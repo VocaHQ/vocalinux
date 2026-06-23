@@ -2664,6 +2664,9 @@ class SettingsDialog(Gtk.Dialog):
             SettingsPage("performance", "Performance", "power-profile-performance-symbolic"),
             SettingsPage("application", "Application", "preferences-system-symbolic"),
             SettingsPage("advanced", "Advanced", "applications-engineering-symbolic"),
+            SettingsPage(
+                "post-processing", "Post-Processing", "utilities-terminal-symbolic"
+            ),
             SettingsPage("about", "About", "help-about-symbolic"),
         ]
         pages_by_name = {page.name: page for page in self._pages}
@@ -2677,6 +2680,7 @@ class SettingsDialog(Gtk.Dialog):
         self.power_tab = pages_by_name["performance"].box
         self.general_tab = pages_by_name["application"].box
         self.advanced_tab = pages_by_name["advanced"].box
+        self.post_processing_tab = pages_by_name["post-processing"].box
         self.about_tab = pages_by_name["about"].box
 
         # Each page is wrapped in a vertical ScrolledWindow: without one, the
@@ -2749,6 +2753,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_gpu_section()
         self._build_general_section()
         self._build_advanced_section()
+        self._build_post_processing_section()
         self._build_about_section()
         self._build_sidebar_footer(sidebar_box)
 
@@ -5659,6 +5664,61 @@ class SettingsDialog(Gtk.Dialog):
 
         self.gpu_device_combo.connect("changed", self._on_advanced_param_changed)
 
+    def _build_post_processing_section(self):
+        """Build the Post-Processing section."""
+        group = PreferencesGroup(
+            title="Post-Processing Script",
+            description=(
+                "Run an executable on each transcription result. "
+                "The script receives the text on stdin and must write the replacement text to stdout."
+            ),
+        )
+
+        path_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.post_processor_entry = Gtk.Entry()
+        self.post_processor_entry.set_placeholder_text("/path/to/script.sh")
+        self.post_processor_entry.set_tooltip_text(
+            "Path to an executable that transforms transcribed text"
+        )
+        self.post_processor_entry.set_hexpand(True)
+
+        browse_button = Gtk.Button(label="Browse…")
+        browse_button.connect("clicked", self._on_post_processor_browse_clicked)
+
+        path_box.pack_start(self.post_processor_entry, True, True, 0)
+        path_box.pack_start(browse_button, False, False, 0)
+
+        script_row = PreferenceRow(
+            title="Script Path",
+            subtitle="Leave empty to disable post-processing",
+            widget=path_box,
+        )
+        group.add_row(script_row)
+        self.post_processing_tab.pack_start(group, False, False, 0)
+
+        self.post_processor_entry.connect("changed", self._on_post_processor_script_changed)
+
+    def _on_post_processor_browse_clicked(self, widget):
+        dialog = Gtk.FileChooserDialog(
+            title="Select Post-Processing Script",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK,
+        )
+        if dialog.run() == Gtk.ResponseType.OK:
+            self.post_processor_entry.set_text(dialog.get_filename())
+        dialog.destroy()
+
+    def _on_post_processor_script_changed(self, widget):
+        if self._initializing or self._applying_settings:
+            return
+        path = widget.get_text().strip()
+        self.config_manager.set("post_processing", "script_path", path)
+        self.config_manager.save_config()
+
     def _build_remote_server_section(self):
         """Build the Remote Server configuration section (shown when Remote API engine is selected)."""
         self.remote_server_group = PreferencesGroup(
@@ -6330,6 +6390,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.disable_internal_hotkey_switch.set_active(disable_internal_hotkey)
         self._update_internal_hotkey_sensitivity(disable_internal_hotkey)
+
+        post_processing_settings = self.config_manager.get_settings().get("post_processing", {})
+        self.post_processor_entry.set_text(post_processing_settings.get("script_path", ""))
 
         available_engines = get_available_engines()
         available_count = 0

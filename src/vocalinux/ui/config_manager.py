@@ -201,6 +201,9 @@ DEFAULT_CONFIG = {
         "enabled": True,  # Keep recent dictation snippets in the tray menu
         "max_items": 10,  # How many snippets to retain (in-memory only, cleared on quit)
     },
+    "post_processing": {
+        "script_path": "",  # Path to executable; empty = disabled
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,
