@@ -191,6 +191,9 @@ DEFAULT_CONFIG = {
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
         "backend": "auto",
     },
+    "post_processing": {
+        "script_path": "",  # Path to executable; empty = disabled
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,

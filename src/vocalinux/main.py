@@ -254,6 +254,7 @@ def main():
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
+    from .post_processor import PostProcessor
 
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
@@ -496,9 +497,10 @@ def main():
 
             Called on the recognition thread with each finalised transcription
             segment.  Strips leading whitespace and trailing spaces/tabs (but
-            preserves trailing newlines from voice commands), then either
-            appends a trailing space (default) or uses the legacy in-session
-            leading-space separator, and injects via TextInjector.
+            preserves trailing newlines from voice commands), optionally pipes
+            the result through the configured post-processing script, then
+            either appends a trailing space (default) or uses the legacy
+            in-session leading-space separator, and injects via TextInjector.
 
             Args:
                 text: Raw transcription segment from the speech engine.
@@ -515,6 +517,12 @@ def main():
                 from vocalinux.speech_recognition.command_processor import capitalize_sentences
 
                 text_to_inject = capitalize_sentences(text_to_inject)
+
+            post_processor_path = config_manager.get_str("post_processing", "script_path", "")
+            if post_processor_path:
+                text_to_inject = PostProcessor(post_processor_path).process(text_to_inject)
+                if not text_to_inject:
+                    return
 
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
