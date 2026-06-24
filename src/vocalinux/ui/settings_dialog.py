@@ -5705,8 +5705,10 @@ class SettingsDialog(Gtk.Dialog):
             action=Gtk.FileChooserAction.OPEN,
         )
         dialog.add_buttons(
-            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
-            Gtk.STOCK_OPEN, Gtk.ResponseType.OK,
+            Gtk.STOCK_CANCEL,
+            Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN,
+            Gtk.ResponseType.OK,
         )
         if dialog.run() == Gtk.ResponseType.OK:
             self.post_processor_entry.set_text(dialog.get_filename())
