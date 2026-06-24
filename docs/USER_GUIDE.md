@@ -214,6 +214,28 @@ vocalinux --transcribe-file meeting.wav   # diarized transcript on stdout, then 
 
 `--transcribe-file` uses the TinyDiarize model (`small.en-tdrz`) and needs it downloaded first — the tray "Transcribe Audio File…" entry fetches it on demand.
 
+### Post-Processing
+
+Vocalinux can pipe each transcription result through a user-defined script before injecting it into your application. This lets you apply custom transformations — for example, grammar correction, abbreviation expansion, or domain-specific formatting.
+
+**To configure:**
+1. Open Settings from the tray icon menu (right-click)
+2. Go to the **Post-Processing** tab
+3. Enter the path to your script, or click **Browse…** to select it
+4. Leave the field empty to disable post-processing
+
+**Script contract:**
+- The script receives the transcription on **stdin**
+- It must write the replacement text to **stdout**
+- A non-zero exit code or a script that times out (10 s) causes the original text to be used unchanged
+
+**Example** — a shell script that uppercases everything:
+```bash
+#!/bin/bash
+tr '[:lower:]' '[:upper:]'
+```
+Make the script executable (`chmod +x`) before setting the path in Vocalinux.
+
 ## Troubleshooting
 
 ```bash
