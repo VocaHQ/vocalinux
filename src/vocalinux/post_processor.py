@@ -33,3 +33,16 @@ class PostProcessor:
         except Exception as e:
             logger.warning("Post-processor failed: %s", e)
             return text
+
+
+def apply_post_processing(text: str, config_manager) -> "str | None":
+    """Apply post-processing script to text if configured.
+
+    Returns processed text, or None to signal the caller should skip injection.
+    Returns original text unchanged when no script is configured.
+    """
+    script_path = config_manager.get_str("post_processing", "script_path", "")
+    if not script_path:
+        return text
+    result = PostProcessor(script_path).process(text)
+    return result if result else None

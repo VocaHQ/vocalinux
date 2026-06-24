@@ -769,6 +769,10 @@ class TestConfigManager(unittest.TestCase):
         new_config_manager = ConfigManager()
         self.assertFalse(new_config_manager.is_sound_effects_enabled())
 
+    def test_post_processing_script_path_empty_by_default(self):
+        config_manager = ConfigManager()
+        self.assertEqual(config_manager.get_str("post_processing", "script_path", ""), "")
+
 
 class TestTypedAccessors(unittest.TestCase):
     """Tests for typed config accessors."""
