@@ -84,9 +84,8 @@ class DictationOverlayController:
             return None
         if self._state == RecognitionState.LISTENING:
             return MODE_LISTENING
-        if self._state == RecognitionState.PROCESSING:
-            return MODE_PROCESSING
-        return None
+        # visible is only True for LISTENING or PROCESSING
+        return MODE_PROCESSING
 
 
 def _try_import_layer_shell():

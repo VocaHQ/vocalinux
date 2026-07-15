@@ -885,6 +885,87 @@ class TestTrayIndicator(unittest.TestCase):
 
         self.tray_indicator._set_menu_item_enabled("Start Voice Typing", True)
 
+    def test_update_overlay_reads_config_and_forwards_state(self):
+        """_update_overlay re-reads config and drives the floating overlay."""
+        mock_overlay = MagicMock()
+        self.tray_indicator.overlay = mock_overlay
+        self.mock_config_manager.is_overlay_enabled.return_value = True
+
+        self.tray_indicator._update_overlay(self.RecognitionState.LISTENING)
+
+        mock_overlay.set_enabled.assert_called_once_with(True)
+        mock_overlay.on_recognition_state.assert_called_once_with(self.RecognitionState.LISTENING)
+
+    def test_update_overlay_noop_when_overlay_missing(self):
+        self.tray_indicator.overlay = None
+        # Must not raise
+        self.tray_indicator._update_overlay(self.RecognitionState.LISTENING)
+
+    def test_set_overlay_enabled_updates_config_and_live_overlay(self):
+        mock_overlay = MagicMock()
+        self.tray_indicator.overlay = mock_overlay
+        self.mock_speech_engine.state = self.RecognitionState.LISTENING
+
+        self.tray_indicator.set_overlay_enabled(False)
+
+        self.mock_config_manager.set_overlay_enabled.assert_called_once_with(False)
+        mock_overlay.set_enabled.assert_called_once_with(False)
+        mock_overlay.on_recognition_state.assert_called_once_with(self.RecognitionState.LISTENING)
+
+    def test_set_overlay_enabled_without_overlay_still_saves_config(self):
+        self.tray_indicator.overlay = None
+        self.tray_indicator.set_overlay_enabled(True)
+        self.mock_config_manager.set_overlay_enabled.assert_called_once_with(True)
+
+    def test_update_ui_forwards_state_to_overlay(self):
+        """_update_ui keeps the floating overlay in sync with tray icon state."""
+        self.tray_indicator.indicator = MagicMock()
+        self.tray_indicator.icon_names = {
+            "default": "off",
+            "active": "on",
+            "processing": "proc",
+        }
+        with patch.object(self.tray_indicator, "_set_menu_item_enabled"):
+            with patch.object(self.tray_indicator, "_update_overlay") as mock_overlay:
+                for state in (
+                    self.RecognitionState.IDLE,
+                    self.RecognitionState.LISTENING,
+                    self.RecognitionState.PROCESSING,
+                    self.RecognitionState.ERROR,
+                ):
+                    mock_overlay.reset_mock()
+                    # _update_ui prefers the engine's live state over the hint.
+                    self.mock_speech_engine.state = state
+                    self.tray_indicator._update_ui(state)
+                    mock_overlay.assert_called_once_with(state)
+
+    def test_settings_dialog_receives_overlay_enabled_callback(self):
+        """Settings dialog is wired with the live overlay toggle callback."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            kwargs = mock_dialog_class.call_args.kwargs
+            self.assertIn("overlay_enabled_callback", kwargs)
+            self.assertEqual(
+                kwargs["overlay_enabled_callback"],
+                self.tray_indicator.set_overlay_enabled,
+            )
+
+    def test_quit_destroys_overlay(self):
+        mock_overlay = MagicMock()
+        self.tray_indicator.overlay = mock_overlay
+        self.tray_indicator._suspend_handler = None
+        with patch.object(self.tray_indicator, "_cleanup_input_monitor"):
+            with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
+                self.tray_indicator._quit()
+        mock_overlay.destroy.assert_called_once()
+        self.assertIsNone(self.tray_indicator.overlay)
+        patched_gtk.main_quit.assert_called_once()
+
 
 class TestTrayIndicatorFlatpakIcons(unittest.TestCase):
     """Tray icon names must adapt to the Flatpak runtime.
