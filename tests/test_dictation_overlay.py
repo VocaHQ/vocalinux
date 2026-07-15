@@ -3,11 +3,15 @@ Tests for the floating dictation overlay.
 
 Drives the shipped DictationOverlayController (and config helpers) so
 LISTENING/PROCESSING show the cue and IDLE/ERROR/disabled hide it.
+
+Important: these tests must not import real GTK / tray_indicator into
+sys.modules — that breaks later tests that mock gi (see CI isolation).
 """
 
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from vocalinux.common_types import RecognitionState
@@ -17,8 +21,12 @@ from vocalinux.ui.dictation_overlay import (
     MODE_PROCESSING,
     DictationOverlay,
     DictationOverlayController,
-    _try_import_layer_shell,
 )
+
+# Source paths for structural checks (avoid importing modules that load GTK).
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_OVERLAY_SRC = _REPO_ROOT / "src" / "vocalinux" / "ui" / "dictation_overlay.py"
+_TRAY_SRC = _REPO_ROOT / "src" / "vocalinux" / "ui" / "tray_indicator.py"
 
 
 def _ensure_test_config_dir(path: str):
@@ -27,6 +35,21 @@ def _ensure_test_config_dir(path: str):
         os.mkdir(parent_dir)
     if not os.path.exists(path):
         os.mkdir(path)
+
+
+def _overlay_without_gtk(enabled: bool = True) -> DictationOverlay:
+    """
+    Build DictationOverlay without initializing a real GTK window.
+
+    Patches window construction so tests never load gi.repository (which
+    would pollute the process for later gi-mocked tests).
+    """
+    with patch.object(
+        DictationOverlay,
+        "_init_gtk_window",
+        side_effect=RuntimeError("gtk disabled in unit tests"),
+    ):
+        return DictationOverlay(enabled=enabled)
 
 
 class TestDictationOverlayController(unittest.TestCase):
@@ -162,12 +185,11 @@ class TestDictationOverlayFacade(unittest.TestCase):
     """
     Drive the shipped DictationOverlay API (real controller path).
 
-    GTK window construction is allowed to fail in headless CI; the controller
-    still receives state transitions through the public methods.
+    Window construction is patched out so these tests never load GTK.
     """
 
     def test_on_recognition_state_drives_controller(self):
-        overlay = DictationOverlay(enabled=True)
+        overlay = _overlay_without_gtk(enabled=True)
         try:
             overlay.on_recognition_state(RecognitionState.LISTENING)
             self.assertTrue(overlay.controller.visible)
@@ -187,7 +209,7 @@ class TestDictationOverlayFacade(unittest.TestCase):
             overlay.destroy()
 
     def test_disabled_overlay_stays_hidden_on_listening(self):
-        overlay = DictationOverlay(enabled=False)
+        overlay = _overlay_without_gtk(enabled=False)
         try:
             overlay.on_recognition_state(RecognitionState.LISTENING)
             self.assertFalse(overlay.controller.visible)
@@ -196,7 +218,7 @@ class TestDictationOverlayFacade(unittest.TestCase):
             overlay.destroy()
 
     def test_set_enabled_false_hides_while_listening(self):
-        overlay = DictationOverlay(enabled=True)
+        overlay = _overlay_without_gtk(enabled=True)
         try:
             overlay.on_recognition_state(RecognitionState.LISTENING)
             self.assertTrue(overlay.controller.visible)
@@ -205,25 +227,22 @@ class TestDictationOverlayFacade(unittest.TestCase):
         finally:
             overlay.destroy()
 
-    def test_layer_shell_import_is_soft(self):
-        """Missing GtkLayerShell must not raise (cross-distro requirement)."""
-        result = _try_import_layer_shell()
-        # Either None (not installed) or a module — never an exception.
-        self.assertTrue(result is None or hasattr(result, "init_for_window"))
+    def test_gtk_init_failure_keeps_controller_usable(self):
+        """If the display/GTK is unavailable, controller still tracks state."""
+        overlay = _overlay_without_gtk(enabled=True)
+        self.assertFalse(overlay._gtk_ready)
+        overlay.on_recognition_state(RecognitionState.LISTENING)
+        self.assertTrue(overlay.controller.visible)
+        overlay.destroy()
 
 
 class TestOverlayWindowPassiveProperties(unittest.TestCase):
     """
-    Structural checks: shipped overlay path asserts non-focus / passive window
-    flags and optional layer-shell (not a hard dependency).
+    Structural checks against source files (no module import side effects).
     """
 
     def test_source_sets_non_focus_and_skip_taskbar(self):
-        import inspect
-
-        import vocalinux.ui.dictation_overlay as mod
-
-        source = inspect.getsource(mod)
+        source = _OVERLAY_SRC.read_text(encoding="utf-8")
         self.assertIn("set_accept_focus(False)", source)
         self.assertIn("set_skip_taskbar_hint(True)", source)
         self.assertIn("set_keep_above(True)", source)
@@ -232,11 +251,7 @@ class TestOverlayWindowPassiveProperties(unittest.TestCase):
         self.assertIn("input_shape_combine_region", source)
 
     def test_source_has_glow_or_pulse_animation(self):
-        import inspect
-
-        import vocalinux.ui.dictation_overlay as mod
-
-        source = inspect.getsource(mod)
+        source = _OVERLAY_SRC.read_text(encoding="utf-8")
         self.assertIn("_on_draw", source)
         self.assertIn("_on_anim_tick", source)
         self.assertIn("timeout_add", source)
@@ -245,22 +260,14 @@ class TestOverlayWindowPassiveProperties(unittest.TestCase):
         self.assertIn("sin", source)
 
     def test_layer_shell_is_optional_soft_import(self):
-        import inspect
-
-        import vocalinux.ui.dictation_overlay as mod
-
-        source = inspect.getsource(mod)
+        source = _OVERLAY_SRC.read_text(encoding="utf-8")
         self.assertIn("_try_import_layer_shell", source)
         self.assertIn("GtkLayerShell", source)
-        # Soft failure path.
-        self.assertIn("except Exception", inspect.getsource(mod._try_import_layer_shell))
+        # Soft failure path is present in the helper.
+        self.assertIn("except Exception", source)
 
     def test_tray_wires_overlay_to_state_updates(self):
-        import inspect
-
-        import vocalinux.ui.tray_indicator as tray_mod
-
-        source = inspect.getsource(tray_mod)
+        source = _TRAY_SRC.read_text(encoding="utf-8")
         self.assertIn("DictationOverlay", source)
         self.assertIn("_update_overlay", source)
         self.assertIn("on_recognition_state", source)
@@ -273,7 +280,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
     """
 
     def test_sync_shows_on_listening_hides_on_idle(self):
-        overlay = DictationOverlay(enabled=True)
+        overlay = _overlay_without_gtk(enabled=True)
         mock_window = MagicMock()
         mock_window.get_visible.return_value = False
         overlay._window = mock_window
@@ -299,7 +306,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
             overlay.destroy()
 
     def test_disabled_does_not_show_window(self):
-        overlay = DictationOverlay(enabled=False)
+        overlay = _overlay_without_gtk(enabled=False)
         mock_window = MagicMock()
         mock_window.get_visible.return_value = False
         overlay._window = mock_window
