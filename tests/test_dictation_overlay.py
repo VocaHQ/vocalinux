@@ -255,12 +255,17 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
             overlay.on_recognition_state(RecognitionState.LISTENING)
             self.assertTrue(overlay.controller.visible)
             mock_window.show_all.assert_called()
-            mock_window.set_keep_above.assert_called_with(True)
+            # Must not call present() — that steals keyboard focus.
+            mock_window.present.assert_not_called()
+            mock_window.set_opacity.assert_called_with(1.0)
 
             mock_window.get_visible.return_value = True
+            mock_window.set_opacity.reset_mock()
             overlay.on_recognition_state(RecognitionState.IDLE)
             self.assertFalse(overlay.controller.visible)
-            mock_window.hide.assert_called()
+            # Idle uses opacity 0 (not hide) so later show cycles do not refocus.
+            mock_window.set_opacity.assert_called_with(0.0)
+            mock_window.hide.assert_not_called()
         finally:
             overlay._window = None
             overlay._anim_id = None
@@ -337,10 +342,13 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay.destroy()
         self.assertIsNone(overlay._window)
 
-    def test_position_bottom_center_moves_window(self):
+    def test_layout_bottom_strip_full_width(self):
+        from vocalinux.ui.dictation_overlay import _BOTTOM_MARGIN, _STRIP_HEIGHT
+
         overlay = _overlay_without_gtk(enabled=True)
         mock_window = MagicMock()
         overlay._window = mock_window
+        overlay._drawing_area = MagicMock()
         geom = MagicMock(x=100, y=50, width=1920, height=1080)
         monitor = MagicMock()
         monitor.get_geometry.return_value = geom
@@ -349,12 +357,12 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = display
 
-        overlay._position_bottom_center()
-        # x = 100 + (1920 - 96) // 2 = 100 + 912 = 1012
-        # y = 50 + 1080 - 96 - 56 = 978
-        mock_window.move.assert_called_once_with(1012, 978)
+        overlay._layout_bottom_strip()
+        # Full-width strip along the bottom of the monitor.
+        mock_window.resize.assert_called_once_with(1920, _STRIP_HEIGHT)
+        mock_window.move.assert_called_once_with(100, 50 + 1080 - _STRIP_HEIGHT - _BOTTOM_MARGIN)
 
-    def test_position_falls_back_to_first_monitor(self):
+    def test_layout_falls_back_to_first_monitor(self):
         overlay = _overlay_without_gtk(enabled=True)
         mock_window = MagicMock()
         overlay._window = mock_window
@@ -368,30 +376,31 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = display
 
-        overlay._position_bottom_center()
+        overlay._layout_bottom_strip()
         mock_window.move.assert_called_once()
+        mock_window.resize.assert_called_once()
 
-    def test_position_noop_without_display(self):
+    def test_layout_noop_without_display(self):
         overlay = _overlay_without_gtk(enabled=True)
         overlay._window = MagicMock()
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = None
-        overlay._position_bottom_center()
+        overlay._layout_bottom_strip()
         overlay._window.move.assert_not_called()
 
-    def test_position_swallows_errors(self):
+    def test_layout_swallows_errors(self):
         overlay = _overlay_without_gtk(enabled=True)
         overlay._window = MagicMock()
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.side_effect = RuntimeError("no gdk")
-        overlay._position_bottom_center()  # must not raise
+        overlay._layout_bottom_strip()  # must not raise
 
-    def test_position_skipped_when_no_window(self):
+    def test_layout_skipped_when_no_window(self):
         overlay = _overlay_without_gtk(enabled=True)
         overlay._window = None
-        overlay._position_bottom_center()  # must not raise
+        overlay._layout_bottom_strip()  # must not raise
 
-    def test_sync_positions_when_layer_shell_unused(self):
+    def test_sync_layouts_when_layer_shell_unused(self):
         overlay = _overlay_without_gtk(enabled=True)
         overlay._window = MagicMock()
         overlay._window.get_visible.return_value = True
@@ -400,9 +409,9 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay._GLib = MagicMock()
         overlay._GLib.timeout_add.return_value = 1
         overlay._drawing_area = MagicMock()
-        with patch.object(overlay, "_position_bottom_center") as mock_pos:
+        with patch.object(overlay, "_layout_bottom_strip") as mock_layout:
             overlay.on_recognition_state(RecognitionState.LISTENING)
-            mock_pos.assert_called_once()
+            mock_layout.assert_called()
 
     def test_on_anim_tick_updates_phase_and_returns_visibility(self):
         overlay = _overlay_without_gtk(enabled=True)
@@ -534,7 +543,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay.controller.set_state(RecognitionState.LISTENING)
         self.assertTrue(overlay._on_anim_tick())
 
-    def test_position_when_no_monitors(self):
+    def test_layout_when_no_monitors(self):
         overlay = _overlay_without_gtk(enabled=True)
         overlay._window = MagicMock()
         display = MagicMock()
@@ -542,7 +551,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         display.get_n_monitors.return_value = 0
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = display
-        overlay._position_bottom_center()
+        overlay._layout_bottom_strip()
         overlay._window.move.assert_not_called()
 
     def test_controller_enabled_property(self):
@@ -560,6 +569,8 @@ class _FakeLayerShell:
 
     class Edge:
         BOTTOM = "BOTTOM"
+        LEFT = "LEFT"
+        RIGHT = "RIGHT"
 
     class KeyboardMode:
         NONE = "NONE"
@@ -696,6 +707,8 @@ class TestInitGtkWindowWithMocks(unittest.TestCase):
         self.assertTrue(overlay._use_layer_shell)
         shell.init_for_window.assert_called_once()
         shell.set_layer.assert_called_once()
+        # Bottom + left + right anchors → full-width strip, orb drawn at center.
+        self.assertGreaterEqual(shell.set_anchor.call_count, 3)
         shell.set_keyboard_mode.assert_called_once()
         overlay.destroy()
 
