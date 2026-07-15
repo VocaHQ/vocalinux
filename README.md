@@ -249,6 +249,7 @@ Once published:
 sudo snap install vocalinux --edge   # first testing channel
 sudo snap install vocalinux          # after stable promotion
 sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
+sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
 ```
 
 ### 🌙 Nightly Releases (Bleeding Edge)

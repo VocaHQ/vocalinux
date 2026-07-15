@@ -30,8 +30,10 @@ description: |
     - Text injection via xdotool/xsel (X11 and XWayland) and IBus when available
 
   Sandbox notes (strict confinement):
-    - Global low-level keyboard hooks (/dev/input / evdev) are not requested;
-      use the tray menu when global shortcuts do not work.
+    - Global keyboard shortcuts need the raw-input interface (reads /dev/input).
+      Connect once after install if shortcuts do not work:
+        sudo snap connect vocalinux:raw-input
+      Until then, use the system tray to start/stop dictation.
     - After install, connect the microphone if not auto-connected:
         sudo snap connect vocalinux:audio-record
     - Config and models live under ~/snap/vocalinux/ (snap-private HOME).
@@ -57,6 +59,10 @@ apps:
       - home # optional access outside snap HOME (shared files)
       - network # download speech models on first run
       - network-bind # optional remote_api engine
+      # Global hotkeys via python-evdev (/proc/bus/input + /dev/input/event*).
+      # Super-privileged: not auto-connected; user must:
+      #   sudo snap connect vocalinux:raw-input
+      - raw-input
     common-id: com.vocalinux.Vocalinux
     desktop: usr/share/applications/vocalinux.desktop
     environment:

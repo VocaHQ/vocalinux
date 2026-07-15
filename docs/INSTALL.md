@@ -154,6 +154,8 @@ sudo snap install vocalinux
 
 # Grant microphone access if snapd does not auto-connect it
 sudo snap connect vocalinux:audio-record
+# Global keyboard shortcuts (strict confinement blocks /dev/input otherwise)
+sudo snap connect vocalinux:raw-input
 ```
 
 To build a local `.snap` for development (requires `snapcraft` + LXD/Multipass):
@@ -163,6 +165,7 @@ sudo snap install snapcraft --classic
 snapcraft pack
 sudo snap install --dangerous ./vocalinux_*.snap
 sudo snap connect vocalinux:audio-record
+sudo snap connect vocalinux:raw-input
 ```
 
 ## System Requirements

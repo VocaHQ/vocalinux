@@ -83,6 +83,8 @@ def test_app_entry_and_required_plugs(snapcraft_doc: dict) -> None:
     # Microphone + model download must be explicit on the app.
     assert "audio-record" in plugs
     assert "network" in plugs
+    # Global hotkeys (evdev) need raw-input under strict confinement.
+    assert "raw-input" in plugs
 
     # Desktop/X11 either via gnome extension or explicit plugs.
     desktop_ok = "gnome" in extensions or (

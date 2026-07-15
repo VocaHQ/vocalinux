@@ -326,9 +326,26 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if not EVDEV_AVAILABLE:
             return "Install python-evdev: pip install evdev"
 
+        # Snap confinement cannot use the host 'input' group; raw-input is required.
+        if os.environ.get("SNAP_NAME") or os.environ.get("SNAP"):
+            return (
+                "Snap is missing input-device access. Connect once, then restart:\n"
+                "sudo snap connect vocalinux:raw-input"
+            )
+
         try:
             devices = find_keyboard_devices()
             if not devices:
+                # Empty list may mean permission denied on /proc/bus/input/devices.
+                try:
+                    with open("/proc/bus/input/devices", "r"):
+                        pass
+                except (OSError, IOError) as e:
+                    if "Permission denied" in str(e) or getattr(e, "errno", None) == errno.EACCES:
+                        return (
+                            "Add your user to the 'input' group and log out/in:\n"
+                            "sudo usermod -a -G input $USER"
+                        )
                 return None  # No devices found, not a permission issue
 
             # Try to open the first device to check permissions

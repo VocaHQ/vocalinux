@@ -83,7 +83,7 @@ Reasons:
 | Remote API engine | `network` / `network-bind` | Optional; not the primary path |
 | GPU / Vulkan | `opengl` (extension) | whisper.cpp acceleration when available |
 | Config / models | snap-private `HOME` (`~/snap/vocalinux/…`) | Same code paths (`~/.config`, `~/.local/share`) remap automatically |
-| Global hotkeys | **Not requested** | No raw `/dev/input`; tray menu is the reliable control surface |
+| Global hotkeys | `raw-input` (manual connect) | `sudo snap connect vocalinux:raw-input` then restart; tray works without it |
 
 If strict confinement blocks text injection or required desktop integration after
 real-device testing, escalate deliberately:
