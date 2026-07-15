@@ -75,7 +75,7 @@ Reasons:
 
 | Need | Interface / mechanism | Notes |
 |------|----------------------|--------|
-| GTK tray / desktop | `gnome` extension (`desktop`, `desktop-legacy`, `unity7`, …) | AppIndicator via Ayatana typelibs |
+| GTK tray / desktop | `gnome` extension (`desktop`, `desktop-legacy`, `unity7`, …) | AppIndicator/GTK from gnome-42 platform (do not stage a second GLib) |
 | Display | `x11`, `wayland` (from extension) | Injection prefers X11/XWayland + xdotool; IBus D-Bus when available |
 | Microphone | `audio-record` (+ `pulseaudio` legacy) | May need `snap connect` |
 | Feedback sounds | `audio-playback` | Short UI tones |
