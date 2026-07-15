@@ -106,6 +106,16 @@ Vocalinux in action. Full gallery on the [website screenshots page](https://voca
       <em>Advanced</em>
     </td>
   </tr>
+  <tr>
+    <td align="center">
+      <img src="web/public/screenshots/06-dictation-overlay-listening.png" alt="Dictation overlay listening" width="96"><br>
+      <em>Floating overlay while listening (green)</em>
+    </td>
+    <td align="center">
+      <img src="web/public/screenshots/07-dictation-overlay-processing.png" alt="Dictation overlay processing" width="96"><br>
+      <em>Floating overlay while processing (amber)</em>
+    </td>
+  </tr>
 </table>
 
 ## Install
