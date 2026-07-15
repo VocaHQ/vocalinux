@@ -109,6 +109,14 @@ def _get_audio_player():
     if shutil.which("paplay"):
         return "paplay", ["wav"]
 
+    # PipeWire CLI (common on modern Ubuntu / GNOME snap platform)
+    if shutil.which("pw-play"):
+        return "pw-play", ["wav"]
+
+    # libcanberra helper (often present with GNOME)
+    if shutil.which("canberra-gtk-play"):
+        return "canberra-gtk-play", ["wav"]
+
     # Check for ALSA aplay
     if shutil.which("aplay"):
         return "aplay", ["wav"]
@@ -165,6 +173,18 @@ def _play_sound_file(sound_path):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=host_env(),
+            )
+        elif player == "pw-play":
+            subprocess.Popen(
+                [player, sound_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif player == "canberra-gtk-play":
+            subprocess.Popen(
+                [player, "--file", sound_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
             )
         elif player == "aplay":
             subprocess.Popen(

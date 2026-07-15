@@ -73,6 +73,20 @@ class TestAudioFeedback(unittest.TestCase):
             self.assertEqual(player, "paplay")
             self.assertEqual(formats, ["wav"])
 
+    def test_get_audio_player_pw_play(self):
+        """Test detecting PipeWire pw-play player."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with patch.object(audio_feedback.shutil, "which") as mock_which:
+
+            def which_side_effect(cmd):
+                return cmd == "pw-play"
+
+            mock_which.side_effect = which_side_effect
+            player, formats = audio_feedback._get_audio_player()
+            self.assertEqual(player, "pw-play")
+            self.assertEqual(formats, ["wav"])
+
     def test_get_audio_player_alsa(self):
         """Test detecting ALSA player."""
         # Import the module first
@@ -83,6 +97,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": True,
                     "play": False,
                     "mplayer": False,
@@ -107,6 +123,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": False,
                     "play": True,
                     "mplayer": False,
@@ -131,6 +149,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": False,
                     "play": False,
                     "mplayer": True,

@@ -104,7 +104,9 @@ parts:
       - libasound2
       - libasound2-data
       - libasound2-plugins # pcm/ctl pulse → host PulseAudio/PipeWire
+      - pulseaudio-utils # paplay for start/stop UI sounds
       - xdotool
+      - wtype # native Wayland text injection (preferred over xdotool)
       - xsel
       - xclip
       - wl-clipboard

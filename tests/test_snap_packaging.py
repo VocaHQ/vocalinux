@@ -99,11 +99,14 @@ def test_stage_packages_include_injection_helpers(snapcraft_doc: dict) -> None:
     stage = set(parts["vocalinux"].get("stage-packages") or [])
     # X11 injection path used by the app (same idea as Flatpak).
     assert "xdotool" in stage
+    assert "wtype" in stage
     assert "xsel" in stage or "xclip" in stage
     # PortAudio runtime for pyaudio.
     assert "libportaudio2" in stage
     # ALSA→Pulse plugins so Settings device list does not abort in PortAudio.
     assert "libasound2-plugins" in stage
+    # UI start/stop sounds
+    assert "pulseaudio-utils" in stage
 
 
 def test_alsa_pulse_routing_config_present() -> None:

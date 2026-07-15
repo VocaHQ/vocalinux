@@ -135,7 +135,8 @@ def find_keyboard_devices() -> list[str]:
         logger.debug(f"Cannot read /proc/bus/input/devices: {e}")
         fallback = _find_keyboard_devices_from_evdev()
         if fallback:
-            logger.info(
+            # Hot-plug rescans call this often; keep the noise down after first hit.
+            logger.debug(
                 "Using evdev.list_devices() fallback for keyboard discovery "
                 f"({len(fallback)} device(s))"
             )
