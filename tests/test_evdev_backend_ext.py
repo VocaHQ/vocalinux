@@ -75,14 +75,33 @@ B: KEY=ff000000000000 0 0 0
     def test_find_keyboard_devices_io_error(self):
         """Test error handling when /proc/bus/input/devices cannot be read."""
         with patch("builtins.open", side_effect=IOError("Permission denied")):
-            result = find_keyboard_devices()
-            assert result == []
+            with patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend._find_keyboard_devices_from_evdev",
+                return_value=[],
+            ):
+                result = find_keyboard_devices()
+                assert result == []
 
     def test_find_keyboard_devices_file_not_found(self):
         """Test error handling when /proc/bus/input/devices doesn't exist."""
         with patch("builtins.open", side_effect=FileNotFoundError()):
-            result = find_keyboard_devices()
-            assert result == []
+            with patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend._find_keyboard_devices_from_evdev",
+                return_value=[],
+            ):
+                result = find_keyboard_devices()
+                assert result == []
+
+    def test_find_keyboard_devices_falls_back_to_evdev_list(self):
+        """When /proc is denied (e.g. snap), discover keyboards via list_devices."""
+        with patch("builtins.open", side_effect=PermissionError(13, "Permission denied")):
+            with patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend._find_keyboard_devices_from_evdev",
+                return_value=["/dev/input/event10"],
+            ) as fallback:
+                result = find_keyboard_devices()
+                assert result == ["/dev/input/event10"]
+                fallback.assert_called_once()
 
     def test_find_keyboard_devices_no_keyboard_capability(self):
         """Test filtering devices without keyboard capability."""
