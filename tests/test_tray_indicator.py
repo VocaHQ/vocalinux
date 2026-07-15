@@ -890,9 +890,10 @@ class TestTrayIndicator(unittest.TestCase):
         from vocalinux.ui.tray_indicator import TrayIndicator
 
         mock_overlay = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.is_overlay_enabled.return_value = True
         self.tray_indicator.overlay = mock_overlay
-        cm = self.tray_indicator.config_manager
-        cm.is_overlay_enabled.return_value = True
+        self.tray_indicator.config_manager = mock_cm
 
         TrayIndicator._update_overlay(self.tray_indicator, self.RecognitionState.LISTENING)
 
@@ -903,6 +904,7 @@ class TestTrayIndicator(unittest.TestCase):
         from vocalinux.ui.tray_indicator import TrayIndicator
 
         self.tray_indicator.overlay = None
+        self.tray_indicator.config_manager = MagicMock()
         # Must not raise
         TrayIndicator._update_overlay(self.tray_indicator, self.RecognitionState.LISTENING)
 
@@ -910,23 +912,26 @@ class TestTrayIndicator(unittest.TestCase):
         from vocalinux.ui.tray_indicator import TrayIndicator
 
         mock_overlay = MagicMock()
+        mock_cm = MagicMock()
         self.tray_indicator.overlay = mock_overlay
+        self.tray_indicator.config_manager = mock_cm
         self.mock_speech_engine.state = self.RecognitionState.LISTENING
-        cm = self.tray_indicator.config_manager
-        # Call the real unbound method so a MagicMock cannot shadow it on the instance.
+
         TrayIndicator.set_overlay_enabled(self.tray_indicator, False)
 
-        cm.set_overlay_enabled.assert_called_with(False)
-        mock_overlay.set_enabled.assert_called_with(False)
-        mock_overlay.on_recognition_state.assert_called_with(self.RecognitionState.LISTENING)
+        mock_cm.set_overlay_enabled.assert_called_once_with(False)
+        mock_overlay.set_enabled.assert_called_once_with(False)
+        mock_overlay.on_recognition_state.assert_called_once_with(self.RecognitionState.LISTENING)
 
     def test_set_overlay_enabled_without_overlay_still_saves_config(self):
         from vocalinux.ui.tray_indicator import TrayIndicator
 
+        mock_cm = MagicMock()
         self.tray_indicator.overlay = None
-        cm = self.tray_indicator.config_manager
+        self.tray_indicator.config_manager = mock_cm
+
         TrayIndicator.set_overlay_enabled(self.tray_indicator, True)
-        cm.set_overlay_enabled.assert_called_with(True)
+        mock_cm.set_overlay_enabled.assert_called_once_with(True)
 
     def test_update_ui_forwards_state_to_overlay(self):
         """_update_ui keeps the floating overlay in sync with tray icon state."""
