@@ -61,10 +61,9 @@ apps:
     desktop: usr/share/applications/vocalinux.desktop
     environment:
       # Prefer bundled CLI helpers (xdotool, xsel, xclip, wl-copy).
+      # Do NOT prepend $SNAP/usr/lib over the gnome extension platform path:
+      # that loads a second GLib/GTK and segfaults on `from gi.repository import Gtk`.
       PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
-      # GI typelibs for AppIndicator / GTK bits staged in this snap.
-      GI_TYPELIB_PATH: $SNAP/usr/lib/girepository-1.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
-      LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 parts:
   vocalinux:
@@ -84,20 +83,14 @@ parts:
       - python3-dev
       - libdbus-1-dev
     stage-packages:
-      # Audio capture (pyaudio / PortAudio)
+      # Only extras not provided by the gnome-42 platform content snap.
+      # Staging GTK/GLib/AppIndicator here duplicates the platform and can crash GI.
       - libportaudio2
       - libasound2
-      # Text injection + clipboard helpers (X11/XWayland path, like Flatpak)
       - xdotool
       - xsel
       - xclip
       - wl-clipboard
-      # Tray / notifications typelibs (Ayatana AppIndicator)
-      - libayatana-appindicator3-1
-      - gir1.2-ayatanaappindicator3-0.1
-      - gir1.2-gtk-3.0
-      - gir1.2-notify-0.7
-      - libnotify4
     python-packages:
       - pip
       - setuptools
