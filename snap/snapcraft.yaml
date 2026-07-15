@@ -119,5 +119,5 @@ parts:
       # meta/gui is what snapd uses for the store/desktop icon when present.
       install -Dm644 "${CRAFT_PROJECT_DIR}/resources/icons/scalable/vocalinux.svg" \
         "${CRAFT_PART_INSTALL}/meta/gui/icon.svg"
-      install -Dm644 "${CRAFT_PROJECT_DIR}/snap/alsa/asound.conf" \
+      install -Dm644 "${CRAFT_PROJECT_DIR}/snap/local/alsa/asound.conf" \
         "${CRAFT_PART_INSTALL}/etc/asound.conf"

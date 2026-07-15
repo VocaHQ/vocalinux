@@ -106,7 +106,7 @@ def test_stage_packages_include_injection_helpers(snapcraft_doc: dict) -> None:
 
 def test_alsa_pulse_routing_config_present() -> None:
     """Snap must ship an asound.conf that routes ALSA to PulseAudio."""
-    conf = REPO_ROOT / "snap" / "alsa" / "asound.conf"
+    conf = REPO_ROOT / "snap" / "local" / "alsa" / "asound.conf"
     assert conf.is_file()
     text = conf.read_text(encoding="utf-8").lower()
     assert "type pulse" in text
