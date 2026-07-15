@@ -10,9 +10,10 @@
 
 name: vocalinux
 base: core22
-# Default version for tooling that does not run override-pull; the vocalinux part
-# sets the live version from src/vocalinux/version.py at pull time.
+# Fallback version; live version is set from src/vocalinux/version.py via
+# adopt-info + craftctl set in the vocalinux part (required for craftctl).
 version: "0.14.0-beta"
+adopt-info: vocalinux
 summary: Free offline voice dictation for Linux
 description: |
   Vocalinux is free, GPLv3 voice typing for Linux. Dictate into almost any
@@ -62,8 +63,8 @@ apps:
       # Prefer bundled CLI helpers (xdotool, xsel, xclip, wl-copy).
       PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
       # GI typelibs for AppIndicator / GTK bits staged in this snap.
-      GI_TYPELIB_PATH: $SNAP/usr/lib/girepository-1.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
-      LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+      GI_TYPELIB_PATH: $SNAP/usr/lib/girepository-1.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
+      LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR:$SNAP/lib/$CRAFT_ARCH_TRIPLET_BUILD_FOR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 parts:
   vocalinux:
