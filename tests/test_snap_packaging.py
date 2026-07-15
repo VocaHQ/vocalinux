@@ -100,6 +100,19 @@ def test_stage_packages_include_injection_helpers(snapcraft_doc: dict) -> None:
     assert "xsel" in stage or "xclip" in stage
     # PortAudio runtime for pyaudio.
     assert "libportaudio2" in stage
+    # ALSA→Pulse plugins so Settings device list does not abort in PortAudio.
+    assert "libasound2-plugins" in stage
+
+
+def test_alsa_pulse_routing_config_present() -> None:
+    """Snap must ship an asound.conf that routes ALSA to PulseAudio."""
+    conf = REPO_ROOT / "snap" / "alsa" / "asound.conf"
+    assert conf.is_file()
+    text = conf.read_text(encoding="utf-8").lower()
+    assert "type pulse" in text
+    recipe = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    assert "ALSA_CONFIG_PATH" in recipe
+    assert "asound.conf" in recipe
 
 
 def test_snap_gui_assets_exist() -> None:

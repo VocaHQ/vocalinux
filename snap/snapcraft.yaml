@@ -64,6 +64,15 @@ apps:
       # Do NOT prepend $SNAP/usr/lib over the gnome extension platform path:
       # that loads a second GLib/GTK and segfaults on `from gi.repository import Gtk`.
       PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # PortAudio opens ALSA first. Point at snap-local config that routes to Pulse.
+      ALSA_CONFIG_PATH: $SNAP/etc/asound.conf
+
+# Make ALSA data/plugins visible at the paths libasound expects.
+layout:
+  /usr/share/alsa:
+    bind: $SNAP/usr/share/alsa
+  /usr/lib/$CRAFT_ARCH_TRIPLET/alsa-lib:
+    bind: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET/alsa-lib
 
 parts:
   vocalinux:
@@ -87,6 +96,8 @@ parts:
       # Staging GTK/GLib/AppIndicator here duplicates the platform and can crash GI.
       - libportaudio2
       - libasound2
+      - libasound2-data
+      - libasound2-plugins # pcm/ctl pulse → host PulseAudio/PipeWire
       - xdotool
       - xsel
       - xclip
@@ -108,3 +119,5 @@ parts:
       # meta/gui is what snapd uses for the store/desktop icon when present.
       install -Dm644 "${CRAFT_PROJECT_DIR}/resources/icons/scalable/vocalinux.svg" \
         "${CRAFT_PART_INSTALL}/meta/gui/icon.svg"
+      install -Dm644 "${CRAFT_PROJECT_DIR}/snap/alsa/asound.conf" \
+        "${CRAFT_PART_INSTALL}/etc/asound.conf"
