@@ -239,6 +239,18 @@ cd vocalinux
 
 The installer handles everything: system dependencies, Python environment, speech models, and desktop integration.
 
+### Snap (Ubuntu Snap Store) — not published yet
+
+Snap packaging lives in-repo (`snap/snapcraft.yaml`) for issue [#48](https://github.com/jatinkrmalik/vocalinux/issues/48). **The app is not listed on the Snap Store yet**, so `snap install vocalinux` will not work until a maintainer registers the name and uploads a build. Strategy, confinement notes, and publish checklist: [packaging/snap/README.md](packaging/snap/README.md).
+
+Once published:
+
+```bash
+sudo snap install vocalinux --edge   # first testing channel
+sudo snap install vocalinux          # after stable promotion
+sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
+```
+
 ### 🌙 Nightly Releases (Bleeding Edge)
 
 For developers and early adopters who want to test the latest features, check out our [GitHub Releases page](https://github.com/VocaHQ/vocalinux/releases) which includes both beta and nightly builds.

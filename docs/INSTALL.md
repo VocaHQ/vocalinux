@@ -136,6 +136,35 @@ model during setup.
 On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 `libgirepository1.0-dev` is not available.
 
+### From Snap (Ubuntu Snap Store) — not published yet
+
+Snap packaging is in the repository (`snap/snapcraft.yaml`) but **Vocalinux is
+not on the Snap Store yet**. Track progress in
+[issue #48](https://github.com/jatinkrmalik/vocalinux/issues/48) and
+[packaging/snap/README.md](../packaging/snap/README.md).
+
+**After** the first store publish (planned `edge`, then `stable`):
+
+```bash
+# Testing channel
+sudo snap install vocalinux --edge
+
+# Stable channel (after promotion)
+sudo snap install vocalinux
+
+# Grant microphone access if snapd does not auto-connect it
+sudo snap connect vocalinux:audio-record
+```
+
+To build a local `.snap` for development (requires `snapcraft` + LXD/Multipass):
+
+```bash
+sudo snap install snapcraft --classic
+snapcraft pack
+sudo snap install --dangerous ./vocalinux_*.snap
+sudo snap connect vocalinux:audio-record
+```
+
 ## System Requirements
 
 | Requirement | Details |

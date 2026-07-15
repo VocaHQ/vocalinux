@@ -1,0 +1,116 @@
+# Vocalinux Snap packaging
+#
+# First ship: strict confinement, default whisper.cpp engine path, GTK tray UI,
+# mic capture, model download, and X11/XWayland text injection (xdotool/xsel).
+# Informed by issue #48 and packaging/flatpak lessons on feat/flatpak-packaging.
+#
+# Build (from repo root, with snapcraft + LXD or Multipass):
+#   snapcraft pack
+# See packaging/snap/README.md for full strategy, plugs, and store publish steps.
+
+name: vocalinux
+base: core22
+# Default version for tooling that does not run override-pull; the vocalinux part
+# sets the live version from src/vocalinux/version.py at pull time.
+version: "0.14.0-beta"
+summary: Free offline voice dictation for Linux
+description: |
+  Vocalinux is free, GPLv3 voice typing for Linux. Dictate into almost any
+  application using fully offline speech recognition.
+
+  This snap ships the default whisper.cpp engine path plus VOSK (from project
+  dependencies). The optional OpenAI Whisper / PyTorch stack is not bundled
+  (large CUDA/torch footprint).
+
+  Features:
+    - System tray control and GTK 3 settings UI
+    - Offline dictation (speech models download on first use over the network)
+    - Microphone capture and short audio feedback tones
+    - Text injection via xdotool/xsel (X11 and XWayland) and IBus when available
+
+  Sandbox notes (strict confinement):
+    - Global low-level keyboard hooks (/dev/input / evdev) are not requested;
+      use the tray menu when global shortcuts do not work.
+    - After install, connect the microphone if not auto-connected:
+        sudo snap connect vocalinux:audio-record
+    - Config and models live under ~/snap/vocalinux/ (snap-private HOME).
+
+grade: devel
+confinement: strict
+license: GPL-3.0
+contact: https://github.com/jatinkrmalik/vocalinux/issues
+issues: https://github.com/jatinkrmalik/vocalinux/issues
+website: https://github.com/jatinkrmalik/vocalinux
+source-code: https://github.com/jatinkrmalik/vocalinux
+donation: https://github.com/sponsors/jatinkrmalik
+
+apps:
+  vocalinux:
+    command: bin/vocalinux
+    extensions: [gnome]
+    plugs:
+      # gnome extension already grants desktop, desktop-legacy, gsettings,
+      # opengl, wayland, x11, unity7 (tray / indicators).
+      - audio-record # microphone (may require manual connect)
+      - audio-playback # start/stop feedback tones (PipeWire-pulse / PulseAudio)
+      - home # optional access outside snap HOME (shared files)
+      - network # download speech models on first run
+      - network-bind # optional remote_api engine
+    common-id: com.vocalinux.Vocalinux
+    desktop: usr/share/applications/vocalinux.desktop
+    environment:
+      # Prefer bundled CLI helpers (xdotool, xsel, xclip, wl-copy).
+      PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
+      # GI typelibs for AppIndicator / GTK bits staged in this snap.
+      GI_TYPELIB_PATH: $SNAP/usr/lib/girepository-1.0:$SNAP/usr/lib/$CRAFT_ARCH_TRIPLET/girepository-1.0${GI_TYPELIB_PATH:+:$GI_TYPELIB_PATH}
+      LD_LIBRARY_PATH: $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET:$SNAP/lib/$CRAFT_ARCH_TRIPLET${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+
+parts:
+  vocalinux:
+    plugin: python
+    source: .
+    source-type: local
+    build-environment:
+      - PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    build-packages:
+      - build-essential
+      - cmake
+      - git
+      - pkg-config
+      - portaudio19-dev
+      - libgirepository1.0-dev
+      - libcairo2-dev
+      - python3-dev
+      - libdbus-1-dev
+    stage-packages:
+      # Audio capture (pyaudio / PortAudio)
+      - libportaudio2
+      - libasound2
+      # Text injection + clipboard helpers (X11/XWayland path, like Flatpak)
+      - xdotool
+      - xsel
+      - xclip
+      - wl-clipboard
+      # Tray / notifications typelibs (Ayatana AppIndicator)
+      - libayatana-appindicator3-1
+      - gir1.2-ayatanaappindicator3-0.1
+      - gir1.2-gtk-3.0
+      - gir1.2-notify-0.7
+      - libnotify4
+    python-packages:
+      - pip
+      - setuptools
+      - wheel
+    override-pull: |
+      craftctl default
+      version="$(python3 -c "import pathlib, re; t = pathlib.Path('${CRAFT_PART_SRC}/src/vocalinux/version.py').read_text(); m = re.search(r'__version__\\s*=\\s*[\\'\"]([^\\'\"]+)', t); assert m, 'version not found'; print(m.group(1))")"
+      craftctl set version="$version"
+    override-build: |
+      craftctl default
+      install -Dm644 "${CRAFT_PROJECT_DIR}/snap/gui/vocalinux.desktop" \
+        "${CRAFT_PART_INSTALL}/usr/share/applications/vocalinux.desktop"
+      install -Dm644 "${CRAFT_PROJECT_DIR}/resources/icons/scalable/vocalinux.svg" \
+        "${CRAFT_PART_INSTALL}/usr/share/icons/hicolor/scalable/apps/vocalinux.svg"
+      # meta/gui is what snapd uses for the store/desktop icon when present.
+      install -Dm644 "${CRAFT_PROJECT_DIR}/resources/icons/scalable/vocalinux.svg" \
+        "${CRAFT_PART_INSTALL}/meta/gui/icon.svg"
