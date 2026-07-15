@@ -887,35 +887,46 @@ class TestTrayIndicator(unittest.TestCase):
 
     def test_update_overlay_reads_config_and_forwards_state(self):
         """_update_overlay re-reads config and drives the floating overlay."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
         mock_overlay = MagicMock()
         self.tray_indicator.overlay = mock_overlay
-        self.mock_config_manager.is_overlay_enabled.return_value = True
+        cm = self.tray_indicator.config_manager
+        cm.is_overlay_enabled.return_value = True
 
-        self.tray_indicator._update_overlay(self.RecognitionState.LISTENING)
+        TrayIndicator._update_overlay(self.tray_indicator, self.RecognitionState.LISTENING)
 
         mock_overlay.set_enabled.assert_called_once_with(True)
         mock_overlay.on_recognition_state.assert_called_once_with(self.RecognitionState.LISTENING)
 
     def test_update_overlay_noop_when_overlay_missing(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
         self.tray_indicator.overlay = None
         # Must not raise
-        self.tray_indicator._update_overlay(self.RecognitionState.LISTENING)
+        TrayIndicator._update_overlay(self.tray_indicator, self.RecognitionState.LISTENING)
 
     def test_set_overlay_enabled_updates_config_and_live_overlay(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
         mock_overlay = MagicMock()
         self.tray_indicator.overlay = mock_overlay
         self.mock_speech_engine.state = self.RecognitionState.LISTENING
+        cm = self.tray_indicator.config_manager
+        # Call the real unbound method so a MagicMock cannot shadow it on the instance.
+        TrayIndicator.set_overlay_enabled(self.tray_indicator, False)
 
-        self.tray_indicator.set_overlay_enabled(False)
-
-        self.mock_config_manager.set_overlay_enabled.assert_called_once_with(False)
-        mock_overlay.set_enabled.assert_called_once_with(False)
-        mock_overlay.on_recognition_state.assert_called_once_with(self.RecognitionState.LISTENING)
+        cm.set_overlay_enabled.assert_called_with(False)
+        mock_overlay.set_enabled.assert_called_with(False)
+        mock_overlay.on_recognition_state.assert_called_with(self.RecognitionState.LISTENING)
 
     def test_set_overlay_enabled_without_overlay_still_saves_config(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
         self.tray_indicator.overlay = None
-        self.tray_indicator.set_overlay_enabled(True)
-        self.mock_config_manager.set_overlay_enabled.assert_called_once_with(True)
+        cm = self.tray_indicator.config_manager
+        TrayIndicator.set_overlay_enabled(self.tray_indicator, True)
+        cm.set_overlay_enabled.assert_called_with(True)
 
     def test_update_ui_forwards_state_to_overlay(self):
         """_update_ui keeps the floating overlay in sync with tray icon state."""
