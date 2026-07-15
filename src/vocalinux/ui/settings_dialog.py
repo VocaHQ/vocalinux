@@ -3355,7 +3355,6 @@ class SettingsDialog(Gtk.Dialog):
             return False
 
         enabled = bool(state)
-        logger.info(f"Dictation overlay toggled: {enabled}")
         self.config_manager.set_overlay_enabled(enabled)
         self.config_manager.save_settings()
         if self.overlay_enabled_callback is not None:

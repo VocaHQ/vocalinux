@@ -121,7 +121,7 @@ class DictationOverlay:
         self._anim_id: Optional[int] = None
         self._phase = 0.0
         self._gtk_ready = False
-        self._layer_shell = None
+        self._use_layer_shell = False
 
         try:
             self._init_gtk_window()
@@ -140,7 +140,6 @@ class DictationOverlay:
         from gi.repository import Gdk, GLib, Gtk  # noqa: F401
 
         self._GLib = GLib
-        self._Gtk = Gtk
         self._Gdk = Gdk
 
         # TOPLEVEL (undecorated) positions more reliably than POPUP on Wayland
@@ -158,7 +157,6 @@ class DictationOverlay:
         window.set_type_hint(Gdk.WindowTypeHint.NOTIFICATION)
         window.set_default_size(_OVERLAY_SIZE, _OVERLAY_SIZE)
         window.set_app_paintable(True)
-        window.set_events(0)  # no input events needed
 
         # RGBA visual for true transparency when the compositor supports it.
         screen = window.get_screen()
@@ -167,25 +165,20 @@ class DictationOverlay:
             window.set_visual(visual)
 
         # Soft Wayland layer-shell (optional — never required).
-        self._layer_shell = _try_import_layer_shell()
-        self._use_layer_shell = False
-        if self._layer_shell is not None:
+        layer_shell = _try_import_layer_shell()
+        if layer_shell is not None:
             try:
-                if self._layer_shell.is_supported():
-                    self._layer_shell.init_for_window(window)
-                    self._layer_shell.set_layer(window, self._layer_shell.Layer.OVERLAY)
-                    self._layer_shell.set_anchor(window, self._layer_shell.Edge.BOTTOM, True)
-                    self._layer_shell.set_margin(
-                        window, self._layer_shell.Edge.BOTTOM, _BOTTOM_MARGIN
-                    )
-                    self._layer_shell.set_exclusive_zone(window, 0)
+                if layer_shell.is_supported():
+                    layer_shell.init_for_window(window)
+                    layer_shell.set_layer(window, layer_shell.Layer.OVERLAY)
+                    layer_shell.set_anchor(window, layer_shell.Edge.BOTTOM, True)
+                    layer_shell.set_margin(window, layer_shell.Edge.BOTTOM, _BOTTOM_MARGIN)
+                    layer_shell.set_exclusive_zone(window, 0)
                     # Do not grab keyboard — passive visual only.
-                    if hasattr(self._layer_shell, "set_keyboard_mode"):
-                        self._layer_shell.set_keyboard_mode(
-                            window, self._layer_shell.KeyboardMode.NONE
-                        )
-                    elif hasattr(self._layer_shell, "set_keyboard_interactivity"):
-                        self._layer_shell.set_keyboard_interactivity(window, False)
+                    if hasattr(layer_shell, "set_keyboard_mode"):
+                        layer_shell.set_keyboard_mode(window, layer_shell.KeyboardMode.NONE)
+                    elif hasattr(layer_shell, "set_keyboard_interactivity"):
+                        layer_shell.set_keyboard_interactivity(window, False)
                     self._use_layer_shell = True
                     logger.info("Dictation overlay using GtkLayerShell")
             except Exception as e:
@@ -316,12 +309,9 @@ class DictationOverlay:
         width = widget.get_allocated_width()
         height = widget.get_allocated_height()
         cx, cy = width / 2.0, height / 2.0
-        base_r, base_g, base_b = _COLORS.get(mode, _COLORS[MODE_LISTENING])
+        base_r, base_g, base_b = _COLORS[mode]
 
-        # Clear to fully transparent.
-        cr.set_operator(cr.get_operator())  # keep default
-        cr.set_source_rgba(0, 0, 0, 0)
-        cr.set_operator(1)  # CAIRO_OPERATOR_SOURCE / CLEAR-like full clear
+        # Clear to fully transparent (SOURCE then OVER for compositors with alpha).
         try:
             import cairo as _cairo
 
@@ -330,67 +320,40 @@ class DictationOverlay:
             cr.paint()
             cr.set_operator(_cairo.OPERATOR_OVER)
         except Exception:
+            cr.set_source_rgba(0, 0, 0, 0)
             cr.paint()
 
-        # Pulse 0..1 → soft scale/alpha modulation.
-        pulse = 0.5 + 0.5 * math.sin(self._phase * 2.0 * math.pi)
-        # Processing uses a slower, subtler pulse.
+        # Pulse 0..1 → soft scale/alpha modulation (quieter while processing).
         if mode == MODE_PROCESSING:
             pulse = 0.55 + 0.25 * math.sin(self._phase * 2.0 * math.pi)
+            alpha_scale = 0.75
+            core_a = 0.8
+        else:
+            pulse = 0.5 + 0.5 * math.sin(self._phase * 2.0 * math.pi)
+            alpha_scale = 1.0
+            core_a = 0.95
 
         # Outer glow rings.
-        for radius_scale, alpha_scale in ((0.95, 0.12), (0.72, 0.22), (0.52, 0.35)):
+        for radius_scale, ring_a in ((0.95, 0.12), (0.72, 0.22), (0.52, 0.35)):
             radius = (width * 0.42) * radius_scale * (0.92 + 0.08 * pulse)
-            alpha = alpha_scale * (0.55 + 0.45 * pulse)
-            if mode == MODE_PROCESSING:
-                alpha *= 0.75
+            alpha = ring_a * (0.55 + 0.45 * pulse) * alpha_scale
             cr.set_source_rgba(base_r, base_g, base_b, alpha)
             cr.arc(cx, cy, radius, 0, 2 * math.pi)
             cr.fill()
 
-        # Expanding ripple ring (listening only — stronger “hot mic” cue).
+        # Expanding ripple (listening only).
         if mode == MODE_LISTENING:
-            ripple_t = self._phase
-            ripple_r = (width * 0.28) + ripple_t * (width * 0.28)
-            ripple_a = max(0.0, 0.45 * (1.0 - ripple_t))
+            ripple_r = (width * 0.28) + self._phase * (width * 0.28)
+            ripple_a = max(0.0, 0.45 * (1.0 - self._phase))
             cr.set_source_rgba(base_r, base_g, base_b, ripple_a)
             cr.set_line_width(2.0)
             cr.arc(cx, cy, ripple_r, 0, 2 * math.pi)
             cr.stroke()
 
-        # Solid core circle.
+        # Solid core.
         core_r = width * 0.16 * (0.95 + 0.05 * pulse)
-        cr.set_source_rgba(base_r, base_g, base_b, 0.95 if mode == MODE_LISTENING else 0.8)
+        cr.set_source_rgba(base_r, base_g, base_b, core_a)
         cr.arc(cx, cy, core_r, 0, 2 * math.pi)
         cr.fill()
-
-        # Simple mic glyph (stem + capsule) in white for readability.
-        cr.set_source_rgba(1, 1, 1, 0.95)
-        mic_w = width * 0.06
-        mic_h = height * 0.10
-        # Capsule body
-        cr.save()
-        cr.translate(cx, cy - height * 0.02)
-        cr.scale(1.0, 1.15)
-        cr.arc(0, -mic_h * 0.15, mic_w, math.pi, 0)
-        cr.arc(0, mic_h * 0.15, mic_w, 0, math.pi)
-        cr.close_path()
-        cr.fill()
-        cr.restore()
-        # Stem
-        cr.set_line_width(max(1.5, width * 0.02))
-        cr.set_line_cap(1)  # round
-        try:
-            import cairo as _cairo
-
-            cr.set_line_cap(_cairo.LINE_CAP_ROUND)
-        except Exception:
-            pass
-        cr.move_to(cx, cy + height * 0.06)
-        cr.line_to(cx, cy + height * 0.14)
-        cr.stroke()
-        # Base arc under mic
-        cr.arc(cx, cy + height * 0.04, width * 0.09, 0.15 * math.pi, 0.85 * math.pi)
-        cr.stroke()
 
         return False

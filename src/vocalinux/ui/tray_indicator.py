@@ -760,24 +760,20 @@ class TrayIndicator:
 
     def _update_overlay(self, state: RecognitionState):
         """Show/hide the floating dictation overlay for the given state."""
-        if not hasattr(self, "overlay") or self.overlay is None:
+        if getattr(self, "overlay", None) is None:
             return
         # Re-read config so Settings toggles apply without restart.
         self.overlay.set_enabled(self.config_manager.is_overlay_enabled())
         self.overlay.on_recognition_state(state)
 
     def set_overlay_enabled(self, enabled: bool) -> None:
-        """
-        Live-update overlay enabled state (called from Settings).
-
-        Args:
-            enabled: Whether the floating overlay should be shown when listening.
-        """
+        """Live-update overlay enabled state (called from Settings)."""
         self.config_manager.set_overlay_enabled(enabled)
-        if hasattr(self, "overlay") and self.overlay is not None:
-            self.overlay.set_enabled(enabled)
-            # Re-apply current recognition state so hide/show is immediate.
-            self.overlay.on_recognition_state(self.speech_engine.state)
+        if getattr(self, "overlay", None) is None:
+            return
+        self.overlay.set_enabled(enabled)
+        # Re-apply current recognition state so hide/show is immediate.
+        self.overlay.on_recognition_state(self.speech_engine.state)
 
     def _set_menu_item_enabled(self, label: str, enabled: bool):
         """
@@ -1184,8 +1180,7 @@ class TrayIndicator:
         # Stop the keyboard shortcut manager
         self.shortcut_manager.stop()
 
-        # Tear down floating overlay
-        if hasattr(self, "overlay") and self.overlay is not None:
+        if getattr(self, "overlay", None) is not None:
             self.overlay.destroy()
             self.overlay = None
 

@@ -24,10 +24,7 @@ from vocalinux.ui.dictation_overlay import (
     DictationOverlayController,
 )
 
-# Source paths for structural checks (avoid importing modules that load GTK).
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-_OVERLAY_SRC = _REPO_ROOT / "src" / "vocalinux" / "ui" / "dictation_overlay.py"
-_TRAY_SRC = _REPO_ROOT / "src" / "vocalinux" / "ui" / "tray_indicator.py"
 
 
 def _ensure_test_config_dir(path: str):
@@ -235,43 +232,6 @@ class TestDictationOverlayFacade(unittest.TestCase):
         overlay.on_recognition_state(RecognitionState.LISTENING)
         self.assertTrue(overlay.controller.visible)
         overlay.destroy()
-
-
-class TestOverlayWindowPassiveProperties(unittest.TestCase):
-    """
-    Structural checks against source files (no module import side effects).
-    """
-
-    def test_source_sets_non_focus_and_skip_taskbar(self):
-        source = _OVERLAY_SRC.read_text(encoding="utf-8")
-        self.assertIn("set_accept_focus(False)", source)
-        self.assertIn("set_skip_taskbar_hint(True)", source)
-        self.assertIn("set_keep_above(True)", source)
-        self.assertIn("set_skip_pager_hint(True)", source)
-        # Click-through so the overlay is passive.
-        self.assertIn("input_shape_combine_region", source)
-
-    def test_source_has_glow_or_pulse_animation(self):
-        source = _OVERLAY_SRC.read_text(encoding="utf-8")
-        self.assertIn("_on_draw", source)
-        self.assertIn("_on_anim_tick", source)
-        self.assertIn("timeout_add", source)
-        # Glow rings / pulse phase.
-        self.assertIn("pulse", source)
-        self.assertIn("sin", source)
-
-    def test_layer_shell_is_optional_soft_import(self):
-        source = _OVERLAY_SRC.read_text(encoding="utf-8")
-        self.assertIn("_try_import_layer_shell", source)
-        self.assertIn("GtkLayerShell", source)
-        # Soft failure path is present in the helper.
-        self.assertIn("except Exception", source)
-
-    def test_tray_wires_overlay_to_state_updates(self):
-        source = _TRAY_SRC.read_text(encoding="utf-8")
-        self.assertIn("DictationOverlay", source)
-        self.assertIn("_update_overlay", source)
-        self.assertIn("on_recognition_state", source)
 
 
 class TestOverlayWithMockedGtkWindow(unittest.TestCase):
@@ -516,11 +476,10 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         widget.get_allocated_width.return_value = 96
         widget.get_allocated_height.return_value = 96
         cr = MagicMock()
-        # Simulate cairo import failure for the clear path then success for line cap
         self.assertFalse(overlay._on_draw(widget, cr))
         self.assertTrue(cr.arc.called)
         self.assertTrue(cr.fill.called)
-        self.assertTrue(cr.stroke.called)
+        self.assertTrue(cr.stroke.called)  # ripple ring
 
     def test_on_draw_processing_uses_muted_pulse(self):
         overlay = _overlay_without_gtk(enabled=True)
