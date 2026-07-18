@@ -72,6 +72,52 @@ class TestFasterWhisperModelInfo:
         assert isinstance(reason, str)
         assert model in FASTER_WHISPER_MODEL_INFO
 
+    def test_is_model_downloaded_with_cache(self, tmp_path):
+        """Test that a cached model is reported as downloaded via fallback path."""
+        import os
+
+        cache_dir = tmp_path / "hub"
+        repo_dir = cache_dir / "models--Systran--faster-whisper-tiny"
+        snapshot_dir = repo_dir / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+        (snapshot_dir / "model.bin").write_text("model")
+
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=str(cache_dir),
+        ):
+            assert is_model_downloaded("tiny") is True
+
+    def test_is_model_downloaded_no_cache(self):
+        """Test fallback when no cache directory exists."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=None,
+        ):
+            assert is_model_downloaded("tiny") is False
+
+    def test_get_recommended_model_cuda_high_ram(self):
+        """Test CUDA recommendation with high RAM."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=True,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = 16 * 1024**3
+                model, _reason = get_recommended_model()
+                assert model == "small"
+
+    def test_get_recommended_model_cpu_low_ram(self):
+        """Test CPU recommendation with low RAM."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=False,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = 4 * 1024**3
+                model, _reason = get_recommended_model()
+                assert model == "tiny"
+
 
 class TestFasterWhisperEngine:
     """Tests for the FasterWhisperEngine class."""
@@ -157,6 +203,48 @@ class TestFasterWhisperEngine:
             engine.cleanup()
             assert not engine.is_ready()
 
+    def test_device_detects_cuda(self):
+        """Test that CUDA is detected when torch reports it available."""
+        torch_mock = MagicMock()
+        torch_mock.cuda.is_available.return_value = True
+        with patch.dict(sys.modules, {"torch": torch_mock}):
+            engine = FasterWhisperEngine(device=None)
+            assert engine.device == "cuda"
+
+    def test_device_falls_back_to_cpu(self):
+        """Test CPU fallback when torch is unavailable."""
+        with patch.dict(sys.modules, {"torch": None}):
+            engine = FasterWhisperEngine(device=None)
+            assert engine.device == "cpu"
+
+    def test_init_import_error(self):
+        """Test that import failure propagates correctly."""
+        with patch.dict(sys.modules, {"faster_whisper": None}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            with patch("builtins.__import__", side_effect=ImportError("not found")):
+                with pytest.raises(ImportError):
+                    engine.init()
+
+    def test_init_already_initialized(self):
+        """Test that init() is idempotent."""
+        whisper_mock = self._mock_whisper_model([])
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            engine.init()
+            engine.init()
+            whisper_mock.WhisperModel.assert_called_once()
+
+    def test_transcribe_handles_error(self):
+        """Test that transcription errors return empty text."""
+        whisper_mock = MagicMock()
+        whisper_mock.WhisperModel.return_value.transcribe.side_effect = RuntimeError("boom")
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            engine.init()
+            audio = np.array([0, 1000], dtype=np.int16)
+            text = engine.transcribe([audio.tobytes()])
+            assert text == ""
+
     def test_language_mapping(self):
         """Test that Vocalinux language codes are mapped correctly."""
         engine = FasterWhisperEngine(language="en-us")
@@ -167,6 +255,17 @@ class TestFasterWhisperEngine:
 
         engine = FasterWhisperEngine(language="fr")
         assert engine._normalize_language() == "fr"
+
+
+class TestEngineRegistry:
+    """Tests for the speech recognition engine registry."""
+
+    def test_registry_contains_faster_whisper(self):
+        """Test that the faster-whisper engine is registered."""
+        from vocalinux.common_types import EngineType
+        from vocalinux.speech_recognition.engines import ENGINES
+
+        assert EngineType.FASTER_WHISPER in ENGINES
 
 
 class TestRecognitionManagerIntegration:
@@ -188,6 +287,23 @@ class TestRecognitionManagerIntegration:
         manager = ConfigManager()
         size = manager.get_model_size_for_engine("faster_whisper")
         assert size in FASTER_WHISPER_MODEL_INFO
+
+    def test_manager_init_faster_whisper(self):
+        """Test that the manager can initialize with faster-whisper engine."""
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        whisper_mock = MagicMock()
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            with patch.object(SpeechRecognitionManager, "_init_vosk"):
+                with patch.object(SpeechRecognitionManager, "_init_whisper"):
+                    with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
+                        manager = SpeechRecognitionManager(
+                            engine="faster_whisper",
+                            model_size="tiny",
+                            language="en-us",
+                            defer_download=True,
+                        )
+                        assert manager.engine == "faster_whisper"
 
 
 if __name__ == "__main__":

@@ -31,9 +31,14 @@ def _make_manager(engine="whisper_cpp", **kw):
     with patch.object(SpeechRecognitionManager, "_init_vosk"):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
             with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
-                return SpeechRecognitionManager(
-                    engine=engine, model_size="small", language="en-us", defer_download=True, **kw
-                )
+                with patch.object(SpeechRecognitionManager, "_init_faster_whisper"):
+                    return SpeechRecognitionManager(
+                        engine=engine,
+                        model_size="small",
+                        language="en-us",
+                        defer_download=True,
+                        **kw,
+                    )
 
 
 class TestSpeechRecognitionManagerInit:
@@ -55,6 +60,11 @@ class TestSpeechRecognitionManagerInit:
         """Test manager initialization with whisper engine."""
         manager = _make_manager(engine="whisper")
         assert manager.engine == "whisper"
+
+    def test_manager_init_faster_whisper_engine(self):
+        """Test manager initialization with faster_whisper engine."""
+        manager = _make_manager(engine="faster_whisper")
+        assert manager.engine == "faster_whisper"
 
     def test_manager_init_with_audio_device_index(self):
         """Test manager initialization with audio device index."""
