@@ -79,6 +79,24 @@ class TestFasterWhisperModelInfo:
             with patch("builtins.__import__", side_effect=ImportError("not found")):
                 assert _hf_hub_cache() is None
 
+    def test_hf_hub_cache_none(self):
+        """Test that _hf_hub_cache returns None when HF_HUB_CACHE is unset."""
+        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+
+        hf_mock = MagicMock()
+        hf_mock.constants.HF_HUB_CACHE = None
+        with patch.dict(sys.modules, {"huggingface_hub": hf_mock}):
+            assert _hf_hub_cache() is None
+
+    def test_hf_hub_cache_path(self):
+        """Test that _hf_hub_cache returns the cache directory when set."""
+        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+
+        hf_mock = MagicMock()
+        hf_mock.constants.HF_HUB_CACHE = "/fake/cache"
+        with patch.dict(sys.modules, {"huggingface_hub": hf_mock}):
+            assert _hf_hub_cache() == "/fake/cache"
+
     def test_is_model_downloaded_exception(self, tmp_path):
         """Test that is_model_downloaded handles filesystem errors."""
         with patch(
@@ -86,6 +104,59 @@ class TestFasterWhisperModelInfo:
             return_value=str(tmp_path),
         ):
             assert is_model_downloaded("tiny") is False
+
+    def test_is_model_downloaded_via_hf_hub(self):
+        """Test that is_model_downloaded uses huggingface_hub when available."""
+        hf_mock = MagicMock()
+        hf_mock.try_to_load_from_cache.return_value = "/path/to/model.bin"
+        constants_mock = MagicMock()
+        constants_mock.HUGGINGFACE_HUB_CACHE = "/cache"
+        hf_mock.constants = constants_mock
+        with patch.dict(
+            sys.modules,
+            {
+                "huggingface_hub": hf_mock,
+                "huggingface_hub.constants": constants_mock,
+            },
+        ):
+            assert is_model_downloaded("tiny") is True
+
+    def test_is_model_downloaded_fallback_no_snapshots(self, tmp_path):
+        """Test fallback path when model cache dir has no snapshots directory."""
+        cache_dir = tmp_path / "hub"
+        repo_dir = cache_dir / "models--Systran--faster-whisper-tiny"
+        repo_dir.mkdir(parents=True)
+
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=str(cache_dir),
+        ):
+            assert is_model_downloaded("tiny") is False
+
+    def test_is_model_downloaded_fallback_empty_snapshot(self, tmp_path):
+        """Test fallback path when a snapshot directory lacks model.bin."""
+        cache_dir = tmp_path / "hub"
+        snapshot_dir = cache_dir / "models--Systran--faster-whisper-tiny" / "snapshots" / "abc123"
+        snapshot_dir.mkdir(parents=True)
+
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=str(cache_dir),
+        ):
+            assert is_model_downloaded("tiny") is False
+
+    def test_is_model_downloaded_fallback_exception(self, tmp_path):
+        """Test that fallback filesystem errors are handled gracefully."""
+        cache_dir = tmp_path / "hub"
+        snapshots_dir = cache_dir / "models--Systran--faster-whisper-tiny" / "snapshots"
+        snapshots_dir.mkdir(parents=True)
+
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=str(cache_dir),
+        ):
+            with patch("os.listdir", side_effect=OSError("boom")):
+                assert is_model_downloaded("tiny") is False
 
     def test_get_recommended_model_returns_tuple(self):
         """Test that get_recommended_model returns a model name and reason."""
@@ -140,6 +211,17 @@ class TestFasterWhisperModelInfo:
                 model, _reason = get_recommended_model()
                 assert model == "tiny"
 
+    def test_get_recommended_model_cpu_medium_ram(self):
+        """Test CPU recommendation with medium RAM."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=False,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = 8 * 1024**3
+                model, _reason = get_recommended_model()
+                assert model == "tiny"
+
     def test_get_recommended_model_cpu_high_ram(self):
         """Test CPU recommendation with high RAM."""
         with patch(
@@ -162,6 +244,20 @@ class TestFasterWhisperModelInfo:
                 model, _reason = get_recommended_model()
                 assert model == "base"
 
+    def test_has_torch_cuda_available(self):
+        """Test that torch detection reports CUDA availability."""
+        from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda
+
+        torch_mock = MagicMock()
+        torch_mock.cuda.is_available.return_value = True
+        _has_torch_cuda.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"torch": torch_mock}):
+                assert _has_torch_cuda() is True
+        finally:
+            _has_torch_cuda.cache_clear()
+            _has_torch_cuda()
+
     def test_has_torch_cuda_exception(self):
         """Test that torch detection falls back to False on errors."""
         from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda
@@ -174,6 +270,16 @@ class TestFasterWhisperModelInfo:
         finally:
             _has_torch_cuda.cache_clear()
             _has_torch_cuda()
+
+    def test_get_recommended_model_psutil_exception(self):
+        """Test that psutil failures default to a safe model choice."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=False,
+        ):
+            with patch("psutil.virtual_memory", side_effect=RuntimeError("boom")):
+                model, _reason = get_recommended_model()
+                assert model == "tiny"
 
 
 class TestFasterWhisperEngine:
@@ -309,7 +415,8 @@ class TestFasterWhisperEngine:
             engine = FasterWhisperEngine(model_size="tiny", device="cpu")
             engine.init()
             engine._model = None
-            text = engine.transcribe([b"\x00\x01"])
+            with patch.object(engine, "is_ready", return_value=True):
+                text = engine.transcribe([b"\x00\x01"])
             assert text == ""
 
     def test_transcribe_empty_result(self):
