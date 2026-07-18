@@ -3663,27 +3663,7 @@ REMOTE_CONFIG
 {
     "speech_recognition": {
         "engine": "faster_whisper",
-        "model_size": "tiny",
-        "vosk_model_size": "small",
-        "whisper_model_size": "tiny",
-        "whisper_cpp_model_size": "tiny",
-        "vad_sensitivity": 3,
-        "silence_timeout": 2.0
-    },
-    "audio": {
-        "device_index": null,
-        "device_name": null
-    },
-    "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
-    },
-    "ui": {
-        "start_minimized": false,
-        "show_notifications": true
-    },
-    "advanced": {
-        "debug_logging": false,
-        "wayland_mode": false
+        "model_size": "tiny"
     }
 }
 FASTER_WHISPER_CONFIG

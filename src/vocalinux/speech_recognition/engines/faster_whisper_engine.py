@@ -13,6 +13,7 @@ import numpy as np
 
 from ...utils.faster_whisper_model_info import (
     FASTER_WHISPER_MODEL_INFO,
+    _has_torch_cuda,
     get_compute_type,
     get_recommended_model,
 )
@@ -70,12 +71,7 @@ class FasterWhisperEngine:
         """Return the compute device, detecting CUDA if not explicitly set."""
         if self._device is not None:
             return self._device
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except Exception:
-            return "cpu"
+        return "cuda" if _has_torch_cuda() else "cpu"
 
     def init(self) -> None:
         """Load the faster-whisper model."""
@@ -148,11 +144,7 @@ class FasterWhisperEngine:
             audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
             audio_float = audio_data.astype(np.float32) / 32768.0
 
-            model = self._model
-            if model is None:
-                return ""
-
-            segments, _info = model.transcribe(
+            segments, _info = self._model.transcribe(
                 audio_float,
                 language=self._normalize_language(),
                 task="transcribe",

@@ -11,33 +11,19 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Model size -> metadata (size_mb, params, description)
-_FASTER_WHISPER_MODEL_SPECS = [
-    ("tiny", 39, "39M", "Fastest, lowest accuracy"),
-    ("tiny.en", 39, "39M", "English-only tiny model"),
-    ("base", 74, "74M", "Fast, good for basic use"),
-    ("base.en", 74, "74M", "English-only base model"),
-    ("small", 244, "244M", "Balanced speed/accuracy"),
-    ("small.en", 244, "244M", "English-only small model"),
-    ("medium", 769, "769M", "High accuracy, slower"),
-    ("medium.en", 769, "769M", "English-only medium model"),
-    ("large-v1", 1550, "1550M", "Legacy large v1 model"),
-    ("large-v2", 1550, "1550M", "Legacy large v2 model"),
-    ("large-v3", 1550, "1550M", "Highest accuracy, slower"),
-]
-
 FASTER_WHISPER_MODEL_INFO = {
-    spec[0]: {
-        "size_mb": spec[1],
-        "params": spec[2],
-        "desc": spec[3],
-    }
-    for spec in _FASTER_WHISPER_MODEL_SPECS
+    "tiny": {"size_mb": 39, "params": "39M", "desc": "Fastest, lowest accuracy"},
+    "tiny.en": {"size_mb": 39, "params": "39M", "desc": "English-only tiny model"},
+    "base": {"size_mb": 74, "params": "74M", "desc": "Fast, good for basic use"},
+    "base.en": {"size_mb": 74, "params": "74M", "desc": "English-only base model"},
+    "small": {"size_mb": 244, "params": "244M", "desc": "Balanced speed/accuracy"},
+    "small.en": {"size_mb": 244, "params": "244M", "desc": "English-only small model"},
+    "medium": {"size_mb": 769, "params": "769M", "desc": "High accuracy, slower"},
+    "medium.en": {"size_mb": 769, "params": "769M", "desc": "English-only medium model"},
+    "large-v1": {"size_mb": 1550, "params": "1550M", "desc": "Legacy large v1 model"},
+    "large-v2": {"size_mb": 1550, "params": "1550M", "desc": "Legacy large v2 model"},
+    "large-v3": {"size_mb": 1550, "params": "1550M", "desc": "Highest accuracy, slower"},
 }
-
-AVAILABLE_MODELS = list(FASTER_WHISPER_MODEL_INFO.keys())
-
-MODEL_SIZES = ["tiny", "base", "small", "medium", "large-v3"]
 
 
 def _repo_id(model_name: str) -> str:

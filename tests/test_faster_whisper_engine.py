@@ -368,17 +368,31 @@ class TestFasterWhisperEngine:
 
     def test_device_detects_cuda(self):
         """Test that CUDA is detected when torch reports it available."""
+        from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda
+
         torch_mock = MagicMock()
         torch_mock.cuda.is_available.return_value = True
-        with patch.dict(sys.modules, {"torch": torch_mock}):
-            engine = FasterWhisperEngine(device=None)
-            assert engine.device == "cuda"
+        _has_torch_cuda.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"torch": torch_mock}):
+                engine = FasterWhisperEngine(device=None)
+                assert engine.device == "cuda"
+        finally:
+            _has_torch_cuda.cache_clear()
+            _has_torch_cuda()
 
     def test_device_falls_back_to_cpu(self):
         """Test CPU fallback when torch is unavailable."""
-        with patch.dict(sys.modules, {"torch": None}):
-            engine = FasterWhisperEngine(device=None)
-            assert engine.device == "cpu"
+        from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda
+
+        _has_torch_cuda.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"torch": None}):
+                engine = FasterWhisperEngine(device=None)
+                assert engine.device == "cpu"
+        finally:
+            _has_torch_cuda.cache_clear()
+            _has_torch_cuda()
 
     def test_init_import_error(self):
         """Test that import failure propagates correctly."""
@@ -406,17 +420,6 @@ class TestFasterWhisperEngine:
             engine.init()
             audio = np.array([0, 1000], dtype=np.int16)
             text = engine.transcribe([audio.tobytes()])
-            assert text == ""
-
-    def test_transcribe_model_none_after_ready(self):
-        """Test the guard when model attribute is None after is_ready passes."""
-        whisper_mock = self._mock_whisper_model([])
-        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
-            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
-            engine.init()
-            engine._model = None
-            with patch.object(engine, "is_ready", return_value=True):
-                text = engine.transcribe([b"\x00\x01"])
             assert text == ""
 
     def test_transcribe_empty_result(self):
