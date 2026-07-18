@@ -15,6 +15,7 @@ from vocalinux.utils.faster_whisper_model_info import (
     FASTER_WHISPER_MODEL_INFO,
     get_compute_type,
     get_recommended_model,
+    is_english_only_model,
     is_model_downloaded,
 )
 
@@ -61,9 +62,30 @@ class TestFasterWhisperModelInfo:
         assert get_compute_type("cpu") == "int8"
         assert get_compute_type("cuda") == "float16"
 
+    def test_is_english_only_model(self):
+        """Test English-only model detection."""
+        assert is_english_only_model("tiny.en") is True
+        assert is_english_only_model("tiny") is False
+
     def test_is_model_downloaded_unknown_model(self):
         """Test that unknown models are reported as not downloaded."""
         assert is_model_downloaded("not-a-model") is False
+
+    def test_hf_hub_cache_exception(self):
+        """Test that _hf_hub_cache handles import failures gracefully."""
+        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+
+        with patch.dict(sys.modules, {"huggingface_hub": None}):
+            with patch("builtins.__import__", side_effect=ImportError("not found")):
+                assert _hf_hub_cache() is None
+
+    def test_is_model_downloaded_exception(self, tmp_path):
+        """Test that is_model_downloaded handles filesystem errors."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            return_value=str(tmp_path),
+        ):
+            assert is_model_downloaded("tiny") is False
 
     def test_get_recommended_model_returns_tuple(self):
         """Test that get_recommended_model returns a model name and reason."""
@@ -117,6 +139,41 @@ class TestFasterWhisperModelInfo:
                 mock_mem.return_value.total = 4 * 1024**3
                 model, _reason = get_recommended_model()
                 assert model == "tiny"
+
+    def test_get_recommended_model_cpu_high_ram(self):
+        """Test CPU recommendation with high RAM."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=False,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = 32 * 1024**3
+                model, _reason = get_recommended_model()
+                assert model == "base"
+
+    def test_get_recommended_model_cuda_low_ram(self):
+        """Test CUDA recommendation with low VRAM-system RAM."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=True,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = 4 * 1024**3
+                model, _reason = get_recommended_model()
+                assert model == "base"
+
+    def test_has_torch_cuda_exception(self):
+        """Test that torch detection falls back to False on errors."""
+        from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda
+
+        _has_torch_cuda.cache_clear()
+        try:
+            with patch.dict(sys.modules, {"torch": None}):
+                with patch("builtins.__import__", side_effect=ImportError("not found")):
+                    assert _has_torch_cuda() is False
+        finally:
+            _has_torch_cuda.cache_clear()
+            _has_torch_cuda()
 
 
 class TestFasterWhisperEngine:
@@ -245,6 +302,26 @@ class TestFasterWhisperEngine:
             text = engine.transcribe([audio.tobytes()])
             assert text == ""
 
+    def test_transcribe_model_none_after_ready(self):
+        """Test the guard when model attribute is None after is_ready passes."""
+        whisper_mock = self._mock_whisper_model([])
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            engine.init()
+            engine._model = None
+            text = engine.transcribe([b"\x00\x01"])
+            assert text == ""
+
+    def test_transcribe_empty_result(self):
+        """Test that empty segment results return empty text and log debug."""
+        whisper_mock = self._mock_whisper_model([MagicMock(text="")])
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            engine.init()
+            audio = np.array([0, 1000], dtype=np.int16)
+            text = engine.transcribe([audio.tobytes()])
+            assert text == ""
+
     def test_language_mapping(self):
         """Test that Vocalinux language codes are mapped correctly."""
         engine = FasterWhisperEngine(language="en-us")
@@ -266,6 +343,29 @@ class TestEngineRegistry:
         from vocalinux.speech_recognition.engines import ENGINES
 
         assert EngineType.FASTER_WHISPER in ENGINES
+
+    def test_registry_ignores_import_errors(self):
+        """Test that the registry stays empty if the engine module fails to import."""
+        import importlib
+        import types
+
+        import vocalinux.speech_recognition.engines as registry_module
+
+        engine_module_name = "vocalinux.speech_recognition.engines.faster_whisper_engine"
+        real_engine_module = sys.modules.get(engine_module_name)
+        fake_module = types.ModuleType(engine_module_name)
+        fake_module.__getattr__ = lambda _name: (_ for _ in ()).throw(ImportError("not found"))
+        sys.modules[engine_module_name] = fake_module
+
+        try:
+            importlib.reload(registry_module)
+            assert EngineType.FASTER_WHISPER not in registry_module.ENGINES
+        finally:
+            if real_engine_module is not None:
+                sys.modules[engine_module_name] = real_engine_module
+            else:
+                sys.modules.pop(engine_module_name, None)
+            importlib.reload(registry_module)
 
 
 class TestRecognitionManagerIntegration:
