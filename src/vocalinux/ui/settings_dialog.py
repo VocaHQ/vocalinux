@@ -35,6 +35,13 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
+from ..utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO  # noqa: E402
+from ..utils.faster_whisper_model_info import (  # noqa: E402
+    get_recommended_model as get_recommended_faster_whisper_model,
+)
+from ..utils.faster_whisper_model_info import (  # noqa: E402
+    is_model_downloaded as is_faster_whisper_model_downloaded,
+)
 from ..utils.model_choice import (
     BALANCED,
     PRIORITIES,
@@ -160,6 +167,13 @@ ENGINE_MODELS = {
     "parakeet": [
         *parakeet.MODEL_SIZES,
     ],  # Parakeet TDT 0.6B int8 bundles
+    "faster_whisper": [
+        "tiny",
+        "base",
+        "small",
+        "medium",
+        "large-v3",
+    ],  # faster-whisper models mirror OpenAI Whisper sizes
     "remote_api": [],  # Remote API does not need local models
 }
 
@@ -178,6 +192,7 @@ ENGINE_DISPLAY_NAMES = {
     "whisper": "Whisper",
     "whisper_cpp": "whisper.cpp",
     "parakeet": "Parakeet",
+    "faster_whisper": "Faster Whisper",
     "remote_api": "Remote API",
 }
 
@@ -676,6 +691,7 @@ def get_available_engines():
         "whisper": False,
         "whisper_cpp": False,
         "parakeet": False,
+        "faster_whisper": False,
         "remote_api": False,
     }
 
@@ -708,6 +724,13 @@ def get_available_engines():
         import sherpa_onnx  # noqa: F401
 
         engines["parakeet"] = True
+    except ImportError:
+        pass
+
+    try:
+        from faster_whisper import WhisperModel  # noqa: F401
+
+        engines["faster_whisper"] = True
     except ImportError:
         pass
 
@@ -5306,6 +5329,8 @@ class SettingsDialog(Gtk.Dialog):
                 recommended_model, _ = _get_recommended_whisper_model()
             elif engine == "parakeet":
                 recommended_model = parakeet.RECOMMENDED_MODEL
+            elif engine == "faster_whisper":
+                recommended_model, _ = get_recommended_faster_whisper_model()
             else:
                 recommended_model, _ = _get_recommended_vosk_model()
 
@@ -5314,6 +5339,9 @@ class SettingsDialog(Gtk.Dialog):
                     if engine == "whisper" and size in WHISPER_MODEL_INFO:
                         info = WHISPER_MODEL_INFO[size]
                         is_downloaded = _is_whisper_model_downloaded(size)
+                    elif engine == "faster_whisper" and size in FASTER_WHISPER_MODEL_INFO:
+                        info = FASTER_WHISPER_MODEL_INFO[size]
+                        is_downloaded = is_faster_whisper_model_downloaded(size)
                     elif engine == "vosk" and size in VOSK_MODEL_INFO:
                         info = VOSK_MODEL_INFO[size]
                         is_downloaded = _is_vosk_model_downloaded(size, self.language)

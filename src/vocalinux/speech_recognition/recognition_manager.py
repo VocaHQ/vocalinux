@@ -22,6 +22,7 @@ from typing import Callable, Optional
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
 from ..utils import parakeet_model_info as parakeet
+from ..utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
@@ -1062,6 +1063,8 @@ class SpeechRecognitionManager:
         self.remote_api_model = kwargs.get("remote_api_model", "whisper-1")
         self._http_session = None
 
+        self._faster_whisper_engine = None
+
         # Audio diagnostics tracking
         self._last_audio_level = 0.0
         self._audio_level_callbacks: list[Callable[[float], None]] = []
@@ -1101,6 +1104,8 @@ class SpeechRecognitionManager:
             self._init_whispercpp()
         elif engine == "parakeet":
             self._init_parakeet()
+        elif engine == "faster_whisper":
+            self._init_faster_whisper()
         elif engine == "remote_api":
             self._init_remote_api()
         else:
@@ -1299,6 +1304,57 @@ class SpeechRecognitionManager:
 
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in Whisper transcription: {e}", exc_info=True)
+            return ""
+
+    def _init_faster_whisper(self):
+        """Initialize the faster-whisper speech recognition engine."""
+        try:
+            from .engines.faster_whisper_engine import FasterWhisperEngine
+        except ImportError as e:
+            logger.error(f"Failed to import faster-whisper engine: {e}")
+            logger.error("Please install with: pip install faster-whisper")
+            self.state = RecognitionState.ERROR
+            raise
+
+        try:
+            if self.model_size not in FASTER_WHISPER_MODEL_INFO:
+                logger.warning(
+                    f"Model size '{self.model_size}' not valid for faster-whisper. "
+                    f"Using recommended model instead."
+                )
+                self.model_size = "tiny"
+
+            self._faster_whisper_engine = FasterWhisperEngine(
+                model_size=self.model_size,
+                language=self.language,
+            )
+            self._faster_whisper_engine.init()
+            self.model = self._faster_whisper_engine._model
+            self._model_initialized = True
+            logger.info("faster-whisper engine initialized successfully.")
+        except (ImportError, RuntimeError, OSError, ValueError) as e:
+            logger.error(f"Failed to initialize faster-whisper engine: {e}", exc_info=True)
+            self.state = RecognitionState.ERROR
+            raise
+
+    def _transcribe_with_faster_whisper(self, audio_buffer: list[bytes]) -> str:
+        """
+        Transcribe audio buffer using faster-whisper.
+
+        Args:
+            audio_buffer: List of audio data chunks (16-bit PCM at 16kHz)
+
+        Returns:
+            Transcribed text
+        """
+        try:
+            if not self._faster_whisper_engine or not self._faster_whisper_engine.is_ready():
+                logger.warning("faster-whisper engine not ready during transcription")
+                return ""
+
+            return self._faster_whisper_engine.transcribe(audio_buffer)
+        except (RuntimeError, OSError, ValueError) as e:
+            logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
             return ""
 
     def _init_whispercpp(self):
@@ -3255,6 +3311,9 @@ class SpeechRecognitionManager:
         elif self.engine == "parakeet":
             text = self._transcribe_with_parakeet(audio_buffer)
 
+        elif self.engine == "faster_whisper":
+            text = self._transcribe_with_faster_whisper(audio_buffer)
+
         elif self.engine == "remote_api":
             # Snapshot the HTTP session under lock to prevent race with
             # reconfigure() / reinitialize_after_resume() which close/recreate
@@ -3523,6 +3582,9 @@ class SpeechRecognitionManager:
                 # Release old resources explicitly if necessary (Python's GC might handle it)
                 self.model = None
                 self.recognizer = None
+                if self._faster_whisper_engine is not None:
+                    self._faster_whisper_engine.cleanup()
+                    self._faster_whisper_engine = None
                 if old_engine == "remote_api" and self.engine != "remote_api":
                     if self._http_session is not None:
                         self._http_session.close()
@@ -3536,6 +3598,8 @@ class SpeechRecognitionManager:
                         self._init_whispercpp()
                     elif self.engine == "parakeet":
                         self._init_parakeet()
+                    elif self.engine == "faster_whisper":
+                        self._init_faster_whisper()
                     elif self.engine == "remote_api":
                         self._init_remote_api()
                     else:
@@ -3751,6 +3815,9 @@ class SpeechRecognitionManager:
         with self._model_lock:
             self.model = None
             self.recognizer = None
+            if self._faster_whisper_engine is not None:
+                self._faster_whisper_engine.cleanup()
+                self._faster_whisper_engine = None
             if self._http_session is not None:
                 self._http_session.close()
             self._http_session = None
@@ -3765,6 +3832,8 @@ class SpeechRecognitionManager:
                     self._init_whispercpp()
                 elif self.engine == "parakeet":
                     self._init_parakeet()
+                elif self.engine == "faster_whisper":
+                    self._init_faster_whisper()
                 elif self.engine == "remote_api":
                     self._init_remote_api()
                 else:
