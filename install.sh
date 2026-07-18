@@ -365,7 +365,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --interactive, -i  Force interactive mode (default)"
             echo "  --auto           Non-interactive automatic installation"
-            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, remote_api"
+            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, faster_whisper, remote_api"
             echo "  --dev            Install in development mode with all dev dependencies"
             echo "  --test           Run tests after installation"
             echo "  --venv-dir=PATH  Specify custom virtual environment directory"
@@ -381,6 +381,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0                           # Interactive mode (recommended)"
             echo "  $0 --auto                    # Auto-install with whisper.cpp"
             echo "  $0 --auto --engine=vosk      # Auto-install VOSK only"
+            echo "  $0 --auto --engine=faster_whisper  # Auto-install faster-whisper"
             echo "  $0 --dev --test              # Dev mode with tests"
             echo ""
             echo "During installation a full transcript is saved to"
@@ -1251,7 +1252,15 @@ EOF
     echo "  └─────────────────────────────────────────────────────────────┘"
     echo ""
     echo "  ┌───────────────────────────────────────────────────────────────┐"
-    echo "  │  4. REMOTE API (ADVANCED)                                     │"
+    echo "  │  4. FASTER-WHISPER                                          │"
+    echo "  │     • PyTorch/CTranslate2-based Whisper implementation        │"
+    echo "  │     • Fast on CPU with INT8 quantization                      │"
+    echo "  │     • Best performance on NVIDIA GPUs (CUDA)                │"
+    echo "  │     • Models download automatically on first use              │"
+    echo "  └───────────────────────────────────────────────────────────────┘"
+    echo ""
+    echo "  ┌───────────────────────────────────────────────────────────────┐"
+    echo "  │  5. REMOTE API (ADVANCED)                                     │"
     echo "  │     • Offload processing to a GPU server on your network      │"
     echo "  │     • Ideal for laptops without GPU                           │"
     echo "  │     • Supports whisper.cpp server & OpenAI-compatible APIs    │"
@@ -1277,7 +1286,7 @@ EOF
     esac
     echo ""
 
-    read -p "Choose engine [1-4] (default: $DEFAULT_CHOICE): " ENGINE_CHOICE
+    read -p "Choose engine [1-5] (default: $DEFAULT_CHOICE): " ENGINE_CHOICE
     ENGINE_CHOICE=${ENGINE_CHOICE:-$DEFAULT_CHOICE}
 
     case "$ENGINE_CHOICE" in
@@ -1294,6 +1303,10 @@ EOF
             ENGINE_DISPLAY="VOSK (Lightweight)"
             ;;
         4)
+            SELECTED_ENGINE="faster_whisper"
+            ENGINE_DISPLAY="Faster-Whisper"
+            ;;
+        5)
             SELECTED_ENGINE="remote_api"
             ENGINE_DISPLAY="Remote API"
             ;;
@@ -1547,12 +1560,11 @@ fi
 
 # Set default engine for auto/non-interactive mode
 if [[ "$NON_INTERACTIVE" == "yes" ]] && [[ -z "$SELECTED_ENGINE" ]]; then
-    # Default to whisper.cpp for best performance
     SELECTED_ENGINE="whisper_cpp"
     print_info "Automatic mode: Installing with whisper.cpp (default engine)"
-    print_info "For other engines, use: --engine=whisper or --engine=vosk or --engine=remote_api"
-    echo ""
+    print_info "For other engines, use: --engine=whisper, --engine=faster_whisper, --engine=vosk, or --engine=remote_api"
 fi
+
 
 # Function to check if a command exists
 command_exists() {
@@ -3611,6 +3623,72 @@ REMOTE_CONFIG
                     print_warning "No server URL configured. You can set it later in Settings."
                 fi
                 ;;
+
+            faster_whisper)
+                print_info "Installing Faster-Whisper engine..."
+                print_info "This engine uses PyTorch + CTranslate2 and downloads models on first use."
+
+                if [[ "$HAS_NVIDIA_GPU" == "yes" ]]; then
+                    print_info "NVIDIA GPU detected - installing PyTorch with CUDA support..."
+                    print_info "Note: This may download ~2GB of CUDA runtime packages"
+                    if pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --log "$PIP_LOG_FILE" 2>&1; then
+                        print_success "PyTorch installed successfully"
+                    else
+                        print_warning "Failed to install PyTorch with CUDA; faster-whisper will still work on CPU"
+                    fi
+                fi
+
+                print_info "Installing faster-whisper package..."
+                if pip install "faster-whisper>=1.0.0" --log "$PIP_LOG_FILE" 2>&1; then
+                    if "$VENV_DIR/bin/python" -c "import faster_whisper" 2>/dev/null; then
+                        print_success "Faster-Whisper installed and verified successfully"
+                    else
+                        print_warning "faster-whisper package installed but import failed"
+                        print_warning "The engine may still work after a system restart"
+                    fi
+                else
+                    print_error "Failed to install faster-whisper package"
+                    print_error "Falling back to whisper.cpp (recommended engine)"
+                    install_cpu_pywhispercpp "$PIP_LOG_FILE" || {
+                        print_error "Failed to install whisper.cpp fallback"
+                        return 1
+                    }
+                    SELECTED_ENGINE="whisper_cpp"
+                fi
+
+                local FASTER_CONFIG_FILE="$CONFIG_DIR/config.json"
+                if [ ! -f "$FASTER_CONFIG_FILE" ]; then
+                    mkdir -p "$CONFIG_DIR"
+                    cat > "$FASTER_CONFIG_FILE" << 'FASTER_WHISPER_CONFIG'
+{
+    "speech_recognition": {
+        "engine": "faster_whisper",
+        "model_size": "tiny",
+        "vosk_model_size": "small",
+        "whisper_model_size": "tiny",
+        "whisper_cpp_model_size": "tiny",
+        "vad_sensitivity": 3,
+        "silence_timeout": 2.0
+    },
+    "audio": {
+        "device_index": null,
+        "device_name": null
+    },
+    "shortcuts": {
+        "toggle_recognition": "ctrl+ctrl"
+    },
+    "ui": {
+        "start_minimized": false,
+        "show_notifications": true
+    },
+    "advanced": {
+        "debug_logging": false,
+        "wayland_mode": false
+    }
+}
+FASTER_WHISPER_CONFIG
+                fi
+                ;;
         esac
     fi
 
@@ -4573,6 +4651,20 @@ verify_installation() {
         fi
     fi
 
+    if [[ "$selected_engine" == "faster_whisper" ]]; then
+        if ! "$VENV_DIR/bin/python" -c "import faster_whisper" 2>/dev/null; then
+            print_error "faster-whisper package installed but cannot be imported at runtime."
+            print_error ""
+            print_error "Diagnostic steps:"
+            print_error "  1. Check pip installation: $VENV_DIR/bin/pip show faster-whisper"
+            print_error "  2. Re-run the installer with: --engine=faster_whisper"
+            print_error "  3. Or switch to whisper.cpp: --engine=whisper_cpp"
+            ISSUES=$((ISSUES + 1))
+        else
+            print_success "faster-whisper import verified successfully."
+        fi
+    fi
+
     # Return the number of issues found
     return $ISSUES
 }
@@ -4626,6 +4718,10 @@ EOF
         parakeet)
             ENGINE_DISPLAY_NAME="Parakeet"
             BACKEND_INFO="CPU"
+            ;;
+        faster_whisper)
+            ENGINE_DISPLAY_NAME="Faster-Whisper"
+            BACKEND_INFO="PyTorch/CTranslate2"
             ;;
         remote_api)
             ENGINE_DISPLAY_NAME="Remote API"
