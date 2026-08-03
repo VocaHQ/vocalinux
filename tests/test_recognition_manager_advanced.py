@@ -529,11 +529,21 @@ class TestDownloadWhisperModel(unittest.TestCase):
         mock_response.headers.get.return_value = "1000"  # content-length
         mock_response.iter_content.return_value = [b"test" * 250]
         mock_requests.get.return_value = mock_response
+        mock_requests.exceptions.RequestException = Exception
         with patch.dict("sys.modules", {"requests": mock_requests}):
             with patch("builtins.open", create=True) as mock_open:
                 mock_file = MagicMock()
                 mock_open.return_value.__enter__.return_value = mock_file
-                with patch("os.rename"):
+                with (
+                    patch("os.rename"),
+                    patch(
+                        "vocalinux.speech_recognition.recognition_manager.verify_downloaded_model"
+                    ),
+                    patch(
+                        "vocalinux.speech_recognition.recognition_manager.get_pinned_digest",
+                        return_value={"sha256": "abc", "size": 1},
+                    ),
+                ):
                     mgr._download_whisper_model(cache_dir="/tmp/test")
                     # Verify file write was called
                     mock_file.write.assert_called()
