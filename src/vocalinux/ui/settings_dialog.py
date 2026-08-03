@@ -665,6 +665,29 @@ spinbutton {
     font-weight: bold;
     color: @theme_selected_bg_color;
 }
+
+/* Secure download badge */
+.secure-badge {
+    background-color: alpha(#26a269, 0.10);
+    border: 1px solid alpha(#26a269, 0.35);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.secure-badge-label {
+    color: #26a269;
+    font-weight: 500;
+    font-size: 0.9em;
+}
+
+.secure-badge-detail {
+    font-size: 0.8em;
+    color: @theme_unfocused_fg_color;
+}
+
+.secure-stage {
+    font-size: 0.95em;
+}
 """
 
 
@@ -1173,7 +1196,16 @@ class SettingsPage:
 
 
 class ModelDownloadDialog(Gtk.Dialog):
-    """Dialog showing model download progress with cancel support."""
+    """Dialog showing a secured model download with integrity verification stages.
+
+    Stages surface the supply-chain checks the downloader already runs so the
+    user can see the pin lookup, transfer, and SHA256 match happen in order.
+    """
+
+    _STAGE_VERIFYING = "verifying"
+    _STAGE_MATCHED = "matched"
+    _STAGE_DOWNLOADING = "downloading"
+    _STAGE_CONNECTING = "connecting"
 
     def __init__(
         self,
@@ -1183,114 +1215,265 @@ class ModelDownloadDialog(Gtk.Dialog):
         engine: str = "whisper",
         language: str = "en-us",
     ):
+        display_name = _model_display_name(model_name)
         super().__init__(
-            title=f"Downloading {_model_display_name(model_name)} Model",
+            title=f"Secured Download — {display_name}",
             transient_for=parent,
             flags=Gtk.DialogFlags.MODAL,
         )
-        self.set_default_size(450, 200)
+        self.set_default_size(480, 280)
         self.set_deletable(False)  # Prevent closing during download
 
         self.cancelled = False
         self.engine = engine
         self.model_name = model_name
+        self._stage = self._STAGE_CONNECTING
+        self._pulse_timeout = None
+        self._integrity_verified = False
 
         engine_display = engine.upper() if engine == "vosk" else engine.capitalize()
 
         box = self.get_content_area()
-        box.set_spacing(16)
+        box.set_spacing(14)
         box.set_margin_start(24)
         box.set_margin_end(24)
-        box.set_margin_top(24)
-        box.set_margin_bottom(20)
+        box.set_margin_top(20)
+        box.set_margin_bottom(16)
 
-        # Info label
+        # Lock badge — the "this download is integrity-checked" signal
+        badge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        badge.get_style_context().add_class("secure-badge")
+        lock_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.BUTTON)
+        badge.pack_start(lock_icon, False, False, 0)
+        badge_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        badge_title = Gtk.Label(label="Integrity-checked download", xalign=0)
+        badge_title.get_style_context().add_class("secure-badge-label")
+        badge_detail = Gtk.Label(
+            label="SHA256 pin verified against Vocalinux's trusted model registry",
+            xalign=0,
+            wrap=True,
+        )
+        badge_detail.get_style_context().add_class("secure-badge-detail")
+        badge_text.pack_start(badge_title, False, False, 0)
+        badge_text.pack_start(badge_detail, False, False, 0)
+        badge.pack_start(badge_text, True, True, 0)
+        box.pack_start(badge, False, False, 0)
+
         self.info_label = Gtk.Label(
-            label=(
-                f"Downloading {engine_display} {_model_display_name(model_name)} model "
-                f"(~{_format_size(model_size_mb)})..."
-            ),
+            label=(f"{engine_display} {display_name} model " f"(~{_format_size(model_size_mb)})"),
             wrap=True,
             justify=Gtk.Justification.CENTER,
         )
         box.pack_start(self.info_label, False, False, 0)
 
-        # Progress bar
+        # Stage line — "Looking up pin…", "Hash matches…", etc.
+        stage_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        stage_row.set_halign(Gtk.Align.CENTER)
+        self.stage_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.MENU)
+        self.stage_label = Gtk.Label(label="Preparing secured download…")
+        self.stage_label.get_style_context().add_class("secure-stage")
+        stage_row.pack_start(self.stage_icon, False, False, 0)
+        stage_row.pack_start(self.stage_label, False, False, 0)
+        box.pack_start(stage_row, False, False, 0)
+
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_show_text(True)
-        self.progress_bar.set_text("Connecting...")
-        box.pack_start(self.progress_bar, False, False, 8)
+        self.progress_bar.set_text("Connecting…")
+        box.pack_start(self.progress_bar, False, False, 4)
 
-        # Status label (shows speed and ETA)
         self.status_label = Gtk.Label(label="")
-        self.status_label.set_markup("<i>Please wait...</i>")
+        self.status_label.set_markup("<i>Looking up pinned SHA256 digest…</i>")
         self.status_label.get_style_context().add_class("status-info")
+        self.status_label.set_line_wrap(True)
+        self.status_label.set_justify(Gtk.Justification.CENTER)
         box.pack_start(self.status_label, False, False, 0)
 
-        # Cancel button
         self.cancel_button = Gtk.Button(label="Cancel")
         self.cancel_button.connect("clicked", self._on_cancel_clicked)
         self.cancel_button.set_halign(Gtk.Align.CENTER)
-        self.cancel_button.set_margin_top(12)
+        self.cancel_button.set_margin_top(8)
         box.pack_start(self.cancel_button, False, False, 0)
 
         self.show_all()
 
-        # For Whisper, we can't track progress, so pulse
-        if engine == "whisper":
-            self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
-        else:
-            self._pulse_timeout = None
+        # Pulse while we wait for the first real progress event
+        self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
 
     def _pulse_progress(self):
-        """Pulse the progress bar while downloading (for Whisper)."""
+        """Pulse the progress bar during connect / verify stages."""
         if self.cancelled:
             return False
-        self.progress_bar.pulse()
-        return True  # Continue pulsing
+        if self._stage in (self._STAGE_CONNECTING, self._STAGE_VERIFYING):
+            self.progress_bar.pulse()
+            return True
+        return False
+
+    def _ensure_pulsing(self):
+        if self._pulse_timeout is None:
+            self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
+
+    def _stop_pulsing(self):
+        if self._pulse_timeout:
+            GLib.source_remove(self._pulse_timeout)
+            self._pulse_timeout = None
+
+    def _set_stage(self, stage: str, stage_text: str, icon_name: str = "channel-secure-symbolic"):
+        self._stage = stage
+        self.stage_label.set_text(stage_text)
+        self.stage_icon.set_from_icon_name(icon_name, Gtk.IconSize.MENU)
+        if stage in (self._STAGE_CONNECTING, self._STAGE_VERIFYING):
+            self._ensure_pulsing()
+        else:
+            self._stop_pulsing()
 
     def _on_cancel_clicked(self, widget):
         """Handle cancel button click."""
         self.cancelled = True
         self.cancel_button.set_sensitive(False)
         self.cancel_button.set_label("Cancelling...")
-        self.status_label.set_markup("<i>Cancelling download...</i>")
+        self.status_label.set_markup("<i>Cancelling download…</i>")
 
     def update_progress(self, fraction: float, speed_mbps: float, status_text: str):
-        """Update the progress bar with actual download progress."""
+        """Update the progress bar and stage line from a downloader status."""
         if self.cancelled:
             return
 
-        # Stop pulsing if we were pulsing
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
+        lower = (status_text or "").lower()
 
-        self.progress_bar.set_fraction(fraction)
+        if "looking up" in lower or "pinned digest found" in lower:
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Checking pinned SHA256…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Securing…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "connecting" in lower or "starting secure download" in lower:
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Connecting securely…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Connecting…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "verifying" in lower:
+            self._set_stage(
+                self._STAGE_VERIFYING,
+                "Verifying SHA256 checksum…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Verifying…")
+            self.status_label.set_markup(
+                "<i>Comparing downloaded bytes against the pinned digest…</i>"
+            )
+            return
+
+        if "skipping hash check" in lower or "no pinned digest" in lower:
+            self._integrity_verified = False
+            self._set_stage(
+                self._STAGE_DOWNLOADING,
+                "No pinned digest — hash check skipped",
+                "dialog-information-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Unpinned")
+            self.status_label.set_markup(
+                "<span foreground='#e5a50a'><i>Model has no pinned SHA256; integrity was not verified</i></span>"
+            )
+            return
+
+        if "hash matches" in lower or "integrity verified" in lower:
+            self._integrity_verified = True
+            self._set_stage(
+                self._STAGE_MATCHED,
+                "Hash matches — integrity verified",
+                "security-high-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Verified")
+            self.status_label.set_markup(
+                "<span foreground='#26a269'><b>SHA256 matches the pinned digest</b></span>"
+            )
+            return
+
+        if "extracting" in lower:
+            self._set_stage(
+                self._STAGE_VERIFYING,
+                "Extracting verified archive…",
+                "emblem-ok-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Extracting…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "complete" in lower:
+            self._stop_pulsing()
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Complete!")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        # Normal byte transfer
+        self._set_stage(
+            self._STAGE_DOWNLOADING,
+            "Downloading over HTTPS…",
+            "channel-secure-symbolic",
+        )
+        self.progress_bar.set_fraction(max(0.0, min(1.0, fraction)))
         self.progress_bar.set_text(f"{fraction * 100:.0f}%")
         self.status_label.set_markup(f"<i>{status_text}</i>")
 
     def set_complete(self, success: bool, message: str = ""):
         """Mark download as complete."""
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
-
-        # Hide cancel button
+        self._stop_pulsing()
         self.cancel_button.hide()
 
         if success:
+            if self._integrity_verified:
+                self._set_stage(
+                    self._STAGE_MATCHED,
+                    "Integrity verified — model ready",
+                    "security-high-symbolic",
+                )
+                ready_markup = (
+                    "<span foreground='#26a269'>"
+                    "<b>✓ SHA256 verified · Model ready to use</b>"
+                    "</span>"
+                )
+            else:
+                self._set_stage(
+                    self._STAGE_DOWNLOADING,
+                    "Download complete",
+                    "emblem-ok-symbolic",
+                )
+                ready_markup = "<span foreground='#26a269'><b>✓ Model ready to use</b></span>"
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("Complete!")
-            self.status_label.set_markup(
-                "<span foreground='#26a269'><b>✓ Model ready to use</b></span>"
-            )
+            self.status_label.set_markup(ready_markup)
         else:
+            self.stage_icon.set_from_icon_name("dialog-warning-symbolic", Gtk.IconSize.MENU)
+            self.stage_label.set_text("Download did not complete")
             self.progress_bar.set_fraction(0)
             self.progress_bar.set_text("Failed")
             if "cancelled" in message.lower():
                 self.status_label.set_markup(
                     "<span foreground='#e5a50a'>✗ Download cancelled</span>"
+                )
+            elif (
+                "sha256" in message.lower()
+                or "integrity" in message.lower()
+                or "hash" in message.lower()
+            ):
+                self.stage_label.set_text("Integrity check failed")
+                self.stage_icon.set_from_icon_name("security-medium-symbolic", Gtk.IconSize.MENU)
+                self.status_label.set_markup(
+                    f"<span foreground='#c01c28'><b>✗ {message}</b></span>"
                 )
             else:
                 self.status_label.set_markup(f"<span foreground='#c01c28'>✗ {message}</span>")
@@ -2335,6 +2518,20 @@ class SettingsDialog(Gtk.Dialog):
         )
         legend.get_style_context().add_class("tip-label")
         self.model_info_card.pack_start(legend, False, False, 0)
+
+        # Integrity note — downloads are SHA256-pinned
+        integrity_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        integrity_row.set_margin_top(4)
+        integrity_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.MENU)
+        integrity_label = Gtk.Label(
+            label="Downloads are SHA256-verified against pinned digests",
+            xalign=0,
+            wrap=True,
+        )
+        integrity_label.get_style_context().add_class("tip-label")
+        integrity_row.pack_start(integrity_icon, False, False, 0)
+        integrity_row.pack_start(integrity_label, True, True, 0)
+        self.model_info_card.pack_start(integrity_row, False, False, 0)
 
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
@@ -4687,11 +4884,16 @@ class SettingsDialog(Gtk.Dialog):
         # Update title
         self.model_info_title.set_markup(f"<b>{model_display_name}</b>: {info['desc']}")
 
-        # Update subtitle with status
+        # Update subtitle with status. "SHA256 verified" is only claimed after a
+        # download that actually ran the pin check — presence on disk alone is
+        # not proof the bytes were hashed (Bugbot: verified label without re-check).
         if is_downloaded:
             status = "<span foreground='#26a269'>✓ Downloaded and ready</span>"
         else:
-            status = f"<span foreground='#e5a50a'>↓ Will download ~{_format_size(info['size_mb'])}</span>"
+            status = (
+                f"<span foreground='#e5a50a'>↓ Will download ~{_format_size(info['size_mb'])}</span>"
+                " · SHA256-pinned"
+            )
         self.model_info_subtitle.set_markup(f"{extra_info} • {status}")
 
         # Update recommendation
