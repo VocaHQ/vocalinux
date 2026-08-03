@@ -3335,6 +3335,82 @@ if ! install_python_package; then
     exit 1
 fi
 
+# Pinned SHA256 digests, shared with the runtime verifier so the installer and
+# the app can never disagree about which bytes are expected. See SECURITY.md.
+MODEL_HASH_REGISTRY="$INSTALL_DIR/src/vocalinux/utils/model_hashes.json"
+
+# Print the pinned SHA256 for a model file, or return non-zero when unpinned.
+lookup_model_sha256() {
+    local model_type="$1"
+    local filename="$2"
+
+    [ -f "$MODEL_HASH_REGISTRY" ] || return 1
+    command -v python3 >/dev/null 2>&1 || return 1
+
+    python3 -c '
+import json, sys
+try:
+    registry = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(1)
+entry = registry.get(sys.argv[2], {}).get(sys.argv[3])
+if not isinstance(entry, dict) or not entry.get("sha256"):
+    sys.exit(1)
+print(entry["sha256"])
+' "$MODEL_HASH_REGISTRY" "$model_type" "$filename" 2>/dev/null
+}
+
+# Verify a downloaded model against its pinned digest. Returns non-zero only on
+# a real mismatch; a missing pin or missing sha256sum degrades to a warning so
+# an installer on a minimal system still works.
+verify_model_sha256() {
+    local file="$1"
+    local model_type="$2"
+    local filename="$3"
+    local label="$4"
+    local expected actual
+
+    if ! expected=$(lookup_model_sha256 "$model_type" "$filename"); then
+        print_warning "No pinned SHA256 for $label; cannot verify its contents"
+        return 0
+    fi
+
+    if ! command -v sha256sum >/dev/null 2>&1; then
+        print_warning "sha256sum not available; cannot verify $label"
+        return 0
+    fi
+
+    actual=$(sha256sum "$file" | cut -d' ' -f1)
+    if [ "$actual" != "$expected" ]; then
+        print_error "SHA256 mismatch for $label"
+        print_error "Expected: $expected"
+        print_error "Got:      $actual"
+        print_error "The download was corrupted or tampered with; discarding it."
+        return 1
+    fi
+
+    print_success "Verified $label against its pinned SHA256"
+    return 0
+}
+
+# Reject archives whose members would be written outside the extraction
+# directory. unzip resolves "../" entries relative to -d, so a hostile archive
+# could otherwise overwrite files anywhere the user can write.
+verify_zip_members_safe() {
+    local zip_file="$1"
+
+    if ! command -v unzip >/dev/null 2>&1; then
+        return 1
+    fi
+
+    if unzip -Z1 "$zip_file" 2>/dev/null | grep -Eq '^/|^[A-Za-z]:|(^|/)\.\.(/|$)'; then
+        print_error "Archive $(basename "$zip_file") contains unsafe paths; refusing to extract"
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to download and install Whisper tiny model
 install_whisper_model() {
     print_info "Installing Whisper tiny model (~75MB)..."
@@ -3390,6 +3466,11 @@ install_whisper_model() {
     # Verify download
     if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
         print_error "Downloaded model file is empty or missing"
+        rm -f "$TEMP_FILE"
+        return 1
+    fi
+
+    if ! verify_model_sha256 "$TEMP_FILE" "whisper" "tiny.pt" "Whisper tiny model"; then
         rm -f "$TEMP_FILE"
         return 1
     fi
@@ -3472,10 +3553,19 @@ install_vosk_models() {
         return 1
     fi
 
+    if ! verify_model_sha256 "$TEMP_ZIP" "vosk" "$SMALL_MODEL_NAME.zip" "VOSK small model"; then
+        rm -f "$TEMP_ZIP"
+        return 1
+    fi
+
     print_info "Extracting VOSK model..."
 
     # Extract the model
     if command -v unzip >/dev/null 2>&1; then
+        if ! verify_zip_members_safe "$TEMP_ZIP"; then
+            rm -f "$TEMP_ZIP"
+            return 1
+        fi
         if ! unzip -q "$TEMP_ZIP" -d "$MODELS_DIR"; then
             print_error "Failed to extract VOSK model"
             rm -f "$TEMP_ZIP"
@@ -3562,6 +3652,11 @@ install_whispercpp_model() {
     # Verify download
     if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
         print_error "Downloaded model file is empty or missing"
+        rm -f "$TEMP_FILE"
+        return 1
+    fi
+
+    if ! verify_model_sha256 "$TEMP_FILE" "whispercpp" "ggml-tiny.bin" "whisper.cpp tiny model"; then
         rm -f "$TEMP_FILE"
         return 1
     fi

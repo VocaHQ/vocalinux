@@ -638,6 +638,17 @@ unzip vosk-model-small-en-us-0.15.zip
 
 Model names with more language and size variety can be found in [VOSK Models](https://alphacephei.com/vosk/models) page.
 
+### Model Download Fails Verification
+
+**Symptom:** `SHA256 mismatch` during install, or "The download was corrupted or
+tampered with" in the app
+
+Vocalinux checks every downloaded model against a pinned SHA256 digest and
+discards anything that does not match, so this usually means the download was
+truncated or a proxy modified it. Retry the download; if it keeps failing on the
+same model, check whether you are behind a TLS-inspecting proxy and report it —
+see [SECURITY.md](../SECURITY.md) for what the check covers.
+
 ### Icons Not Displaying
 
 **Symptom:** Tray icon missing or generic

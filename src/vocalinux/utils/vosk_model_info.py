@@ -191,6 +191,15 @@ SUPPORTED_LANGUAGES = {
 }
 
 
+# Alphacephei serves every model as "<base>/<model name>.zip".
+VOSK_MODEL_BASE_URL = "https://alphacephei.com/vosk/models"
+
+
+def vosk_model_url(model_name: str) -> str:
+    """Build the Alphacephei download URL for a VOSK model."""
+    return f"{VOSK_MODEL_BASE_URL}/{model_name}.zip"
+
+
 # VOSK model metadata for display and download path resolution.
 # When Alphacephei only ships a small model, medium/large point at that same
 # zip so size selection never resolves to None (issue #550).

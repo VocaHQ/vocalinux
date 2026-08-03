@@ -71,6 +71,41 @@ OpenAI's Whisper is also available as an alternative:
 - Models are downloaded once and cached locally
 - No audio data is sent to external servers
 
+### Model Download Integrity
+
+Speech recognition models are large binaries fetched from third parties — Hugging
+Face (whisper.cpp), Alphacephei (VOSK) and OpenAI's CDN (Whisper) — and are then
+loaded into the Vocalinux process. Every model the app can download is pinned in
+`src/vocalinux/utils/model_hashes.json` with its SHA256 digest and byte size, and
+both the runtime downloader and `install.sh` verify a download against that pin
+before the file is installed or unpacked.
+
+What the checks cover:
+
+| Check | Effect |
+| --- | --- |
+| Pinned SHA256 + size | A file whose bytes differ from the reviewed pin is deleted, not installed |
+| HTTPS on a known host | Download URLs must be HTTPS on huggingface.co, alphacephei.com or openaipublic.azureedge.net |
+| Redirect guard | A redirect that downgrades to plain HTTP aborts the download |
+| Archive path validation | VOSK zips are rejected if any member is absolute, traverses out of the models directory, or is a symlink |
+| Expansion cap | An archive that unpacks to more than 8 GiB is refused |
+
+Pinning gives integrity, not authenticity. A digest recorded from a file that was
+already malicious upstream would still match. What it does guarantee is that the
+bytes were reviewed once, in a pull request, and cannot silently change
+afterwards: a swapped or corrupted model, a tampering proxy, or a truncated
+download all fail the check.
+
+Digests are regenerated with `scripts/update_model_hashes.py`. whisper.cpp
+digests come from Hugging Face's Git LFS metadata, Whisper digests come from the
+SHA256 that OpenAI embeds in each download URL, and VOSK archives are streamed
+and hashed locally with their published MD5 used as a cross-check.
+
+Set `VOCALINUX_STRICT_MODEL_VERIFICATION=1` to refuse any model that has no
+pinned digest instead of downloading it with a warning. Every model currently
+reachable from the UI is pinned, so strict mode only matters if you add a new
+model or edit the registry.
+
 ### File Permissions
 
 The application stores data in:
