@@ -343,3 +343,98 @@ class TestCommandProcessorFallback(unittest.TestCase):
         """Test paste action through generic path."""
         result, actions = self.processor.process_text("paste content")
         self.assertIn("paste", actions)
+
+
+class TestLocalizedTextCommands(unittest.TestCase):
+    """Localized punctuation / line-break voice commands (issue #640)."""
+
+    def test_english_dot_alias(self):
+        """English 'dot' maps to a period."""
+        processor = CommandProcessor(language="en-us")
+        result, actions = processor.process_text("end of sentence dot")
+        self.assertEqual(result, "end of sentence.")
+        self.assertEqual(actions, [])
+
+    def test_italian_punctuation(self):
+        """Italian spoken punctuation replaces with symbols."""
+        processor = CommandProcessor(language="it")
+        cases = [
+            ("ciao virgola mondo", "ciao,mondo"),
+            ("fine punto", "fine."),
+            ("davvero punto interrogativo", "davvero?"),
+            ("bravo punto esclamativo", "bravo!"),
+            ("lista punto e virgola", "lista;"),
+            ("nota due punti", "nota:"),
+            ("prima nuova riga dopo", "prima \n dopo"),
+        ]
+        for input_text, expected in cases:
+            result, actions = processor.process_text(input_text)
+            self.assertEqual(result, expected, msg=input_text)
+            self.assertEqual(actions, [])
+
+    def test_italian_long_phrase_before_punto(self):
+        """'punto interrogativo' must not collapse to '.' + leftover words."""
+        processor = CommandProcessor(language="it")
+        result, _ = processor.process_text("sei sicuro punto interrogativo")
+        self.assertEqual(result, "sei sicuro?")
+        self.assertNotIn("interrogativo", result)
+
+    def test_french_and_german(self):
+        """French and German punctuation aliases work."""
+        fr = CommandProcessor(language="fr")
+        result, _ = fr.process_text("bonjour virgule monde point")
+        self.assertEqual(result, "bonjour,monde.")
+
+        de = CommandProcessor(language="de")
+        result, _ = de.process_text("hallo komma welt punkt")
+        self.assertEqual(result, "hallo,welt.")
+
+    def test_spanish_portuguese(self):
+        """Spanish and Portuguese punctuation aliases work."""
+        es = CommandProcessor(language="es")
+        result, _ = es.process_text("hola coma mundo punto")
+        self.assertEqual(result, "hola,mundo.")
+
+        pt = CommandProcessor(language="pt")
+        result, _ = pt.process_text("ola virgula mundo ponto")
+        self.assertEqual(result, "ola,mundo.")
+
+    def test_english_phrases_still_work_in_italian(self):
+        """English command phrases remain available when language is Italian."""
+        processor = CommandProcessor(language="it")
+        result, _ = processor.process_text("hello comma world period")
+        self.assertEqual(result, "hello,world.")
+
+    def test_auto_language_keeps_english_only_aliases(self):
+        """auto-detect does not load non-English phrase aliases."""
+        processor = CommandProcessor(language="auto")
+        self.assertNotIn("virgola", processor.text_commands)
+        self.assertIn("dot", processor.text_commands)
+        result, _ = processor.process_text("ciao virgola")
+        self.assertEqual(result, "ciao virgola")
+
+    def test_set_language_rebuilds_aliases(self):
+        """set_language swaps localized aliases without recreating the processor."""
+        processor = CommandProcessor(language="en-us")
+        self.assertNotIn("virgola", processor.text_commands)
+        processor.set_language("it")
+        self.assertIn("virgola", processor.text_commands)
+        result, _ = processor.process_text("testo virgola")
+        self.assertEqual(result, "testo,")
+        processor.set_language("auto")
+        self.assertNotIn("virgola", processor.text_commands)
+
+
+class TestCommandPhrases(unittest.TestCase):
+    """Catalog id mapping for localized command aliases."""
+
+    def test_normalize_command_language(self):
+        """Catalog keys and auto-detect resolve to phrase-table codes."""
+        from vocalinux.speech_recognition.command_phrases import normalize_command_language
+
+        self.assertEqual(normalize_command_language("en-us"), "en")
+        self.assertEqual(normalize_command_language("en-in"), "en")
+        self.assertEqual(normalize_command_language("it"), "it")
+        self.assertEqual(normalize_command_language("auto"), "en")
+        self.assertEqual(normalize_command_language(None), "en")
+        self.assertEqual(normalize_command_language("fr"), "fr")

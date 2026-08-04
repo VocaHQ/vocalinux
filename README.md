@@ -303,10 +303,14 @@ Or launch it from your application menu!
 
 ### Voice Commands
 
+English phrases always work. With a non-English recognition language, matching
+punctuation / line-break phrases in that language are also recognized
+(Italian *virgola* / *punto*, French *virgule* / *point*, etc.).
+
 | Command | Action |
 |---------|--------|
 | "new line" | Inserts a line break |
-| "period" / "full stop" | Types a period (.) |
+| "period" / "full stop" / "dot" | Types a period (.) |
 | "comma" | Types a comma (,) |
 | "question mark" | Types a question mark (?) |
 | "exclamation mark" | Types an exclamation mark (!) |

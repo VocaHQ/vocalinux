@@ -5,10 +5,45 @@ This module processes text commands from speech recognition, such as
 "new line", "period", etc.
 """
 
+from __future__ import annotations
+
 import logging
 import re
+from typing import Optional
+
+from .command_phrases import text_command_aliases_for
 
 logger = logging.getLogger(__name__)
+
+# Replacements that should attach to the preceding word (no leading space).
+_ATTACH_LEFT_REPLACEMENTS = {".", ",", "?", "!", ";", ":"}
+
+# Base English text commands (always present).
+_BASE_TEXT_COMMANDS = {
+    # Line commands
+    "new line": "\n",
+    "new paragraph": "\n\n",
+    # Punctuation
+    "period": ".",
+    "full stop": ".",
+    "comma": ",",
+    "question mark": "?",
+    "exclamation mark": "!",
+    "exclamation point": "!",
+    "semicolon": ";",
+    "colon": ":",
+    "dash": "-",
+    "hyphen": "-",
+    "underscore": "_",
+    "quote": '"',
+    "single quote": "'",
+    "open parenthesis": "(",
+    "close parenthesis": ")",
+    "open bracket": "[",
+    "close bracket": "]",
+    "open brace": "{",
+    "close brace": "}",
+}
 
 
 class CommandProcessor:
@@ -16,37 +51,23 @@ class CommandProcessor:
     Processes text commands in speech recognition results.
 
     This class handles special commands like "new line", "period",
-    "delete that", etc.
+    "delete that", etc. Localized punctuation aliases follow the
+    recognition language (see ``command_phrases``).
     """
 
-    def __init__(self):
-        """Initialize the command processor."""
-        # Map of command phrases to their actions
-        self.text_commands = {
-            # Line commands
-            "new line": "\n",
-            "new paragraph": "\n\n",
-            # Punctuation
-            "period": ".",
-            "full stop": ".",
-            "comma": ",",
-            "question mark": "?",
-            "exclamation mark": "!",
-            "exclamation point": "!",
-            "semicolon": ";",
-            "colon": ":",
-            "dash": "-",
-            "hyphen": "-",
-            "underscore": "_",
-            "quote": '"',
-            "single quote": "'",
-            "open parenthesis": "(",
-            "close parenthesis": ")",
-            "open bracket": "[",
-            "close bracket": "]",
-            "open brace": "{",
-            "close brace": "}",
-        }
+    def __init__(self, language: Optional[str] = "en-us"):
+        """Initialize the command processor.
+
+        Args:
+            language: Recognition language catalog id (e.g. ``it``, ``en-us``,
+                ``auto``). Localized punctuation phrases are merged for
+                non-English languages; English phrases are always available.
+        """
+        self.language = language or "en-us"
+
+        # Map of command phrases to their actions (English base + locale aliases)
+        self.text_commands = dict(_BASE_TEXT_COMMANDS)
+        self.text_commands.update(text_command_aliases_for(self.language))
 
         # Special action commands that don't directly map to text
         self.action_commands = {
@@ -78,12 +99,18 @@ class CommandProcessor:
         # Compile regex patterns for faster matching
         self._compile_patterns()
 
-    def _compile_patterns(self):
+    def set_language(self, language: Optional[str]) -> None:
+        """Update recognition language and rebuild text-command aliases."""
+        self.language = language or "en-us"
+        self.text_commands = dict(_BASE_TEXT_COMMANDS)
+        self.text_commands.update(text_command_aliases_for(self.language))
+        self._compile_patterns()
+
+    def _compile_patterns(self) -> None:
         """Compile regex patterns for command matching."""
-        # Create regex pattern for text commands
-        text_cmd_pattern = (
-            r"\b(" + "|".join(re.escape(cmd) for cmd in self.text_commands.keys()) + r")\b"
-        )
+        # Longer phrases first so alternation prefers "punto interrogativo" over "punto"
+        text_keys = sorted(self.text_commands.keys(), key=len, reverse=True)
+        text_cmd_pattern = r"\b(" + "|".join(re.escape(cmd) for cmd in text_keys) + r")\b"
         self.text_cmd_regex = re.compile(text_cmd_pattern, re.IGNORECASE)
 
         # Create regex pattern for action commands
@@ -245,21 +272,14 @@ class CommandProcessor:
                     else:
                         processed_text = ""
 
-            # Handle text commands
-            for cmd, replacement in self.text_commands.items():
+            # Handle text commands (longest phrase first to avoid partial matches)
+            for cmd, replacement in sorted(
+                self.text_commands.items(), key=lambda item: len(item[0]), reverse=True
+            ):
                 cmd_pattern = r"\b" + re.escape(cmd) + r"\b"
                 if re.search(cmd_pattern, processed_text, re.IGNORECASE):
-                    if cmd in [
-                        "period",
-                        "full stop",
-                        "comma",
-                        "question mark",
-                        "exclamation mark",
-                        "exclamation point",
-                        "semicolon",
-                        "colon",
-                    ]:
-                        # For punctuation, replace the command and remove the space before it
+                    if replacement in _ATTACH_LEFT_REPLACEMENTS:
+                        # Punctuation: drop the space before the spoken phrase
                         processed_text = re.sub(
                             r"\s*" + cmd_pattern + r"\s*",
                             replacement,

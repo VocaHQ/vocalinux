@@ -31,7 +31,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Display servers: X11 and Wayland
 - Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
 - Searchable language combobox; delete unused downloaded speech models from Settings
-- Optional voice commands (English-only); Silero neural VAD with amplitude fallback
+- Optional voice commands with localized punctuation phrases for common languages; Silero neural VAD with amplitude fallback
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
 - In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available

@@ -56,12 +56,16 @@ Nested terminal panels inside an IDE are often invisible to window-class detecti
 
 ## Voice Commands
 
-Vocalinux supports several commands that you can speak to control formatting:
+Vocalinux supports several commands that you can speak to control formatting.
+English phrases always work. When recognition language is set (e.g. Italian,
+French, German, Spanish), matching punctuation and line-break phrases in that
+language are also recognized (for example Italian *virgola* / *punto*, French
+*virgule* / *point*).
 
 | Command | Action |
 |---------|--------|
 | "new line" or "new paragraph" | Inserts a line break |
-| "period" or "full stop" | Types a period (.) |
+| "period", "full stop", or "dot" | Types a period (.) |
 | "comma" | Types a comma (,) |
 | "question mark" | Types a question mark (?) |
 | "exclamation point" or "exclamation mark" | Types an exclamation point (!) |
@@ -70,6 +74,9 @@ Vocalinux supports several commands that you can speak to control formatting:
 | "delete that" or "scratch that" | Deletes the last sentence |
 | "capitalize" or "uppercase" | Capitalizes the next word |
 | "all caps" | Makes the next word ALL CAPS |
+
+Editing and formatting action phrases (`delete that`, `undo`, `capitalize`, …)
+are currently English-only.
 
 ## Tips for Better Recognition
 

@@ -1106,6 +1106,8 @@ def test_speech_manager_init_normalizes_parakeet_language():
             defer_download=True,
         )
     assert manager.language == "auto"
+    assert manager.command_processor.language == "auto"
+    assert "virgule" not in manager.command_processor.text_commands
 
 
 def test_speech_manager_reconfigure_to_parakeet_normalizes_language():
@@ -1128,6 +1130,8 @@ def test_speech_manager_reconfigure_to_parakeet_normalizes_language():
         manager.reconfigure(engine="parakeet", model_size="v3-european", language="fr")
     assert manager.engine == "parakeet"
     assert manager.language == "auto"
+    assert manager.command_processor.language == "auto"
+    assert "virgule" not in manager.command_processor.text_commands
 
 
 def test_main_startup_normalizes_parakeet_language():
@@ -1155,9 +1159,12 @@ def test_speech_manager_reconfigure_to_parakeet_clears_leftover_without_language
             defer_download=True,
         )
         assert manager.language == "de"
+        assert "komma" in manager.command_processor.text_commands
         manager.reconfigure(engine="parakeet", model_size="v3-european", force_download=False)
     assert manager.engine == "parakeet"
     assert manager.language == "auto"
+    assert manager.command_processor.language == "auto"
+    assert "komma" not in manager.command_processor.text_commands
 
 
 def test_speech_manager_reconfigure_parakeet_language_arg_stays_auto():
@@ -1175,3 +1182,25 @@ def test_speech_manager_reconfigure_parakeet_language_arg_stays_auto():
         )
         manager.reconfigure(language="fr", force_download=False)
     assert manager.language == "auto"
+    assert manager.command_processor.language == "auto"
+    assert "virgule" not in manager.command_processor.text_commands
+
+
+def test_speech_manager_command_processor_follows_language():
+    """Localized command aliases track the recognition language."""
+    from unittest.mock import patch
+
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
+        manager = SpeechRecognitionManager(
+            engine="whisper_cpp",
+            model_size="small",
+            language="it",
+            defer_download=True,
+        )
+        assert manager.command_processor.language == "it"
+        assert "virgola" in manager.command_processor.text_commands
+        manager.reconfigure(language="en-us", force_download=False)
+    assert manager.command_processor.language == "en-us"
+    assert "virgola" not in manager.command_processor.text_commands

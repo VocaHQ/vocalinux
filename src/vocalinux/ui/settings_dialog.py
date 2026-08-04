@@ -3392,11 +3392,13 @@ class SettingsDialog(Gtk.Dialog):
         self.voice_commands_switch = Gtk.Switch()
         self.voice_commands_switch.set_tooltip_text(
             "Enable voice commands like 'new line', 'period', 'undo', etc.\n"
+            "Punctuation phrases also match the recognition language "
+            "(e.g. Italian 'virgola', French 'virgule').\n"
             "Useful for VOSK engine. Whisper engines handle punctuation automatically."
         )
         voice_commands_row = PreferenceRow(
             title="Voice Commands",
-            subtitle="Say 'new line', 'period', 'undo' while dictating",
+            subtitle="Say 'new line', 'period', 'undo' (localized punctuation too)",
             widget=self.voice_commands_switch,
             keywords=("punctuation", "editing"),
         )

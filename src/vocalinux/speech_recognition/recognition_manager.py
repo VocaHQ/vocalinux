@@ -1002,7 +1002,7 @@ class SpeechRecognitionManager:
         self.recognition_thread = None
         self.model = None
         self.recognizer = None  # Added for VOSK
-        self.command_processor = CommandProcessor()
+        self.command_processor = CommandProcessor(language=self.language)
 
         # Voice commands: None=auto (VOSK=yes, Whisper=no), True=always on, False=always off
         self._voice_commands_preference = kwargs.get("voice_commands_enabled")
@@ -3437,8 +3437,10 @@ class SpeechRecognitionManager:
         # Language change requires restart for both engines
         # Whisper needs to know the language for transcription
         # VOSK needs to load a different model for the new language
+        language_changed = False
         if language is not None and language != self.language:
             self.language = language
+            language_changed = True
             restart_needed = True
 
         # Parakeet never consumes catalog language. Apply after engine/language
@@ -3446,7 +3448,12 @@ class SpeechRecognitionManager:
         normalized_language = normalize_language_for_engine(self.engine, self.language)
         if normalized_language != self.language:
             self.language = normalized_language
+            language_changed = True
             restart_needed = True
+
+        # Command aliases follow the stored language (auto after Parakeet).
+        if language_changed:
+            self.command_processor.set_language(self.language)
 
         # Update VOSK specific params if provided
         if vad_sensitivity is not None:
