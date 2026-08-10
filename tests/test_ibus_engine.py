@@ -965,6 +965,97 @@ class TestIBusTextInjector(unittest.TestCase):
             [ENGINE_NAME, "libpinyin"],
         )
 
+    @patch("vocalinux.text_injection.ibus_engine.restore_xkb_layout")
+    @patch(
+        "vocalinux.text_injection.ibus_engine.get_current_xkb_layout",
+        return_value=("br", "", ""),
+    )
+    @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="xkb:br::por")
+    @patch("vocalinux.text_injection.ibus_engine.is_engine_active", return_value=False)
+    @patch("vocalinux.text_injection.ibus_engine.switch_engine", return_value=True)
+    @patch("socket.socket")
+    @patch("vocalinux.text_injection.ibus_engine.SOCKET_PATH")
+    @patch("vocalinux.text_injection.ibus_engine.IBUS_AVAILABLE", True)
+    @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")
+    def test_inject_text_restores_xkb_layout_after_scoped_activation(
+        self,
+        mock_ensure_dir,
+        mock_socket_path,
+        mock_socket_cls,
+        mock_switch,
+        mock_is_active,
+        mock_get_current,
+        mock_get_xkb,
+        mock_restore_xkb,
+    ):
+        """Scoped injection must restore XKB after the Vocalinux engine switch (#664)."""
+        from vocalinux.text_injection.ibus_engine import ENGINE_NAME, IBusTextInjector
+
+        mock_socket_path.exists.return_value = True
+        mock_sock = MagicMock()
+        mock_sock.__enter__.return_value = mock_sock
+        mock_sock.__exit__.return_value = None
+        mock_sock.recv.return_value = b"OK"
+        mock_socket_cls.return_value = mock_sock
+
+        parent = MagicMock()
+        parent.attach_mock(mock_get_xkb, "get_xkb")
+        parent.attach_mock(mock_switch, "switch")
+        parent.attach_mock(mock_restore_xkb, "restore_xkb")
+
+        injector = IBusTextInjector(auto_activate=False)
+        result = injector.inject_text("olá")
+
+        self.assertTrue(result)
+        mock_get_xkb.assert_called_once()
+        mock_restore_xkb.assert_called_once_with("br", "", "")
+        self.assertEqual(
+            [call.args[0] for call in mock_switch.call_args_list],
+            [ENGINE_NAME, "xkb:br::por"],
+        )
+        # Capture before switch; restore after engine restore.
+        self.assertEqual(
+            [c[0] for c in parent.mock_calls],
+            ["get_xkb", "switch", "switch", "restore_xkb"],
+        )
+
+    @patch("vocalinux.text_injection.ibus_engine.restore_xkb_layout")
+    @patch(
+        "vocalinux.text_injection.ibus_engine.get_current_xkb_layout",
+        return_value=("", "", ""),
+    )
+    @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="libpinyin")
+    @patch("vocalinux.text_injection.ibus_engine.is_engine_active", return_value=False)
+    @patch("vocalinux.text_injection.ibus_engine.switch_engine", return_value=True)
+    @patch("socket.socket")
+    @patch("vocalinux.text_injection.ibus_engine.SOCKET_PATH")
+    @patch("vocalinux.text_injection.ibus_engine.IBUS_AVAILABLE", True)
+    @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")
+    def test_inject_text_skips_xkb_restore_when_layout_empty(
+        self,
+        mock_ensure_dir,
+        mock_socket_path,
+        mock_socket_cls,
+        mock_switch,
+        mock_is_active,
+        mock_get_current,
+        mock_get_xkb,
+        mock_restore_xkb,
+    ):
+        """Wayland/empty capture must not call setxkbmap restore (#474)."""
+        from vocalinux.text_injection.ibus_engine import IBusTextInjector
+
+        mock_socket_path.exists.return_value = True
+        mock_sock = MagicMock()
+        mock_sock.__enter__.return_value = mock_sock
+        mock_sock.__exit__.return_value = None
+        mock_sock.recv.return_value = b"OK"
+        mock_socket_cls.return_value = mock_sock
+
+        injector = IBusTextInjector(auto_activate=False)
+        self.assertTrue(injector.inject_text("hello"))
+        mock_restore_xkb.assert_not_called()
+
     @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="xkb:de::deu")
     @patch("vocalinux.text_injection.ibus_engine.is_engine_active", return_value=False)
     @patch("vocalinux.text_injection.ibus_engine.switch_engine", return_value=True)

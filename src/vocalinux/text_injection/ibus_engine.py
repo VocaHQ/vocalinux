@@ -1409,6 +1409,10 @@ class IBusTextInjector:
         logger.info(f"Starting IBus text injection: '{text[:20]}...' (length: {len(text)})")
 
         restore_engine: Optional[str] = None
+        # Capture before any engine switch. Switching to Vocalinux can override
+        # the system XKB map to us; scoped injection must restore it after
+        # switching back (#292, #664). Empty on Wayland (no-op restore).
+        captured_xkb = get_current_xkb_layout()
         if not is_engine_active():
             current_engine = get_current_engine()
             if not current_engine:
@@ -1538,6 +1542,13 @@ class IBusTextInjector:
                     "Skipping engine restoration after injection — "
                     "no valid engine was captured (see #497)"
                 )
+
+            # Engine switch can leave XKB on us even after restoring the IBus
+            # engine (setxkbmap vs IBus). Re-apply the pre-switch map on X11;
+            # Wayland capture is empty so this is a no-op (#474, #664).
+            layout, variant, option = captured_xkb
+            if layout:
+                restore_xkb_layout(layout, variant, option)
 
         return False
 
