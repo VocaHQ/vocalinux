@@ -264,6 +264,35 @@ class TestTrayIndicator(unittest.TestCase):
             mock_dialog_class.assert_called_once()
             mock_dialog_instance.show.assert_called_once()
 
+    def test_settings_dialog_reused_on_repeated_click(self):
+        """Repeated Settings clicks focus the open dialog instead of duplicating it."""
+        self.tray_indicator._on_settings_clicked(None)
+        self.tray_indicator._on_settings_clicked(None)
+
+        self.mock_settings_dialog_class.assert_called_once()
+        self.mock_settings_dialog.show.assert_called_once()
+        self.mock_settings_dialog.present.assert_called_once()
+
+    def test_settings_dialog_destroy_allows_a_fresh_one(self):
+        """Once the tracked dialog is destroyed, the next click builds a new one."""
+        self.tray_indicator._on_settings_clicked(None)
+        self.assertIs(self.tray_indicator._settings_dialog, self.mock_settings_dialog)
+
+        self.tray_indicator._on_settings_dialog_destroy(self.mock_settings_dialog)
+        self.assertIsNone(self.tray_indicator._settings_dialog)
+
+        self.tray_indicator._on_settings_clicked(None)
+        self.assertEqual(self.mock_settings_dialog_class.call_count, 2)
+
+    def test_about_reuses_open_settings_dialog(self):
+        """About click on an already-open Settings dialog navigates it, no duplicate."""
+        self.tray_indicator._on_settings_clicked(None)
+        self.tray_indicator._on_about_clicked(None)
+
+        self.mock_settings_dialog_class.assert_called_once()
+        self.mock_settings_dialog.navigate_to_page.assert_called_once_with("about")
+        self.mock_settings_dialog.present.assert_called_once()
+
     def test_about_dialog(self):
         """Test About opens Settings focused on the About page."""
         with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
@@ -558,6 +587,38 @@ class TestTrayIndicator(unittest.TestCase):
 
             mock_logging_dialog_class.assert_called_once_with(parent=None)
             mock_dialog.show.assert_called_once()
+
+    def test_on_logs_clicked_reused_on_repeated_click(self):
+        """Repeated View Logs clicks focus the open dialog instead of duplicating it."""
+        mock_dialog = MagicMock()
+        mock_logging_dialog_class = MagicMock(return_value=mock_dialog)
+        mock_logging_module = MagicMock()
+        mock_logging_module.LoggingDialog = mock_logging_dialog_class
+
+        with patch.dict(sys.modules, {"vocalinux.ui.logging_dialog": mock_logging_module}):
+            self.tray_indicator._on_logs_clicked(None)
+            self.tray_indicator._on_logs_clicked(None)
+
+            mock_logging_dialog_class.assert_called_once_with(parent=None)
+            mock_dialog.show.assert_called_once()
+            mock_dialog.present.assert_called_once()
+
+    def test_on_logging_dialog_destroy_allows_a_fresh_one(self):
+        """Once the tracked logs dialog is destroyed, the next click builds a new one."""
+        mock_dialog = MagicMock()
+        mock_logging_dialog_class = MagicMock(return_value=mock_dialog)
+        mock_logging_module = MagicMock()
+        mock_logging_module.LoggingDialog = mock_logging_dialog_class
+
+        with patch.dict(sys.modules, {"vocalinux.ui.logging_dialog": mock_logging_module}):
+            self.tray_indicator._on_logs_clicked(None)
+            self.assertIs(self.tray_indicator._logging_dialog, mock_dialog)
+
+            self.tray_indicator._on_logging_dialog_destroy(mock_dialog)
+            self.assertIsNone(self.tray_indicator._logging_dialog)
+
+            self.tray_indicator._on_logs_clicked(None)
+            self.assertEqual(mock_logging_dialog_class.call_count, 2)
 
     def test_on_settings_dialog_response_close(self):
         """Test settings dialog response handler for CLOSE."""

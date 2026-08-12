@@ -147,6 +147,8 @@ class TrayIndicator:
         # Must exist before _init_indicator: tests run idle_add synchronously.
         self._pending_update: Optional[ReleaseInfo] = None
         self._update_menu_item = None
+        self._settings_dialog: Optional[Gtk.Dialog] = None
+        self._logging_dialog: Optional[Gtk.Dialog] = None
 
         # Initialize the indicator (in the GTK main thread)
         GLib.idle_add(self._init_indicator)
@@ -568,6 +570,12 @@ class TrayIndicator:
 
     def _show_settings_page(self, page_name: Optional[str]):
         """Open settings, optionally focused on a specific sidebar page."""
+        if self._settings_dialog is not None:
+            if page_name:
+                self._settings_dialog.navigate_to_page(page_name)
+            self._settings_dialog.present()
+            return
+
         dialog = SettingsDialog(
             parent=None,
             config_manager=self.config_manager,
@@ -581,7 +589,13 @@ class TrayIndicator:
             ),
         )
         dialog.connect("response", self._on_settings_dialog_response)
+        dialog.connect("destroy", self._on_settings_dialog_destroy)
+        self._settings_dialog = dialog
         dialog.show()
+
+    def _on_settings_dialog_destroy(self, dialog):
+        """Drop the tracked instance once the dialog is gone."""
+        self._settings_dialog = None
 
     def _get_update_channel(self) -> str:
         """Return the configured release channel for background update checks."""
@@ -660,12 +674,22 @@ class TrayIndicator:
         """Handle click on the View Logs menu item."""
         logger.debug("View Logs clicked")
 
+        if self._logging_dialog is not None:
+            self._logging_dialog.present()
+            return
+
         # Import here to avoid circular imports
         from .logging_dialog import LoggingDialog
 
         # Create and show the logging dialog
         dialog = LoggingDialog(parent=None)
+        dialog.connect("destroy", self._on_logging_dialog_destroy)
+        self._logging_dialog = dialog
         dialog.show()
+
+    def _on_logging_dialog_destroy(self, dialog):
+        """Drop the tracked instance once the dialog is gone."""
+        self._logging_dialog = None
 
     def _on_settings_dialog_response(self, dialog, response):
         """Handle responses from the settings dialog."""
