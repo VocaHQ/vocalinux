@@ -501,9 +501,18 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
 
     # Never probe stereo on a device that reports a single input channel
     # (opening with more channels than supported is itself a known
-    # PortAudio/ALSA corruption trigger).
+    # PortAudio/ALSA corruption trigger). Stereo-capable devices must be
+    # opened at their native layout first: Intel SOF DMICs (Raptor Lake
+    # "Digital Microphone", etc.) often only support 2ch at the PCM, and
+    # PortAudio can abort with heap corruption if open() accepts a converted
+    # 1ch stream and the callback then overruns (#666).
     reported_channels = int(device_info.get("maxInputChannels", 0) or 0)
-    channel_options = [1] if reported_channels == 1 else [1, 2]
+    if reported_channels == 1:
+        channel_options = [1]
+    elif reported_channels >= 2:
+        channel_options = [2, 1]
+    else:
+        channel_options = [1, 2]
 
     bluetooth = _is_bluetooth_device(device_name)
     # Brief settle helps BlueZ/Pulse release SCO between failed open attempts.

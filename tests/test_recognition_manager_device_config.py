@@ -334,6 +334,59 @@ class TestAudioDeviceDetection(unittest.TestCase):
             assert stream is mock_stream
             assert mock_audio.open.call_count == 1
 
+    def test_open_capture_stream_stereo_device_prefers_native_channels(self):
+        """Stereo devices must be opened 2ch-first, not converted mono (#666).
+
+        Intel SOF digital mics report maxInputChannels=2. Opening them as
+        1ch can succeed then abort in PortAudio's callback with
+        ``free(): corrupted unsorted chunks``.
+        """
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+        mock_audio.open.return_value = mock_stream
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "Raptor Lake-P/U/H cAVS Digital Microphone",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 2,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 18)
+
+        assert channels == 2
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_count == 1
+        assert mock_audio.open.call_args.kwargs.get("channels") == 2
+
+    def test_open_capture_stream_stereo_device_falls_back_to_mono(self):
+        """If native stereo open fails, still try mono on a 2ch-reporting device."""
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+
+        def open_side_effect(**kwargs):
+            if kwargs.get("channels") == 2:
+                raise IOError("[Errno -9998] Invalid number of channels")
+            return mock_stream
+
+        mock_audio.open.side_effect = open_side_effect
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "USB Microphone",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 2,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 1
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_args.kwargs.get("channels") == 1
+        assert any(call.kwargs.get("channels") == 2 for call in mock_audio.open.call_args_list)
+
     def test_open_capture_stream_mono_device_never_probes_stereo(self):
         """Mono-only devices must never be opened with 2 channels.
 
