@@ -136,6 +136,14 @@ Vocalinux now offers **three speech recognition engines**:
 
 English-only whisper.cpp specializations limit the language selector to English.
 
+### Removing unused models
+
+Open Settings and go to **Speech Model**. **Remove Model** lists speech models already
+downloaded into `~/.local/share/vocalinux`. The model currently selected is marked
+in use; switch to another model first if you want to delete that one. Confirming
+**Delete** removes the files from disk. Vocalinux will download the model again if
+you select it later. Packaged system-wide VOSK models are left alone.
+
 ### When to Use Each Model
 
 **For real-time dictation:** Use **tiny** or **base** - they're fast enough to keep up with your speech.

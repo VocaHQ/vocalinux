@@ -700,6 +700,35 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "auto"), "medium")
 
+    def test_whisper_delete_unknown_model(self):
+        """Test deleting an unknown Whisper model raises ValueError."""
+        from vocalinux.ui.settings_dialog import _delete_whisper_model
+
+        with self.assertRaises(ValueError):
+            _delete_whisper_model("not-a-whisper-model")
+
+    def test_remove_model_row_exists_in_source(self):
+        """Test that the Speech Engine page has a Remove Model control."""
+        import os
+
+        source_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "vocalinux",
+            "ui",
+            "settings_dialog.py",
+        )
+        with open(source_path, "r") as handle:
+            source_code = handle.read()
+
+        self.assertIn('title="Remove Model"', source_code)
+        self.assertIn("self._on_remove_model_clicked", source_code)
+        self.assertIn(
+            'keywords=("delete", "remove", "unused", "disk", "storage", "downloaded")',
+            source_code,
+        )
+
 
 class TestSettingsSearch(unittest.TestCase):
     """Test cases for the settings search feature."""

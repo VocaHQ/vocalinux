@@ -28,3 +28,22 @@ def data_dir() -> str:
 def models_dir() -> str:
     """Return the directory where speech-recognition models are stored."""
     return os.path.join(data_dir(), "models")
+
+
+def is_within_directory(path: str, directory: str, *, allow_root: bool = False) -> bool:
+    """Return whether ``path`` resolves inside ``directory``.
+
+    Symlinks are resolved before the check. The directory itself is included
+    only when ``allow_root`` is true.
+    """
+    real_path = os.path.realpath(path)
+    real_dir = os.path.realpath(directory)
+    try:
+        rel = os.path.relpath(real_path, real_dir)
+    except ValueError:
+        return False
+    if os.path.isabs(rel) or rel == ".." or rel.startswith(".." + os.sep):
+        return False
+    if rel == ".":
+        return allow_root
+    return True
