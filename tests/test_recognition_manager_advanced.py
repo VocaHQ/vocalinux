@@ -453,9 +453,12 @@ class TestInitWhisper(unittest.TestCase):
         mock_torch.cuda.is_available.return_value = False
         with patch.dict("sys.modules", {"whisper": mock_whisper, "torch": mock_torch}):
             with patch("os.path.exists", return_value=True):
-                mgr._init_whisper()
-                self.assertTrue(mgr._model_initialized)
-                self.assertEqual(mgr.model, mock_model)
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.ensure_local_model_file"
+                ):
+                    mgr._init_whisper()
+                    self.assertTrue(mgr._model_initialized)
+                    self.assertEqual(mgr.model, mock_model)
 
 
 class TestInitWhispercpp(unittest.TestCase):
@@ -480,10 +483,13 @@ class TestInitWhispercpp(unittest.TestCase):
                     "pywhispercpp.model": mock_pywhispercpp,
                 },
             ):
-                try:
-                    mgr._init_whispercpp()
-                except Exception:
-                    pass
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.ensure_local_model_file"
+                ):
+                    try:
+                        mgr._init_whispercpp()
+                    except Exception:
+                        pass
 
     def test_cpu_fallback_filters_unsupported_whispercpp_params(self):
         mgr = _make_manager(engine="whisper_cpp")

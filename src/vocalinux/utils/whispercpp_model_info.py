@@ -425,7 +425,7 @@ def is_model_downloaded(model_name: str) -> bool:
         True if model exists, False otherwise
     """
     model_path = get_model_path(model_name)
-    return os.path.exists(model_path)
+    return os.path.exists(model_path) and not os.path.islink(model_path)
 
 
 def list_downloaded_models() -> list[str]:

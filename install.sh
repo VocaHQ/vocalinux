@@ -3360,9 +3360,10 @@ print(entry["sha256"])
 ' "$MODEL_HASH_REGISTRY" "$model_type" "$filename" 2>/dev/null
 }
 
-# Verify a downloaded model against its pinned digest. Returns non-zero only on
-# a real mismatch; a missing pin or missing sha256sum degrades to a warning so
-# an installer on a minimal system still works.
+# Verify a downloaded model against its pinned digest. Returns non-zero on a
+# real mismatch, a missing registry, or when the digest cannot be computed.
+# A missing pin degrades to a warning so an unlisted extra model can still
+# install; pinned models always hash (sha256sum, or Python hashlib).
 verify_model_sha256() {
     local file="$1"
     local model_type="$2"
@@ -3370,17 +3371,32 @@ verify_model_sha256() {
     local label="$4"
     local expected actual
 
+    if [ ! -f "$MODEL_HASH_REGISTRY" ]; then
+        print_error "Model hash registry missing; cannot verify $label"
+        return 1
+    fi
+
     if ! expected=$(lookup_model_sha256 "$model_type" "$filename"); then
         print_warning "No pinned SHA256 for $label; cannot verify its contents"
         return 0
     fi
 
-    if ! command -v sha256sum >/dev/null 2>&1; then
-        print_warning "sha256sum not available; cannot verify $label"
-        return 0
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$(sha256sum "$file" | cut -d' ' -f1)
+    else
+        actual=$(python3 -c '
+import hashlib, sys
+h = hashlib.sha256()
+with open(sys.argv[1], "rb") as handle:
+    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        h.update(chunk)
+print(h.hexdigest())
+' "$file") || {
+            print_error "Cannot compute SHA256 for $label"
+            return 1
+        }
     fi
 
-    actual=$(sha256sum "$file" | cut -d' ' -f1)
     if [ "$actual" != "$expected" ]; then
         print_error "SHA256 mismatch for $label"
         print_error "Expected: $expected"

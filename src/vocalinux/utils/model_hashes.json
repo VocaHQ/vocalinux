@@ -160,6 +160,10 @@
       "sha256": "ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e",
       "size": 145262807
     },
+    "large-v3.pt": {
+      "sha256": "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb",
+      "size": 3087371615
+    },
     "large.pt": {
       "sha256": "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb",
       "size": 3087371615

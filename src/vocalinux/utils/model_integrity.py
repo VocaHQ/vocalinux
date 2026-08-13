@@ -195,7 +195,35 @@ def ensure_trusted_model_url(url: str) -> None:
         )
 
 
-def safe_extract_zip(zip_path: str, dest_dir: str) -> None:
+def ensure_local_model_file(filepath: str) -> None:
+    """Refuse to load a model via symlink.
+
+    Downloads still SHA256-hash. Existing files are not re-hashed on every
+    launch — that would stall startup on multi-gigabyte checkpoints.
+    """
+    try:
+        if os.path.islink(filepath):
+            raise ModelIntegrityError(f"Refusing to load model via symlink: {filepath}")
+    except TypeError:
+        # Tests sometimes pass MagicMock paths; ignore those.
+        return
+
+
+def ensure_local_model_dir(dirpath: str) -> None:
+    """Refuse to load a model directory that is a symlink."""
+    try:
+        if os.path.islink(dirpath):
+            raise ModelIntegrityError(f"Refusing to load model via symlink: {dirpath}")
+    except TypeError:
+        return
+
+
+def safe_extract_zip(
+    zip_path: str,
+    dest_dir: str,
+    expected_root: Optional[str] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
+) -> None:
     """
     Extract a model archive, refusing members that escape ``dest_dir``.
 
@@ -203,15 +231,36 @@ def safe_extract_zip(zip_path: str, dest_dir: str) -> None:
     does not reject absolute paths, ``../`` traversal or symlink entries, any of
     which let a hostile archive write over files elsewhere in the home directory.
 
+    ``expected_root``, when set, is the single top-level directory the archive
+    may write (the VOSK model folder). That stops a hostile zip from dropping
+    files next to the model after the path-escape check has passed.
+
+    ``should_abort`` is checked between members so Cancel can stop a long extract.
+
     Raises:
         ModelIntegrityError: If any member escapes the destination, is a symlink,
             or if the archive expands beyond MAX_ARCHIVE_EXPANDED_BYTES.
+        RuntimeError: If ``should_abort`` returns True while extracting.
     """
     dest_root = Path(dest_dir).resolve()
     total_expanded = 0
+    expected_dir: Optional[Path] = None
+
+    if expected_root is not None:
+        if (
+            not expected_root
+            or expected_root in {".", ".."}
+            or "/" in expected_root
+            or "\\" in expected_root
+        ):
+            raise ModelIntegrityError(f"Invalid expected archive root: {expected_root!r}")
+        expected_dir = (dest_root / expected_root).resolve()
+        if expected_dir != dest_root and dest_root not in expected_dir.parents:
+            raise ModelIntegrityError("Expected archive root escapes the models directory")
 
     with zipfile.ZipFile(zip_path, "r") as archive:
-        for member in archive.infolist():
+        members = archive.infolist()
+        for member in members:
             name = member.filename
             if name.startswith("/") or name.startswith("\\") or Path(name).is_absolute():
                 raise ModelIntegrityError(f"Archive member has an absolute path: {name!r}")
@@ -219,6 +268,12 @@ def safe_extract_zip(zip_path: str, dest_dir: str) -> None:
             target = (dest_root / name).resolve()
             if target != dest_root and dest_root not in target.parents:
                 raise ModelIntegrityError(f"Archive member escapes the models directory: {name!r}")
+
+            if expected_dir is not None and target != dest_root:
+                if target != expected_dir and expected_dir not in target.parents:
+                    raise ModelIntegrityError(
+                        f"Archive member {name!r} is outside {expected_root!r}"
+                    )
 
             # The upper 4 bits of the high half of external_attr hold the Unix
             # file type; 0xA is a symlink, which could redirect a later write.
@@ -232,4 +287,7 @@ def safe_extract_zip(zip_path: str, dest_dir: str) -> None:
                     f"{MAX_ARCHIVE_EXPANDED_BYTES // (1024 ** 3)} GiB; refusing to extract."
                 )
 
-        archive.extractall(dest_root)
+        for member in members:
+            if should_abort is not None and should_abort():
+                raise RuntimeError("Download cancelled")
+            archive.extract(member, dest_root)

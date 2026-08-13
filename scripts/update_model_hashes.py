@@ -115,10 +115,12 @@ def collect_whisper() -> Dict[str, dict]:
                 content_length,
             )
             continue
-        digests[f"{size}.pt"] = {
-            "sha256": sha256,
-            "size": size_bytes,
-        }
+        filename = Path(urlparse(url).path).name or f"{size}.pt"
+        entry = {"sha256": sha256, "size": size_bytes}
+        digests[filename] = entry
+        alias = f"{size}.pt"
+        if alias != filename:
+            digests[alias] = dict(entry)
     logger.info("Pinned %d Whisper models", len(digests))
     return digests
 

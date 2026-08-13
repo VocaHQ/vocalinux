@@ -50,6 +50,7 @@ from ..utils.vosk_model_info import (  # noqa: E402
     list_downloaded_vosk_models,
     vosk_model_dirname,
 )
+from ..utils.whisper_model_info import whisper_model_filenames  # noqa: E402
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
@@ -630,14 +631,24 @@ spinbutton {
 /* Model info card */
 .model-info-card {
     background-color: alpha(@theme_base_color, 0.8);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin: 8px 0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0 8px 0;
 }
 
 .model-info-title {
-    font-weight: bold;
-    font-size: 1.0em;
+    font-weight: 600;
+    font-size: 1.05em;
+}
+
+.model-info-subtitle {
+    font-size: 0.9em;
+    color: @theme_unfocused_fg_color;
+}
+
+.model-info-meta {
+    font-size: 0.9em;
+    margin-top: 2px;
 }
 
 /* Unused downloads: one collapsed row until expanded */
@@ -647,11 +658,6 @@ spinbutton {
 
 .unused-downloads-expander list {
     background-color: transparent;
-}
-
-.model-info-subtitle {
-    font-size: 0.9em;
-    color: @theme_unfocused_fg_color;
 }
 
 /* Tip styling */
@@ -797,25 +803,29 @@ def _whisper_model_files(model_name: str) -> list[str]:
     if model_name not in WHISPER_MODEL_INFO:
         return []
 
-    filename = f"{model_name}.pt"
-    candidates = [
-        os.path.join(_get_whisper_cache_dir(), filename),
-        os.path.join(os.path.expanduser("~/.cache/whisper"), filename),
-    ]
+    candidates = []
+    for filename in whisper_model_filenames(model_name):
+        candidates.extend(
+            [
+                os.path.join(_get_whisper_cache_dir(), filename),
+                os.path.join(os.path.expanduser("~/.cache/whisper"), filename),
+            ]
+        )
     allowed_parents = {
         os.path.realpath(_get_whisper_cache_dir()),
         os.path.realpath(os.path.expanduser("~/.cache/whisper")),
     }
+    allowed_names = set(whisper_model_filenames(model_name))
 
     found: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
-        if not os.path.isfile(candidate):
+        if os.path.islink(candidate) or not os.path.isfile(candidate):
             continue
         real = os.path.realpath(candidate)
         if real in seen or os.path.dirname(real) not in allowed_parents:
             continue
-        if os.path.basename(real) != filename:
+        if os.path.basename(real) not in allowed_names:
             continue
         seen.add(real)
         found.append(real)
@@ -824,13 +834,7 @@ def _whisper_model_files(model_name: str) -> list[str]:
 
 def _is_whisper_model_downloaded(model_name: str) -> bool:
     """Check if a Whisper model is downloaded."""
-    cache_dir = _get_whisper_cache_dir()
-    model_file = os.path.join(cache_dir, f"{model_name}.pt")
-    if os.path.exists(model_file):
-        return True
-    # Also check default whisper cache
-    default_cache = os.path.expanduser("~/.cache/whisper")
-    return os.path.exists(os.path.join(default_cache, f"{model_name}.pt"))
+    return bool(_whisper_model_files(model_name))
 
 
 def _list_downloaded_whisper_models() -> list[str]:
@@ -910,13 +914,13 @@ def _is_vosk_model_downloaded(size: str, language: str) -> bool:
 
     # Check user's local models directory
     user_model_path = os.path.join(MODELS_DIR, model_name)
-    if os.path.exists(user_model_path):
+    if os.path.exists(user_model_path) and not os.path.islink(user_model_path):
         return True
 
     # Check system-wide installation directories
     for system_dir in SYSTEM_MODELS_DIRS:
         system_model_path = os.path.join(system_dir, model_name)
-        if os.path.exists(system_model_path):
+        if os.path.exists(system_model_path) and not os.path.islink(system_model_path):
             return True
 
     return False
@@ -1225,6 +1229,7 @@ class ModelDownloadDialog(Gtk.Dialog):
         self.set_deletable(False)  # Prevent closing during download
 
         self.cancelled = False
+        self.succeeded = False
         self.engine = engine
         self.model_name = model_name
         self._stage = self._STAGE_CONNECTING
@@ -1249,11 +1254,12 @@ class ModelDownloadDialog(Gtk.Dialog):
         badge_title = Gtk.Label(label="Integrity-checked download", xalign=0)
         badge_title.get_style_context().add_class("secure-badge-label")
         badge_detail = Gtk.Label(
-            label="SHA256 pin verified against Vocalinux's trusted model registry",
+            label="Checking pinned SHA256…",
             xalign=0,
             wrap=True,
         )
         badge_detail.get_style_context().add_class("secure-badge-detail")
+        self.badge_detail = badge_detail
         badge_text.pack_start(badge_title, False, False, 0)
         badge_text.pack_start(badge_detail, False, False, 0)
         badge.pack_start(badge_text, True, True, 0)
@@ -1340,7 +1346,19 @@ class ModelDownloadDialog(Gtk.Dialog):
 
         lower = (status_text or "").lower()
 
-        if "looking up" in lower or "pinned digest found" in lower:
+        if "looking up" in lower:
+            self.badge_detail.set_text("Checking pinned SHA256…")
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Checking pinned SHA256…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Securing…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "pinned digest found" in lower:
+            self.badge_detail.set_text("SHA256 pin found in Vocalinux's model registry")
             self._set_stage(
                 self._STAGE_CONNECTING,
                 "Checking pinned SHA256…",
@@ -1375,6 +1393,7 @@ class ModelDownloadDialog(Gtk.Dialog):
 
         if "skipping hash check" in lower or "no pinned digest" in lower:
             self._integrity_verified = False
+            self.badge_detail.set_text("No pin for this file — hash was not checked")
             self._set_stage(
                 self._STAGE_DOWNLOADING,
                 "No pinned digest — hash check skipped",
@@ -1389,6 +1408,7 @@ class ModelDownloadDialog(Gtk.Dialog):
 
         if "hash matches" in lower or "integrity verified" in lower:
             self._integrity_verified = True
+            self.badge_detail.set_text("SHA256 matches the pinned digest")
             self._set_stage(
                 self._STAGE_MATCHED,
                 "Hash matches — integrity verified",
@@ -1433,6 +1453,7 @@ class ModelDownloadDialog(Gtk.Dialog):
         """Mark download as complete."""
         self._stop_pulsing()
         self.cancel_button.hide()
+        self.succeeded = bool(success) and not self.cancelled
 
         if success:
             if self._integrity_verified:
@@ -2487,7 +2508,7 @@ class SettingsDialog(Gtk.Dialog):
         self.content_box.pack_start(group, False, False, 0)
 
         # Model info card (shown below the group)
-        self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.model_info_card.get_style_context().add_class("model-info-card")
         self.model_info_card.set_margin_start(4)
         self.model_info_card.set_margin_end(4)
@@ -2500,8 +2521,13 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
+        self.model_info_meta = Gtk.Label(xalign=0, wrap=True, use_markup=True)
+        self.model_info_meta.get_style_context().add_class("model-info-meta")
+        self.model_info_card.pack_start(self.model_info_meta, False, False, 0)
+
         self.model_recommendation = Gtk.Label(xalign=0, wrap=True)
         self.model_recommendation.get_style_context().add_class("tip-label")
+        self.model_recommendation.set_no_show_all(True)
         self.model_info_card.pack_start(self.model_recommendation, False, False, 0)
 
         # Language warning (e.g. auto-detect, English-only models) lives in
@@ -2510,28 +2536,6 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.get_style_context().add_class("status-warning")
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
-
-        # Symbol legend as a muted caption inside the card
-        legend = Gtk.Label(
-            label="✓ Downloaded    ↓ Will download    ★ Recommended",
-            xalign=0,
-        )
-        legend.get_style_context().add_class("tip-label")
-        self.model_info_card.pack_start(legend, False, False, 0)
-
-        # Integrity note — downloads are SHA256-pinned
-        integrity_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        integrity_row.set_margin_top(4)
-        integrity_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.MENU)
-        integrity_label = Gtk.Label(
-            label="Downloads are SHA256-verified against pinned digests",
-            xalign=0,
-            wrap=True,
-        )
-        integrity_label.get_style_context().add_class("tip-label")
-        integrity_row.pack_start(integrity_icon, False, False, 0)
-        integrity_row.pack_start(integrity_label, True, True, 0)
-        self.model_info_card.pack_start(integrity_row, False, False, 0)
 
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
@@ -4847,6 +4851,7 @@ class SettingsDialog(Gtk.Dialog):
                 return
             model_name = model_id.lower()
 
+        extra_info = ""
         if engine == "whisper":
             if model_name not in WHISPER_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4854,7 +4859,6 @@ class SettingsDialog(Gtk.Dialog):
             info = WHISPER_MODEL_INFO[model_name]
             is_downloaded = _is_whisper_model_downloaded(model_name)
             recommended, reason = _get_recommended_whisper_model()
-            extra_info = f"Parameters: {info['params']}"
         elif engine == "whisper_cpp":
             if model_name not in WHISPERCPP_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4862,10 +4866,8 @@ class SettingsDialog(Gtk.Dialog):
             info = WHISPERCPP_MODEL_INFO[model_name]
             is_downloaded = is_whispercpp_model_downloaded(model_name)
             recommended, reason = self._get_recommended_whispercpp_model_for_language()
-            backend, backend_info = detect_compute_backend()
-            extra_info = (
-                f"Parameters: {info['params']} • Backend: {get_backend_display_name(backend)}"
-            )
+            backend, _backend_info = detect_compute_backend()
+            extra_info = get_backend_display_name(backend)
         elif engine == "vosk":
             if model_name not in VOSK_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4873,7 +4875,8 @@ class SettingsDialog(Gtk.Dialog):
             info = VOSK_MODEL_INFO[model_name]
             is_downloaded = _is_vosk_model_downloaded(model_name, self.language)
             recommended, reason = _get_recommended_vosk_model()
-            extra_info = f"Size: {_format_size(info['size_mb'])}"
+            if is_downloaded:
+                extra_info = _format_size(info["size_mb"])
         else:
             self.model_info_card.hide()
             return
@@ -4881,30 +4884,30 @@ class SettingsDialog(Gtk.Dialog):
         model_display_name = _model_display_name(model_name)
         recommended_display_name = _model_display_name(recommended)
 
-        # Update title
-        self.model_info_title.set_markup(f"<b>{model_display_name}</b>: {info['desc']}")
+        self.model_info_title.set_text(model_display_name)
+        self.model_info_subtitle.set_text(info["desc"])
 
-        # Update subtitle with status. "SHA256 verified" is only claimed after a
-        # download that actually ran the pin check — presence on disk alone is
-        # not proof the bytes were hashed (Bugbot: verified label without re-check).
+        bits = []
         if is_downloaded:
-            status = "<span foreground='#26a269'>✓ Downloaded and ready</span>"
+            bits.append("<span foreground='#26a269'>Ready</span>")
         else:
-            status = (
-                f"<span foreground='#e5a50a'>↓ Will download ~{_format_size(info['size_mb'])}</span>"
-                " · SHA256-pinned"
+            bits.append(
+                f"<span foreground='#e5a50a'>Downloads {_format_size(info['size_mb'])}</span>"
             )
-        self.model_info_subtitle.set_markup(f"{extra_info} • {status}")
+        if engine != "vosk":
+            bits.append(f"{info['params']}")
+        if extra_info:
+            bits.append(extra_info)
+        self.model_info_meta.set_markup(" · ".join(bits))
 
-        # Update recommendation
         if model_name == recommended:
-            self.model_recommendation.set_markup(
-                f"<span foreground='#26a269'>★ Recommended for your system ({reason})</span>"
-            )
+            self.model_recommendation.set_text("")
+            self.model_recommendation.hide()
         else:
             self.model_recommendation.set_markup(
-                f"Tip: <b>{recommended_display_name}</b> is recommended for your system ({reason})"
+                f"Recommended: <b>{recommended_display_name}</b> · {reason}"
             )
+            self.model_recommendation.show()
 
         self._update_model_picker_tooltips()
         self.model_info_card.show_all()
@@ -4970,6 +4973,7 @@ class SettingsDialog(Gtk.Dialog):
                             self._apply_settings_internal(settings, show_errors=False)
                             GLib.idle_add(download_dialog.set_complete, True, "")
                             GLib.idle_add(self._populate_model_options)
+                            GLib.idle_add(self._update_model_info)
                         finally:
                             GLib.source_remove(cancel_check_id)
                             self.speech_engine.set_download_progress_callback(None)
@@ -4994,18 +4998,20 @@ class SettingsDialog(Gtk.Dialog):
 
                 threading.Thread(target=download_and_apply, daemon=True).start()
                 download_dialog.run()
+                succeeded = download_dialog.succeeded
                 download_dialog.destroy()
-                return
+                self._populate_model_options()
+                self._update_model_info()
+                return succeeded
 
             logger.info(f"Auto-applying settings: {settings}")
-
-            self._save_selected_settings(settings)
 
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
             logger.info("Settings auto-applied successfully")
         except Exception as e:
             logger.error(f"Failed to auto-apply settings: {e}")
@@ -5275,10 +5281,12 @@ For now, the engine has been reverted to VOSK."""
 
             threading.Thread(target=download_and_apply, daemon=True).start()
             download_dialog.run()
+            succeeded = download_dialog.succeeded
             download_dialog.destroy()
 
             self._populate_model_options()
-            return True
+            self._update_model_info()
+            return succeeded
 
         return self._apply_settings_internal(settings)
 
@@ -5290,14 +5298,13 @@ For now, the engine has been reverted to VOSK."""
         created from that background thread.
         """
         try:
-            self._save_selected_settings(settings)
-
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
                 time.sleep(0.5)
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -84,7 +85,7 @@ class TestVerifyModelSha256:
         assert "PASS" in result.stdout
         assert "WARNING: No pinned SHA256" in result.stdout
 
-    def test_missing_registry_warns_but_does_not_block(self, tmp_path):
+    def test_missing_registry_blocks_install(self, tmp_path):
         model = tmp_path / "ggml-tiny.bin"
         model.write_bytes(b"weights")
 
@@ -95,8 +96,30 @@ class TestVerifyModelSha256:
             f"&& echo PASS || echo FAIL"
         )
 
+        assert "FAIL" in result.stdout
+        assert "registry missing" in result.stdout
+
+    def test_python_hashlib_fallback_when_sha256sum_missing(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"weights")
+        registry = _registry(
+            tmp_path,
+            {"whispercpp": {"ggml-tiny.bin": {"sha256": hashlib.sha256(b"weights").hexdigest()}}},
+        )
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        (bin_dir / "python3").symlink_to(sys.executable)
+
+        result = _run(
+            f"{_PRELUDE}\n{_source('lookup_model_sha256', 'verify_model_sha256')}\n"
+            f'export PATH="{bin_dir}"\n'
+            f'MODEL_HASH_REGISTRY="{registry}"\n'
+            f'verify_model_sha256 "{model}" whispercpp ggml-tiny.bin "tiny" '
+            f"&& echo PASS || echo FAIL"
+        )
+
         assert "PASS" in result.stdout
-        assert "WARNING: No pinned SHA256" in result.stdout
+        assert "SUCCESS: Verified tiny" in result.stdout
 
     def test_shipped_registry_pins_the_models_the_installer_downloads(self):
         """The installer looks these three up by name; they must exist."""

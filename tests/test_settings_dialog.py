@@ -58,17 +58,7 @@ def apply_settings_internal(dialog, settings: dict) -> bool:
     This is a test helper that mirrors the real implementation behavior.
     """
     try:
-        # 1. Update Config Manager
-        sr_settings = {k: v for k, v in settings.items() if not k.startswith("whispercpp_")}
-        advanced_settings = {k: v for k, v in settings.items() if k.startswith("whispercpp_")}
-
-        dialog.config_manager.update_speech_recognition_settings(sr_settings)
-        for key, value in advanced_settings.items():
-            dialog.config_manager.set("advanced", key, value)
-        dialog.config_manager.save_settings()
-
-        # 2. Reconfigure Speech Engine
-        # Stop engine before reconfiguring if it's running
+        # Reconfigure first so a failed download is not persisted.
         was_running = dialog.speech_engine.state != RecognitionState.IDLE
         if was_running:
             dialog.speech_engine.stop_recognition()
@@ -76,6 +66,14 @@ def apply_settings_internal(dialog, settings: dict) -> bool:
             time.sleep(0.01)  # Shortened for tests
 
         dialog.speech_engine.reconfigure(**settings)
+
+        sr_settings = {k: v for k, v in settings.items() if not k.startswith("whispercpp_")}
+        advanced_settings = {k: v for k, v in settings.items() if k.startswith("whispercpp_")}
+
+        dialog.config_manager.update_speech_recognition_settings(sr_settings)
+        for key, value in advanced_settings.items():
+            dialog.config_manager.set("advanced", key, value)
+        dialog.config_manager.save_settings()
         return True
     except Exception:
         return False
@@ -198,9 +196,9 @@ class TestSettingsDialog(unittest.TestCase):
         # Verify the result
         self.assertFalse(result)
 
-        # Verify mocks were called
-        mock_config_manager.update_speech_recognition_settings.assert_called_once()
-        mock_config_manager.save_settings.assert_called_once()
+        # Verify a failed reconfigure does not persist the selection
+        mock_config_manager.update_speech_recognition_settings.assert_not_called()
+        mock_config_manager.save_settings.assert_not_called()
         mock_speech_engine.reconfigure.assert_called_once()
 
 

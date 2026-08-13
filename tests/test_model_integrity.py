@@ -12,6 +12,7 @@ from vocalinux.utils import model_integrity
 from vocalinux.utils.model_integrity import (
     MAX_ARCHIVE_EXPANDED_BYTES,
     ModelIntegrityError,
+    ensure_local_model_file,
     ensure_trusted_model_url,
     get_pinned_digest,
     load_registry,
@@ -21,7 +22,7 @@ from vocalinux.utils.model_integrity import (
     verify_downloaded_model,
 )
 from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO, vosk_model_url
-from vocalinux.utils.whisper_model_info import WHISPER_MODEL_URLS
+from vocalinux.utils.whisper_model_info import WHISPER_MODEL_URLS, whisper_model_filename
 from vocalinux.utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO
 
 
@@ -73,6 +74,13 @@ class TestRegistryContents:
         for size, url in WHISPER_MODEL_URLS.items():
             url_digest = url.strip("/").split("/")[-2]
             assert get_pinned_digest("whisper", f"{size}.pt")["sha256"] == url_digest
+            assert (
+                get_pinned_digest("whisper", whisper_model_filename(size))["sha256"] == url_digest
+            )
+
+    def test_whisper_large_uses_upstream_filename(self):
+        assert whisper_model_filename("large") == "large-v3.pt"
+        assert whisper_model_filename("tiny") == "tiny.pt"
 
     def test_portuguese_medium_model_is_the_published_archive(self):
         """vosk-model-pt-0.4 404s; Alphacephei ships the Facebook-trained zip."""
@@ -231,6 +239,34 @@ class TestSafeExtractZip:
         assert not (tmp_path.parent / ".bashrc").exists()
         assert list(dest.iterdir()) == [], "nothing may be written when a member is rejected"
 
+    def test_sibling_paths_are_refused_when_root_is_constrained(self, tmp_path):
+        archive = self._write_zip(
+            tmp_path / "evil.zip", [("model/ok", "fine"), ("other/pwned", "nope")]
+        )
+        dest = tmp_path / "models"
+        dest.mkdir()
+
+        with pytest.raises(ModelIntegrityError, match="outside"):
+            safe_extract_zip(str(archive), str(dest), expected_root="model")
+
+        assert list(dest.iterdir()) == []
+
+    def test_extract_stops_when_cancelled(self, tmp_path):
+        archive = self._write_zip(
+            tmp_path / "model.zip",
+            [("model/a", "one"), ("model/b", "two"), ("model/c", "three")],
+        )
+        dest = tmp_path / "models"
+        dest.mkdir()
+        calls = {"n": 0}
+
+        def abort():
+            calls["n"] += 1
+            return calls["n"] > 1
+
+        with pytest.raises(RuntimeError, match="cancelled"):
+            safe_extract_zip(str(archive), str(dest), should_abort=abort)
+
     def test_absolute_paths_are_refused(self, tmp_path):
         archive = tmp_path / "abs.zip"
         with zipfile.ZipFile(archive, "w") as zf:
@@ -267,3 +303,19 @@ class TestSafeExtractZip:
     def test_real_cap_is_large_enough_for_the_biggest_model(self):
         """The largest VOSK archive unpacks to roughly 2 GB."""
         assert MAX_ARCHIVE_EXPANDED_BYTES > 4 * 1024**3
+
+
+class TestEnsureLocalModelFile:
+    def test_symlink_is_refused(self, tmp_path):
+        target = tmp_path / "real.bin"
+        target.write_bytes(b"weights")
+        link = tmp_path / "ggml-tiny.bin"
+        link.symlink_to(target)
+
+        with pytest.raises(ModelIntegrityError, match="symlink"):
+            ensure_local_model_file(str(link))
+
+    def test_regular_file_is_accepted(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"weights")
+        ensure_local_model_file(str(model))

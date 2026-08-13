@@ -23,6 +23,8 @@ from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
 from ..utils.model_integrity import (
     ModelIntegrityError,
+    ensure_local_model_dir,
+    ensure_local_model_file,
     ensure_trusted_model_url,
     get_pinned_digest,
     safe_extract_zip,
@@ -30,7 +32,7 @@ from ..utils.model_integrity import (
 )
 from ..utils.paths import models_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO, vosk_model_url
-from ..utils.whisper_model_info import WHISPER_MODEL_URLS
+from ..utils.whisper_model_info import WHISPER_MODEL_URLS, whisper_model_filename
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
@@ -1063,6 +1065,7 @@ class SpeechRecognitionManager:
                     # Update path after download
                     self.vosk_model_path = self._get_vosk_model_path()
             else:
+                ensure_local_model_dir(self.vosk_model_path)
                 # Check if this is a pre-installed model
                 if any(self.vosk_model_path.startswith(sys_dir) for sys_dir in SYSTEM_MODELS_DIRS):
                     logger.info(f"Using pre-installed VOSK model from {self.vosk_model_path}")
@@ -1106,14 +1109,26 @@ class SpeechRecognitionManager:
                 )
                 self.model_size = "base"
 
-            # Check if model is downloaded
+            # Check if model is downloaded. OpenAI's "large" checkpoint is
+            # large-v3.pt; rename a leftover large.pt so load_model finds it.
             whisper_cache_dir = os.path.join(MODELS_DIR, "whisper")
             os.makedirs(whisper_cache_dir, exist_ok=True)
-            model_file = os.path.join(whisper_cache_dir, f"{self.model_size}.pt")
+            filename = whisper_model_filename(self.model_size)
+            alias = f"{self.model_size}.pt"
             default_cache = os.path.expanduser("~/.cache/whisper")
-            default_model_file = os.path.join(default_cache, f"{self.model_size}.pt")
+            if filename != alias:
+                for cache in (whisper_cache_dir, default_cache):
+                    src = os.path.join(cache, alias)
+                    dst = os.path.join(cache, filename)
+                    if os.path.isfile(src) and not os.path.islink(src) and not os.path.exists(dst):
+                        os.rename(src, dst)
+            model_file = os.path.join(whisper_cache_dir, filename)
+            default_model_file = os.path.join(default_cache, filename)
 
             model_exists = os.path.exists(model_file) or os.path.exists(default_model_file)
+            existing = model_file if os.path.exists(model_file) else default_model_file
+            if model_exists:
+                ensure_local_model_file(existing)
 
             if not model_exists and self._defer_download:
                 logger.info(
@@ -1238,17 +1253,18 @@ class SpeechRecognitionManager:
             # Check if model is downloaded
             model_path = get_model_path(self.model_size)
 
-            if not os.path.exists(model_path):
-                if self._defer_download:
-                    logger.info(
-                        f"whisper.cpp model '{self.model_size}' not found at {model_path}. "
-                        "Will download when needed."
-                    )
-                    self._model_initialized = False
-                    return  # Don't block startup
-                else:
-                    logger.info(f"Downloading whisper.cpp '{self.model_size}' model...")
-                    self._download_whispercpp_model()
+            if os.path.exists(model_path):
+                ensure_local_model_file(model_path)
+            elif self._defer_download:
+                logger.info(
+                    f"whisper.cpp model '{self.model_size}' not found at {model_path}. "
+                    "Will download when needed."
+                )
+                self._model_initialized = False
+                return  # Don't block startup
+            else:
+                logger.info(f"Downloading whisper.cpp '{self.model_size}' model...")
+                self._download_whispercpp_model()
 
             self._load_whispercpp_model(model_path)
 
@@ -2133,14 +2149,14 @@ class SpeechRecognitionManager:
 
         # First, check user's local models directory
         user_model_path = os.path.join(MODELS_DIR, model_name)
-        if os.path.exists(user_model_path):
+        if os.path.exists(user_model_path) and not os.path.islink(user_model_path):
             logger.debug(f"Found user model at: {user_model_path}")
             return user_model_path
 
         # Then check system-wide installation directories
         for system_dir in SYSTEM_MODELS_DIRS:
             system_model_path = os.path.join(system_dir, model_name)
-            if os.path.exists(system_model_path):
+            if os.path.exists(system_model_path) and not os.path.islink(system_model_path):
                 logger.info(f"Found pre-installed model at: {system_model_path}")
                 return system_model_path
 
@@ -2276,7 +2292,12 @@ class SpeechRecognitionManager:
 
             # Extract the model
             logger.info(f"Extracting VOSK model to {model_path}")
-            safe_extract_zip(zip_path, MODELS_DIR)
+            safe_extract_zip(
+                zip_path,
+                MODELS_DIR,
+                expected_root=os.path.basename(model_path.rstrip(os.sep)),
+                should_abort=self._download_was_cancelled,
+            )
 
             # Remove the zip file
             os.remove(zip_path)
@@ -2320,7 +2341,8 @@ class SpeechRecognitionManager:
             raise ValueError(f"Unknown Whisper model size: {self.model_size}")
 
         ensure_trusted_model_url(url)
-        model_file = os.path.join(cache_dir, f"{self.model_size}.pt")
+        filename = whisper_model_filename(self.model_size)
+        model_file = os.path.join(cache_dir, filename)
         temp_file = model_file + ".tmp"
 
         os.makedirs(cache_dir, exist_ok=True)
@@ -2329,7 +2351,7 @@ class SpeechRecognitionManager:
         logger.info(f"Downloading from {url}")
 
         try:
-            self._announce_secured_download("whisper", f"{self.model_size}.pt")
+            self._announce_secured_download("whisper", filename)
             response = requests.get(url, stream=True, timeout=self._MODEL_DOWNLOAD_TIMEOUT)
             response.raise_for_status()
             self._reject_insecure_redirect(response)
@@ -2388,7 +2410,7 @@ class SpeechRecognitionManager:
 
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
-            self._verify_download_with_status(temp_file, "whisper", f"{self.model_size}.pt")
+            self._verify_download_with_status(temp_file, "whisper", filename)
             self._raise_if_download_cancelled()
 
             # Rename temp file to final
