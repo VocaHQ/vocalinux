@@ -254,8 +254,8 @@ MODEL_SPECIALIZATION_TOOLTIP = (
     "lower-memory quantized models, Turbo speed, or a legacy large model."
 )
 LANGUAGE_TOOLTIP = (
-    "Choose the language you dictate in. English-only model specializations limit this "
-    "list to English."
+    "Choose the language you dictate in. Type to search the list. English-only model "
+    "specializations limit this list to English."
 )
 
 
@@ -545,6 +545,7 @@ levelbar block.empty {
 
 /* Combo boxes and spin buttons */
 combobox button,
+combobox entry,
 spinbutton {
     min-height: 32px;
     border-radius: 6px;
@@ -676,6 +677,67 @@ def _prevent_scroll_on_hover(widget: Gtk.Widget):
 
     widget.connect("scroll-event", on_scroll)
     widget.set_can_focus(True)
+
+
+def _combo_text_matches_query(query: str, item_id: str, item_text: str) -> bool:
+    """Return whether a combo row matches a case-insensitive search query."""
+    needle = (query or "").strip().lower()
+    if not needle:
+        return True
+    return needle in (item_text or "").lower() or needle in (item_id or "").lower()
+
+
+def _resolve_combo_text_query(query: str, rows: list) -> Optional[str]:
+    """Return a unique matching combo id, preferring an exact name or id."""
+    needle = (query or "").strip()
+    if not needle:
+        return None
+    needle_l = needle.lower()
+    matches = []
+    for item_id, item_text in rows:
+        item_id = item_id or ""
+        item_text = item_text or ""
+        if item_text.lower() == needle_l or item_id.lower() == needle_l:
+            return item_id
+        if _combo_text_matches_query(needle, item_id, item_text):
+            matches.append(item_id)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _combo_text_rows(combo: Gtk.ComboBoxText) -> list:
+    """Return ``(id, display text)`` pairs from a ComboBoxText model."""
+    model = combo.get_model()
+    if not model:
+        return []
+    return [(row[0], row[1]) for row in model]
+
+
+def _combo_completion_match(completion, key, tree_iter, *_args) -> bool:
+    """GtkEntryCompletion match function for ComboBoxText id/text columns."""
+    model = completion.get_model()
+    if model is None:
+        return False
+    row = model[tree_iter]
+    return _combo_text_matches_query(key, row[0], row[1])
+
+
+def _attach_language_combo_search(combo: Gtk.ComboBoxText) -> None:
+    """Filter language choices as the user types in a ComboBoxText entry."""
+    entry = combo.get_child()
+    if entry is None:
+        return
+    entry.set_placeholder_text("Search languages…")
+    completion = Gtk.EntryCompletion()
+    completion.set_model(combo.get_model())
+    # ComboBoxText store: column 0 is id, column 1 is display text.
+    completion.set_text_column(1)
+    completion.set_inline_completion(False)
+    completion.set_popup_completion(True)
+    completion.set_minimum_key_length(1)
+    completion.set_match_func(_combo_completion_match)
+    entry.set_completion(completion)
 
 
 def _get_whisper_cache_dir() -> str:
@@ -2141,14 +2203,19 @@ class SettingsDialog(Gtk.Dialog):
         self.model_variant_row.set_tooltip_text(MODEL_SPECIALIZATION_TOOLTIP)
         group.add_row(self.model_variant_row)
 
-        # Language selection
-        self.language_combo = Gtk.ComboBoxText()
+        # Language selection (searchable: type to filter the 30+ language list)
+        self.language_combo = Gtk.ComboBoxText.new_with_entry()
         self.language_combo.set_size_request(_CONTROL_WIDTH, -1)
         self.language_combo.set_tooltip_text(LANGUAGE_TOOLTIP)
         _prevent_scroll_on_hover(self.language_combo)
+        _attach_language_combo_search(self.language_combo)
+        language_entry = self.language_combo.get_child()
+        if language_entry is not None:
+            language_entry.connect("activate", self._on_language_entry_activate)
+            language_entry.connect("focus-out-event", self._on_language_entry_focus_out)
         self.language_row = PreferenceRow(
             title="Language",
-            subtitle="Primary language for recognition",
+            subtitle="Type to search, or pick from the list",
             widget=self.language_combo,
         )
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
@@ -4188,6 +4255,36 @@ class SettingsDialog(Gtk.Dialog):
             self._auto_apply_settings()
         finally:
             self._processing_language_change = False
+
+    def _on_language_entry_activate(self, entry):
+        """Commit a unique typed match when Enter is pressed in the language entry."""
+        self._commit_or_restore_language_entry()
+
+    def _on_language_entry_focus_out(self, entry, event):
+        """Commit or restore the language after the entry loses focus."""
+        # Defer so a completion click can set the active id before we restore.
+        GLib.idle_add(self._commit_or_restore_language_entry)
+        return False
+
+    def _commit_or_restore_language_entry(self) -> bool:
+        """Resolve typed language text, or restore the last valid selection."""
+        if self._processing_language_change or self._initializing:
+            return False
+        if self.language_combo.get_active_id():
+            return False
+        entry = self.language_combo.get_child()
+        typed = entry.get_text() if entry is not None else ""
+        match_id = _resolve_combo_text_query(typed, _combo_text_rows(self.language_combo))
+        if match_id:
+            self.language_combo.set_active_id(match_id)
+            return False
+        # Restoring the same language should not re-apply settings.
+        self._processing_language_change = True
+        try:
+            self._set_combo_active_id_or_first(self.language_combo, self.language)
+        finally:
+            self._processing_language_change = False
+        return False
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
