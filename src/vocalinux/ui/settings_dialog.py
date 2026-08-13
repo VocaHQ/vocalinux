@@ -707,20 +707,23 @@ def _resolve_combo_text_query(query: str, rows: list) -> Optional[str]:
 
 
 def _combo_text_rows(combo: Gtk.ComboBoxText) -> list:
-    """Return ``(id, display text)`` pairs from a ComboBoxText model."""
+    """Return ``(id, display text)`` pairs from a ComboBoxText model.
+
+    Gtk.ComboBoxText stores display text in column 0 and the id in column 1.
+    """
     model = combo.get_model()
     if not model:
         return []
-    return [(row[0], row[1]) for row in model]
+    return [(row[1], row[0]) for row in model]
 
 
 def _combo_completion_match(completion, key, tree_iter, *_args) -> bool:
-    """GtkEntryCompletion match function for ComboBoxText id/text columns."""
+    """GtkEntryCompletion match function for ComboBoxText text/id columns."""
     model = completion.get_model()
     if model is None:
         return False
     row = model[tree_iter]
-    return _combo_text_matches_query(key, row[0], row[1])
+    return _combo_text_matches_query(key, row[1], row[0])
 
 
 def _attach_language_combo_search(combo: Gtk.ComboBoxText) -> None:
@@ -731,8 +734,8 @@ def _attach_language_combo_search(combo: Gtk.ComboBoxText) -> None:
     entry.set_placeholder_text("Search languages…")
     completion = Gtk.EntryCompletion()
     completion.set_model(combo.get_model())
-    # ComboBoxText store: column 0 is id, column 1 is display text.
-    completion.set_text_column(1)
+    # ComboBoxText store: column 0 is display text, column 1 is id.
+    completion.set_text_column(0)
     completion.set_inline_completion(False)
     completion.set_popup_completion(True)
     completion.set_minimum_key_length(1)

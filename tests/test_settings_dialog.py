@@ -764,6 +764,7 @@ class TestLanguageComboSearch(unittest.TestCase):
 
         self.assertIn("Gtk.ComboBoxText.new_with_entry()", source_code)
         self.assertIn("Gtk.EntryCompletion()", source_code)
+        self.assertIn("completion.set_text_column(0)", source_code)
         self.assertIn("Search languages…", source_code)
         self.assertIn("def _commit_or_restore_language_entry", source_code)
         self.assertIn("Type to search, or pick from the list", source_code)
