@@ -369,6 +369,8 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 
 ## Quick Update
 
+Vocalinux checks GitHub Releases in the background about every six hours (and shortly after startup). When a newer build is on your selected channel, the tray menu gains an **Update Available…** entry and Settings → About shows a green **New** badge; open that page for release notes and download links. Updates are not installed automatically — re-run the installer (or your package manager) as below.
+
 ### If You Installed via curl (Recommended)
 
 Simply re-run the installation command:

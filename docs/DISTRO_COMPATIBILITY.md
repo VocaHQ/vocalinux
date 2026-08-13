@@ -519,7 +519,7 @@ Use this checklist when testing on a new distribution:
 - [ ] Launch from terminal: `~/.local/bin/vocalinux-gui`
 - [ ] Launch from application menu
 - [ ] Verify tray icon appears
-- [ ] Test keyboard shortcuts (Ctrl+Alt+M by default)
+- [ ] Test keyboard shortcuts (Hold Right Alt by default)
 - [ ] Test audio recording
 - [ ] Test text injection in different applications
 - [ ] Test Settings dialog opens correctly

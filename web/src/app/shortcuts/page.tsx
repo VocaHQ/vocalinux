@@ -10,11 +10,19 @@ const shortcutCategories = [
     icon: Mic,
     iconColor: "text-primary",
     shortcuts: [
-      { keys: ["Ctrl", "Ctrl"], action: "Toggle mode: start/stop dictation", note: "Default mode" },
-      { keys: ["Hold Ctrl"], action: "Push-to-talk mode: speak while held", note: "Release to stop" },
+      {
+        keys: ["Hold Right Alt"],
+        action: "Push-to-talk (default): speak while held",
+        note: "Release to stop · Option on Mac-layout keyboards",
+      },
+      {
+        keys: ["Double-tap key"],
+        action: "Toggle mode: start/stop dictation",
+        note: "Optional — switch in Settings",
+      },
       {
         keys: ["Settings"],
-        action: "Choose Left Ctrl vs Right Ctrl in Settings for more control",
+        action: "Choose Left/Right Ctrl, Alt, or Shift in Settings",
         note: "Modifier key side selection",
       },
       {
@@ -144,8 +152,9 @@ export default function ShortcutsPage() {
           Keyboard Shortcuts & Voice Commands
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Master Vocalinux with keyboard shortcuts and voice commands. Use toggle mode (double-tap)
-          or push-to-talk mode, then apply voice commands for editing and formatting.
+          Master Vocalinux with keyboard shortcuts and voice commands. New installs default to
+          push-to-talk (hold Right Alt), or switch to toggle mode (double-tap), then apply voice
+          commands for editing and formatting.
         </p>
       </section>
 
@@ -155,19 +164,15 @@ export default function ShortcutsPage() {
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <kbd className="rounded-lg border border-border bg-muted px-3 py-1.5 font-mono text-sm font-semibold">
-              Ctrl
-            </kbd>
-            <span className="text-muted-foreground">+</span>
-            <kbd className="rounded-lg border border-border bg-muted px-3 py-1.5 font-mono text-sm font-semibold">
-              Ctrl
+              Hold Right Alt
             </kbd>
           </div>
           <span className="text-muted-foreground">→</span>
-          <span className="font-medium">Toggle Mode: Start/Stop Dictation</span>
+          <span className="font-medium">Push-to-Talk: Speak While Held</span>
         </div>
         <p className="mt-3 text-sm text-muted-foreground">
-          Push-to-talk mode is also available: hold your configured key to dictate, release to stop.
-          You can switch modes in Settings.
+          Right Alt is the Option key on Mac-layout keyboards. Toggle mode is also available:
+          double-tap your configured key to start/stop. You can switch modes and keys in Settings.
         </p>
         <p className="mt-2 text-sm text-muted-foreground">
           Voice commands can be enabled or disabled from Settings depending on your workflow.

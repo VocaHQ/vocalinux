@@ -212,8 +212,8 @@ class TestEvdevKeyboardBackendInit:
     def test_init_default_values(self):
         """Test initialization with default values."""
         backend = EvdevKeyboardBackend()
-        assert backend.shortcut == "ctrl+ctrl"
-        assert backend.mode == "toggle"
+        assert backend.shortcut == "right_alt+right_alt"
+        assert backend.mode == "push_to_talk"
         assert backend.active is False
         assert backend.devices == []
         assert backend.device_fds == []

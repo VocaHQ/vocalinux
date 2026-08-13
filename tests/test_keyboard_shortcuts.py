@@ -30,7 +30,7 @@ class TestKeyboardShortcuts(unittest.TestCase):
         self.mock_backend.key_press_callback = None
         self.mock_backend.key_release_callback = None
         self.mock_backend.start.return_value = True
-        self.mock_backend.shortcut = "ctrl+ctrl"
+        self.mock_backend.shortcut = "right_alt+right_alt"
         self.mock_create_backend.return_value = self.mock_backend
 
         # Create a new KSM for each test
@@ -54,12 +54,12 @@ class TestKeyboardShortcuts(unittest.TestCase):
         # Verify the shortcut was passed to create_backend
         # Verify the shortcut was passed to create_backend
         self.mock_create_backend.assert_called_with(
-            preferred_backend=None, shortcut="alt+alt", mode="toggle"
+            preferred_backend=None, shortcut="alt+alt", mode="push_to_talk"
         )
 
     def test_default_shortcut(self):
-        """Test that default shortcut is ctrl+ctrl."""
-        self.assertEqual(DEFAULT_SHORTCUT, "ctrl+ctrl")
+        """Test that default shortcut is right_alt+right_alt (hold Right Alt)."""
+        self.assertEqual(DEFAULT_SHORTCUT, "right_alt+right_alt")
 
     def test_supported_shortcuts(self):
         """Test that all expected shortcuts are supported."""
@@ -104,12 +104,12 @@ class TestKeyboardShortcuts(unittest.TestCase):
 
     def test_shortcut_property(self):
         """Test the shortcut property."""
-        self.assertEqual(self.ksm.shortcut, "ctrl+ctrl")
+        self.assertEqual(self.ksm.shortcut, "right_alt+right_alt")
 
     def test_shortcut_display_name_property(self):
         """Test the shortcut_display_name property."""
         display_name = self.ksm.shortcut_display_name
-        self.assertEqual(display_name, SHORTCUT_DISPLAY_NAMES["ctrl+ctrl"])
+        self.assertEqual(display_name, SHORTCUT_DISPLAY_NAMES["right_alt+right_alt"])
 
     def test_set_shortcut_valid(self):
         """Test setting a valid shortcut."""
@@ -124,7 +124,7 @@ class TestKeyboardShortcuts(unittest.TestCase):
         result = self.ksm.set_shortcut("invalid+shortcut")
 
         self.assertFalse(result)
-        self.assertEqual(self.ksm.shortcut, "ctrl+ctrl")  # Should remain unchanged
+        self.assertEqual(self.ksm.shortcut, "right_alt+right_alt")  # Should remain unchanged
 
     def test_restart_with_shortcut_valid(self):
         """Test restarting with a valid shortcut."""
@@ -148,7 +148,7 @@ class TestKeyboardShortcuts(unittest.TestCase):
         result = self.ksm.restart_with_shortcut("invalid+shortcut")
 
         self.assertFalse(result)
-        self.assertEqual(self.ksm.shortcut, "ctrl+ctrl")  # Should remain unchanged
+        self.assertEqual(self.ksm.shortcut, "right_alt+right_alt")  # Should remain unchanged
 
     def test_restart_with_shortcut_same_shortcut(self):
         """Test restarting with the same shortcut (no-op)."""
@@ -158,7 +158,7 @@ class TestKeyboardShortcuts(unittest.TestCase):
         self.mock_backend.stop.reset_mock()
         self.mock_backend.start.reset_mock()
 
-        result = self.ksm.restart_with_shortcut("ctrl+ctrl")
+        result = self.ksm.restart_with_shortcut("right_alt+right_alt")
 
         self.assertTrue(result)
         # Should not have stopped or started since shortcut is the same
@@ -179,6 +179,7 @@ class TestKeyboardShortcuts(unittest.TestCase):
     def test_restart_with_shortcut_preserves_callback(self):
         """Test that restart preserves the registered callback."""
         callback = MagicMock()
+        self.ksm.set_mode("toggle")
         self.mock_backend.double_tap_callback = callback
 
         # Start the listener
@@ -626,7 +627,7 @@ class TestBackendFactory(unittest.TestCase):
                     result = create_backend(shortcut="alt+alt")
 
                     self.assertIsNotNone(result)
-                    MockPynput.assert_called_once_with(shortcut="alt+alt", mode="toggle")
+                    MockPynput.assert_called_once_with(shortcut="alt+alt", mode="push_to_talk")
 
 
 class TestShortcutParseFunction(unittest.TestCase):

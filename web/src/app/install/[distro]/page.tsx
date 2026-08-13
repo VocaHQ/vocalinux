@@ -56,7 +56,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
     ],
     postInstallChecks: [
       "Run vocalinux and confirm the tray indicator appears.",
-      "Use toggle mode (double-tap Ctrl) or push-to-talk mode and verify dictation starts.",
+      "Hold Right Alt (Option) to dictate, or switch to toggle mode in Settings and verify dictation starts.",
       "Set language and model size in the settings panel for your workload.",
     ],
   },
@@ -264,7 +264,7 @@ export default async function DistroInstallPage({
       {
         "@type": "HowToStep",
         name: "Start dictating",
-        text: "Launch vocalinux and use toggle mode or push-to-talk mode to begin dictation.",
+        text: "Launch vocalinux and hold Right Alt (Option) to begin dictation, or choose toggle mode in Settings.",
         url: absoluteUrl(`/install/${distro}`),
       },
     ],

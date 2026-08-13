@@ -90,7 +90,9 @@ SHORTCUT_MODE_DISPLAY_NAMES = {
     },
 }
 
-DEFAULT_SHORTCUT = "ctrl+ctrl"
+# Hold Right Alt (Option on Mac-layout keyboards). Avoids double-tap Ctrl
+# colliding with common desktop/app shortcuts out of the box.
+DEFAULT_SHORTCUT = "right_alt+right_alt"
 
 # Supported shortcut modes
 SHORTCUT_MODES = {
@@ -98,7 +100,7 @@ SHORTCUT_MODES = {
     "push_to_talk": "Push-to-Talk (hold to speak)",
 }
 
-DEFAULT_SHORTCUT_MODE = "toggle"
+DEFAULT_SHORTCUT_MODE = "push_to_talk"
 
 
 # ---------------------------------------------------------------------------

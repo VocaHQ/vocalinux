@@ -162,7 +162,7 @@ const homeJsonLd = [
       {
         "@type": "HowToStep",
         name: "Start dictating",
-        text: "Launch vocalinux and use toggle or push-to-talk shortcut mode to begin dictation.",
+        text: "Launch vocalinux and hold Right Alt (Option) to begin dictation, or choose toggle mode in Settings.",
         url: "https://vocalinux.com/#install",
       },
     ],
@@ -497,7 +497,7 @@ export default function HomePage() {
                 ["Offline", "Local engines"],
                 ["Display", "X11 + Wayland"],
                 ["Default", "whisper.cpp"],
-                ["License", "GPL-3.0"],
+                ["License", "AGPL-3.0"],
               ].map(([k, v]) => (
                 <div key={k} className="min-w-0">
                   <dt className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
@@ -1012,7 +1012,7 @@ export default function HomePage() {
                   question: "Is Vocalinux free?",
                   answer: (
                     <>
-                      Yes. GPL-3.0, no premium tiers.{" "}
+                      Yes. AGPL-3.0, no premium tiers.{" "}
                       <Link href="/open-source/" className="font-medium text-primary hover:underline">
                         About the project
                       </Link>
@@ -1122,7 +1122,7 @@ export default function HomePage() {
         <div className="mx-auto max-w-2xl text-center">
           <h2 className="section-heading">Install and try a real dictation session</h2>
           <p className="section-lede mx-auto">
-            Free under GPL-3.0. Local engines by default. Star the repo if it
+            Free under AGPL-3.0. Local engines by default. Star the repo if it
             helps your setup.
           </p>
           <div className="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
@@ -1244,7 +1244,7 @@ export default function HomePage() {
           </div>
           <div className="flex flex-col items-center justify-between gap-4 border-t border-zinc-800 pt-8 sm:flex-row">
             <p className="text-sm text-zinc-400">
-              © {new Date().getFullYear()} Vocalinux. Open-source under GPL-3.0.
+              © {new Date().getFullYear()} Vocalinux. Open-source under AGPL-3.0.
             </p>
             <p className="flex items-center gap-1 text-sm text-zinc-400">
               Made with <Heart className="h-4 w-4 text-primary" /> by{" "}

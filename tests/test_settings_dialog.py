@@ -773,6 +773,19 @@ class TestSettingsSearch(unittest.TestCase):
         self.assertIn("self.sidebar_listbox.select_row(page.sidebar_row)", source)
         self.assertIn("self.settings_stack.set_visible_child_name(page.name)", source)
 
+    def test_failed_update_check_clears_pending_before_hiding_badge(self):
+        """Failed About lookup must clear _pending_update so search cannot revive New."""
+        source = self._settings_source()
+        fail_block = source.split("if release is None:")[1].split("return False")[0]
+        self.assertIn("self._pending_update = None", fail_block)
+        self.assertIn("self._set_about_update_badge(False)", fail_block)
+        # Search restore must follow _pending_update via the badge helper.
+        restore_body = source.split("def _restore_search_baseline")[1].split("def ")[0]
+        self.assertIn(
+            "self._set_about_update_badge(self._pending_update is not None)",
+            restore_body,
+        )
+
     @staticmethod
     def _settings_source():
         import os
@@ -845,6 +858,14 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn('close_button = Gtk.Button(label="Close")', footer_body)
         # No persistent bottom strip below the pages
         self.assertNotIn("def _build_status_strip(self):", self.source_code)
+
+    def test_close_button_separated_from_dictation_test(self):
+        """Close sits below a separator so it reads as dialog chrome (#651)."""
+        footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
+        after_test = footer_body.split("footer.pack_start(self.test_output_revealer")[1]
+        before_close = after_test.split('close_button = Gtk.Button(label="Close")')[0]
+        self.assertIn("Gtk.Separator", before_close)
+        self.assertIn("footer.pack_start(close_separator", before_close)
 
     def test_sidebar_icons_use_adwaita_names(self):
         """Sidebar icons must resolve in the stock Adwaita theme."""

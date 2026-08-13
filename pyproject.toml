@@ -7,7 +7,7 @@ name = "vocalinux"
 dynamic = ["version"]
 description = "A seamless voice dictation system for Linux"
 readme = "README.md"
-license = {text = "GPL-3.0"}
+license = {text = "AGPL-3.0"}
 authors = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
@@ -23,7 +23,7 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: GTK",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",

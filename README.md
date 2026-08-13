@@ -12,7 +12,7 @@
 [![Privacy: 100% offline](https://img.shields.io/badge/privacy-100%25%20offline-success)](https://github.com/jatinkrmalik/vocalinux#features)
 [![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/jatinkrmalik/vocalinux#features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 
 <!-- Identity + quality (medium) -->
@@ -34,7 +34,7 @@
 
 Linux has always punched above its weight, except when it comes to voice typing. Vocalinux fixes that.
 
-It's a free, GPLv3-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using fully offline speech recognition. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
+It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using fully offline speech recognition. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
 
 No internet required. No data leaves your machine. Just speak and type.
 
@@ -272,9 +272,9 @@ Or launch it from your application menu!
 
 ### Voice Dictation
 
-1. **Toggle mode**: Double-tap the shortcut key (default Ctrl) to start recording
+1. **Push-to-talk (default)**: Hold Right Alt (Option on Mac-layout keyboards) and speak
 2. Speak clearly into your microphone
-3. **Toggle mode**: Double-tap again (or pause speaking) to stop, or **Push-to-Talk mode**: release the key to stop
+3. **Release** the key to stop, or switch to **Toggle mode** in Settings (double-tap a key to start/stop)
 
 ### Voice Commands
 
@@ -489,7 +489,15 @@ If you find Vocalinux useful, please consider:
 
 ## 📜 License
 
-This project is licensed under the **GNU General Public License v3.0** - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **GNU Affero General Public License v3.0**
+([AGPL-3.0](LICENSE)), aligning with the other [VocaHQ](https://github.com/VocaHQ)
+distribution projects ([VocaMac](https://github.com/VocaHQ/vocamac),
+[VocaPhone](https://github.com/VocaHQ/vocaphone),
+[VocaServer](https://github.com/VocaHQ/vocaserver)).
+
+You may use, study, modify, and redistribute the software under AGPL-3.0. If you
+run a modified version as a network service, AGPL also requires that you make the
+corresponding source available.
 
 ## Star Chart
 

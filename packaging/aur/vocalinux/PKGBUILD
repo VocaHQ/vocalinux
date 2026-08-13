@@ -9,7 +9,7 @@ pkgrel=1
 pkgdesc="Free, offline voice dictation for Linux"
 arch=('any')
 url="https://github.com/jatinkrmalik/vocalinux"
-license=('GPL-3.0-only')
+license=('AGPL-3.0-only')
 depends=(
   'python>=3.9'
   'python-gobject'

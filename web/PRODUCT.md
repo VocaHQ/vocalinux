@@ -29,7 +29,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Engines: whisper.cpp (default), OpenAI Whisper, VOSK, optional Remote API
 - Speech languages: large selectable catalog (~33 + Auto-detect) shared by Settings/CLI; VOSK only lists languages with official Alphacephei models; remaining Whisper languages available via Auto-detect
 - Display servers: X11 and Wayland
-- Shortcut modes: toggle and push-to-talk; left/right modifier distinction; configurable modifier+key combos
+- Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
 - Optional voice commands (English-only); Silero neural VAD with amplitude fallback
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
@@ -37,7 +37,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
 - Packaging: install.sh, AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented)
 - No usage telemetry in the installed app
-- GPL-3.0; marketing version string is tracked in site package/version surfaces
+- AGPL-3.0; marketing version string is tracked in site package/version surfaces
 - Website is Next.js marketing + SEO guides (static export); languages page documents per-engine support honestly
 
 ## Brand commitments

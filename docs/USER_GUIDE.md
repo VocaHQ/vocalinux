@@ -32,9 +32,9 @@ Vocalinux supports login autostart using the standard Linux desktop-session mech
 
 1. **Launch the application**: Run `vocalinux` in a terminal or launch it from your application menu
 2. **Find the tray icon**: Look for the microphone icon in your system tray
-3. **Start voice typing**: Click the tray icon and select "Start Voice Typing", or use your configured shortcut mode (toggle or push-to-talk)
+3. **Start voice typing**: Hold Right Alt (Option) by default, or use the tray menu / your configured shortcut
 4. **Speak clearly**: As you speak, your words will be transcribed into the currently focused application
-5. **Stop voice typing**: Click the tray icon and select "Stop Voice Typing" when you're done, double-tap again in toggle mode, or release the key in push-to-talk mode
+5. **Stop voice typing**: Release the key in push-to-talk (default), double-tap again in toggle mode, or use the tray menu
 
 ### Dictation formatting
 
@@ -84,8 +84,8 @@ Vocalinux supports several commands that you can speak to control formatting:
 
 Vocalinux supports two shortcut modes for controlling voice typing:
 
-- **Toggle mode (default)**: Double-tap the shortcut key (Ctrl by default) to start/stop voice typing
-- **Push-to-talk mode**: Hold the configured shortcut key to speak, then release to stop
+- **Push-to-talk mode (default)**: Hold Right Alt (Option on Mac-layout keyboards) to speak, then release to stop
+- **Toggle mode**: Double-tap the configured shortcut key to start/stop voice typing
 - Configure mode and key in **Settings -> Shortcuts**
 
 ### Model Settings

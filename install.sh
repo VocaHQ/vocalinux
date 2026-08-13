@@ -2843,7 +2843,8 @@ install_whispercpp_with_gpu_support() {
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3019,7 +3020,8 @@ PY
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3072,7 +3074,8 @@ WHISPER_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3113,7 +3116,8 @@ FALLBACK_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3176,7 +3180,8 @@ VOSK_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,

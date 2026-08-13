@@ -83,7 +83,7 @@ const faqCategories = [
     questions: [
       {
         q: "How do I start and stop dictation?",
-        a: "By default, toggle mode uses double-tap Ctrl to start/stop dictation. You can also switch to push-to-talk mode (hold key to speak, release to stop) in Settings.",
+        a: "By default, hold Right Alt (Option on Mac-layout keyboards) to speak and release to stop (push-to-talk). You can switch to toggle mode (double-tap a key to start/stop) or change the key in Settings.",
       },
       {
         q: "Does Vocalinux work with Wayland?",

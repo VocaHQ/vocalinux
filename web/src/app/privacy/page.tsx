@@ -92,7 +92,7 @@ export default function PrivacyPage() {
           </div>
           <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
           <p className="text-sm text-muted-foreground">
-            Fully open source under GPL-3.0. Inspect the code yourself on GitHub. No hidden
+            Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. No hidden
             telemetry or data collection.
           </p>
         </article>
@@ -223,7 +223,7 @@ export default function PrivacyPage() {
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Source code available</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">Yes (GPL-3.0)</td>
+                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">Yes (AGPL-3.0)</td>
                 <td className="py-3 text-primary">No</td>
               </tr>
               <tr className="border-b border-border">

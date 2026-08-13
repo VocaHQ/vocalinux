@@ -38,7 +38,10 @@ from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, T
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
 from ..suspend_handler import SuspendHandler
 from ..utils.resource_manager import ResourceManager
+from ..utils.update_checker import ReleaseInfo
+from ..utils.update_monitor import UpdateMonitor
 from .config_manager import ConfigManager
+from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import SettingsDialog
 
@@ -105,8 +108,8 @@ class TrayIndicator:
         self._syncing_autostart_menu = False
 
         # Get configured shortcut and mode from config
-        shortcut = self.config_manager.get_str("shortcuts", "toggle_recognition", "ctrl+ctrl")
-        mode = self.config_manager.get_str("shortcuts", "mode", "toggle")
+        shortcut = self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
+        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
 
         # Initialize keyboard shortcut manager with configured shortcut and mode
         self.shortcut_manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
@@ -141,6 +144,12 @@ class TrayIndicator:
         self._init_icons()
         self._validate_resources()
 
+        # Must exist before _init_indicator: tests run idle_add synchronously.
+        self._pending_update: Optional[ReleaseInfo] = None
+        self._update_menu_item = None
+        self._settings_dialog: Optional[SettingsDialog] = None
+        self._logging_dialog: Optional[Gtk.Dialog] = None
+
         # Initialize the indicator (in the GTK main thread)
         GLib.idle_add(self._init_indicator)
 
@@ -166,6 +175,13 @@ class TrayIndicator:
         self._model_keepalive.start()
         self._model_keepalive.bump()
 
+        # Background GitHub update checks (tray menu + optional notification)
+        self._update_monitor = UpdateMonitor(
+            get_channel=self._get_update_channel,
+            on_result=self._on_update_check_result,
+        )
+        self._update_monitor.start()
+
         # Set up keyboard shortcuts with mode support
         self._setup_keyboard_shortcuts()
 
@@ -182,7 +198,7 @@ class TrayIndicator:
         self.shortcut_manager.register_release_callback(None)
 
         # Get configured mode from config
-        mode = self.config_manager.get_str("shortcuts", "mode", "toggle")
+        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
         logger.info(f"Setting up keyboard shortcuts with mode: {mode}")
 
         if mode == "toggle":
@@ -287,6 +303,12 @@ class TrayIndicator:
         self._add_menu_item("Settings", self._on_settings_clicked)
         self._add_menu_item("View Logs", self._on_logs_clicked)
         self._add_menu_separator()
+        # Hidden until a background check finds a newer release.
+        self._update_menu_item = self._add_menu_item(
+            "Update Available…", self._on_update_available_clicked
+        )
+        self._update_menu_item.set_no_show_all(True)
+        self._update_menu_item.hide()
         self._add_menu_item("About", self._on_about_clicked)
         self._add_menu_item("Quit", self._on_quit_clicked)
 
@@ -295,6 +317,11 @@ class TrayIndicator:
 
         # Show the menu
         self.menu.show_all()
+        # show_all() would re-show the update item; keep it hidden until needed.
+        if self._pending_update is None:
+            self._update_menu_item.hide()
+        else:
+            self._show_update_menu_item(self._pending_update)
 
         # Update the UI based on the initial state
         self._update_ui(RecognitionState.IDLE)
@@ -539,43 +566,146 @@ class TrayIndicator:
     def _on_settings_clicked(self, widget):
         """Handle click on the Settings menu item."""
         logger.debug("Settings clicked")
+        self._show_settings_page(None)
 
-        # Create the settings dialog
-        dialog = SettingsDialog(
-            parent=None,  # Or get the main window if available
-            config_manager=self.config_manager,
-            speech_engine=self.speech_engine,
-            shortcut_update_callback=self.update_shortcut,
-        )
+    def _show_settings_page(self, page_name: Optional[str]):
+        """Open settings, optionally focused on a specific sidebar page."""
+        dialog = self._settings_dialog
+        if dialog is not None:
+            try:
+                if page_name:
+                    dialog.navigate_to_page(page_name)
+                self._present_window(dialog)
+                return
+            except Exception:
+                logger.debug("Existing settings dialog is gone, opening a new one")
+                self._settings_dialog = None
 
-        # Connect to the response signal
-        dialog.connect("response", self._on_settings_dialog_response)
-
-        # Show the dialog (non-modal)
-        dialog.show()
-
-    def _show_settings_page(self, page_name: str):
-        """Open settings focused on a specific sidebar page."""
         dialog = SettingsDialog(
             parent=None,
             config_manager=self.config_manager,
             speech_engine=self.speech_engine,
             shortcut_update_callback=self.update_shortcut,
             initial_page=page_name,
+            pending_update=self._pending_update,
+            # About checks should refresh the tray item without re-notifying.
+            update_status_callback=lambda available, release: self._apply_update_status(
+                available, release, notify=False
+            ),
         )
         dialog.connect("response", self._on_settings_dialog_response)
+        dialog.connect("destroy", self._on_settings_dialog_destroyed)
+        self._settings_dialog = dialog
         dialog.show()
+
+    def _present_window(self, window: Gtk.Window) -> None:
+        """Raise an already-open window so a second tray click does not spawn another."""
+        window.deiconify()
+        window.present_with_time(Gtk.get_current_event_time())
+
+    def _on_settings_dialog_destroyed(self, dialog, *_args) -> None:
+        """Drop the settings dialog reference after it is closed."""
+        if self._settings_dialog is dialog:
+            self._settings_dialog = None
+
+    def _get_update_channel(self) -> str:
+        """Return the configured release channel for background update checks."""
+        return self.config_manager.get_str("updates", "channel", "stable")
+
+    def _on_update_check_result(self, available: bool, release: Optional[ReleaseInfo]):
+        """Handle a background update-check result (already on the GLib main loop)."""
+        self._apply_update_status(available, release, notify=True)
+
+    def _apply_update_status(
+        self,
+        available: bool,
+        release: Optional[ReleaseInfo],
+        *,
+        notify: bool,
+    ) -> None:
+        """Update tray pending-update state and optional desktop notification."""
+        self._pending_update = release if available else None
+        if not hasattr(self, "menu"):
+            return
+        if available and release is not None:
+            self._show_update_menu_item(release)
+            if notify:
+                self._maybe_notify_update(release)
+        elif self._update_menu_item is not None:
+            self._update_menu_item.hide()
+
+    def _show_update_menu_item(self, release: ReleaseInfo) -> None:
+        """Reveal the tray menu entry that opens About / release notes."""
+        if self._update_menu_item is None:
+            return
+        label = f"Update Available ({release.tag_name})…"
+        self._update_menu_item.set_label(label)
+        self._update_menu_item.set_tooltip_text(
+            "Open Settings → About for release notes and download links"
+        )
+        self._update_menu_item.show()
+
+    def _maybe_notify_update(self, release: ReleaseInfo) -> None:
+        """Send one desktop notification per new version when notifications are on."""
+        if not self.config_manager.get_bool("ui", "show_notifications", True):
+            return
+        if self.config_manager.get_str("updates", "last_notified_version", "") == release.tag_name:
+            return
+        # Persist only after notify-send is successfully spawned so a missing
+        # binary does not permanently suppress the alert for this version.
+        try:
+            import subprocess
+
+            subprocess.Popen(
+                [
+                    "notify-send",
+                    "-i",
+                    "software-update-available",
+                    "-a",
+                    "Vocalinux",
+                    "Vocalinux update available",
+                    f"{release.tag_name} is ready. Open the tray menu or "
+                    "Settings → About for release notes.",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (FileNotFoundError, OSError) as exc:
+            logger.debug("Could not show update notification: %s", exc)
+            return
+        self.config_manager.set("updates", "last_notified_version", release.tag_name)
+        self.config_manager.save_settings()
+
+    def _on_update_available_clicked(self, widget):
+        """Open Settings on About so the user can read notes and open the release."""
+        logger.debug("Update Available clicked")
+        self._show_settings_page("about")
 
     def _on_logs_clicked(self, widget):
         """Handle click on the View Logs menu item."""
         logger.debug("View Logs clicked")
 
+        dialog = self._logging_dialog
+        if dialog is not None:
+            try:
+                self._present_window(dialog)
+                return
+            except Exception:
+                logger.debug("Existing logs dialog is gone, opening a new one")
+                self._logging_dialog = None
+
         # Import here to avoid circular imports
         from .logging_dialog import LoggingDialog
 
-        # Create and show the logging dialog
         dialog = LoggingDialog(parent=None)
+        dialog.connect("destroy", self._on_logging_dialog_destroyed)
+        self._logging_dialog = dialog
         dialog.show()
+
+    def _on_logging_dialog_destroyed(self, dialog, *_args) -> None:
+        """Drop the logs dialog reference after it is closed."""
+        if self._logging_dialog is dialog:
+            self._logging_dialog = None
 
     def _on_settings_dialog_response(self, dialog, response):
         """Handle responses from the settings dialog."""
@@ -801,6 +931,9 @@ class TrayIndicator:
 
         if getattr(self, "_model_keepalive", None) is not None:
             self._model_keepalive.shutdown()
+
+        if getattr(self, "_update_monitor", None) is not None:
+            self._update_monitor.shutdown()
 
         self._cleanup_input_monitor()
 
