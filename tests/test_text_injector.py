@@ -2278,9 +2278,66 @@ class TestConfiguredBackend(unittest.TestCase):
             self.assertEqual(TextInjector._configured_backend(), "auto")
 
     def test_corrupt_config_does_not_raise(self):
-        """An unreadable config must not stop text injection from starting."""
+        """An unreadable config must not stop text injection from starting.
+
+        Only that it survives; that it also says so is
+        test_corrupt_config_warns_that_the_pin_is_ignored.
+        """
         with _fake_config("{not valid json"):
             self.assertEqual(TextInjector._configured_backend(), "auto")
+
+    def _warnings(self, logs):
+        return [line for line in logs.output if line.startswith("WARNING")]
+
+    def test_corrupt_config_warns_that_the_pin_is_ignored(self):
+        """A stray comma is the likely way to break a file people hand-edit.
+
+        Staying quiet leaves the user with autodetection and the silent IBus
+        miss they set the pin to avoid, with nothing to tell the two apart.
+        """
+        with _fake_config("{not valid json"):
+            with self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs:
+                self.assertEqual(TextInjector._configured_backend(), "auto")
+        warned = self._warnings(logs)
+        self.assertTrue(warned, f"corrupt config was not reported: {logs.output}")
+        self.assertIn("text_injection.backend", warned[0])
+
+    def test_config_that_is_not_an_object_warns(self):
+        """Valid JSON that is not an object reaches the lookup as a non-mapping.
+
+        Guarded rather than caught: the shape check is what lets the handler
+        stay narrow instead of swallowing every AttributeError raised below it.
+        """
+        with _fake_config("[1, 2, 3]"):
+            with self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs:
+                self.assertEqual(TextInjector._configured_backend(), "auto")
+        warned = self._warnings(logs)
+        self.assertTrue(warned, f"non-object config was not reported: {logs.output}")
+        self.assertIn("not a JSON object", warned[0])
+
+    def test_text_injection_section_that_is_not_an_object_warns(self):
+        """The top level being a mapping is not enough; the section can still not be.
+
+        Contrast with test_config_that_is_not_an_object_warns: a single
+        top-level check passes this input and then fails on the lookup.
+        """
+        with _fake_config({"text_injection": [1, 2]}):
+            with self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs:
+                self.assertEqual(TextInjector._configured_backend(), "auto")
+        warned = self._warnings(logs)
+        self.assertTrue(warned, f"non-object section was not reported: {logs.output}")
+        self.assertIn("text_injection section", warned[0])
+
+    def test_absent_config_is_not_reported(self):
+        """No config.json is the default install, not a problem to warn about."""
+        for config in (None, {}, {"text_injection": {}}):
+            with self.subTest(config=config):
+                # A mocked logger rather than assertLogs: the assertion is that
+                # nothing was logged, and assertLogs fails when nothing is.
+                with _fake_config(config):
+                    with patch("vocalinux.text_injection.text_injector.logger") as mock_logger:
+                        self.assertEqual(TextInjector._configured_backend(), "auto")
+                mock_logger.warning.assert_not_called()
 
 
 class TestBackendPreference(unittest.TestCase):

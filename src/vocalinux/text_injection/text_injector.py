@@ -541,27 +541,67 @@ class TextInjector:
 
         Read from disk rather than through ConfigManager to keep this package
         independent of the UI layer, matching ``_should_copy_to_clipboard()``.
-        """
-        try:
-            import json
 
-            config_path = os.path.join(config_dir(), "config.json")
-            if not os.path.exists(config_path):
-                return "auto"
+        A file that cannot be used is reported at warning level, not debug. This
+        setting is hand-edited, so a stray comma is a likely way to reach it, and
+        the symptom of staying quiet is the silent IBus miss the pin was set to
+        avoid -- indistinguishable from the pin simply not working.
+
+        The two shape checks below are what keep the lookup total, so the
+        handler only has to cover reading and parsing. Locating the file is
+        deliberately outside the handler: ``config_dir()`` resolving a path is
+        not a failure this should paper over, and computing it inside the
+        ``try`` only meant the handler could not name the file it failed on.
+        """
+        import json
+
+        config_path = os.path.join(config_dir(), "config.json")
+        if not os.path.exists(config_path):
+            return "auto"
+
+        try:
             with open(config_path, "r") as f:
                 config = json.load(f)
-            value = str(config.get("text_injection", {}).get("backend", "") or "").strip().lower()
-            if not value or value == "auto":
-                return "auto"
-            if value in TextInjector._SELECTABLE_BACKENDS:
-                return value
+        except (OSError, ValueError) as e:
+            # Corrupt or unreadable must not block startup, but must not pass
+            # unmentioned either: the user edited this file expecting an effect.
             logger.warning(
-                "Ignoring unknown text_injection.backend=%r (expected %s)",
-                value,
-                TextInjector._accepted_backends_help(),
+                "Ignoring text_injection.backend: could not read %s (%s). "
+                "Continuing with backend autodetection.",
+                config_path,
+                e,
             )
-        except Exception as e:  # unreadable/corrupt config must not block startup
-            logger.debug(f"Could not read text_injection.backend setting: {e}")
+            return "auto"
+
+        if not isinstance(config, dict):
+            logger.warning(
+                "Ignoring text_injection.backend: %s is not a JSON object. "
+                "Continuing with backend autodetection.",
+                config_path,
+            )
+            return "auto"
+
+        section = config.get("text_injection")
+        if section is None:
+            return "auto"
+        if not isinstance(section, dict):
+            logger.warning(
+                "Ignoring text_injection.backend: the text_injection section of %s "
+                "is not a JSON object. Continuing with backend autodetection.",
+                config_path,
+            )
+            return "auto"
+
+        value = str(section.get("backend", "") or "").strip().lower()
+        if not value or value == "auto":
+            return "auto"
+        if value in TextInjector._SELECTABLE_BACKENDS:
+            return value
+        logger.warning(
+            "Ignoring unknown text_injection.backend=%r (expected %s)",
+            value,
+            TextInjector._accepted_backends_help(),
+        )
         return "auto"
 
     @staticmethod
