@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 from enum import Enum
-from typing import Optional  # noqa: F401
+from typing import Optional, Tuple  # noqa: F401
 
 from ..utils.paths import config_dir
 from .ibus_engine import (
@@ -104,6 +104,7 @@ class TextInjector:
             wayland_mode: Force Wayland compatibility mode
         """
         self._ibus_injector: Optional[IBusTextInjector] = None
+        self._backend_pin: Tuple[str, Optional[str]] = ("auto", None)
         self.environment = self._detect_environment()
         self._session_environment = self.environment
         self._ibus_ready = False
@@ -165,6 +166,11 @@ class TextInjector:
                 self._test_xdotool_fallback()
             except Exception as e:
                 logger.error(f"XWayland fallback test failed: {e}")
+
+        # Last, so it sees the final selection: _check_dependencies() returns early
+        # on two paths, and the wtype probe above can still demote a pin that was
+        # honoured up to that point.
+        self._warn_if_pin_not_honoured(*self._backend_pin)
 
     def stop(self) -> None:
         """
@@ -559,8 +565,14 @@ class TextInjector:
         return "auto"
 
     @staticmethod
-    def _backend_preference() -> str:
-        """The backend to pin, from the environment or config.json.
+    def _resolve_backend_pin() -> Tuple[str, Optional[str]]:
+        """The pinned backend and where it came from, resolved once.
+
+        Returns ``(backend, source)``. ``source`` names the setting that won, or
+        is ``None`` when nothing pinned anything. Both come from a single pass so
+        callers that report the source cannot disagree with the value actually
+        used -- and so the environment is parsed once per construction, which
+        also means a malformed value is reported once rather than per caller.
 
         ``VOCALINUX_FORCE_BACKEND`` wins so a backend can still be A/B-tested
         for one run without editing (or permanently changing) the user's config.
@@ -569,20 +581,78 @@ class TextInjector:
         """
         env = TextInjector._forced_backend_setting()
         if env is not None:
-            return env
-        return TextInjector._configured_backend()
+            return env, "VOCALINUX_FORCE_BACKEND"
+        configured = TextInjector._configured_backend()
+        if configured != "auto":
+            return configured, "text_injection.backend"
+        return "auto", None
+
+    @staticmethod
+    def _backend_preference() -> str:
+        """The backend to pin, from the environment or config.json."""
+        return TextInjector._resolve_backend_pin()[0]
+
+    def _resolved_backend(self) -> Optional[str]:
+        """The backend actually in effect, read back from final state.
+
+        Deliberately reads ``environment`` before ``wayland_tool``: the wtype
+        probe in ``__init__`` demotes a failed wtype to ``WAYLAND_XDOTOOL``
+        without clearing ``wayland_tool``, and ``inject_text()`` follows
+        ``environment``. Reading the tool first would report wtype while
+        injection actually goes through XWayland.
+        """
+        if self._ibus_injector is not None or self.environment in (
+            DesktopEnvironment.X11_IBUS,
+            DesktopEnvironment.WAYLAND_IBUS,
+        ):
+            return "ibus"
+        if self.environment in (
+            DesktopEnvironment.X11,
+            DesktopEnvironment.WAYLAND_XDOTOOL,
+        ):
+            return "xdotool"
+        return getattr(self, "wayland_tool", None)
+
+    def _warn_if_pin_not_honoured(self, pinned: str, source: Optional[str]) -> None:
+        """Say so when the backend in use is not the one that was pinned.
+
+        One comparison rather than a check per cause: a missing binary, a value
+        that does not apply to this session type, IBus being unavailable and the
+        wtype probe demoting to XWayland all end the same way -- something other
+        than the pinned backend is doing the typing -- and a new cause is covered
+        without adding a branch here.
+
+        This is a startup diagnostic, not a live invariant. It runs once, at the
+        end of construction. ``_try_recover_from_fallback()`` can later switch
+        the tool when ydotoold appears mid-session, so a pin that becomes
+        honoured (or stops being honoured) after startup is not reported again.
+        """
+        if not source or pinned == "auto":
+            return
+        resolved = self._resolved_backend()
+        # Unreachable today (every path either sets a backend or raises before
+        # construction finishes), but guarded so a future path cannot render
+        # "using None instead" at a user.
+        if resolved is None or resolved == pinned:
+            return
+
+        if pinned in self._SELECTABLE_BACKENDS and pinned != "ibus":
+            reason = f" ({pinned} is not installed)" if not shutil.which(pinned) else ""
+        elif pinned == "ibus" and not is_ibus_available():
+            reason = " (IBus support is not available)"
+        else:
+            reason = ""
+        logger.warning(
+            "%s=%s was not applied%s; using %s instead.", source, pinned, reason, resolved
+        )
 
     def _check_dependencies(self):
         """Check for the required tools for text injection."""
         ibus_requested = False
-        forced = self._backend_preference()
-        if forced != "auto":
-            source = (
-                "VOCALINUX_FORCE_BACKEND"
-                if self._forced_backend() != "auto"
-                else "text_injection.backend"
-            )
-            logger.info("%s=%s: overriding backend autodetection", source, forced)
+        forced, pin_source = self._resolve_backend_pin()
+        self._backend_pin = (forced, pin_source)
+        if pin_source and forced != "auto":
+            logger.info("%s=%s: overriding backend autodetection", pin_source, forced)
 
         # Prefer IBus on both X11 and Wayland - it sends Unicode directly,
         # bypassing keyboard layout issues entirely
@@ -680,11 +750,11 @@ class TextInjector:
             # ydotool for native Wayland typing; wtype needs a Wayland socket.
             if forced == "wtype" and wtype_available:
                 self.wayland_tool = "wtype"
-                logger.info("VOCALINUX_FORCE_BACKEND=wtype: using wtype for Wayland injection")
+                logger.info("%s=wtype: using wtype for Wayland injection", pin_source)
             elif forced == "ydotool" and ydotool_available:
                 self._ensure_ydotoold()
                 self.wayland_tool = "ydotool"
-                logger.info("VOCALINUX_FORCE_BACKEND=ydotool: using ydotool for Wayland injection")
+                logger.info("%s=ydotool: using ydotool for Wayland injection", pin_source)
             elif ydotool_available and self._ensure_ydotoold():
                 self.wayland_tool = "ydotool"
                 logger.info("Using ydotool for Wayland text injection")
