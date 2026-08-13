@@ -522,18 +522,26 @@ class TestCheckDependencies(unittest.TestCase):
             ),
             patch("vocalinux.text_injection.text_injector.IBusTextInjector"),
             patch.object(TextInjector, "_start_ibus_initialization", lambda s: None),
+            # shutil.which is patched to claim every tool exists, so without this
+            # the real probe shells out to a ydotoold that may not be installed
+            # and logs a warning that has nothing to do with the pin.
+            patch.object(TextInjector, "_ensure_ydotoold", lambda s: True),
             patch("shutil.which", side_effect=lambda c: f"/usr/bin/{c}"),
             self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs,
         ):
             obj._check_dependencies()
         return logs.output, len(calls)
 
+    @staticmethod
+    def _silent_failure_warnings(output):
+        """Only the denylist-bypass warning, not every warning the run emits."""
+        return [line for line in output if "may silently do nothing" in line]
+
     def test_ibus_pin_on_unbridged_compositor_warns_about_silent_failure(self):
         """Pinning ibus can re-enable the silent drop the denylist exists to stop."""
         output, _ = self._run_ibus_pin(bridges=False)
-        warnings = [line for line in output if line.startswith("WARNING")]
         self.assertTrue(
-            any("may silently do nothing" in line for line in warnings),
+            self._silent_failure_warnings(output),
             f"expected a silent-failure warning, got: {output}",
         )
 
@@ -545,8 +553,8 @@ class TestCheckDependencies(unittest.TestCase):
         """
         output, _ = self._run_ibus_pin(bridges=True)
         self.assertFalse(
-            [line for line in output if line.startswith("WARNING")],
-            f"expected no warning on a bridged compositor, got: {output}",
+            self._silent_failure_warnings(output),
+            f"expected no silent-failure warning on a bridged compositor, got: {output}",
         )
 
     def test_ibus_pin_never_double_checks_the_compositor(self):
@@ -565,7 +573,7 @@ class TestCheckDependencies(unittest.TestCase):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         output, _ = self._run_ibus_pin(bridges=True, env=DesktopEnvironment.X11)
-        self.assertFalse([line for line in output if line.startswith("WARNING")])
+        self.assertFalse(self._silent_failure_warnings(output))
 
     def _run_with_pin(
         self, pin, tools, ibus_available=True, bridges=True, env=None, ydotoold_ready=None
