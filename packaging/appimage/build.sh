@@ -31,10 +31,32 @@ case "$ARCH" in
   *) echo "Unsupported architecture: $ARCH (need x86_64 or aarch64)" >&2; exit 1 ;;
 esac
 
+# Seed typelibs Vocalinux imports directly, plus transitive GIR deps that Gtk
+# and AppIndicator require (xlib, Dbusmenu, …). Without those, GI falls back to
+# the builder's baked-in path (/usr/lib/x86_64-linux-gnu/girepository-1.0), which
+# does not exist on Fedora/openSUSE/Arch — startup then reports "missing GTK3".
 TYPELIBS=(
   Gtk-3.0 Gdk-3.0 GdkX11-3.0 GdkPixbuf-2.0 GLib-2.0 GObject-2.0 Gio-2.0
-  Pango-1.0 PangoCairo-1.0 cairo-1.0 HarfBuzz-0.0 Atk-1.0 freetype2-2.0
-  AppIndicator3-0.1 AyatanaAppIndicator3-0.1 Notify-0.7 IBus-1.0 Rsvg-2.0
+  GModule-2.0 Pango-1.0 PangoCairo-1.0 cairo-1.0 HarfBuzz-0.0 Atk-1.0
+  freetype2-2.0 fontconfig-2.0 xlib-2.0
+  AyatanaAppIndicator3-0.1 AyatanaAppindicator3-0.1 AppIndicator3-0.1
+  Dbusmenu-0.4 Notify-0.7 IBus-1.0 Rsvg-2.0
+)
+
+# Runtime only needs one tray stack (same order as tray_indicator.py). Prefer
+# Ayatana; accept the rare lowercase typelib; legacy AppIndicator3 last.
+INDICATOR_TYPELIBS=(
+  AyatanaAppIndicator3-0.1 AyatanaAppindicator3-0.1 AppIndicator3-0.1
+)
+
+# Shared libs loaded via GI at runtime (not linked into python3), so
+# linuxdeploy will not discover them from -e python3 alone.
+GI_RUNTIME_LIBS=(
+  libappindicator3.so.1
+  libayatana-appindicator3.so.1
+  libdbusmenu-glib.so.4
+  libdbusmenu-gtk3.so.4
+  libnotify.so.4
 )
 
 WORKDIR="$(mktemp -d)"
@@ -89,18 +111,76 @@ install -Dm644 "$REPO_ROOT/resources/icons/scalable/vocalinux.svg" \
 
 copy_typelibs() {
   local dest="$1"
+  local require_all="${2:-0}"
   mkdir -p "$dest"
-  local typelib found
+  local typelib found missing=() indicator_found=0
   for typelib in "${TYPELIBS[@]}"; do
-    found="$(find /usr/lib -name "${typelib}.typelib" 2>/dev/null | head -1 || true)"
+    found="$(find /usr/lib /usr/lib64 -name "${typelib}.typelib" 2>/dev/null | head -1 || true)"
     if [ -n "$found" ]; then
       cp "$found" "$dest/"
+      case " ${INDICATOR_TYPELIBS[*]} " in
+        *" ${typelib} "*) indicator_found=1 ;;
+      esac
+    else
+      missing+=("$typelib")
+    fi
+  done
+
+  # Tray indicator typelibs are alternates; drop them from the hard-fail list
+  # when at least one copied successfully.
+  local hard_missing=()
+  for typelib in "${missing[@]}"; do
+    case " ${INDICATOR_TYPELIBS[*]} " in
+      *" ${typelib} "*)
+        if [ "$indicator_found" -eq 0 ]; then
+          hard_missing+=("$typelib")
+        fi
+        ;;
+      *)
+        hard_missing+=("$typelib")
+        ;;
+    esac
+  done
+
+  if [ "$require_all" = "1" ] && [ "${#hard_missing[@]}" -gt 0 ]; then
+    echo "Missing required typelibs on the build host:" >&2
+    printf '  - %s\n' "${hard_missing[@]}" >&2
+    if [ "$indicator_found" -eq 0 ]; then
+      echo "Need at least one of: ${INDICATOR_TYPELIBS[*]}" >&2
+    fi
+    echo "Install the matching gir1.2-* packages and retry." >&2
+    exit 1
+  fi
+  if [ "${#missing[@]}" -gt 0 ]; then
+    echo "Warning: typelibs not found on build host (optional/alternate): ${missing[*]}" >&2
+  fi
+}
+
+copy_gi_runtime_libs() {
+  local dest="$1"
+  mkdir -p "$dest"
+  local lib found
+  for lib in "${GI_RUNTIME_LIBS[@]}"; do
+    found="$(find /usr/lib /usr/lib64 -name "$lib" 2>/dev/null | head -1 || true)"
+    if [ -n "$found" ]; then
+      cp -aL "$found" "$dest/"
+      # Prefer versioned real files so linuxdeploy can resolve the SONAME.
+      if [ -L "$found" ]; then
+        real="$(readlink -f "$found")"
+        cp -aL "$real" "$dest/" 2>/dev/null || true
+      fi
+      echo "  bundled $lib from $found"
+    else
+      echo "Warning: $lib not found on build host (tray/notify may need host libs)" >&2
     fi
   done
 }
 
 echo "== Copying GObject-Introspection typelibs (not handled by linuxdeploy-plugin-gtk) =="
-copy_typelibs "$APPDIR/usr/lib/girepository-1.0"
+copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 0
+
+echo "== Copying GI runtime shared libraries (AppIndicator/Notify) =="
+copy_gi_runtime_libs "$APPDIR/usr/lib"
 
 echo "== Writing AppRun =="
 cat > "$APPDIR/AppRun" << 'APPRUN'
@@ -126,9 +206,10 @@ export DEPLOY_GTK_VERSION=3
   -d "$APPDIR/usr/share/applications/vocalinux.desktop" \
   -i "$APPDIR/usr/share/icons/hicolor/scalable/apps/vocalinux.svg"
 
-echo "== Pruning typelibs back to the allowlist (linuxdeploy copies the host set) =="
-rm -rf "$APPDIR/usr/lib/girepository-1.0"
-copy_typelibs "$APPDIR/usr/lib/girepository-1.0"
+# linuxdeploy copies the host's full typelib set; keep those extras (transitive
+# GIR deps vary by distro) and re-assert our required seed on top.
+echo "== Ensuring required typelibs are present (keeping linuxdeploy extras) =="
+copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 1
 
 echo "== Patching linuxdeploy GTK AppRun hook (Wayland-friendly GDK backend) =="
 GTK_HOOK="$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
@@ -164,6 +245,51 @@ print(f"Patched {path}")
 PY
 else
   echo "Warning: GTK AppRun hook not found at $GTK_HOOK" >&2
+fi
+
+echo "== Smoke-testing GI imports without host typelibs =="
+# Catch the openSUSE/Fedora class of failure before packaging: Gtk needs xlib
+# (and friends) from the bundle when the host GI search path is not Debian's.
+smoke_gi_imports() {
+  local appdir="$1"
+  unshare --user --mount --map-root-user bash -c "
+    set -euo pipefail
+    mkdir -p /tmp/vocalinux-empty-gi
+    for d in /usr/lib/x86_64-linux-gnu/girepository-1.0 \
+             /usr/lib/aarch64-linux-gnu/girepository-1.0 \
+             /usr/lib/girepository-1.0 \
+             /usr/lib64/girepository-1.0; do
+      if [ -d \"\$d\" ]; then
+        mount --bind /tmp/vocalinux-empty-gi \"\$d\"
+      fi
+    done
+    export PYTHONHOME='$appdir/usr'
+    export PYTHONPATH='$appdir/usr/lib/python3:$appdir/usr/lib/python3/site-packages'
+    export GI_TYPELIB_PATH='$appdir/usr/lib/girepository-1.0'
+    export LD_LIBRARY_PATH='$appdir/usr/lib'
+    '$appdir/usr/bin/python3' - <<'PY'
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk  # noqa: F401
+try:
+    gi.require_version('AyatanaAppIndicator3', '0.1')
+    from gi.repository import AyatanaAppIndicator3  # noqa: F401
+except (ImportError, ValueError):
+    try:
+        gi.require_version('AyatanaAppindicator3', '0.1')
+        from gi.repository import AyatanaAppindicator3  # noqa: F401
+    except (ImportError, ValueError):
+        gi.require_version('AppIndicator3', '0.1')
+        from gi.repository import AppIndicator3  # noqa: F401
+print('GI smoke OK')
+PY
+  "
+}
+
+if command -v unshare >/dev/null 2>&1 && unshare --user --mount --map-root-user true 2>/dev/null; then
+  smoke_gi_imports "$APPDIR"
+else
+  echo "Warning: unshare unavailable; skipping isolated GI smoke test" >&2
 fi
 
 echo "== Packaging AppImage =="

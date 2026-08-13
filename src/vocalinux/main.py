@@ -104,27 +104,39 @@ def check_dependencies():
 
         gi.require_version("Gtk", "3.0")
         from gi.repository import Gtk  # noqa: F401
-    except (ImportError, ValueError):
+    except (ImportError, ValueError) as e:
+        logger.debug("GTK import failed: %s", e)
         missing_system_deps.append(
             "GTK3 (install with: sudo apt install python3-gi gir1.2-gtk-3.0)"
         )
 
-    # Check for AppIndicator3 / Ayatana AppIndicator
+    # Prefer Ayatana AppIndicator (maintained; registers on KDE Plasma).
+    # Match tray_indicator.py: canonical Ayatana, rare lowercase typelib, then
+    # legacy Canonical AppIndicator3 as last resort.
     try:
         import gi
 
-        gi.require_version("AppIndicator3", "0.1")
-        from gi.repository import AppIndicator3  # noqa: F401
-    except (ImportError, ValueError):
+        gi.require_version("AyatanaAppIndicator3", "0.1")
+        from gi.repository import AyatanaAppIndicator3  # noqa: F401
+    except (ImportError, ValueError) as e:
+        logger.debug("AyatanaAppIndicator3 import failed: %s", e)
         try:
             import gi
 
-            gi.require_version("AyatanaAppIndicator3", "0.1")
-            from gi.repository import AyatanaAppIndicator3  # noqa: F401
-        except (ImportError, ValueError):
-            missing_system_deps.append(
-                "AppIndicator3/AyatanaAppIndicator3 - Required for system tray icon"
-            )
+            gi.require_version("AyatanaAppindicator3", "0.1")
+            from gi.repository import AyatanaAppindicator3  # noqa: F401
+        except (ImportError, ValueError) as e2:
+            logger.debug("AyatanaAppindicator3 import failed: %s", e2)
+            try:
+                import gi
+
+                gi.require_version("AppIndicator3", "0.1")
+                from gi.repository import AppIndicator3  # noqa: F401
+            except (ImportError, ValueError) as e3:
+                logger.debug("AppIndicator3 import failed: %s", e3)
+                missing_system_deps.append(
+                    "AppIndicator3/AyatanaAppIndicator3 - Required for system tray icon"
+                )
 
     # Keyboard backends are optional and checked lazily by the shortcut manager.
     # Importing pynput can fail on Wayland/X-less sessions even when installed.
@@ -152,10 +164,10 @@ def check_dependencies():
             logger.error("  Then log out and back in. Ubuntu includes this by default.")
             logger.error("")
             logger.error("  Fedora:")
-            logger.error("    sudo dnf install python3-gobject gtk3 libappindicator-gtk3")
+            logger.error("    sudo dnf install python3-gobject gtk3 libayatana-appindicator-gtk3")
             logger.error("")
             logger.error("  Arch Linux:")
-            logger.error("    sudo pacman -S python-gobject gtk3 libappindicator")
+            logger.error("    sudo pacman -S python-gobject gtk3 libayatana-appindicator")
             logger.error("")
             logger.error("  openSUSE Tumbleweed:")
             logger.error(

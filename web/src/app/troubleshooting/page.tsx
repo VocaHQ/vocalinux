@@ -153,7 +153,7 @@ const troubleshootingItems = [
       "Ensure your desktop environment supports system trays (GNOME requires an AppIndicator extension)",
       "Install the GNOME AppIndicator extension (pick your distro): Debian/Ubuntu: sudo apt install gnome-shell-extension-appindicator — Fedora: sudo dnf install gnome-shell-extension-appindicator — Arch: sudo pacman -S gnome-shell-extension-appindicator",
       "Then enable the extension (Extensions app, or: gnome-extensions enable appindicatorsupport@rgcjonas.gmail.com) and log out/in if needed",
-      "Debian/Ubuntu only — also check ayatana: sudo apt install libayatana-appindicator3-1 (Fedora already pulls libappindicator-gtk3 via the installer)",
+      "Debian/Ubuntu: sudo apt install libayatana-appindicator3-1 — Fedora: sudo dnf install libayatana-appindicator-gtk3 — Arch: sudo pacman -S libayatana-appindicator (legacy libappindicator-gtk3 can leave the icon missing on KDE)",
       "Try launching from terminal to see any errors: vocalinux --debug",
     ],
   },

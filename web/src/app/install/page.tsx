@@ -114,8 +114,7 @@ export default function InstallGuidesPage() {
             .
           </li>
           <li>
-            Use toggle mode (double-tap Ctrl) or push-to-talk to control
-            dictation in any text field.
+            Hold Right Alt (Option) to dictate, or switch to toggle mode in Settings.
           </li>
           <li>
             Choose whisper.cpp for speed, Whisper for maximum model

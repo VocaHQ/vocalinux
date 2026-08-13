@@ -80,7 +80,7 @@ Use this checklist when testing Vocalinux on a new Linux distribution.
 - [ ] Check for startup errors
 - [ ] Verify the application starts
 - [ ] Check that tray icon appears
-- [ ] Verify keyboard shortcut works (Ctrl+Alt+M by default)
+- [ ] Verify keyboard shortcut works (Hold Right Alt by default)
 
 ### Launch from Application Menu
 - [ ] Launch from desktop environment's application menu
@@ -98,7 +98,7 @@ Use this checklist when testing Vocalinux on a new Linux distribution.
 - [ ] "Quit" menu item exits the application
 
 #### Keyboard Shortcuts
-- [ ] Default shortcut (Ctrl+Alt+M) toggles recording
+- [ ] Default shortcut (Hold Right Alt) starts push-to-talk recording
 - [ ] Custom shortcuts can be configured in Settings
 - [ ] Shortcut works in different applications (terminal, text editor, browser)
 

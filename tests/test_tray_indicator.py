@@ -8,6 +8,7 @@ The tests focus on the business logic of the TrayIndicator class.
 import os
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
@@ -263,6 +264,54 @@ class TestTrayIndicator(unittest.TestCase):
             mock_dialog_class.assert_called_once()
             mock_dialog_instance.show.assert_called_once()
 
+    def test_settings_reuses_open_dialog(self):
+        """A second Settings click focuses the existing window instead of duplicating it."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_settings_clicked(None)
+
+            mock_dialog_class.assert_called_once()
+            mock_dialog_instance.show.assert_called_once()
+            mock_dialog_instance.present_with_time.assert_called_once()
+            mock_dialog_instance.navigate_to_page.assert_not_called()
+
+    def test_about_reuses_open_settings_dialog(self):
+        """About focuses the existing Settings window and switches to the About page."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_about_clicked(None)
+
+            mock_dialog_class.assert_called_once()
+            mock_dialog_instance.navigate_to_page.assert_called_once_with("about")
+            mock_dialog_instance.present_with_time.assert_called_once()
+
+    def test_settings_opens_new_dialog_after_close(self):
+        """Closing Settings allows a later click to open a fresh dialog."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        first_dialog = MagicMock()
+        second_dialog = MagicMock()
+        mock_dialog_class = MagicMock(side_effect=[first_dialog, second_dialog])
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_settings_dialog_destroyed(first_dialog)
+            self.tray_indicator._on_settings_clicked(None)
+
+            self.assertEqual(mock_dialog_class.call_count, 2)
+            second_dialog.show.assert_called_once()
+            first_dialog.present_with_time.assert_not_called()
+
     def test_about_dialog(self):
         """Test About opens Settings focused on the About page."""
         with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
@@ -275,6 +324,156 @@ class TestTrayIndicator(unittest.TestCase):
             kwargs = mock_dialog_class.call_args.kwargs
             self.assertEqual(kwargs.get("initial_page"), "about")
             mock_dialog_instance.show.assert_called_once()
+
+    def test_update_available_shows_menu_and_opens_about(self):
+        """Background update check reveals tray item and opens About with release."""
+        from vocalinux.utils.update_checker import ReleaseInfo
+
+        release = ReleaseInfo(
+            tag_name="v0.99.0",
+            version="0.99.0",
+            name="v0.99.0",
+            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.99.0",
+            body="Notes",
+            published_at="2026-08-06T00:00:00Z",
+            prerelease=False,
+            channel="stable",
+        )
+        menu_item = MagicMock()
+        self.tray_indicator._update_menu_item = menu_item
+        self.tray_indicator.menu = MagicMock()
+        # Pin the mock config used by the tray (avoids any patch indirection).
+        self.tray_indicator.config_manager = self.mock_config_manager
+        self.mock_config_manager.get_bool.side_effect = None
+        self.mock_config_manager.get_bool.return_value = True
+        self.mock_config_manager.get_str.side_effect = None
+        self.mock_config_manager.get_str.return_value = ""
+        recorded_sets = []
+
+        def _record_set(section, key, value):
+            recorded_sets.append((section, key, value))
+            return True
+
+        self.mock_config_manager.set.side_effect = _record_set
+
+        with patch("subprocess.Popen") as mock_popen:
+            self.tray_indicator._on_update_check_result(True, release)
+
+        menu_item.set_label.assert_called()
+        self.assertIn("v0.99.0", menu_item.set_label.call_args[0][0])
+        menu_item.show.assert_called_once()
+        mock_popen.assert_called_once()
+        self.assertEqual(self.tray_indicator._pending_update, release)
+        self.assertIn(("updates", "last_notified_version", "v0.99.0"), recorded_sets)
+        self.mock_config_manager.save_settings.assert_called()
+
+        with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
+            mock_dialog_instance = MagicMock()
+            mock_dialog_class.return_value = mock_dialog_instance
+            self.tray_indicator._on_update_available_clicked(None)
+            kwargs = mock_dialog_class.call_args.kwargs
+            self.assertEqual(kwargs.get("initial_page"), "about")
+            self.assertEqual(kwargs.get("pending_update"), release)
+            self.assertIn("update_status_callback", kwargs)
+
+    def test_update_notification_not_marked_when_notify_send_missing(self):
+        """Do not record last_notified_version if notify-send cannot be spawned."""
+        from vocalinux.utils.update_checker import ReleaseInfo
+
+        release = ReleaseInfo(
+            tag_name="v0.99.0",
+            version="0.99.0",
+            name="v0.99.0",
+            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.99.0",
+            body="Notes",
+            published_at="2026-08-06T00:00:00Z",
+            prerelease=False,
+            channel="stable",
+        )
+        self.tray_indicator.config_manager = self.mock_config_manager
+        self.tray_indicator._update_menu_item = MagicMock()
+        self.tray_indicator.menu = MagicMock()
+        self.mock_config_manager.get_bool.side_effect = None
+        self.mock_config_manager.get_bool.return_value = True
+        self.mock_config_manager.get_str.side_effect = None
+        self.mock_config_manager.get_str.return_value = ""
+        recorded_sets = []
+        self.mock_config_manager.set.side_effect = (
+            lambda section, key, value: recorded_sets.append((section, key, value)) or True
+        )
+
+        with patch("subprocess.Popen", side_effect=FileNotFoundError("notify-send")):
+            self.tray_indicator._maybe_notify_update(release)
+
+        self.assertEqual(recorded_sets, [])
+
+    def test_update_notification_persists_after_successful_spawn(self):
+        """Record last_notified_version only after notify-send is spawned."""
+        from vocalinux.utils.update_checker import ReleaseInfo
+
+        release = ReleaseInfo(
+            tag_name="v0.99.0",
+            version="0.99.0",
+            name="v0.99.0",
+            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.99.0",
+            body="Notes",
+            published_at="2026-08-06T00:00:00Z",
+            prerelease=False,
+            channel="stable",
+        )
+        self.tray_indicator.config_manager = self.mock_config_manager
+        self.mock_config_manager.get_bool.side_effect = None
+        self.mock_config_manager.get_bool.return_value = True
+        self.mock_config_manager.get_str.side_effect = None
+        self.mock_config_manager.get_str.return_value = ""
+        recorded_sets = []
+        self.mock_config_manager.set.side_effect = (
+            lambda section, key, value: recorded_sets.append((section, key, value)) or True
+        )
+
+        with patch("subprocess.Popen") as mock_popen:
+            self.tray_indicator._maybe_notify_update(release)
+
+        mock_popen.assert_called_once()
+        self.assertEqual(recorded_sets, [("updates", "last_notified_version", "v0.99.0")])
+        self.mock_config_manager.save_settings.assert_called()
+
+    def test_update_cleared_hides_menu_item(self):
+        """Clearing an update hides the tray menu entry."""
+        menu_item = MagicMock()
+        self.tray_indicator._update_menu_item = menu_item
+        self.tray_indicator.menu = MagicMock()
+        self.tray_indicator._pending_update = MagicMock()
+
+        self.tray_indicator._on_update_check_result(False, None)
+
+        self.assertIsNone(self.tray_indicator._pending_update)
+        menu_item.hide.assert_called_once()
+
+    def test_about_callback_syncs_tray_without_notification(self):
+        """About-page checks update the tray item but do not re-notify."""
+        from vocalinux.utils.update_checker import ReleaseInfo
+
+        release = ReleaseInfo(
+            tag_name="v0.99.0",
+            version="0.99.0",
+            name="v0.99.0",
+            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.99.0",
+            body="Notes",
+            published_at="2026-08-06T00:00:00Z",
+            prerelease=False,
+            channel="stable",
+        )
+        menu_item = MagicMock()
+        self.tray_indicator._update_menu_item = menu_item
+        self.tray_indicator.menu = MagicMock()
+
+        with patch.object(self.tray_indicator, "_maybe_notify_update") as mock_notify:
+            self.tray_indicator._apply_update_status(True, release, notify=False)
+
+        menu_item.show.assert_called_once()
+        mock_notify.assert_not_called()
+        self.assertEqual(self.tray_indicator._pending_update, release)
 
     def test_validate_resources_missing_resources_dir(self):
         """Test validation when resources directory doesn't exist."""
@@ -407,6 +606,22 @@ class TestTrayIndicator(unittest.TestCase):
 
             mock_logging_dialog_class.assert_called_once_with(parent=None)
             mock_dialog.show.assert_called_once()
+            mock_dialog.connect.assert_called()
+
+    def test_logs_reuses_open_dialog(self):
+        """A second View Logs click focuses the existing window instead of duplicating it."""
+        mock_dialog = MagicMock()
+        mock_logging_dialog_class = MagicMock(return_value=mock_dialog)
+        mock_logging_module = MagicMock()
+        mock_logging_module.LoggingDialog = mock_logging_dialog_class
+
+        with patch.dict(sys.modules, {"vocalinux.ui.logging_dialog": mock_logging_module}):
+            self.tray_indicator._on_logs_clicked(None)
+            self.tray_indicator._on_logs_clicked(None)
+
+            mock_logging_dialog_class.assert_called_once_with(parent=None)
+            mock_dialog.show.assert_called_once()
+            mock_dialog.present_with_time.assert_called_once()
 
     def test_on_settings_dialog_response_close(self):
         """Test settings dialog response handler for CLOSE."""
@@ -634,3 +849,74 @@ class TestTrayIndicatorFlatpakIcons(unittest.TestCase):
         self.assertEqual(names["default"], "com.vocalinux.Vocalinux-microphone-off")
         self.assertEqual(names["active"], "com.vocalinux.Vocalinux-microphone")
         self.assertEqual(names["processing"], "com.vocalinux.Vocalinux-microphone-process")
+
+
+class TestAppIndicatorImportFallback(unittest.TestCase):
+    """The AppIndicator/Ayatana import chain must prefer the actively
+    maintained Ayatana fork and only fall back to the legacy Canonical
+    AppIndicator3 typelib when no Ayatana variant is installed.
+
+    Unlike the rest of this file, these tests use a bare object instead of
+    a MagicMock for ``gi.repository``: MagicMock auto-creates any attribute
+    on access, so it can never reproduce the real ``ImportError`` a missing
+    typelib raises, which is exactly the behavior this fallback chain
+    depends on.
+    """
+
+    def setUp(self):
+        self.addCleanup(self._restore_gi_repository)
+        self._clear_tray_indicator_module()
+
+    def tearDown(self):
+        self._clear_tray_indicator_module()
+
+    @staticmethod
+    def _clear_tray_indicator_module():
+        for mod in [k for k in list(sys.modules.keys()) if "tray_indicator" in k]:
+            del sys.modules[mod]
+
+    @staticmethod
+    def _restore_gi_repository():
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = mock_gi_repository
+
+    @staticmethod
+    def _fake_repository(**appindicator_attrs):
+        """A gi.repository stand-in exposing only the given AppIndicator
+        symbols, so importing anything else raises a real ImportError."""
+        repo = SimpleNamespace(
+            Gtk=mock_gtk,
+            GLib=mock_glib,
+            GObject=mock_gobject,
+            GdkPixbuf=mock_gdkpixbuf,
+            Gio=MagicMock(name="Gio"),
+            **appindicator_attrs,
+        )
+        return repo
+
+    def test_prefers_ayatana_appindicator3_when_available(self):
+        sentinel = MagicMock(name="AyatanaAppIndicator3")
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = self._fake_repository(AyatanaAppIndicator3=sentinel)
+
+        import vocalinux.ui.tray_indicator as tray
+
+        self.assertIs(tray.AppIndicator3, sentinel)
+
+    def test_falls_back_to_lowercase_ayatana_variant(self):
+        sentinel = MagicMock(name="AyatanaAppindicator3")
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = self._fake_repository(AyatanaAppindicator3=sentinel)
+
+        import vocalinux.ui.tray_indicator as tray
+
+        self.assertIs(tray.AppIndicator3, sentinel)
+
+    def test_falls_back_to_legacy_appindicator3_when_no_ayatana_available(self):
+        sentinel = MagicMock(name="AppIndicator3")
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = self._fake_repository(AppIndicator3=sentinel)
+
+        import vocalinux.ui.tray_indicator as tray
+
+        self.assertIs(tray.AppIndicator3, sentinel)

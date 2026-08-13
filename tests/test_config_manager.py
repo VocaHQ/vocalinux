@@ -434,6 +434,52 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config_manager.config["shortcuts"]["toggle_recognition"], "alt+alt")
         self.assertEqual(config_manager.config["shortcuts"]["mode"], "push_to_talk")
 
+    def test_existing_ctrl_toggle_config_preserved(self):
+        """Existing installs keep saved Ctrl toggle defaults after default change."""
+        test_config = {
+            "shortcuts": {
+                "toggle_recognition": "ctrl+ctrl",
+                "mode": "toggle",
+            }
+        }
+
+        with open(self.temp_config_file, "w") as f:
+            json.dump(test_config, f)
+
+        config_manager = ConfigManager()
+        self.assertEqual(config_manager.config["shortcuts"]["toggle_recognition"], "ctrl+ctrl")
+        self.assertEqual(config_manager.config["shortcuts"]["mode"], "toggle")
+
+    def test_legacy_shortcut_without_mode_stays_toggle(self):
+        """Installer/old seeds with only toggle_recognition keep toggle mode."""
+        test_config = {
+            "shortcuts": {
+                "toggle_recognition": "ctrl+ctrl",
+            }
+        }
+
+        with open(self.temp_config_file, "w") as f:
+            json.dump(test_config, f)
+
+        config_manager = ConfigManager()
+        self.assertEqual(config_manager.config["shortcuts"]["toggle_recognition"], "ctrl+ctrl")
+        self.assertEqual(config_manager.config["shortcuts"]["mode"], "toggle")
+
+    def test_legacy_config_without_shortcuts_section_keeps_ctrl_toggle(self):
+        """Configs that never stored shortcuts keep legacy ctrl+ctrl toggle."""
+        test_config = {
+            "speech_recognition": {
+                "engine": "whisper_cpp",
+            }
+        }
+
+        with open(self.temp_config_file, "w") as f:
+            json.dump(test_config, f)
+
+        config_manager = ConfigManager()
+        self.assertEqual(config_manager.config["shortcuts"]["toggle_recognition"], "ctrl+ctrl")
+        self.assertEqual(config_manager.config["shortcuts"]["mode"], "toggle")
+
     def test_sound_effects_enabled_by_default(self):
         """Test that sound effects are enabled by default."""
         config_manager = ConfigManager()

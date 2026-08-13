@@ -112,6 +112,10 @@ class TextInjector:
         self._state_lock = threading.Lock()
         self._clipboard_tool_health = {}
         self._clipboard_timeout = 0.35
+        # Overlapping ydotool pastes: bump generation to cancel stale restores;
+        # target keeps the original pre-injection clipboard across the window.
+        self._clipboard_restore_generation = 0
+        self._clipboard_restore_target: Optional[str] = None
 
         # Force Wayland mode if requested
         if wayland_mode and self.environment == DesktopEnvironment.X11:
@@ -895,6 +899,58 @@ class TextInjector:
         )
         return False
 
+    def _clear_clipboard(self) -> bool:
+        """
+        Clear the clipboard using the first available tool.
+
+        Each backend has its own clear command:
+        - wl-copy: ``--clear`` flag removes the selection entirely
+        - xsel:    ``--clear`` flag
+        - xclip:   pipe empty input (creates an empty text offer)
+
+        Returns True if the clipboard was cleared successfully.
+        """
+        for tool in self._get_clipboard_tools():
+            if self._clipboard_tool_health.get(tool) is False:
+                continue
+            try:
+                if tool == "wl-copy":
+                    subprocess.run(
+                        ["wl-copy", "--clear"],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=self._clipboard_timeout,
+                    )
+                    return True
+                if tool == "xsel":
+                    subprocess.run(
+                        ["xsel", "--clipboard", "--clear"],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=self._clipboard_timeout,
+                    )
+                    return True
+                if tool == "xclip":
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard"],
+                        input="",
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        text=True,
+                        timeout=self._clipboard_timeout,
+                    )
+                    return True
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                FileNotFoundError,
+            ):
+                continue
+        return False
+
     def _should_copy_to_clipboard(self) -> bool:
         """Check if copy-to-clipboard setting is enabled."""
         try:
@@ -1204,29 +1260,87 @@ class TextInjector:
         except UnicodeEncodeError:
             return True
 
+    def _read_clipboard(self) -> Optional[str]:
+        """
+        Read clipboard text only.
+
+        Requests text MIME types so image/file data is not treated as text.
+        Returns the text, "" if a tool reports a verifiably empty clipboard,
+        or None if unreadable as text (non-text data, no tool, or error).
+        """
+        host_is_wayland = (
+            self._session_environment == DesktopEnvironment.WAYLAND
+            or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+            or bool(os.environ.get("WAYLAND_DISPLAY"))
+        )
+
+        # Bare `xclip -o` / `wl-paste` can return raw image bytes with rc=0.
+        candidates: list[list[str]] = []
+        if host_is_wayland and shutil.which("wl-paste"):
+            candidates.append(["wl-paste", "--no-newline", "--type", "text"])
+        if shutil.which("xclip"):
+            candidates.append(["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"])
+        if shutil.which("xsel"):
+            candidates.append(["xsel", "--clipboard", "--output"])
+        if not host_is_wayland and shutil.which("wl-paste"):
+            candidates.append(["wl-paste", "--no-newline", "--type", "text"])
+
+        saw_empty = False
+        for cmd in candidates:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=1.0,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                if result.returncode == 0:
+                    return result.stdout
+                # Only wl-paste's empty signal — xclip "target not available"
+                # also means image/file. Keep scanning other backends.
+                if "nothing is copied" in (result.stderr or "").lower():
+                    saw_empty = True
+            except (subprocess.TimeoutExpired, OSError, UnicodeDecodeError):
+                continue
+
+        return "" if saw_empty else None
+
     def _inject_via_clipboard_paste(self, text: str) -> bool:
         """
         Inject text by copying to clipboard and simulating Ctrl+V with ydotool.
 
-        This is the workaround for ydotool's inability to type non-ASCII/Unicode
-        characters (accented letters, CJK, etc.) because ydotool simulates evdev
-        key events which only cover US ASCII keycodes. See issue #362.
-
-        Note: this temporarily overwrites the user's clipboard. There is no
-        attempt to restore it afterward, as there is no safe race-free way to
-        do so on Wayland.
+        Workaround for ydotool's US-ASCII-only key events (see issue #362).
+        Saves the previous clipboard and restores it after a short delay.
+        Overlapping pastes share one restore target (pre-first-injection content)
+        and a generation counter so stale restore threads exit.
 
         Returns:
             True if successful, False otherwise
         """
         logger.debug(
             "Using clipboard-paste injection for non-ASCII text "
-            "(user clipboard will be temporarily overwritten)"
+            "(saving clipboard to restore after paste)"
+        )
+
+        # Inherit a pending restore target so a second paste in the delay window
+        # still restores the original clipboard, not intermediate dictated text.
+        with self._state_lock:
+            pending_target = self._clipboard_restore_target
+        previous_clipboard = (
+            pending_target if pending_target is not None else self._read_clipboard()
         )
 
         if not self._copy_to_clipboard(text):
             logger.warning("Could not copy text to clipboard for paste injection")
             return False
+
+        # Clipboard is overwritten — cancel any in-flight restore and take ownership.
+        with self._state_lock:
+            self._clipboard_restore_generation += 1
+            generation = self._clipboard_restore_generation
 
         # Simulate Ctrl+V via ydotool. Syntax differs by major version:
         # - 0.1.x (distro packages): named sequences, e.g. ctrl+v
@@ -1243,10 +1357,50 @@ class TextInjector:
                 timeout=3,
             )
             logger.info(f"Text injected via clipboard paste: '{text[:20]}...' ({len(text)} chars)")
-            return True
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(f"Paste simulation failed: {e}")
+            with self._state_lock:
+                if generation == self._clipboard_restore_generation:
+                    self._clipboard_restore_target = None
+            if previous_clipboard is not None and not self._should_copy_to_clipboard():
+                if previous_clipboard == "":
+                    self._clear_clipboard()
+                else:
+                    self._copy_to_clipboard(previous_clipboard)
             return False
+
+        # Delayed restore so Ctrl+V can land first. Skip when the user wants
+        # dictated text left on the clipboard (copy_to_clipboard setting).
+        if previous_clipboard is not None and not self._should_copy_to_clipboard():
+            with self._state_lock:
+                self._clipboard_restore_target = previous_clipboard
+
+            def _restore() -> None:
+                time.sleep(0.3)
+                with self._state_lock:
+                    if generation != self._clipboard_restore_generation:
+                        return
+                    self._clipboard_restore_target = None
+                # User copied something else during the delay — leave it alone.
+                if self._read_clipboard() != text:
+                    logger.debug("Clipboard changed during restore delay; skipping restore")
+                    return
+                if previous_clipboard == "":
+                    success = self._clear_clipboard()
+                else:
+                    success = self._copy_to_clipboard(previous_clipboard)
+                if success:
+                    logger.debug("Clipboard restored to previous content")
+                else:
+                    logger.debug("Could not restore previous clipboard content")
+
+            threading.Thread(target=_restore, daemon=True).start()
+        else:
+            with self._state_lock:
+                if generation == self._clipboard_restore_generation:
+                    self._clipboard_restore_target = None
+
+        return True
 
     # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_V=47 press/release.
     _YDOTOOL_V1_CTRL_V = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]

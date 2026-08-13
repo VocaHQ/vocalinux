@@ -1451,6 +1451,43 @@ pacman_package_installed() {
     pacman -Q "$1" >/dev/null 2>&1
 }
 
+# Install an AppIndicator/StatusNotifierItem provider, preferring the
+# actively maintained Ayatana fork over the legacy Canonical package
+# (unmaintained since ~2013). The legacy package can install and import
+# without error yet silently fail to register a tray icon with KDE's
+# StatusNotifierWatcher, leaving no icon and no logged error. $1 is the
+# package-manager install command (e.g. "sudo dnf install -y"), $2/$3 are
+# the Ayatana/legacy package names for that package manager, $4 is the
+# "is this package installed" checker function name.
+install_preferred_appindicator() {
+    local install_cmd="$1"
+    local ayatana_pkg="$2"
+    local legacy_pkg="$3"
+    local checker="$4"
+
+    if "$checker" "$ayatana_pkg"; then
+        return 0
+    fi
+
+    if $install_cmd "$ayatana_pkg" 2>/dev/null; then
+        print_info "Installed $ayatana_pkg (Ayatana AppIndicator; required for a working KDE tray icon)"
+        return 0
+    fi
+
+    if "$checker" "$legacy_pkg"; then
+        print_info "$ayatana_pkg not available; $legacy_pkg is already installed but may not show a tray icon on KDE Plasma"
+        return 0
+    fi
+
+    print_info "$ayatana_pkg not available, falling back to $legacy_pkg (may not show a tray icon on KDE Plasma)..."
+    if $install_cmd "$legacy_pkg"; then
+        return 0
+    fi
+
+    print_error "Failed to install an AppIndicator package (tried $ayatana_pkg and $legacy_pkg)"
+    return 1
+}
+
 suse_python_package_prefix() {
     python3 -c 'import sys; print(f"python{sys.version_info.major}{sys.version_info.minor}")' 2>/dev/null || echo "python3"
 }
@@ -1588,8 +1625,8 @@ install_system_dependencies() {
     local APT_PACKAGES_DEBIAN_BASE="python3-pip python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-ibus-1.0 libcairo2-dev cmake python3-dev build-essential portaudio19-dev python3-venv pkg-config wget curl unzip vulkan-tools libvulkan-dev $VULKAN_SHADER_PKG xclip xsel wl-clipboard $PYWHISPERCPP_BUILD_DEPS"
     local APT_PACKAGES_DEBIAN_11_12="$APT_PACKAGES_DEBIAN_BASE libgirepository1.0-dev gir1.2-ayatanaappindicator3-0.1"
     local APT_PACKAGES_DEBIAN_13_PLUS="$APT_PACKAGES_DEBIAN_BASE libgirepository-2.0-dev gir1.2-ayatanaappindicator3-0.1"
-    local DNF_PACKAGES="python3-pip python3-gobject gtk3 libappindicator-gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslang xclip xsel wl-clipboard"
-    local PACMAN_PACKAGES="python-pip python-gobject gtk3 libappindicator-gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers glslang xclip xsel wl-clipboard"
+    local DNF_PACKAGES="python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslang xclip xsel wl-clipboard"
+    local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers glslang xclip xsel wl-clipboard"
     local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4"
     # Gentoo uses Portage and different package naming convention
     local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.9 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
@@ -1686,6 +1723,8 @@ install_system_dependencies() {
             else
                 print_info "All required packages are already installed."
             fi
+
+            install_preferred_appindicator "$INSTALL_CMD" "libayatana-appindicator-gtk3" "libappindicator-gtk3" dnf_package_installed || exit 1
             ;;
 
         arch)
@@ -1709,6 +1748,8 @@ install_system_dependencies() {
             else
                 print_info "All required packages are already installed."
             fi
+
+            install_preferred_appindicator "sudo pacman -S --noconfirm" "libayatana-appindicator" "libappindicator-gtk3" pacman_package_installed || exit 1
             ;;
 
         suse)
@@ -2810,7 +2851,8 @@ install_whispercpp_with_gpu_support() {
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -2986,7 +3028,8 @@ PY
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3039,7 +3082,8 @@ WHISPER_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3080,7 +3124,8 @@ FALLBACK_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,
@@ -3143,7 +3188,8 @@ VOSK_CONFIG
         "device_name": null
     },
     "shortcuts": {
-        "toggle_recognition": "ctrl+ctrl"
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     },
     "ui": {
         "start_minimized": false,

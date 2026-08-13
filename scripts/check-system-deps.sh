@@ -161,10 +161,10 @@ PY
             echo "  sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 portaudio19-dev python3-dev python3-venv pkg-config xdotool wtype wl-clipboard xclip xsel"
         elif [[ "$DETECTED_DISTRO" == "fedora" || "$DETECTED_DISTRO_LIKE" == *"fedora"* || "$DETECTED_DISTRO" == "rhel" || "$DETECTED_DISTRO" == "centos" || "$DETECTED_DISTRO" == "rocky" || "$DETECTED_DISTRO" == "almalinux" ]]; then
             echo "Fedora/RHEL-based:"
-            echo "  sudo dnf install -y python3-gobject gtk3-devel gobject-introspection-devel portaudio-devel python3-devel python3-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel"
+            echo "  sudo dnf install -y python3-gobject gtk3-devel libayatana-appindicator-gtk3 gobject-introspection-devel portaudio-devel python3-devel python3-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel"
         elif [[ "$DETECTED_DISTRO" == "arch" || "$DETECTED_DISTRO_LIKE" == *"arch"* || "$DETECTED_DISTRO" == "manjaro" || "$DETECTED_DISTRO" == "endeavouros" ]]; then
             echo "Arch Linux-based:"
-            echo "  sudo pacman -S --needed python-gobject gtk3 gobject-introspection portaudio python pkg-config xdotool wtype wl-clipboard xclip xsel"
+            echo "  sudo pacman -S --needed python-gobject gtk3 libayatana-appindicator gobject-introspection portaudio python pkg-config xdotool wtype wl-clipboard xclip xsel"
         elif [[ "$DETECTED_DISTRO" == "opensuse" || "$DETECTED_DISTRO_LIKE" == *"suse"* ]]; then
             echo "openSUSE:"
             echo "  PYVER=\$(python3 -c 'import sys; print(f\"python{sys.version_info.major}{sys.version_info.minor}\")')"
@@ -172,7 +172,7 @@ PY
             echo "  If \"\${PYVER}-virtualenv\" is unavailable, try \"\${PYVER}-venv\"."
         elif [[ "$DETECTED_DISTRO" == "gentoo" ]]; then
             echo "Gentoo:"
-            echo "  sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libappindicator:3 media-libs/portaudio dev-lang/python:3.9 xdotool wtype"
+            echo "  sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.9 xdotool wtype"
         elif [[ "$DETECTED_DISTRO" == "alpine" ]]; then
             echo "Alpine Linux:"
             echo "  sudo apk add py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf xdotool wtype"
@@ -194,10 +194,10 @@ PY
             echo "  sudo apt install -y python3-gi gir1.2-gtk-3.0 portaudio19-dev python3-dev pkg-config xdotool wtype wl-clipboard xclip xsel"
             echo ""
             echo "Fedora/RHEL-based:"
-            echo "  sudo dnf install -y python3-gobject gtk3-devel portaudio-devel python3-devel pkg-config xdotool wtype wl-clipboard xclip xsel"
+            echo "  sudo dnf install -y python3-gobject gtk3-devel libayatana-appindicator-gtk3 portaudio-devel python3-devel pkg-config xdotool wtype wl-clipboard xclip xsel"
             echo ""
             echo "Arch Linux:"
-            echo "  sudo pacman -S python-gobject gtk3 portaudio python pkg-config xdotool wtype wl-clipboard xclip xsel"
+            echo "  sudo pacman -S python-gobject gtk3 libayatana-appindicator portaudio python pkg-config xdotool wtype wl-clipboard xclip xsel"
         fi
 
         echo ""

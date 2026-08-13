@@ -574,16 +574,20 @@ class TestIBusTextInjector(unittest.TestCase):
         self.assertIsNotNone(injector)
 
     @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")
+    @patch("vocalinux.text_injection.ibus_engine.stop_engine_process")
     @patch("vocalinux.text_injection.ibus_engine.switch_engine")
     @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="other-engine")
-    def test_ibus_text_injector_stop(self, mock_current_engine, mock_switch, mock_ensure_dir):
-        """Test IBusTextInjector stop restores previous engine."""
+    def test_ibus_text_injector_stop(
+        self, mock_current_engine, mock_switch, mock_stop_proc, mock_ensure_dir
+    ):
+        """Test IBusTextInjector stop restores previous engine after teardown."""
         from vocalinux.text_injection.ibus_engine import IBusTextInjector
 
         injector = IBusTextInjector(auto_activate=False)
         injector._previous_engine = "other-engine"
 
         injector.stop()
+        mock_stop_proc.assert_called_once()
         mock_switch.assert_called_once_with("other-engine")
 
     @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")

@@ -699,10 +699,9 @@ class TestCheckDependencies(unittest.TestCase):
                 self.assertFalse(result)
 
     def test_check_dependencies_missing_appindicator_with_ayatana_fallback(self):
-        """Test when AppIndicator3 is missing but AyatanaAppIndicator3 is available."""
+        """Test when legacy AppIndicator3 is missing but Ayatana is available."""
 
-        # Make gi.require_version raise ValueError for AppIndicator3 only
-        # AyatanaAppIndicator3 should work as fallback
+        # Prefer Ayatana; legacy AppIndicator3 is only a fallback.
         def require_version_side_effect(name, version):
             if name == "AppIndicator3":
                 raise ValueError("AppIndicator3 not found")
@@ -726,15 +725,73 @@ class TestCheckDependencies(unittest.TestCase):
         ):
             with patch("vocalinux.main.logger"):
                 result = check_dependencies()
-                # Should return True because AyatanaAppIndicator3 fallback works
+                # Should return True because AyatanaAppIndicator3 works
+                self.assertTrue(result)
+
+    def test_check_dependencies_falls_back_to_legacy_appindicator(self):
+        """Test when Ayatana is missing but legacy AppIndicator3 is available."""
+
+        def require_version_side_effect(name, version):
+            if name in ("AyatanaAppIndicator3", "AyatanaAppindicator3"):
+                raise ValueError(f"{name} not found")
+
+        mock_gi = MagicMock()
+        mock_gi.require_version = MagicMock(side_effect=require_version_side_effect)
+        mock_gtk = MagicMock()
+        mock_appindicator = MagicMock()
+        mock_pynput = MagicMock()
+        mock_requests = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "gi": mock_gi,
+                "gi.repository": MagicMock(Gtk=mock_gtk, AppIndicator3=mock_appindicator),
+                "pynput": mock_pynput,
+                "requests": mock_requests,
+            },
+        ):
+            with patch("vocalinux.main.logger"):
+                result = check_dependencies()
+                self.assertTrue(result)
+
+    def test_check_dependencies_falls_back_to_lowercase_ayatana(self):
+        """Test rare lowercase AyatanaAppindicator3 typelib is accepted."""
+
+        def require_version_side_effect(name, version):
+            if name == "AyatanaAppIndicator3":
+                raise ValueError("AyatanaAppIndicator3 not found")
+
+        mock_gi = MagicMock()
+        mock_gi.require_version = MagicMock(side_effect=require_version_side_effect)
+        mock_gtk = MagicMock()
+        mock_ayatana_lower = MagicMock()
+        mock_pynput = MagicMock()
+        mock_requests = MagicMock()
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "gi": mock_gi,
+                "gi.repository": MagicMock(Gtk=mock_gtk, AyatanaAppindicator3=mock_ayatana_lower),
+                "pynput": mock_pynput,
+                "requests": mock_requests,
+            },
+        ):
+            with patch("vocalinux.main.logger"):
+                result = check_dependencies()
                 self.assertTrue(result)
 
     def test_check_dependencies_missing_both_appindicators(self):
         """Test when both AppIndicator3 and AyatanaAppIndicator3 are missing."""
 
-        # Make gi.require_version raise ValueError for both AppIndicator variants
+        # Make gi.require_version raise ValueError for all AppIndicator variants
         def require_version_side_effect(name, version):
-            if name in ("AppIndicator3", "AyatanaAppIndicator3"):
+            if name in (
+                "AppIndicator3",
+                "AyatanaAppIndicator3",
+                "AyatanaAppindicator3",
+            ):
                 raise ValueError(f"{name} not found")
 
         mock_gi = MagicMock()

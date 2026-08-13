@@ -59,9 +59,7 @@ class TestSettingsDialogShortcutsSection(unittest.TestCase):
 
     def test_shortcut_config_read(self):
         """Test that shortcut is read from config."""
-        self.assertIn(
-            'self.config_manager.get_str("shortcuts", "toggle_recognition"', self.source_code
-        )
+        self.assertIn('"shortcuts", "toggle_recognition"', self.source_code)
 
     def test_shortcut_changed_handler_exists(self):
         """Test that shortcut changed handler exists."""
@@ -204,7 +202,7 @@ class TestKeyboardBackendsBase(unittest.TestCase):
         """Test that DEFAULT_SHORTCUT is defined."""
         from vocalinux.ui.keyboard_backends.base import DEFAULT_SHORTCUT
 
-        self.assertEqual(DEFAULT_SHORTCUT, "ctrl+ctrl")
+        self.assertEqual(DEFAULT_SHORTCUT, "right_alt+right_alt")
 
     def test_keyboard_backend_shortcut_property(self):
         """Test that KeyboardBackend has shortcut property."""
@@ -239,7 +237,8 @@ class TestConfigManagerShortcuts(unittest.TestCase):
 
         self.assertIn("shortcuts", DEFAULT_CONFIG)
         self.assertIn("toggle_recognition", DEFAULT_CONFIG["shortcuts"])
-        self.assertEqual(DEFAULT_CONFIG["shortcuts"]["toggle_recognition"], "ctrl+ctrl")
+        self.assertEqual(DEFAULT_CONFIG["shortcuts"]["toggle_recognition"], "right_alt+right_alt")
+        self.assertEqual(DEFAULT_CONFIG["shortcuts"]["mode"], "push_to_talk")
 
     def test_config_manager_get_shortcut(self):
         """Test getting shortcut from config manager."""
@@ -249,8 +248,9 @@ class TestConfigManagerShortcuts(unittest.TestCase):
             from vocalinux.ui.config_manager import ConfigManager
 
             config = ConfigManager()
-            shortcut = config.get("shortcuts", "toggle_recognition", "ctrl+ctrl")
-            self.assertEqual(shortcut, "ctrl+ctrl")
+            shortcut = config.get("shortcuts", "toggle_recognition", "right_alt+right_alt")
+            self.assertEqual(shortcut, "right_alt+right_alt")
+            self.assertEqual(config.get("shortcuts", "mode"), "push_to_talk")
 
 
 if __name__ == "__main__":

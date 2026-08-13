@@ -1407,9 +1407,26 @@ class SpeechRecognitionManager:
             f"whisper.cpp using {get_backend_display_name(backend)} backend: {backend_info}"
         )
 
-        # Select Vulkan GPU via pywhispercpp context_params (GGML_VULKAN_DEVICE is ignored).
+        actual_gpu_backend = self._detect_pywhispercpp_gpu_backend()
+
+        # Select GPU device for pywhispercpp context_params.
         selected_gpu_device = None
-        if backend == ComputeBackend.VULKAN:
+        if actual_gpu_backend == "cuda":
+            # pywhispercpp CUDA uses CUDA device ordinals (0 = first NVIDIA GPU).
+            # Vulkan enumeration on hybrid laptops lists iGPU as GPU0 and dGPU as
+            # GPU1; passing that Vulkan index to CUDA selects the CPU fallback.
+            vulkan_gpu_index = self.whispercpp_gpu_device
+            if vulkan_gpu_index is None or vulkan_gpu_index < 0:
+                vulkan_gpu_index = _prefer_discrete_vulkan_device()
+            if vulkan_gpu_index not in (None, 0):
+                logger.info(
+                    "pywhispercpp is CUDA-backed; using CUDA device 0 "
+                    f"(Vulkan GPU index {vulkan_gpu_index} does not map to CUDA ordinals)"
+                )
+            else:
+                logger.info("pywhispercpp is CUDA-backed; using CUDA device 0")
+            selected_gpu_device = 0
+        elif actual_gpu_backend == "vulkan":
             gpu_device_index = self.whispercpp_gpu_device
             if gpu_device_index is None or gpu_device_index < 0:
                 gpu_device_index = _prefer_discrete_vulkan_device()
@@ -1439,7 +1456,6 @@ class SpeechRecognitionManager:
         logger.info(f"Loading whisper.cpp '{self.model_size}' model...")
         self.model = None  # Release previous model if re-initializing
 
-        actual_gpu_backend = self._detect_pywhispercpp_gpu_backend()
         has_gpu_libs = actual_gpu_backend in ("vulkan", "cuda")
 
         if self.whispercpp_n_threads is not None and self.whispercpp_n_threads > 0:

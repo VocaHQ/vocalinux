@@ -331,6 +331,15 @@ We follow [Semantic Versioning](https://semver.org/):
 - 👀 Watch for updates
 - 🐦 Follow [@jatinkrmalik](https://twitter.com/jatinkrmalik) on Twitter
 
+## License
+
+Contributions are licensed under the [GNU Affero General Public License v3.0](LICENSE)
+(AGPL-3.0), matching the other [VocaHQ](https://github.com/VocaHQ) distribution
+projects ([VocaMac](https://github.com/VocaHQ/vocamac),
+[VocaPhone](https://github.com/VocaHQ/vocaphone),
+[VocaServer](https://github.com/VocaHQ/vocaserver)). By opening a pull request, you
+agree that your contribution may be distributed under that license.
+
 ---
 
 Thank you for contributing to Vocalinux! ❤️

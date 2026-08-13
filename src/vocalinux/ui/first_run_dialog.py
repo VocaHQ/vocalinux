@@ -66,8 +66,8 @@ class FirstRunDialog(Gtk.Dialog):
         quick_guide_label = Gtk.Label(
             label=(
                 "<b>Quick start</b>\n"
-                "1. Open the tray icon and choose Start Voice Typing\n"
-                "2. Open Settings from the tray menu to configure shortcuts, model, and audio"
+                "1. Hold Right Alt (Option) to dictate, release to stop\n"
+                "2. Open Settings from the tray menu to change shortcuts, model, and audio"
             ),
             use_markup=True,
             wrap=True,

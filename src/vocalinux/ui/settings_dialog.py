@@ -36,6 +36,7 @@ from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
+    ReleaseInfo,
     fetch_latest_release,
     format_release_notes,
     is_trusted_release_url,
@@ -58,6 +59,8 @@ from ..utils.whispercpp_model_info import is_model_downloaded as is_whispercpp_m
 from ..version import __copyright__, __description__, __url__, __version__  # noqa: E402
 from .config_manager import DEFAULT_CONFIG  # noqa: E402
 from .keyboard_backends import (  # noqa: E402
+    DEFAULT_SHORTCUT,
+    DEFAULT_SHORTCUT_MODE,
     SHORTCUT_DISPLAY_NAMES,
     SHORTCUT_GROUPS,
     SHORTCUT_MODES,
@@ -251,8 +254,8 @@ MODEL_SPECIALIZATION_TOOLTIP = (
     "lower-memory quantized models, Turbo speed, or a legacy large model."
 )
 LANGUAGE_TOOLTIP = (
-    "Choose the language you dictate in. English-only model specializations limit this "
-    "list to English."
+    "Choose the language you dictate in. Type to search the list. English-only model "
+    "specializations limit this list to English."
 )
 
 
@@ -413,6 +416,15 @@ SETTINGS_CSS = """
     background-color: alpha(@theme_selected_fg_color, 0.2);
 }
 
+.sidebar-update-badge {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #ffffff;
+    background-color: #26a269;
+    border-radius: 10px;
+    padding: 1px 7px;
+}
+
 .settings-search {
     margin: 8px 6px 14px 6px;
     border-radius: 8px;
@@ -533,6 +545,7 @@ levelbar block.empty {
 
 /* Combo boxes and spin buttons */
 combobox button,
+combobox entry,
 spinbutton {
     min-height: 32px;
     border-radius: 6px;
@@ -664,6 +677,70 @@ def _prevent_scroll_on_hover(widget: Gtk.Widget):
 
     widget.connect("scroll-event", on_scroll)
     widget.set_can_focus(True)
+
+
+def _combo_text_matches_query(query: str, item_id: str, item_text: str) -> bool:
+    """Return whether a combo row matches a case-insensitive search query."""
+    needle = (query or "").strip().lower()
+    if not needle:
+        return True
+    return needle in (item_text or "").lower() or needle in (item_id or "").lower()
+
+
+def _resolve_combo_text_query(query: str, rows: list) -> Optional[str]:
+    """Return a unique matching combo id, preferring an exact name or id."""
+    needle = (query or "").strip()
+    if not needle:
+        return None
+    needle_l = needle.lower()
+    matches = []
+    for item_id, item_text in rows:
+        item_id = item_id or ""
+        item_text = item_text or ""
+        if item_text.lower() == needle_l or item_id.lower() == needle_l:
+            return item_id
+        if _combo_text_matches_query(needle, item_id, item_text):
+            matches.append(item_id)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _combo_text_rows(combo: Gtk.ComboBoxText) -> list:
+    """Return ``(id, display text)`` pairs from a ComboBoxText model.
+
+    Gtk.ComboBoxText stores display text in column 0 and the id in column 1.
+    """
+    model = combo.get_model()
+    if not model:
+        return []
+    return [(row[1], row[0]) for row in model]
+
+
+def _combo_completion_match(completion, key, tree_iter, *_args) -> bool:
+    """GtkEntryCompletion match function for ComboBoxText text/id columns."""
+    model = completion.get_model()
+    if model is None:
+        return False
+    row = model[tree_iter]
+    return _combo_text_matches_query(key, row[1], row[0])
+
+
+def _attach_language_combo_search(combo: Gtk.ComboBoxText) -> None:
+    """Filter language choices as the user types in a ComboBoxText entry."""
+    entry = combo.get_child()
+    if entry is None:
+        return
+    entry.set_placeholder_text("Search languages…")
+    completion = Gtk.EntryCompletion()
+    completion.set_model(combo.get_model())
+    # ComboBoxText store: column 0 is display text, column 1 is id.
+    completion.set_text_column(0)
+    completion.set_inline_completion(False)
+    completion.set_popup_completion(True)
+    completion.set_minimum_key_length(1)
+    completion.set_match_func(_combo_completion_match)
+    entry.set_completion(completion)
 
 
 def _get_whisper_cache_dir() -> str:
@@ -984,6 +1061,7 @@ class SettingsPage:
         self.extras = []
         self.sidebar_row = None
         self.match_count_label = None
+        self.update_badge_label = None
 
         self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         self.box.set_margin_top(16)
@@ -1155,6 +1233,8 @@ class SettingsDialog(Gtk.Dialog):
         speech_engine: "SpeechRecognitionManager",
         shortcut_update_callback: callable = None,
         initial_page: Optional[str] = None,
+        pending_update: Optional[ReleaseInfo] = None,
+        update_status_callback: callable = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -1166,6 +1246,7 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager = config_manager
         self.speech_engine = speech_engine
         self.shortcut_update_callback = shortcut_update_callback
+        self.update_status_callback = update_status_callback
         self._test_active = False
         self._test_result = ""
         self._initializing = True  # Flag to prevent auto-apply during initialization
@@ -1180,6 +1261,7 @@ class SettingsDialog(Gtk.Dialog):
         self._update_check_generation = 0
         self._update_auto_checked = False
         self._initial_page = initial_page
+        self._pending_update = pending_update
 
         # Setup CSS styling
         _setup_css()
@@ -1308,6 +1390,10 @@ class SettingsDialog(Gtk.Dialog):
         self.show_all()
         # Release notes stay hidden until a successful update check.
         self.release_notes_group.hide()
+        # Re-hide the About "New" badge if show_all revealed it without a pending update.
+        self._set_about_update_badge(self._pending_update is not None)
+        # Seed About from a tray background check (opens with notes already filled).
+        self._seed_pending_update_ui()
         if self._initial_page:
             self.navigate_to_page(self._initial_page)
         else:
@@ -1350,6 +1436,12 @@ class SettingsDialog(Gtk.Dialog):
         label = Gtk.Label(label=page.title, xalign=0)
         hbox.pack_start(label, True, True, 0)
 
+        update_badge = Gtk.Label(label="New")
+        update_badge.get_style_context().add_class("sidebar-update-badge")
+        update_badge.set_no_show_all(True)
+        update_badge.hide()
+        hbox.pack_end(update_badge, False, False, 0)
+
         match_label = Gtk.Label(label="")
         match_label.get_style_context().add_class("sidebar-match-count")
         match_label.set_no_show_all(True)
@@ -1358,6 +1450,9 @@ class SettingsDialog(Gtk.Dialog):
         row.add(hbox)
         page.sidebar_row = row
         page.match_count_label = match_label
+        page.update_badge_label = update_badge
+        if page.name == "about" and self._pending_update is not None:
+            update_badge.show()
         return row
 
     def _build_search_empty_page(self) -> Gtk.Widget:
@@ -1462,6 +1557,10 @@ class SettingsDialog(Gtk.Dialog):
             page.sidebar_row.set_sensitive(True)
             page.sidebar_row.show()
 
+        # Badge visibility follows _pending_update (cleared on failed About checks
+        # so a stale New badge cannot reappear when search is cleared).
+        self._set_about_update_badge(self._pending_update is not None)
+
         # Engine-driven visibility is authoritative; re-apply it in case a
         # control changed while the filter was active.
         self._update_engine_specific_ui()
@@ -1514,12 +1613,16 @@ class SettingsDialog(Gtk.Dialog):
                 extra.hide()
 
             if page_matches > 0:
+                if page.update_badge_label is not None:
+                    page.update_badge_label.hide()
                 page.match_count_label.set_text(str(page_matches))
                 page.match_count_label.show()
                 page.sidebar_row.set_sensitive(True)
                 if first_match_page is None:
                     first_match_page = page
             else:
+                if page.update_badge_label is not None:
+                    page.update_badge_label.hide()
                 page.match_count_label.hide()
                 page.sidebar_row.set_sensitive(False)
 
@@ -2103,14 +2206,19 @@ class SettingsDialog(Gtk.Dialog):
         self.model_variant_row.set_tooltip_text(MODEL_SPECIALIZATION_TOOLTIP)
         group.add_row(self.model_variant_row)
 
-        # Language selection
-        self.language_combo = Gtk.ComboBoxText()
+        # Language selection (searchable: type to filter the 30+ language list)
+        self.language_combo = Gtk.ComboBoxText.new_with_entry()
         self.language_combo.set_size_request(_CONTROL_WIDTH, -1)
         self.language_combo.set_tooltip_text(LANGUAGE_TOOLTIP)
         _prevent_scroll_on_hover(self.language_combo)
+        _attach_language_combo_search(self.language_combo)
+        language_entry = self.language_combo.get_child()
+        if language_entry is not None:
+            language_entry.connect("activate", self._on_language_entry_activate)
+            language_entry.connect("focus-out-event", self._on_language_entry_focus_out)
         self.language_row = PreferenceRow(
             title="Language",
-            subtitle="Primary language for recognition",
+            subtitle="Type to search, or pick from the list",
             widget=self.language_combo,
         )
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
@@ -2403,9 +2511,9 @@ class SettingsDialog(Gtk.Dialog):
             self.shortcut_mode_combo.append(mode_id, display_name)
 
         # Load current mode from config
-        current_mode = self.config_manager.get_str("shortcuts", "mode", "toggle")
+        current_mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
         if not self.shortcut_mode_combo.set_active_id(current_mode):
-            self.shortcut_mode_combo.set_active_id("toggle")
+            self.shortcut_mode_combo.set_active_id(DEFAULT_SHORTCUT_MODE)
 
         mode_row = PreferenceRow(
             title="Shortcut Mode",
@@ -2433,7 +2541,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Load current shortcut from config
         current_shortcut = self.config_manager.get_str(
-            "shortcuts", "toggle_recognition", "ctrl+ctrl"
+            "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
         )
 
         self.shortcut_row = PreferenceRow(
@@ -2541,7 +2649,7 @@ class SettingsDialog(Gtk.Dialog):
             blocked = False
         try:
             if not self.shortcut_combo.set_active_id(active_id):
-                self.shortcut_combo.set_active_id("ctrl+ctrl")
+                self.shortcut_combo.set_active_id(DEFAULT_SHORTCUT)
         finally:
             if blocked:
                 self.shortcut_combo.handler_unblock_by_func(self._on_shortcut_changed)
@@ -2683,7 +2791,7 @@ class SettingsDialog(Gtk.Dialog):
         assuming a bare-modifier gesture. Reads the saved shortcut from config
         (the single source of truth for both preset and custom shortcuts).
         """
-        shortcut = self.config_manager.get_str("shortcuts", "toggle_recognition", "ctrl+ctrl")
+        shortcut = self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
         is_combo = is_valid_shortcut(shortcut) and parse_shortcut_spec(shortcut).is_combo
         # e.g. "Press Alt+R" (combo toggle), "Double-tap Ctrl", "Hold Alt+R".
         action = get_shortcut_display_name(shortcut, mode)
@@ -2729,7 +2837,7 @@ class SettingsDialog(Gtk.Dialog):
         # Apply from saved config (source of truth for both preset and custom).
         if self.shortcut_update_callback:
             shortcut_id = self.config_manager.get_str(
-                "shortcuts", "toggle_recognition", "ctrl+ctrl"
+                "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
             )
             success = self.shortcut_update_callback(shortcut_id, mode_id)
             if success:
@@ -2757,9 +2865,9 @@ class SettingsDialog(Gtk.Dialog):
         visible while a preset is still the active binding. Also clear the
         temporary Record/Set hint so the mode description matches the UI.
         """
-        current = self.config_manager.get_str("shortcuts", "toggle_recognition", "ctrl+ctrl")
+        current = self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
         self._sync_shortcut_selection_ui(current)
-        mode_id = self.shortcut_mode_combo.get_active_id() or "toggle"
+        mode_id = self.shortcut_mode_combo.get_active_id() or DEFAULT_SHORTCUT_MODE
         self._update_shortcut_ui_for_mode(mode_id)
 
     def _on_shortcut_changed(self, widget):
@@ -2779,7 +2887,9 @@ class SettingsDialog(Gtk.Dialog):
         # Selecting "Custom Shortcut" does not change the active binding until
         # the user records/sets one; just focus the custom entry for convenience.
         if shortcut_id == "__custom__":
-            current = self.config_manager.get_str("shortcuts", "toggle_recognition", "ctrl+ctrl")
+            current = self.config_manager.get_str(
+                "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
+            )
             if not self._is_preset_shortcut(current):
                 self.custom_shortcut_entry.set_text(current)
             self._set_custom_shortcut_row_visible(True)
@@ -2877,6 +2987,15 @@ class SettingsDialog(Gtk.Dialog):
         self.test_output_revealer.add(scrolled_window)
 
         footer.pack_start(self.test_output_revealer, False, False, 0)
+
+        # Separate Close from the dictation-test controls so it reads as
+        # dialog chrome, not as part of Test Dictation (#651).
+        close_separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        close_separator.set_margin_start(8)
+        close_separator.set_margin_end(8)
+        close_separator.set_margin_top(2)
+        close_separator.set_margin_bottom(2)
+        footer.pack_start(close_separator, False, False, 0)
 
         # In-window Close so the dialog can always be dismissed, even on WMs
         # that hide the title-bar close button for Gtk.Dialog windows (#323).
@@ -3122,8 +3241,8 @@ class SettingsDialog(Gtk.Dialog):
 
         license_row = PreferenceRow(
             title="License",
-            subtitle=f"GNU GPL v3 · {__copyright__}",
-            keywords=("license", "gpl", "copyright"),
+            subtitle=f"GNU AGPL v3 · {__copyright__}",
+            keywords=("license", "agpl", "gpl", "copyright"),
         )
         app_group.add_row(license_row)
         self.about_tab.pack_start(app_group, False, False, 0)
@@ -3202,6 +3321,30 @@ class SettingsDialog(Gtk.Dialog):
         self.about_tab.pack_start(self.release_notes_group, False, False, 0)
         self.release_notes_group.hide()
 
+    def _set_about_update_badge(self, visible: bool) -> None:
+        """Show or hide the green New badge on the About sidebar row."""
+        about_page = next((page for page in self._pages if page.name == "about"), None)
+        if about_page is None or about_page.update_badge_label is None:
+            return
+        # Don't fight the search filter's match-count badges.
+        searching = bool(self.search_entry.get_text().strip())
+        if visible and not searching:
+            about_page.update_badge_label.show()
+        else:
+            about_page.update_badge_label.hide()
+
+    def _seed_pending_update_ui(self) -> None:
+        """Apply a tray-discovered update to the About page without another fetch."""
+        if self._pending_update is None:
+            return
+        # Avoid an immediate re-check flicker; user can still press Check.
+        self._update_auto_checked = True
+        self._apply_update_check_result(
+            self._pending_update,
+            channel=self._current_update_channel(),
+            generation=None,
+        )
+
     def _current_update_channel(self) -> str:
         """Return the selected update channel id."""
         channel_id = self.update_channel_combo.get_active_id()
@@ -3252,6 +3395,9 @@ class SettingsDialog(Gtk.Dialog):
     def _dialog_is_alive(self) -> bool:
         """Return False when the settings dialog has been destroyed."""
         try:
+            # During __init__ (before map) widgets exist but are not realized yet.
+            if self._initializing:
+                return True
             return bool(self.get_realized())
         except Exception:
             return False
@@ -3293,6 +3439,12 @@ class SettingsDialog(Gtk.Dialog):
             self.open_release_btn.set_tooltip_text("Open the Vocalinux project page")
             self.open_release_btn.get_style_context().remove_class("suggested-action")
             self.release_notes_group.hide()
+            # Clear dialog pending state so search restore cannot revive the New
+            # badge while About still shows the failed-lookup message. Do not
+            # call update_status_callback — tray state stays as-is (same as
+            # UpdateMonitor on a failed lookup).
+            self._pending_update = None
+            self._set_about_update_badge(False)
             return False
 
         self._about_release_url = (
@@ -3306,13 +3458,24 @@ class SettingsDialog(Gtk.Dialog):
             release_label = f"{release_label} (nightly)"
 
         if update_available:
+            self._pending_update = release
             self.update_status_row.set_subtitle(
                 f"Update available on {channel} (running {__version__})"
             )
             self.open_release_btn.get_style_context().add_class("suggested-action")
+            self._set_about_update_badge(True)
         else:
+            self._pending_update = None
             self.update_status_row.set_subtitle(f"Up to date on {channel}")
             self.open_release_btn.get_style_context().remove_class("suggested-action")
+            self._set_about_update_badge(False)
+
+        # Keep the tray menu in sync with an About-page check (no extra notification).
+        if self.update_status_callback is not None:
+            try:
+                self.update_status_callback(update_available, release if update_available else None)
+            except Exception:
+                logger.error("Update status callback failed", exc_info=True)
 
         self.latest_release_row.set_subtitle(release_label)
         self.open_release_btn.set_sensitive(True)
@@ -4104,6 +4267,36 @@ class SettingsDialog(Gtk.Dialog):
             self._auto_apply_settings()
         finally:
             self._processing_language_change = False
+
+    def _on_language_entry_activate(self, entry):
+        """Commit a unique typed match when Enter is pressed in the language entry."""
+        self._commit_or_restore_language_entry()
+
+    def _on_language_entry_focus_out(self, entry, event):
+        """Commit or restore the language after the entry loses focus."""
+        # Defer so a completion click can set the active id before we restore.
+        GLib.idle_add(self._commit_or_restore_language_entry)
+        return False
+
+    def _commit_or_restore_language_entry(self) -> bool:
+        """Resolve typed language text, or restore the last valid selection."""
+        if self._processing_language_change or self._initializing:
+            return False
+        if self.language_combo.get_active_id():
+            return False
+        entry = self.language_combo.get_child()
+        typed = entry.get_text() if entry is not None else ""
+        match_id = _resolve_combo_text_query(typed, _combo_text_rows(self.language_combo))
+        if match_id:
+            self.language_combo.set_active_id(match_id)
+            return False
+        # Restoring the same language should not re-apply settings.
+        self._processing_language_change = True
+        try:
+            self._set_combo_active_id_or_first(self.language_combo, self.language)
+        finally:
+            self._processing_language_change = False
+        return False
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""

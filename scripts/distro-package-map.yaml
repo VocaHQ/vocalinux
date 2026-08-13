@@ -22,14 +22,16 @@ system_packages:
     solus: ["python3-gobject", "gtk3"]
 
   # AppIndicator / Ayatana AppIndicator
+  # Prefer Ayatana: legacy Canonical AppIndicator can load without error but
+  # fail to register a StatusNotifierItem on modern KDE Plasma.
   appindicator:
     ubuntu: ["gir1.2-appindicator3-0.1"]
     debian_11: ["gir1.2-ayatanaappindicator3-0.1"]
     debian_12_plus: ["gir1.2-ayatanaappindicator3-0.1"]
-    fedora: ["libappindicator-gtk3"]
-    arch: ["libappindicator-gtk3"]
+    fedora: ["libayatana-appindicator-gtk3"]
+    arch: ["libayatana-appindicator"]
     opensuse: ["typelib-1_0-AyatanaAppIndicator3-0_1", "libayatana-appindicator3-1", "typelib-1_0-AppIndicator3-0_1"]
-    gentoo: ["dev-libs/libappindicator:3"]
+    gentoo: ["dev-libs/libayatana-appindicator"]
     alpine: ["libayatana-appindicator"]
     void: ["libappindicator"]
     solus: ["libappindicator"]

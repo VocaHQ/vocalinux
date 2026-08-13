@@ -173,7 +173,7 @@ native dependencies; it does **not** mean beta or unstable packages. If
 
 ### Gentoo
 ```bash
-sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libappindicator:3 \
+sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator \
   media-libs/portaudio dev-lang/python:3.9
 ```
 
@@ -239,14 +239,14 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 #### Fedora
 ```bash
-sudo dnf install python3-gobject gtk3 gtk3-devel libappindicator-gtk3 \
+sudo dnf install python3-gobject gtk3 gtk3-devel libayatana-appindicator-gtk3 \
   gobject-introspection-devel portaudio-devel python3-devel \
   python3-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel
 ```
 
 #### Arch Linux
 ```bash
-sudo pacman -S python-gobject gtk3 libappindicator gobject-introspection \
+sudo pacman -S python-gobject gtk3 libayatana-appindicator gobject-introspection \
   python-cairo portaudio python-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel
 ```
 
@@ -519,7 +519,7 @@ Use this checklist when testing on a new distribution:
 - [ ] Launch from terminal: `~/.local/bin/vocalinux-gui`
 - [ ] Launch from application menu
 - [ ] Verify tray icon appears
-- [ ] Test keyboard shortcuts (Ctrl+Alt+M by default)
+- [ ] Test keyboard shortcuts (Hold Right Alt by default)
 - [ ] Test audio recording
 - [ ] Test text injection in different applications
 - [ ] Test Settings dialog opens correctly

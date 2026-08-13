@@ -4,6 +4,7 @@ Final comprehensive tests for IBus engine.
 These tests exercise code paths to improve coverage without platform-specific issues.
 """
 
+import signal
 import subprocess
 import sys
 import unittest
@@ -318,6 +319,87 @@ class TestStopEngineProcess(unittest.TestCase):
         result = stop_engine_process()
         # Verify the function handles missing PID file gracefully
         self.assertIsNone(result)
+
+    @patch("vocalinux.text_injection.ibus_engine.time.sleep", return_value=None)
+    @patch("vocalinux.text_injection.ibus_engine.os.kill")
+    @patch("vocalinux.text_injection.ibus_engine.Path")
+    @patch("vocalinux.text_injection.ibus_engine.PID_FILE")
+    def test_stop_engine_process_waits_for_exit(
+        self, mock_pid_file, mock_path_cls, mock_kill, mock_sleep
+    ):
+        """SIGTERM path must wait until the process is gone before returning (#558)."""
+        from vocalinux.text_injection.ibus_engine import stop_engine_process
+
+        mock_pid_file.exists.return_value = True
+        mock_pid_file.read_text.return_value = "4242\n"
+
+        cmdline = MagicMock()
+        cmdline.exists.return_value = True
+        cmdline.read_text.return_value = "python /x/vocalinux/text_injection/ibus_engine.py --ibus"
+        mock_path_cls.return_value = cmdline
+
+        # SIGTERM succeeds; first liveness check still alive; second gone.
+        mock_kill.side_effect = [None, None, OSError(3, "No such process")]
+
+        stop_engine_process(wait_timeout=1.0)
+
+        self.assertEqual(mock_kill.call_args_list[0][0], (4242, signal.SIGTERM))
+        self.assertGreaterEqual(mock_kill.call_count, 3)
+        mock_pid_file.unlink.assert_called()
+        mock_sleep.assert_called()
+
+    @patch("vocalinux.text_injection.ibus_engine.time.sleep", return_value=None)
+    @patch("vocalinux.text_injection.ibus_engine.os.kill")
+    @patch("vocalinux.text_injection.ibus_engine.Path")
+    @patch("vocalinux.text_injection.ibus_engine.PID_FILE")
+    def test_stop_engine_process_sigkills_when_term_ignored(
+        self, mock_pid_file, mock_path_cls, mock_kill, mock_sleep
+    ):
+        """Escalate to SIGKILL if the engine ignores SIGTERM (#558 wait path)."""
+        from vocalinux.text_injection.ibus_engine import stop_engine_process
+
+        mock_pid_file.exists.return_value = True
+        mock_pid_file.read_text.return_value = "4242\n"
+
+        cmdline = MagicMock()
+        cmdline.exists.return_value = True
+        cmdline.read_text.return_value = "python /x/vocalinux/text_injection/ibus_engine.py --ibus"
+        mock_path_cls.return_value = cmdline
+
+        # SIGTERM, then keep reporting alive until wait timeout, then SIGKILL succeeds.
+        mock_kill.side_effect = [None, None, None, OSError(3, "No such process")]
+        with patch(
+            "vocalinux.text_injection.ibus_engine.time.monotonic",
+            side_effect=[0.0, 0.0, 2.1, 2.1, 2.2, 2.7],
+        ):
+            stop_engine_process(wait_timeout=2.0)
+
+        self.assertEqual(mock_kill.call_args_list[0][0], (4242, signal.SIGTERM))
+        self.assertTrue(any(c[0] == (4242, signal.SIGKILL) for c in mock_kill.call_args_list))
+        mock_pid_file.unlink.assert_called()
+
+
+class TestStopRestoreRetry(unittest.TestCase):
+    """Coverage for stop() restore retry after teardown."""
+
+    @patch("vocalinux.text_injection.ibus_engine.stop_engine_process")
+    @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="xkb:es::spa")
+    @patch("vocalinux.text_injection.ibus_engine.switch_engine", return_value=False)
+    @patch("vocalinux.text_injection.ibus_engine.time.sleep", return_value=None)
+    @patch("vocalinux.text_injection.ibus_engine.IBUS_AVAILABLE", True)
+    @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")
+    def test_stop_retries_failed_engine_restore(
+        self, mock_ensure_dir, mock_sleep, mock_switch, mock_get_current, mock_stop_proc
+    ):
+        """stop() retries switch_engine after teardown when the first attempts fail."""
+        from vocalinux.text_injection.ibus_engine import IBusTextInjector
+
+        injector = IBusTextInjector(auto_activate=False)
+        injector.stop()
+
+        self.assertEqual(mock_switch.call_count, 3)
+        mock_switch.assert_called_with("xkb:es::spa")
+        self.assertEqual(mock_sleep.call_count, 3)
 
 
 if __name__ == "__main__":

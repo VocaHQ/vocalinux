@@ -262,6 +262,12 @@ class TestSettingsDialogCSS(unittest.TestCase):
         self.assertNotIn("border-left:", SETTINGS_CSS)
         self.assertNotIn("border-left-color:", SETTINGS_CSS)
 
+    def test_settings_css_styles_combobox_entry(self):
+        """Searchable combos need the inner entry to match button height."""
+        from vocalinux.ui.settings_dialog import SETTINGS_CSS
+
+        self.assertIn("combobox entry", SETTINGS_CSS)
+
 
 class TestSettingsDialogClasses(unittest.TestCase):
     """Test cases for SettingsDialog helper classes."""
@@ -371,7 +377,10 @@ class TestSettingsDialogInstantApply(unittest.TestCase):
         with open(source_path, "r") as f:
             source_code = f.read()
 
-        self.assertNotIn("focus-out-event", source_code)
+        # The initial prompt must not auto-apply on focus-out; that fights typing.
+        # Language combo search may restore a valid selection on focus-out.
+        advanced_body = source_code.split("def _build_advanced_section")[1].split("\n    def ")[0]
+        self.assertNotIn("focus-out-event", advanced_body)
         self.assertNotIn(
             'advanced_initial_prompt_buffer.connect("changed", self._on_advanced_param_changed)',
             source_code,
@@ -644,6 +653,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         self.assertIn("largest model", MODEL_SIZE_TOOLTIP)
         self.assertIn("Standard multilingual", MODEL_SPECIALIZATION_TOOLTIP)
         self.assertIn("English-only", LANGUAGE_TOOLTIP)
+        self.assertIn("Type to search", LANGUAGE_TOOLTIP)
         self.assertIn("only in English", _model_specialization_tooltip("medium.en"))
         self.assertIn("lower-memory systems", _model_specialization_tooltip("medium-q5_0"))
         self.assertIn("Turbo", _model_specialization_tooltip("large-v3-turbo"))
@@ -672,6 +682,8 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
             source_code,
         )
         self.assertIn("self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)", source_code)
+        self.assertIn("Gtk.ComboBoxText.new_with_entry()", source_code)
+        self.assertIn("_attach_language_combo_search", source_code)
 
     def test_whispercpp_recommendation_uses_language_for_specialization(self):
         """Test that English language nudges recommendations to .en variants."""
@@ -699,6 +711,63 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
             ("medium", "mock hardware reason"),
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "auto"), "medium")
+
+
+class TestLanguageComboSearch(unittest.TestCase):
+    """Searchable language ComboBox matching and commit helpers."""
+
+    def setUp(self):
+        if "vocalinux.ui.settings_dialog" in sys.modules:
+            del sys.modules["vocalinux.ui.settings_dialog"]
+
+    def test_combo_text_matches_query_name_id_and_case(self):
+        from vocalinux.ui.settings_dialog import _combo_text_matches_query
+
+        self.assertTrue(_combo_text_matches_query("span", "es", "Spanish"))
+        self.assertTrue(_combo_text_matches_query("SPAN", "es", "Spanish"))
+        self.assertTrue(_combo_text_matches_query("es", "es", "Spanish"))
+        self.assertTrue(_combo_text_matches_query("", "es", "Spanish"))
+        self.assertFalse(_combo_text_matches_query("span", "fr", "French"))
+
+    def test_resolve_combo_text_query_unique_exact_and_ambiguous(self):
+        from vocalinux.ui.settings_dialog import _resolve_combo_text_query
+        from vocalinux.utils.vosk_model_info import SUPPORTED_LANGUAGES
+
+        rows = [(code, info["name"]) for code, info in SUPPORTED_LANGUAGES.items()]
+        self.assertEqual(_resolve_combo_text_query("span", rows), "es")
+        self.assertEqual(_resolve_combo_text_query("English (US)", rows), "en-us")
+        self.assertEqual(_resolve_combo_text_query("auto", rows), "auto")
+        self.assertEqual(_resolve_combo_text_query("ja", rows), "ja")
+        self.assertIsNone(_resolve_combo_text_query("en", rows))
+        self.assertIsNone(_resolve_combo_text_query("zzzz", rows))
+        self.assertIsNone(_resolve_combo_text_query("", rows))
+
+    def test_resolve_prefers_exact_name_over_substring(self):
+        from vocalinux.ui.settings_dialog import _resolve_combo_text_query
+
+        rows = [("xx", "Spanish"), ("es", "Not Spanish")]
+        self.assertEqual(_resolve_combo_text_query("Spanish", rows), "xx")
+
+    def test_language_combo_is_searchable_in_source(self):
+        import os
+
+        source_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "vocalinux",
+            "ui",
+            "settings_dialog.py",
+        )
+        with open(source_path, "r") as f:
+            source_code = f.read()
+
+        self.assertIn("Gtk.ComboBoxText.new_with_entry()", source_code)
+        self.assertIn("Gtk.EntryCompletion()", source_code)
+        self.assertIn("completion.set_text_column(0)", source_code)
+        self.assertIn("Search languages…", source_code)
+        self.assertIn("def _commit_or_restore_language_entry", source_code)
+        self.assertIn("Type to search, or pick from the list", source_code)
 
 
 class TestSettingsSearch(unittest.TestCase):
@@ -773,6 +842,19 @@ class TestSettingsSearch(unittest.TestCase):
         self.assertIn("self.sidebar_listbox.select_row(page.sidebar_row)", source)
         self.assertIn("self.settings_stack.set_visible_child_name(page.name)", source)
 
+    def test_failed_update_check_clears_pending_before_hiding_badge(self):
+        """Failed About lookup must clear _pending_update so search cannot revive New."""
+        source = self._settings_source()
+        fail_block = source.split("if release is None:")[1].split("return False")[0]
+        self.assertIn("self._pending_update = None", fail_block)
+        self.assertIn("self._set_about_update_badge(False)", fail_block)
+        # Search restore must follow _pending_update via the badge helper.
+        restore_body = source.split("def _restore_search_baseline")[1].split("def ")[0]
+        self.assertIn(
+            "self._set_about_update_badge(self._pending_update is not None)",
+            restore_body,
+        )
+
     @staticmethod
     def _settings_source():
         import os
@@ -845,6 +927,14 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn('close_button = Gtk.Button(label="Close")', footer_body)
         # No persistent bottom strip below the pages
         self.assertNotIn("def _build_status_strip(self):", self.source_code)
+
+    def test_close_button_separated_from_dictation_test(self):
+        """Close sits below a separator so it reads as dialog chrome (#651)."""
+        footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
+        after_test = footer_body.split("footer.pack_start(self.test_output_revealer")[1]
+        before_close = after_test.split('close_button = Gtk.Button(label="Close")')[0]
+        self.assertIn("Gtk.Separator", before_close)
+        self.assertIn("footer.pack_start(close_separator", before_close)
 
     def test_sidebar_icons_use_adwaita_names(self):
         """Sidebar icons must resolve in the stock Adwaita theme."""

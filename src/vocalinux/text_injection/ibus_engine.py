@@ -87,14 +87,14 @@ COMPONENT_NAME = "org.freedesktop.IBus.Vocalinux"
 ENGINE_RANK = 50
 _ENGINE_META = {
     "language": "other",
-    "license": "GPL-3.0",
+    "license": "AGPL-3.0",
     "author": "Vocalinux",
     "icon": "audio-input-microphone",
     "layout": "default",
 }
 _COMPONENT_META = {
     "version": "1.0",
-    "license": "GPL-3.0",
+    "license": "AGPL-3.0",
     "author": "Vocalinux",
     "homepage": "https://github.com/jatinkrmalik/vocalinux",
     "textdomain": "vocalinux",
@@ -839,8 +839,13 @@ def start_engine_process() -> bool:
         return False
 
 
-def stop_engine_process() -> None:
-    """Stop the IBus engine process if running."""
+def stop_engine_process(wait_timeout: float = 2.0) -> None:
+    """Stop the IBus engine process if running.
+
+    Waits for the process to actually exit so callers that restore the user's
+    IBus engine afterward run after ``register_component`` teardown has been
+    observed by ibus-daemon (issue #558).
+    """
     try:
         if not PID_FILE.exists():
             logger.debug("No PID file found, engine not running")
@@ -857,6 +862,29 @@ def stop_engine_process() -> None:
                 return
 
         os.kill(pid, signal.SIGTERM)
+        # Wait for exit: IBus clears/repairs GlobalEngine on component destroy,
+        # which only runs after the process actually disconnects (#558).
+        deadline = time.monotonic() + max(wait_timeout, 0.0)
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.05)
+        else:
+            # Still alive — escalate so teardown (and GlobalEngine repair) finishes.
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+            kill_deadline = time.monotonic() + 0.5
+            while time.monotonic() < kill_deadline:
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.05)
+
         logger.info(f"IBus engine process (PID {pid}) stopped")
         PID_FILE.unlink()
     except (OSError, ValueError, FileNotFoundError) as e:
@@ -1206,7 +1234,18 @@ class IBusTextInjector:
         The Vocalinux engine is only needed while committing dictated text. Keeping
         the user's normal IBus/XKB engine active preserves dead-key composition and
         layout-specific behavior during ordinary typing.
+
+        Captures the current engine for shutdown restore only. Injection still
+        resolves the restore target at commit time so a stale warmup value is not
+        used mid-session (see #623); shutdown needs a fallback when quit leaves
+        Vocalinux selected after a failed inject restore (#558).
         """
+        if not is_engine_active():
+            captured = get_current_engine()
+            if captured and captured != ENGINE_NAME:
+                self._previous_engine = captured
+                logger.debug(f"Captured current engine for shutdown restore: {captured}")
+
         if not start_engine_process():
             raise IBusSetupError("Failed to start IBus engine process. Check logs for details.")
 
@@ -1303,27 +1342,55 @@ class IBusTextInjector:
         captured before injection (e.g. on GNOME/Wayland with no global IBus
         engine), restoration is skipped to avoid switching the user to a
         wrong layout (see issue #497).
+
+        Engine restoration must run *after* ``stop_engine_process()`` has
+        observed process exit. Killing the process that called
+        ``register_component`` makes IBus run ``check_global_engine()``, which
+        only searches ``register_engine_list`` and treats XML engines such as
+        ``xkb:es::spa`` as missing, clearing the global engine even when
+        Vocalinux was never selected (issue #558).
+
+        Prefer the *live* engine at quit when it is a real non-Vocalinux
+        engine, so a user who changed input source after warmup is not
+        switched back to a stale cache. Fall back to ``_previous_engine`` only
+        when the live engine is Vocalinux or unavailable (failed inject restore).
         """
-        if self._previous_engine:
-            logger.info(f"Restoring previous engine: {self._previous_engine}")
-            switch_engine(self._previous_engine)
-            self._previous_engine = None
+        current = get_current_engine()
+        if current and current != ENGINE_NAME:
+            restore_engine = current
+        else:
+            restore_engine = self._previous_engine
+            if restore_engine == ENGINE_NAME:
+                restore_engine = None
+
+        # Stop the engine process first and wait for exit — teardown can clear
+        # IBus GlobalEngine (#558). Restore must land after that check.
+        stop_engine_process()
+
+        if restore_engine:
+            logger.info(f"Restoring previous engine after teardown: {restore_engine}")
+            restored = False
+            for attempt in range(3):
+                if switch_engine(restore_engine):
+                    restored = True
+                    break
+                time.sleep(0.15 * (attempt + 1))
+            if not restored:
+                logger.error(f"Failed to restore IBus engine after teardown: {restore_engine}")
         else:
             logger.info(
-                "Skipping engine restoration — " "no valid engine was captured before injection"
+                "Skipping engine restoration — no restorable engine was available at shutdown"
             )
+        self._previous_engine = None
 
-        # Restore the XKB layout that was captured during setup
-        # This ensures the user's original keyboard layout is preserved
+        # XKB last: switching engines can override layout (#292). Re-apply after
+        # the post-teardown engine restore so we don't lose the user's map.
         if self._previous_xkb_layout:
             layout, variant, option = self._previous_xkb_layout
             if layout:
                 logger.info(f"Restoring XKB layout: {layout}")
                 restore_xkb_layout(layout, variant, option)
             self._previous_xkb_layout = None
-
-        # Stop the engine process
-        stop_engine_process()
 
     def inject_text(self, text: str) -> bool:
         """
@@ -1342,6 +1409,10 @@ class IBusTextInjector:
         logger.info(f"Starting IBus text injection: '{text[:20]}...' (length: {len(text)})")
 
         restore_engine: Optional[str] = None
+        # Capture before any engine switch. Switching to Vocalinux can override
+        # the system XKB map to us; scoped injection must restore it after
+        # switching back (#292, #664). Empty on Wayland (no-op restore).
+        captured_xkb = get_current_xkb_layout()
         if not is_engine_active():
             current_engine = get_current_engine()
             if not current_engine:
@@ -1352,6 +1423,9 @@ class IBusTextInjector:
                 return False
 
             restore_engine = current_engine
+            # Always refresh the shutdown fallback to the live engine so a later
+            # quit does not restore a stale warmup value (Bugbot on #643 / #558).
+            self._previous_engine = current_engine
             logger.debug(
                 f"Temporarily activating Vocalinux IBus engine (will restore {current_engine})"
             )
@@ -1468,6 +1542,13 @@ class IBusTextInjector:
                     "Skipping engine restoration after injection — "
                     "no valid engine was captured (see #497)"
                 )
+
+            # Engine switch can leave XKB on us even after restoring the IBus
+            # engine (setxkbmap vs IBus). Re-apply the pre-switch map on X11;
+            # Wayland capture is empty so this is a no-op (#474, #664).
+            layout, variant, option = captured_xkb
+            if layout:
+                restore_xkb_layout(layout, variant, option)
 
         return False
 

@@ -69,7 +69,7 @@ vocalinux
 ```bash
 sudo dnf install -y \
     python3-virtualenv python3-devel python3-gobject gtk3 gtk3-devel \
-    libappindicator-gtk3 gobject-introspection-devel portaudio-devel \
+    libayatana-appindicator-gtk3 gobject-introspection-devel portaudio-devel \
     pkg-config xdotool wtype wl-clipboard xclip xsel
 
 python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
@@ -89,7 +89,7 @@ See [AUR.md](AUR.md). Or via PyPI:
 
 ```bash
 sudo pacman -S --needed \
-    python python-virtualenv python-gobject gtk3 libappindicator-gtk3 \
+    python python-virtualenv python-gobject gtk3 libayatana-appindicator \
     gobject-introspection python-cairo portaudio pkg-config xdotool wtype wl-clipboard xclip xsel
 
 python -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
@@ -369,7 +369,7 @@ sudo apt install -y wtype wl-clipboard xclip xsel
 ```bash
 sudo dnf install -y \
     python3-pip python3-devel python3-virtualenv \
-    python3-gobject gtk3 libappindicator-gtk3 \
+    python3-gobject gtk3 libayatana-appindicator-gtk3 \
     gobject-introspection-devel portaudio-devel \
     wget curl unzip xdotool wtype wl-clipboard xclip xsel
 ```
@@ -378,7 +378,7 @@ sudo dnf install -y \
 ```bash
 sudo pacman -S --noconfirm \
     python-pip python-gobject gtk3 \
-    libappindicator-gtk3 gobject-introspection \
+    libayatana-appindicator gobject-introspection \
     python-cairo portaudio python-virtualenv \
     wget curl unzip xdotool wtype wl-clipboard xclip xsel
 ```

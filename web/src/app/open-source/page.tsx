@@ -44,7 +44,7 @@ const benefits = [
   {
     title: "Free Forever",
     description:
-      "GPL v3 licensed. Free to use, modify, and share. No freemium, no premium tier, no hidden costs.",
+      "AGPL-3.0 licensed. Free to use, modify, and share. No freemium, no premium tier, no hidden costs.",
     icon: Heart,
     iconColor: "text-primary",
     iconBg: "bg-primary/10",
@@ -87,12 +87,12 @@ const techStack = [
 export const metadata: Metadata = buildPageMetadata({
   title: "Open Source Voice Dictation for Linux | Vocalinux",
   description:
-    "100% free and open source voice dictation for Linux. GPL v3 licensed, no vendor lock-in, transparent code, community-driven development. Your voice data stays private.",
+    "100% free and open source voice dictation for Linux. AGPL-3.0 licensed, no vendor lock-in, transparent code, community-driven development. Your voice data stays private.",
   path: "/open-source",
   keywords: [
     "open source voice dictation",
     "free speech to text Linux",
-    "GPL voice recognition",
+    "AGPL voice recognition",
     "FOSS dictation software",
     "Linux voice typing free",
     "transparent voice recognition",
@@ -107,7 +107,7 @@ export default function OpenSourcePage() {
     "@type": "Article",
     headline: "Open Source Voice Dictation for Linux",
     description:
-      "Why Vocalinux is 100% open source. GPL v3 licensed, community-driven, no vendor lock-in voice dictation for Linux.",
+      "Why Vocalinux is 100% open source. AGPL-3.0 licensed, community-driven, no vendor lock-in voice dictation for Linux.",
     dateModified: "2026-02-22",
     author: {
       "@type": "Person",
@@ -141,8 +141,9 @@ export default function OpenSourcePage() {
           Free & Open Source Voice Dictation
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Vocalinux is 100% open source under the GPL v3 license. No subscriptions, no vendor
-          lock-in, no hidden costs. Your voice data never leaves your machine.
+          Vocalinux is 100% open source under the AGPL-3.0 license, aligned with the other
+          VocaHQ distribution projects. No subscriptions, no vendor lock-in, no hidden costs.
+          Your voice data never leaves your machine.
         </p>
       </section>
 
@@ -150,11 +151,11 @@ export default function OpenSourcePage() {
         <div className="mb-4 flex items-center gap-3">
           <Scale className="h-6 w-6 text-muted-foreground" />
           <h2 className="text-xl font-semibold text-foreground">
-            GPL v3 Licensed
+            AGPL-3.0 Licensed
           </h2>
         </div>
         <p className="mb-4 text-muted-foreground">
-          Vocalinux is released under the GNU General Public License v3.0, which means:
+          Vocalinux is released under the GNU Affero General Public License v3.0, which means:
         </p>
         <ul className="grid gap-2 sm:grid-cols-2">
           {[
@@ -162,6 +163,7 @@ export default function OpenSourcePage() {
             "Free to study and modify",
             "Free to share with others",
             "Modifications must remain open",
+            "Network-deployed modifications must offer source",
           ].map((item) => (
             <li key={item} className="flex items-center gap-2 text-sm text-muted-foreground">
               <CheckCircle2 className="h-4 w-4" />
