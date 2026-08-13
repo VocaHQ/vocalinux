@@ -859,6 +859,14 @@ class TestSettingsNavigation(unittest.TestCase):
         # No persistent bottom strip below the pages
         self.assertNotIn("def _build_status_strip(self):", self.source_code)
 
+    def test_close_button_separated_from_dictation_test(self):
+        """Close sits below a separator so it reads as dialog chrome (#651)."""
+        footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
+        after_test = footer_body.split("footer.pack_start(self.test_output_revealer")[1]
+        before_close = after_test.split('close_button = Gtk.Button(label="Close")')[0]
+        self.assertIn("Gtk.Separator", before_close)
+        self.assertIn("footer.pack_start(close_separator", before_close)
+
     def test_sidebar_icons_use_adwaita_names(self):
         """Sidebar icons must resolve in the stock Adwaita theme."""
         for icon in [
