@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = config_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
+# Tells "this key was absent" apart from "this key held None". Several settings
+# default to None, so a plain dict.get() cannot distinguish the two.
+_UNSET = object()
+
 # Default configuration
 DEFAULT_CONFIG = {
     "speech_recognition": {  # Changed section name
@@ -121,11 +125,23 @@ class ConfigManager:
     # creating new top-level config keys.
     _VALID_SECTIONS = frozenset(DEFAULT_CONFIG.keys())
 
+    # The configuration as it stood after loading, used by save_config() to tell
+    # what this process changed from what it merely read. Empty here so that an
+    # instance built without __init__ (ConfigManager.__new__, as some tests do)
+    # still saves: with no baseline, every value counts as changed and the write
+    # overwrites, which is what saving did before this became a merge. Instances
+    # rebind it rather than mutating it, so the shared default is never written.
+    _loaded: dict = {}
+
     def __init__(self):
         """Initialize the configuration manager."""
         self.config = copy.deepcopy(DEFAULT_CONFIG)
+        # Must exist before load_config(): migration can save part-way through
+        # it, and save_config() needs a baseline to compare against.
+        self._loaded = copy.deepcopy(DEFAULT_CONFIG)
         self._ensure_config_dir()
         self.load_config()
+        self._loaded = copy.deepcopy(self.config)
 
     def _ensure_config_dir(self):
         """Ensure the configuration directory exists."""
@@ -141,10 +157,11 @@ class ConfigManager:
             logger.info(f"Config file not found at {CONFIG_FILE}. Using defaults.")
             return
 
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                user_config = json.load(f)
+        user_config = self._read_config_file()
+        if user_config is None:
+            return
 
+        try:
             # Check if migration is needed BEFORE merging with defaults
             needs_migration = self._check_needs_migration(user_config)
 
@@ -160,6 +177,36 @@ class ConfigManager:
 
         except (json.JSONDecodeError, OSError) as e:
             logger.error(f"Failed to load config: {e}")
+
+    def _read_config_file(self) -> Optional[dict]:
+        """
+        Read and parse the config file.
+
+        Shared by :meth:`load_config` and :meth:`save_config` so a missing or
+        corrupt file means the same thing to both; handling it in two places is
+        how a reader and a writer of the same file drift apart.
+
+        Returns:
+            The parsed contents, or None if the file is absent or unreadable.
+        """
+        if not os.path.exists(CONFIG_FILE):
+            return None
+
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                parsed = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.error(f"Failed to load config: {e}")
+            return None
+
+        if not isinstance(parsed, dict):
+            # Valid JSON that is not an object (a bare list, string, number).
+            # Callers expect to walk sections, so treat it like a corrupt file
+            # rather than letting the walk raise somewhere further in.
+            logger.error(f"Config file is not a JSON object: {CONFIG_FILE}")
+            return None
+
+        return parsed
 
     def _check_needs_migration(self, user_config: dict) -> bool:
         """Check if the user config needs migration to add per-engine model sizes."""
@@ -229,19 +276,63 @@ class ConfigManager:
             self.save_config()
 
     def save_config(self):
-        """Save the current configuration to the config file."""
+        """
+        Save the current configuration to the config file.
+
+        Merges onto the file's current contents rather than overwriting them. A
+        value is taken from memory only where it changed since the config was
+        loaded, so a setting this process never touched keeps whatever is on
+        disk now. That is what lets a config.json hand-edited while Vocalinux is
+        running survive an unrelated save.
+
+        Two limits worth knowing: the read and the write are not atomic, so two
+        processes saving at once can still lose an update (as they could before,
+        when every save was a blind overwrite); and a list this process changed
+        replaces the one on disk wholesale rather than merging element-wise.
+        """
         try:
             # Ensure directory exists before writing
             self._ensure_config_dir()
-            with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config, f, indent=4)
 
+            merged = self._read_config_file()
+            if merged is None:
+                merged = {}
+            self._merge_local_changes(merged, self.config, self._loaded)
+
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(merged, f, indent=4)
+
+            self._loaded = copy.deepcopy(self.config)
             logger.info(f"Saved configuration to {CONFIG_FILE}")
             return True
 
         except (OSError, TypeError) as e:
             logger.error(f"Failed to save config: {e}")
             return False
+
+    def _merge_local_changes(self, target: dict, current: dict, loaded: dict) -> None:
+        """
+        Apply this process's changes onto a dict, leaving the rest of it alone.
+
+        Args:
+            target: The dictionary to write into (the file's current contents)
+            current: The in-memory configuration
+            loaded: The in-memory configuration as it stood after loading
+        """
+        for key, value in current.items():
+            was = loaded.get(key, _UNSET)
+            if isinstance(value, dict) and isinstance(was, dict):
+                nested = target.get(key)
+                if not isinstance(nested, dict):
+                    nested = target[key] = {}
+                self._merge_local_changes(nested, value, was)
+            elif value != was:
+                # Changed here since load, so this process is the authority.
+                target[key] = value
+            else:
+                # Untouched here, so whatever is on disk now wins; this only
+                # seeds the key when the file does not have it at all.
+                target.setdefault(key, value)
 
     def save_settings(self):
         """Save the current configuration to the config file.
