@@ -652,7 +652,12 @@ class TextInjector:
         forced, pin_source = self._resolve_backend_pin()
         self._backend_pin = (forced, pin_source)
         if pin_source and forced != "auto":
-            logger.info("%s=%s: overriding backend autodetection", pin_source, forced)
+            # States the request, not the result. Nothing has been checked for
+            # availability yet, and an unavailable pin falls through to
+            # autodetection further down -- so a word like "overriding" here
+            # would describe an outcome this line cannot know, and would read as
+            # contradicting the "was not applied" warning when it does not hold.
+            logger.info("%s=%s: backend pin requested", pin_source, forced)
 
         # Prefer IBus on both X11 and Wayland - it sends Unicode directly,
         # bypassing keyboard layout issues entirely

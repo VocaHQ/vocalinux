@@ -399,6 +399,97 @@ class TestCheckDependencies(unittest.TestCase):
         self.assertEqual(obj.wayland_tool, "wtype")
         mock_ibus_class.assert_not_called()
 
+    def test_x11_config_pin_never_constructs_ibus(self):
+        """On X11 the user guide promises any non-ibus pin turns the IBus path off.
+
+        The X11 reporter on #476 wanted exactly that. The pin does not choose the
+        tool there -- xdotool always does the typing -- so the only thing the pin
+        changes on X11 is whether IBus runs, and that is what this asserts.
+        """
+        import json as _json
+
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        def run(pinned):
+            """Drive _check_dependencies on X11 under conditions IBus would pass."""
+            obj = _make_injector(DesktopEnvironment.X11)
+            section = {"backend": pinned} if pinned else {}
+            config = _json.dumps({"text_injection": section})
+
+            with (
+                patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11"}, clear=True),
+                patch(
+                    "vocalinux.text_injection.text_injector.config_dir",
+                    return_value="/fake/config",
+                ),
+                patch("os.path.exists", return_value=True),
+                patch("builtins.open", mock_open(read_data=config)),
+                patch(
+                    "vocalinux.text_injection.text_injector.is_ibus_available", return_value=True
+                ),
+                patch(
+                    "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+                    return_value=True,
+                ),
+                patch(
+                    "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+                    return_value=True,
+                ),
+                patch("vocalinux.text_injection.text_injector.IBusTextInjector") as mock_ibus_class,
+                patch("shutil.which", side_effect=lambda c: f"/usr/bin/{c}"),
+            ):
+                obj._check_dependencies()
+            return mock_ibus_class
+
+        # Control: with no pin these same conditions do construct IBus, so a
+        # not-called assertion below is the pin's doing and not the environment's.
+        self.assertTrue(run(None).called, "control failed: IBus was not constructed without a pin")
+
+        for pinned in ("xdotool", "wtype"):
+            with self.subTest(backend=pinned):
+                run(pinned).assert_not_called()
+
+    def test_explicit_auto_environment_ignores_the_saved_config_pin(self):
+        """VOCALINUX_FORCE_BACKEND=auto is how you get one run of plain autodetection.
+
+        The resolver already knows an explicit auto from an unset variable; this
+        drives the whole of _check_dependencies to show the saved pin really is
+        not consulted, rather than only that the resolver returned "auto".
+        """
+        import json as _json
+
+        from vocalinux.text_injection.text_injector import DesktopEnvironment, TextInjector
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        obj._backend_pin = ("auto", None)
+        config = _json.dumps({"text_injection": {"backend": "wtype"}})
+
+        with (
+            patch.dict(
+                os.environ,
+                {"XDG_SESSION_TYPE": "wayland", "VOCALINUX_FORCE_BACKEND": "auto"},
+                clear=True,
+            ),
+            patch("vocalinux.text_injection.text_injector.config_dir", return_value="/fake/config"),
+            patch("os.path.exists", return_value=True),
+            patch("builtins.open", mock_open(read_data=config)),
+            patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False),
+            patch.object(TextInjector, "_ensure_ydotoold", lambda s: True),
+            patch("shutil.which", side_effect=lambda c: f"/usr/bin/{c}"),
+            self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs,
+        ):
+            obj._check_dependencies()
+            obj._warn_if_pin_not_honoured(*obj._backend_pin)
+
+        # Autodetection prefers ydotool when its daemon is ready; the saved wtype
+        # pin would have won had the explicit auto not discarded it.
+        self.assertEqual(obj.wayland_tool, "ydotool")
+        self.assertFalse(
+            [line for line in logs.output if "backend pin requested" in line],
+            f"an explicit auto still reported a pin: {logs.output}",
+        )
+        self.assertFalse(self._not_applied(logs.output))
+
     def _run_ibus_pin(self, bridges, desktop="Hyprland", env=None):
         """Drive _check_dependencies with an ibus pin; return (logs, bridge_call_count)."""
         from vocalinux.text_injection.text_injector import DesktopEnvironment, TextInjector
@@ -476,8 +567,15 @@ class TestCheckDependencies(unittest.TestCase):
         output, _ = self._run_ibus_pin(bridges=True, env=DesktopEnvironment.X11)
         self.assertFalse([line for line in output if line.startswith("WARNING")])
 
-    def _run_with_pin(self, pin, tools, ibus_available=True, bridges=True, env=None):
-        """Construct through _check_dependencies with a pin; return (injector, logs)."""
+    def _run_with_pin(
+        self, pin, tools, ibus_available=True, bridges=True, env=None, ydotoold_ready=None
+    ):
+        """Construct through _check_dependencies with a pin; return (injector, logs).
+
+        ydotoold_ready defaults to whether ydotool is installed, which is what
+        every caller wanted before the daemonless fallback needed exercising.
+        Pass it explicitly to have ydotool present but its daemon unavailable.
+        """
         from vocalinux.text_injection.text_injector import DesktopEnvironment, TextInjector
 
         obj = _make_injector(env or DesktopEnvironment.WAYLAND)
@@ -504,7 +602,11 @@ class TestCheckDependencies(unittest.TestCase):
             patch.object(TextInjector, "_wayland_compositor_bridges_ibus", lambda s: bridges),
             patch("vocalinux.text_injection.text_injector.IBusTextInjector"),
             patch.object(TextInjector, "_start_ibus_initialization", lambda s: None),
-            patch.object(TextInjector, "_ensure_ydotoold", lambda s: "ydotool" in tools),
+            patch.object(
+                TextInjector,
+                "_ensure_ydotoold",
+                lambda s: ("ydotool" in tools) if ydotoold_ready is None else ydotoold_ready,
+            ),
             patch("shutil.which", side_effect=lambda c: f"/usr/bin/{c}" if c in tools else None),
             self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs,
         ):
@@ -634,6 +736,78 @@ class TestCheckDependencies(unittest.TestCase):
         self.assertTrue(warned, f"expected a not-applied warning, got: {logs.output}")
         self.assertNotIn("not available", warned[0])
         self.assertNotIn("not installed", warned[0])
+
+    def test_ydotool_pin_with_missing_binary_warns_and_names_the_reason(self):
+        """The wtype case has a counterpart: every selectable tool can be absent.
+
+        Contrast with test_pin_with_missing_binary_warns_and_names_the_reason,
+        which pins the tool the fallback then chooses; here the pin and the
+        fallback are swapped, so a check keyed on one name would still pass.
+        """
+        _, output = self._run_with_pin("ydotool", tools=("wtype",))
+        warned = self._not_applied(output)
+        self.assertTrue(warned, f"expected a not-applied warning, got: {output}")
+        self.assertIn("ydotool is not installed", warned[0])
+        self.assertIn("using wtype instead", warned[0])
+
+    def test_wtype_pin_without_wtype_falls_back_to_daemonless_ydotool(self):
+        """ydotool present but ydotoold not ready is its own branch, and a pin reaches it.
+
+        Both diagnostics have to survive together: the fallback says the daemon
+        is missing, and the pin check says the pin is not what ended up typing.
+        """
+        obj, output = self._run_with_pin("wtype", tools=("ydotool",), ydotoold_ready=False)
+        self.assertEqual(obj.wayland_tool, "ydotool")
+        self.assertTrue(
+            [line for line in output if "ydotoold not ready" in line],
+            f"expected the daemonless-ydotool warning, got: {output}",
+        )
+        warned = self._not_applied(output)
+        self.assertTrue(warned, f"expected a not-applied warning, got: {output}")
+        self.assertIn("using ydotool instead", warned[0])
+
+    def test_ibus_pin_survives_the_x11_missing_xdotool_early_return(self):
+        """_check_dependencies returns early here, before any tool is selected.
+
+        The pin is still honoured -- IBus is what types -- so the pin check must
+        not report a failure just because the usual selection chain was skipped.
+        """
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj, output = self._run_with_pin("ibus", tools=(), env=DesktopEnvironment.X11)
+        self.assertIsNotNone(obj._ibus_injector)
+        self.assertFalse(
+            self._not_applied(output),
+            f"honoured ibus pin reported as not applied: {output}",
+        )
+
+    def test_ibus_pin_survives_the_no_tools_early_return(self):
+        """The other early return: Wayland with nothing installed but IBus asked for.
+
+        Without the early return this path raises RuntimeError, so reaching the
+        pin check at all is part of what this asserts.
+        """
+        obj, output = self._run_with_pin("ibus", tools=())
+        self.assertIsNotNone(obj._ibus_injector)
+        self.assertFalse(
+            self._not_applied(output),
+            f"honoured ibus pin reported as not applied: {output}",
+        )
+
+    def test_pin_log_states_the_request_without_claiming_the_outcome(self):
+        """The pin line runs before anything is checked, so it may not claim success.
+
+        A pin that is not installed is reported by this line and then
+        contradicted by the not-applied warning, which is what made an
+        outcome-shaped word wrong here.
+        """
+        _, output = self._run_with_pin("wtype", tools=("ydotool",))
+        requested = [line for line in output if "backend pin requested" in line]
+        self.assertTrue(requested, f"expected the pin-requested line, got: {output}")
+        self.assertFalse(
+            [line for line in output if "overriding" in line],
+            f"pin line still claims an outcome it cannot know: {output}",
+        )
 
     def test_force_backend_ydotool_skips_ibus_and_wtype(self):
         """VOCALINUX_FORCE_BACKEND=ydotool pins ydotool even when wtype is available."""
