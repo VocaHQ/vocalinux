@@ -264,6 +264,54 @@ class TestTrayIndicator(unittest.TestCase):
             mock_dialog_class.assert_called_once()
             mock_dialog_instance.show.assert_called_once()
 
+    def test_settings_reuses_open_dialog(self):
+        """A second Settings click focuses the existing window instead of duplicating it."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_settings_clicked(None)
+
+            mock_dialog_class.assert_called_once()
+            mock_dialog_instance.show.assert_called_once()
+            mock_dialog_instance.present_with_time.assert_called_once()
+            mock_dialog_instance.navigate_to_page.assert_not_called()
+
+    def test_about_reuses_open_settings_dialog(self):
+        """About focuses the existing Settings window and switches to the About page."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_about_clicked(None)
+
+            mock_dialog_class.assert_called_once()
+            mock_dialog_instance.navigate_to_page.assert_called_once_with("about")
+            mock_dialog_instance.present_with_time.assert_called_once()
+
+    def test_settings_opens_new_dialog_after_close(self):
+        """Closing Settings allows a later click to open a fresh dialog."""
+        import vocalinux.ui.tray_indicator as tray_module
+
+        first_dialog = MagicMock()
+        second_dialog = MagicMock()
+        mock_dialog_class = MagicMock(side_effect=[first_dialog, second_dialog])
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            self.tray_indicator._on_settings_dialog_destroyed(first_dialog)
+            self.tray_indicator._on_settings_clicked(None)
+
+            self.assertEqual(mock_dialog_class.call_count, 2)
+            second_dialog.show.assert_called_once()
+            first_dialog.present_with_time.assert_not_called()
+
     def test_about_dialog(self):
         """Test About opens Settings focused on the About page."""
         with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
@@ -558,6 +606,22 @@ class TestTrayIndicator(unittest.TestCase):
 
             mock_logging_dialog_class.assert_called_once_with(parent=None)
             mock_dialog.show.assert_called_once()
+            mock_dialog.connect.assert_called()
+
+    def test_logs_reuses_open_dialog(self):
+        """A second View Logs click focuses the existing window instead of duplicating it."""
+        mock_dialog = MagicMock()
+        mock_logging_dialog_class = MagicMock(return_value=mock_dialog)
+        mock_logging_module = MagicMock()
+        mock_logging_module.LoggingDialog = mock_logging_dialog_class
+
+        with patch.dict(sys.modules, {"vocalinux.ui.logging_dialog": mock_logging_module}):
+            self.tray_indicator._on_logs_clicked(None)
+            self.tray_indicator._on_logs_clicked(None)
+
+            mock_logging_dialog_class.assert_called_once_with(parent=None)
+            mock_dialog.show.assert_called_once()
+            mock_dialog.present_with_time.assert_called_once()
 
     def test_on_settings_dialog_response_close(self):
         """Test settings dialog response handler for CLOSE."""

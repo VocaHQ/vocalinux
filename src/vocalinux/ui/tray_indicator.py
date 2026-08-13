@@ -147,6 +147,8 @@ class TrayIndicator:
         # Must exist before _init_indicator: tests run idle_add synchronously.
         self._pending_update: Optional[ReleaseInfo] = None
         self._update_menu_item = None
+        self._settings_dialog: Optional[SettingsDialog] = None
+        self._logging_dialog: Optional[Gtk.Dialog] = None
 
         # Initialize the indicator (in the GTK main thread)
         GLib.idle_add(self._init_indicator)
@@ -568,6 +570,17 @@ class TrayIndicator:
 
     def _show_settings_page(self, page_name: Optional[str]):
         """Open settings, optionally focused on a specific sidebar page."""
+        dialog = self._settings_dialog
+        if dialog is not None:
+            try:
+                if page_name:
+                    dialog.navigate_to_page(page_name)
+                self._present_window(dialog)
+                return
+            except Exception:
+                logger.debug("Existing settings dialog is gone, opening a new one")
+                self._settings_dialog = None
+
         dialog = SettingsDialog(
             parent=None,
             config_manager=self.config_manager,
@@ -581,7 +594,19 @@ class TrayIndicator:
             ),
         )
         dialog.connect("response", self._on_settings_dialog_response)
+        dialog.connect("destroy", self._on_settings_dialog_destroyed)
+        self._settings_dialog = dialog
         dialog.show()
+
+    def _present_window(self, window: Gtk.Window) -> None:
+        """Raise an already-open window so a second tray click does not spawn another."""
+        window.deiconify()
+        window.present_with_time(Gtk.get_current_event_time())
+
+    def _on_settings_dialog_destroyed(self, dialog, *_args) -> None:
+        """Drop the settings dialog reference after it is closed."""
+        if self._settings_dialog is dialog:
+            self._settings_dialog = None
 
     def _get_update_channel(self) -> str:
         """Return the configured release channel for background update checks."""
@@ -660,12 +685,27 @@ class TrayIndicator:
         """Handle click on the View Logs menu item."""
         logger.debug("View Logs clicked")
 
+        dialog = self._logging_dialog
+        if dialog is not None:
+            try:
+                self._present_window(dialog)
+                return
+            except Exception:
+                logger.debug("Existing logs dialog is gone, opening a new one")
+                self._logging_dialog = None
+
         # Import here to avoid circular imports
         from .logging_dialog import LoggingDialog
 
-        # Create and show the logging dialog
         dialog = LoggingDialog(parent=None)
+        dialog.connect("destroy", self._on_logging_dialog_destroyed)
+        self._logging_dialog = dialog
         dialog.show()
+
+    def _on_logging_dialog_destroyed(self, dialog, *_args) -> None:
+        """Drop the logs dialog reference after it is closed."""
+        if self._logging_dialog is dialog:
+            self._logging_dialog = None
 
     def _on_settings_dialog_response(self, dialog, response):
         """Handle responses from the settings dialog."""
