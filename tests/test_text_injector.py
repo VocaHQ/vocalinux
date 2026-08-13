@@ -2331,6 +2331,33 @@ class TestBackendPreference(unittest.TestCase):
                 self.assertEqual(TextInjector._backend_preference(), "wtype")
 
 
+class TestSelectableBackends(unittest.TestCase):
+    """xdotool is a pinnable value, and both readers accept the same set."""
+
+    def test_xdotool_is_accepted_from_the_environment(self):
+        with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": "xdotool"}):
+            self.assertEqual(TextInjector._forced_backend_setting(), "xdotool")
+
+    def test_xdotool_is_accepted_from_config(self):
+        with _fake_config({"text_injection": {"backend": "xdotool"}}):
+            self.assertEqual(TextInjector._configured_backend(), "xdotool")
+
+    def test_both_readers_accept_the_same_values(self):
+        """A value valid in one source must be valid in the other."""
+        for value in TextInjector._SELECTABLE_BACKENDS:
+            with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": value}):
+                self.assertEqual(TextInjector._forced_backend_setting(), value)
+            with _fake_config({"text_injection": {"backend": value}}):
+                self.assertEqual(TextInjector._configured_backend(), value)
+
+    def test_help_text_lists_every_selectable_value(self):
+        """Guards the 'expected ...' messages against drifting from the tuple."""
+        help_text = TextInjector._accepted_backends_help()
+        for value in TextInjector._SELECTABLE_BACKENDS:
+            self.assertIn(value, help_text)
+        self.assertIn("auto", help_text)
+
+
 class TestForcedBackendSetting(unittest.TestCase):
     """The raw three-state reading of VOCALINUX_FORCE_BACKEND.
 

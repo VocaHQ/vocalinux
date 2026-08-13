@@ -398,6 +398,83 @@ class TestCheckDependencies(unittest.TestCase):
         self.assertEqual(obj.wayland_tool, "wtype")
         mock_ibus_class.assert_not_called()
 
+    def _run_ibus_pin(self, bridges, desktop="Hyprland", env=None):
+        """Drive _check_dependencies with an ibus pin; return (logs, bridge_call_count)."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment, TextInjector
+
+        obj = _make_injector(env or DesktopEnvironment.WAYLAND)
+        calls = []
+
+        def fake_bridges(self):
+            calls.append(1)
+            return bridges
+
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": desktop,
+                    "VOCALINUX_FORCE_BACKEND": "ibus",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_wayland_compositor_bridges_ibus", fake_bridges),
+            patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True),
+            patch(
+                "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+                return_value=True,
+            ),
+            patch(
+                "vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True
+            ),
+            patch("vocalinux.text_injection.text_injector.IBusTextInjector"),
+            patch.object(TextInjector, "_start_ibus_initialization", lambda s: None),
+            patch("shutil.which", side_effect=lambda c: f"/usr/bin/{c}"),
+            self.assertLogs("vocalinux.text_injection.text_injector", level="DEBUG") as logs,
+        ):
+            obj._check_dependencies()
+        return logs.output, len(calls)
+
+    def test_ibus_pin_on_unbridged_compositor_warns_about_silent_failure(self):
+        """Pinning ibus can re-enable the silent drop the denylist exists to stop."""
+        output, _ = self._run_ibus_pin(bridges=False)
+        warnings = [line for line in output if line.startswith("WARNING")]
+        self.assertTrue(
+            any("may silently do nothing" in line for line in warnings),
+            f"expected a silent-failure warning, got: {output}",
+        )
+
+    def test_ibus_pin_on_bridged_compositor_does_not_warn(self):
+        """The guard must key off the compositor, not merely off the pin.
+
+        A bridged desktop -- including a denylisted compositor with the
+        ibus-wayland bridge running -- is not a bypass and must stay quiet.
+        """
+        output, _ = self._run_ibus_pin(bridges=True)
+        self.assertFalse(
+            [line for line in output if line.startswith("WARNING")],
+            f"expected no warning on a bridged compositor, got: {output}",
+        )
+
+    def test_ibus_pin_never_double_checks_the_compositor(self):
+        """The bridging check shells out (pgrep / gdbus), so it must run at most once.
+
+        The elif chain short-circuits on ``not force_ibus``, so a pinned run
+        reaches the new guard without having evaluated the check already. If a
+        future edit drops that short-circuit, this catches the extra subprocess.
+        """
+        for bridges in (False, True):
+            _, call_count = self._run_ibus_pin(bridges=bridges)
+            self.assertEqual(call_count, 1, f"bridges={bridges}: expected 1 call, got {call_count}")
+
+    def test_ibus_pin_on_x11_does_not_warn(self):
+        """The denylist is a Wayland concern; X11 reaches apps through XIM."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        output, _ = self._run_ibus_pin(bridges=True, env=DesktopEnvironment.X11)
+        self.assertFalse([line for line in output if line.startswith("WARNING")])
+
     def test_force_backend_ydotool_skips_ibus_and_wtype(self):
         """VOCALINUX_FORCE_BACKEND=ydotool pins ydotool even when wtype is available."""
         from vocalinux.text_injection.text_injector import DesktopEnvironment

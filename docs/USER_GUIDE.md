@@ -195,14 +195,15 @@ Pin the backend explicitly in `~/.config/vocalinux/config.json`:
 | `ibus` | IBus input method |
 | `wtype` | wtype virtual keyboard (Wayland) |
 | `ydotool` | ydotool uinput (Wayland; needs `ydotoold`) |
+| `xdotool` | xdotool (X11). On Wayland it only turns IBus off -- the Wayland tool is still picked automatically |
 
 The setting takes effect on the next start. When it is set to anything other
 than `ibus`, Vocalinux does not take the IBus path at all.
 
-On X11 the injection tool is always `xdotool`, so the practical choice there is
-`ibus` versus anything else: pinning a non-`ibus` value turns IBus off and
-dictates through `xdotool`, which is useful when IBus is unreliable in a
-particular application.
+On X11 the injection tool is `xdotool` regardless of which non-`ibus` value you
+pin, so `xdotool` is the name to use there when IBus is unreliable in a
+particular application. Pinning `ibus` keeps the IBus path; pinning anything
+else turns it off.
 
 To try a backend for a single run without changing the saved setting, set
 `VOCALINUX_FORCE_BACKEND`, which overrides the config value:

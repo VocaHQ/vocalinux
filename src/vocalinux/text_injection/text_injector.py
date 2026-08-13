@@ -244,6 +244,16 @@ class TextInjector:
         "weston",
     )
 
+    # Backends a user may pin explicitly, via VOCALINUX_FORCE_BACKEND or the
+    # text_injection.backend setting. Named once so the two readers and the two
+    # "expected ..." messages cannot drift apart as values are added.
+    _SELECTABLE_BACKENDS = ("ibus", "wtype", "ydotool", "xdotool")
+
+    @staticmethod
+    def _accepted_backends_help() -> str:
+        """The accepted pin values, for user-facing "expected ..." messages."""
+        return "/".join(TextInjector._SELECTABLE_BACKENDS) + "/auto"
+
     def _kde_virtual_keyboard_enabled(self) -> bool:
         """Return True when KWin VirtualKeyboard / input method is enabled.
 
@@ -484,11 +494,12 @@ class TextInjector:
             return None
         if value == "auto":
             return "auto"
-        if value in ("ibus", "wtype", "ydotool"):
+        if value in TextInjector._SELECTABLE_BACKENDS:
             return value
         logger.warning(
-            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected ibus/wtype/ydotool/auto)",
+            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected %s)",
             value,
+            TextInjector._accepted_backends_help(),
         )
         # Deliberately unset rather than "auto": a typo in a shell variable should
         # not discard a valid saved pin, only fail to override it.
@@ -536,11 +547,12 @@ class TextInjector:
             value = str(config.get("text_injection", {}).get("backend", "") or "").strip().lower()
             if not value or value == "auto":
                 return "auto"
-            if value in ("ibus", "wtype", "ydotool"):
+            if value in TextInjector._SELECTABLE_BACKENDS:
                 return value
             logger.warning(
-                "Ignoring unknown text_injection.backend=%r (expected ibus/wtype/ydotool/auto)",
+                "Ignoring unknown text_injection.backend=%r (expected %s)",
                 value,
+                TextInjector._accepted_backends_help(),
             )
         except Exception as e:  # unreadable/corrupt config must not block startup
             logger.debug(f"Could not read text_injection.backend setting: {e}")
@@ -623,6 +635,20 @@ class TextInjector:
                     os.environ.get("XDG_CURRENT_DESKTOP", "unknown"),
                 )
             else:
+                # force_ibus short-circuits all three guards above, so a pinned
+                # run arrives here without any of them having been evaluated.
+                # This warns for the compositor guard only: that is the case
+                # with a documented silent failure (#478, #485), where IBus
+                # reports the commit as delivered and the text never arrives.
+                # The other two guards are out of scope for this warning.
+                if force_ibus and not self._wayland_compositor_bridges_ibus():
+                    logger.warning(
+                        "Compositor '%s' does not bridge IBus to native Wayland apps, but an "
+                        "explicit ibus pin overrides that check. Dictation may silently do "
+                        "nothing in native Wayland windows; remove the pin to fall back to "
+                        "wtype/ydotool.",
+                        os.environ.get("XDG_CURRENT_DESKTOP", "unknown"),
+                    )
                 try:
                     if wayland_scoped_ibus and not ibus_active:
                         logger.info(
