@@ -1433,20 +1433,25 @@ class TextInjector:
         #   and the evdev code that produces Latin 'v' on the active layout —
         #   KEY_V=47 only on QWERTY). Passing 1.x codes to 0.1.x does not
         #   paste; it types garbage (e.g. "2442").
+        paste_cmd: list = []
         try:
             use_terminal_paste = self._should_use_terminal_paste()
-            cmd = self._clipboard_paste_command(terminal=use_terminal_paste)
+            paste_cmd = self._clipboard_paste_command(terminal=use_terminal_paste)
             logger.debug(
                 "Simulating %s paste with: %s",
                 "terminal" if use_terminal_paste else "standard",
-                cmd,
+                paste_cmd,
             )
             subprocess.run(
-                cmd, check=True, stderr=subprocess.PIPE, text=True, timeout=3, env=host_env()
+                paste_cmd, check=True, stderr=subprocess.PIPE, text=True, timeout=3, env=host_env()
             )
             logger.info(f"Text injected via clipboard paste: '{text[:20]}...' ({len(text)} chars)")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(f"Paste simulation failed: {e}")
+            # timeout=3 SIGKILLs the ydotool client. ydotoold keeps any keys it
+            # already applied, so a virtual Ctrl can stay held until logout (#658).
+            if paste_cmd:
+                self._ydotool_release_paste_keys(paste_cmd)
             with self._state_lock:
                 if generation == self._clipboard_restore_generation:
                     self._clipboard_restore_target = None
@@ -1744,6 +1749,63 @@ class TextInjector:
 
         setattr(self, cache_attr, cmd)
         return list(cmd)
+
+    def _ydotool_paste_release_command(self, paste_cmd: list) -> list:
+        """Return argv that lifts keys held by a ydotool paste chord.
+
+        wtype chords are ignored: they do not go through ydotoold, so a killed
+        client cannot leave a virtual modifier down.
+        """
+        if not paste_cmd or paste_cmd[0] != "ydotool":
+            return []
+
+        pressed: list = []
+        for token in paste_cmd:
+            if isinstance(token, str) and token.endswith(":1"):
+                code = token[:-2]
+                if code:
+                    pressed.append(code)
+        if pressed:
+            # Reverse press order so the letter lifts before Shift/Ctrl.
+            return ["ydotool", "key"] + [f"{code}:0" for code in reversed(pressed)]
+
+        token = ""
+        for part in reversed(paste_cmd):
+            if isinstance(part, str) and part not in ("ydotool", "key"):
+                token = part.lower()
+                break
+        has_ctrl = "ctrl" in token
+        has_shift = "shift" in token
+        if has_ctrl and has_shift:
+            # 0.1.x has no keycode:value form. A named tap is down+up; if the
+            # modifier is already down, the up half should clear it.
+            return ["ydotool", "key", "ctrl+shift"]
+        if has_shift:
+            return ["ydotool", "key", "shift"]
+        if has_ctrl:
+            return ["ydotool", "key", "ctrl"]
+        return []
+
+    def _ydotool_release_paste_keys(self, paste_cmd: list) -> None:
+        """Best-effort Ctrl/Shift/letter up after a failed ydotool paste (#658).
+
+        Releasing an already-up key is a no-op. If ydotoold is still wedged the
+        follow-up may also time out; we swallow that so paste failure stays False.
+        """
+        release = self._ydotool_paste_release_command(paste_cmd)
+        if not release:
+            return
+        try:
+            subprocess.run(
+                release,
+                check=False,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1,
+                env=host_env(),
+            )
+        except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            logger.debug("ydotool paste-key release did not complete")
 
     # evdev keycodes for modifier keys. If any of these is still physically held
     # when a Wayland injection fires, the injected keystrokes are modified: a

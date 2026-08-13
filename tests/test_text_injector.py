@@ -857,6 +857,153 @@ class TestTextInjector(unittest.TestCase):
         cmd = injector._ydotool_ctrl_v_command()
         self.assertEqual(cmd, ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
 
+    def _minimal_paste_injector(self) -> TextInjector:
+        injector = TextInjector.__new__(TextInjector)
+        injector._state_lock = threading.Lock()
+        injector._clipboard_restore_generation = 0
+        injector._clipboard_restore_target = None
+        injector.wayland_tool = "ydotool"
+        injector._wtype_paste_usable = False
+        return injector
+
+    def _inject_failing_paste(
+        self, injector: TextInjector, mock_run: MagicMock, paste_cmd: list, error: BaseException
+    ) -> bool:
+        def run_side_effect(cmd, **kwargs):
+            if cmd == paste_cmd:
+                raise error
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run_side_effect
+        with patch.object(injector, "_copy_to_clipboard", return_value=True):
+            with patch.object(injector, "_read_clipboard", return_value=None):
+                with patch.object(injector, "_should_copy_to_clipboard", return_value=False):
+                    with patch.object(injector, "_should_use_terminal_paste", return_value=False):
+                        with patch.object(
+                            injector, "_clipboard_paste_command", return_value=paste_cmd
+                        ):
+                            return injector._inject_via_clipboard_paste("hello")
+
+    def test_ydotool_paste_release_command_lifts_held_keys(self):
+        """Release argv follows the actual paste chord, including Shift and layout 'v'."""
+        injector = TextInjector.__new__(TextInjector)
+        self.assertEqual(
+            injector._ydotool_paste_release_command(
+                ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+            ),
+            ["ydotool", "key", "47:0", "29:0"],
+        )
+        self.assertEqual(
+            injector._ydotool_paste_release_command(
+                ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+            ),
+            ["ydotool", "key", "47:0", "42:0", "29:0"],
+        )
+        self.assertEqual(
+            injector._ydotool_paste_release_command(
+                ["ydotool", "key", "29:1", "17:1", "17:0", "29:0"]
+            ),
+            ["ydotool", "key", "17:0", "29:0"],
+        )
+        self.assertEqual(
+            injector._ydotool_paste_release_command(["ydotool", "key", "ctrl+v"]),
+            ["ydotool", "key", "ctrl"],
+        )
+        self.assertEqual(
+            injector._ydotool_paste_release_command(["ydotool", "key", "ctrl+shift+v"]),
+            ["ydotool", "key", "ctrl+shift"],
+        )
+        self.assertEqual(
+            injector._ydotool_paste_release_command(["wtype", "-M", "ctrl", "v"]),
+            [],
+        )
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_ydotool_paste_timeout_releases_v1_modifiers(self, mock_run):
+        """Timeout mid Ctrl+V must send V-up and Ctrl-up (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+        result = self._inject_failing_paste(
+            injector, mock_run, paste_cmd, subprocess.TimeoutExpired(paste_cmd, 3)
+        )
+
+        self.assertFalse(result)
+        cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        release_cmd = ["ydotool", "key", "47:0", "29:0"]
+        self.assertIn(release_cmd, cmds)
+        release_kwargs = next(
+            c.kwargs for c in mock_run.call_args_list if c.args and c.args[0] == release_cmd
+        )
+        self.assertIn("env", release_kwargs)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_ydotool_paste_timeout_releases_terminal_shift(self, mock_run):
+        """A timed-out Ctrl+Shift+V chord must also lift Shift (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
+        result = self._inject_failing_paste(
+            injector, mock_run, paste_cmd, subprocess.TimeoutExpired(paste_cmd, 3)
+        )
+
+        self.assertFalse(result)
+        cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        self.assertIn(["ydotool", "key", "47:0", "42:0", "29:0"], cmds)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_ydotool_paste_error_releases_legacy_ctrl(self, mock_run):
+        """A failed 0.1.x ctrl+v paste must tap ctrl so a stuck modifier can lift (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = list(TextInjector._YDOTOOL_LEGACY_CTRL_V)
+        result = self._inject_failing_paste(
+            injector, mock_run, paste_cmd, subprocess.CalledProcessError(1, paste_cmd)
+        )
+
+        self.assertFalse(result)
+        cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        self.assertIn(["ydotool", "key", "ctrl"], cmds)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_ydotool_paste_error_releases_legacy_ctrl_shift(self, mock_run):
+        """A failed 0.1.x ctrl+shift+v paste must tap ctrl+shift (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = list(TextInjector._YDOTOOL_LEGACY_CTRL_SHIFT_V)
+        result = self._inject_failing_paste(
+            injector, mock_run, paste_cmd, subprocess.CalledProcessError(1, paste_cmd)
+        )
+
+        self.assertFalse(result)
+        cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        self.assertIn(["ydotool", "key", "ctrl+shift"], cmds)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_ydotool_paste_release_timeout_still_returns_false(self, mock_run):
+        """A wedged daemon on the release path must not raise out of paste (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+        mock_run.side_effect = subprocess.TimeoutExpired("ydotool", 3)
+        with patch.object(injector, "_copy_to_clipboard", return_value=True):
+            with patch.object(injector, "_read_clipboard", return_value=None):
+                with patch.object(injector, "_should_copy_to_clipboard", return_value=False):
+                    with patch.object(injector, "_should_use_terminal_paste", return_value=False):
+                        with patch.object(
+                            injector, "_clipboard_paste_command", return_value=paste_cmd
+                        ):
+                            result = injector._inject_via_clipboard_paste("hello")
+        self.assertFalse(result)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_wtype_paste_timeout_does_not_release_ydotool_keys(self, mock_run):
+        """wtype paste failure must not send a ydotool key-up (#658)."""
+        injector = self._minimal_paste_injector()
+        paste_cmd = ["wtype", "-M", "ctrl", "v"]
+        result = self._inject_failing_paste(
+            injector, mock_run, paste_cmd, subprocess.TimeoutExpired(paste_cmd, 3)
+        )
+
+        self.assertFalse(result)
+        cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        self.assertFalse(any(isinstance(c, list) and c and c[0] == "ydotool" for c in cmds))
+
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     def test_clipboard_paste_returns_false_on_paste_failure(self, mock_run, mock_which):
