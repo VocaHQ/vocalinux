@@ -90,6 +90,21 @@ class InstallerCudaDiagnosticsTests(unittest.TestCase):
             self.assertIn("xsel", line)
             self.assertIn("wl-clipboard", line)
 
+    def test_ubuntu_22_package_list_omits_util_linux_extra(self) -> None:
+        """util-linux-extra is probed via apt-cache, not hardcoded in base package lists."""
+        source = _installer_source()
+
+        ubuntu_line = next(
+            line for line in source.splitlines() if "local APT_PACKAGES_UBUNTU=" in line
+        )
+        debian_13_line = next(
+            line for line in source.splitlines() if "local APT_PACKAGES_DEBIAN_13_PLUS=" in line
+        )
+        self.assertNotIn("util-linux-extra", ubuntu_line)
+        self.assertNotIn("util-linux-extra", debian_13_line)
+        self.assertIn("apt-cache show util-linux-extra", source)
+        self.assertIn('APT_PACKAGES="$APT_PACKAGES util-linux-extra"', source)
+
 
 if __name__ == "__main__":
     unittest.main()
