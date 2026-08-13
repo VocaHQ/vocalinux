@@ -1,0 +1,1091 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vocalinux open PR triage — 13 Aug 2026</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink: #09090b;
+  --paper: #ffffff;
+  --raised: #f4f4f5;
+  --muted: #52525b;
+  --border: #e4e4e7;
+  --green: #1a7f4e;
+  --green-deep: #14663e;
+  --green-soft: #ecfdf3;
+  --red: #c45c5c;
+  --red-soft: #fef2f2;
+  --amber: #b45309;
+  --amber-soft: #fffbeb;
+  --blue: #1d4ed8;
+  --blue-soft: #eff6ff;
+  --violet: #6d28d9;
+  --violet-soft: #f5f3ff;
+  --zinc: #27272a;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  font-size: 16.5px;
+  line-height: 1.55;
+}
+.wrap { max-width: 1080px; margin: 0 auto; padding: 2.25rem 1.5rem 5rem; }
+h1, h2, h3, .display {
+  font-family: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: -0.03em;
+  font-weight: 600;
+}
+h1 { font-size: clamp(2rem, 4vw, 2.75rem); line-height: 1.1; margin: 0 0 .5rem; }
+h2 { font-size: 1.45rem; margin: 2.5rem 0 .75rem; }
+h3 { font-size: 1.05rem; margin: 0; }
+.lede { color: var(--muted); max-width: 42rem; margin: 0 0 1.5rem; }
+.meta { font-size: .85rem; color: var(--muted); margin-bottom: 1.75rem; }
+.pills { display: flex; flex-wrap: wrap; gap: .5rem; margin: 1rem 0 1.75rem; }
+.pill {
+  display: inline-flex; align-items: center; gap: .4rem;
+  border: 1px solid var(--border); background: var(--raised);
+  border-radius: 999px; padding: .25rem .7rem; font-size: .82rem; font-weight: 600;
+}
+.pill b { font-variant-numeric: tabular-nums; }
+.pill.merge { background: var(--green-soft); border-color: #bbf7d0; color: var(--green-deep); }
+.pill.close { background: var(--red-soft); border-color: #fecaca; color: #991b1b; }
+.pill.fix { background: var(--amber-soft); border-color: #fde68a; color: #92400e; }
+.pill.draft { background: var(--violet-soft); border-color: #ddd6fe; color: #5b21b6; }
+.pill.rebase { background: var(--blue-soft); border-color: #bfdbfe; color: #1e40af; }
+.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin: 1.5rem 0 2rem; }
+.toc a {
+  display: block; text-decoration: none; color: inherit;
+  border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.1rem;
+  background: var(--paper);
+}
+.toc a:hover { border-color: #a1a1aa; }
+.toc .k { font-size: .72rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.toc ol { margin: .4rem 0 0; padding-left: 1.15rem; font-size: .92rem; }
+.toc li { margin: .15rem 0; }
+.toc a.merge { border-top: 3px solid var(--green); }
+.toc a.later { border-top: 3px solid var(--amber); }
+.toc a.closeb { border-top: 3px solid var(--red); }
+.note {
+  background: var(--raised); border: 1px solid var(--border); border-radius: 10px;
+  padding: .9rem 1.1rem; font-size: .92rem; color: var(--zinc);
+}
+.card {
+  border: 1px solid var(--border); border-radius: 14px; padding: 1.15rem 1.2rem 1.05rem;
+  margin: 1rem 0; background: #fff; break-inside: avoid;
+}
+.card.v-merge_after_fix { border-left: 4px solid var(--amber); }
+.card.v-needs_rebase { border-left: 4px solid var(--blue); }
+.card.v-needs_changes { border-left: 4px solid var(--amber); }
+.card.v-close { border-left: 4px solid var(--red); }
+.card.v-keep_draft { border-left: 4px solid var(--violet); }
+.card.v-merge { border-left: 4px solid var(--green); }
+.head { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; flex-wrap: wrap; }
+.head a { color: var(--ink); text-decoration: none; }
+.head a:hover { color: var(--green); }
+.badge {
+  font-size: .72rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+  border-radius: 6px; padding: .22rem .5rem; white-space: nowrap;
+}
+.b-merge, .b-merge_after_fix { background: var(--green-soft); color: var(--green-deep); }
+.b-needs_rebase { background: var(--blue-soft); color: #1e40af; }
+.b-needs_changes { background: var(--amber-soft); color: #92400e; }
+.b-close { background: var(--red-soft); color: #991b1b; }
+.b-keep_draft { background: var(--violet-soft); color: #5b21b6; }
+.one { margin: .45rem 0 .7rem; }
+.facts { display: flex; flex-wrap: wrap; gap: .35rem .7rem; font-size: .82rem; color: var(--muted); margin-bottom: .7rem; }
+.facts code { font-size: .78rem; background: var(--raised); padding: .05rem .35rem; border-radius: 4px; }
+.action {
+  background: var(--green-soft); border: 1px solid #bbf7d0; border-radius: 8px;
+  padding: .55rem .75rem; font-size: .9rem; margin: .6rem 0;
+}
+.card.v-close .action { background: var(--red-soft); border-color: #fecaca; }
+.card.v-keep_draft .action { background: var(--violet-soft); border-color: #ddd6fe; }
+.card.v-needs_changes .action, .card.v-merge_after_fix .action { background: var(--amber-soft); border-color: #fde68a; }
+.card.v-needs_rebase .action { background: var(--blue-soft); border-color: #bfdbfe; }
+.findings { margin: .5rem 0 0; padding-left: 1.1rem; }
+.findings li { margin: .25rem 0; font-size: .92rem; }
+.sev { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  border-radius: 4px; padding: .08rem .35rem; margin-right: .25rem; }
+.sev-blocker { background: #991b1b; color: #fff; }
+.sev-major { background: #b45309; color: #fff; }
+.sev-minor { background: #3f3f46; color: #fff; }
+.sev-nit { background: #e4e4e7; color: #3f3f46; }
+details { margin-top: .85rem; }
+summary { cursor: pointer; font-weight: 600; font-size: .9rem; color: var(--green-deep); }
+pre.comment {
+  white-space: pre-wrap; word-break: break-word;
+  background: #0c0c0e; color: #e4e4e7; border-radius: 10px;
+  padding: 1rem; font-size: .78rem; line-height: 1.45;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  max-height: 28rem; overflow: auto;
+}
+.toolbar { display: flex; gap: .5rem; margin: .45rem 0 .3rem; }
+button.copy {
+  font: inherit; font-size: .8rem; font-weight: 600;
+  background: var(--ink); color: #fff; border: 0; border-radius: 6px;
+  padding: .3rem .65rem; cursor: pointer;
+}
+button.copy:hover { background: var(--green); }
+.footer { margin-top: 3rem; font-size: .85rem; color: var(--muted); border-top: 1px solid var(--border); padding-top: 1rem; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; margin: 1rem 0 1.5rem; }
+th, td { text-align: left; padding: .45rem .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+td a { color: var(--ink); font-weight: 600; text-decoration: none; }
+td a:hover { color: var(--green); }
+@media print {
+  .toolbar, button.copy { display: none !important; }
+  .card, .toc a { break-inside: avoid; }
+  a { text-decoration: none; }
+  body { font-size: 12px; }
+  pre.comment { max-height: none; background: #f4f4f5; color: #111; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p class="meta">Vocalinux · VocaHQ/vocalinux · reviewed 13 Aug 2026 against <code>main</code> @ 36b2d92</p>
+<h1>Open pull request triage</h1>
+<p class="lede">21 open PRs. None are safe to squash-merge as they sit today. Four are one rebase or CI fix away. Five should be closed. The rest are real work that needs a rebase against current main, or should stay draft.</p>
+<div class="pills">
+  <span class="pill"><b>21</b> open</span>
+  <span class="pill"><b>0</b> merge now</span>
+  <span class="pill fix"><b>4</b> fix then merge</span>
+  <span class="pill rebase"><b>2</b> rebase first</span>
+  <span class="pill"><b>5</b> needs changes</span>
+  <span class="pill draft"><b>5</b> keep draft</span>
+  <span class="pill close"><b>5</b> close</span>
+  <span class="pill"><b>6</b> drafts</span>
+  <span class="pill"><b>16</b> conflicting</span>
+</div>
+
+<div class="toc">
+  <a class="merge" href="#merge-lane">
+    <div class="k">Do first</div>
+    <ol>
+      <li>#635 installer util-linux-extra — rebase, merge</li>
+      <li>#649 pin injection backend — approve CI, merge</li>
+      <li>#667 reuse Settings dialog — fix 3.9/3.10 tests</li>
+      <li>#575 model hash pinning — fix Bugbot, then merge</li>
+    </ol>
+  </a>
+  <a class="later" href="#later">
+    <div class="k">Keep, don’t merge yet</div>
+    <ol>
+      <li>#662 recreate postcss-only bump (Next 16 sneaked in)</li>
+      <li>#642 / #634 rebase own drafts</li>
+      <li>#568 D-Bus, #479 postprocess, #487 history</li>
+      <li>#516 overlay, #519 snap, #543 faster-whisper</li>
+    </ol>
+  </a>
+  <a class="closeb" href="#close">
+    <div class="k">Close</div>
+    <ol>
+      <li>#556 clipboard restore — already on main</li>
+      <li>#402 backend picker — superseded by #649</li>
+      <li>#425 Firefox paste — wrong heuristic</li>
+      <li>#353 Super+settings — suspend already on main</li>
+      <li>#291 custom shortcuts — shipped in #493</li>
+    </ol>
+  </a>
+</div>
+
+<div class="note">
+  <strong>How to use this.</strong> Each card has a maintainer action and a paste-ready GitHub review. Open the PR, paste the comment, request changes or close. Print this page (or Save as PDF) if you want a paper copy. Reviews are adversarial against current <code>main</code>, including whether the feature already landed.
+</div>
+
+<h2>All 21 at a glance</h2>
+<table><thead><tr><th>PR</th><th>Verdict</th><th>Author</th><th>State</th><th>Updated</th><th>One-liner</th></tr></thead><tbody>
+<tr><td><a href="#pr-635">#635</a></td><td><span class="badge b-needs_rebase">Rebase first</span></td><td>@flesler</td><td>conflicts · approved</td><td>2026-08-06</td><td>Correct apt-cache gate for #526; main still hardcodes util-linux-extra on Ubuntu, but install.sh conflicts with the later Ayatana package-list change.</td></tr>
+<tr><td><a href="#pr-649">#649</a></td><td><span class="badge b-merge_after_fix">Fix, then merge</span></td><td>@HashimAbdulaziz</td><td>ok · review required</td><td>2026-08-06</td><td>Narrow, correct config.json pin for #476; main still only has VOCALINUX_FORCE_BACKEND. CI never ran (first-time contributor cancel), not a code defect.</td></tr>
+<tr><td><a href="#pr-667">#667</a></td><td><span class="badge b-merge_after_fix">Fix, then merge</span></td><td>@AmirF194</td><td>ok · review required</td><td>2026-08-12</td><td>Production reuse logic is sound, but the new tests ignore the file&#x27;s own patch.object pattern and fail Python 3.9/3.10 in the full suite.</td></tr>
+<tr><td><a href="#pr-575">#575</a></td><td><span class="badge b-merge_after_fix">Fix, then merge</span></td><td>@jatinkrmalik</td><td>ok · review required</td><td>2026-08-03</td><td>Solid hash pinning and zip-slip work, but Bugbot&#x27;s high-severity false-success dialog is still open and the installer/runtime checks are fail-open by default.</td></tr>
+<tr><td><a href="#pr-662">#662</a></td><td><span class="badge b-needs_changes">Needs changes</span></td><td>@app/dependabot</td><td>ok · review required</td><td>2026-08-08</td><td>Dependabot&#x27;s &#x27;postcss&#x27; group PR also major-bumps Next.js 15.5.21 → 16.3.0; the website build dies on default Turbopack plus a webpack-only next.config.js.</td></tr>
+<tr><td><a href="#pr-642">#642</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@jatinkrmalik</td><td>draft · conflicts · review required</td><td>2026-08-04</td><td>Real #640 fix (language-aware punctuation aliases) that is still missing on main, but it is a draft with a PRODUCT.md conflict and no live dictation check.</td></tr>
+<tr><td><a href="#pr-634">#634</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@jatinkrmalik</td><td>draft · conflicts · review required</td><td>2026-08-03</td><td>Useful docs split (CoC/SUPPORT/CHANGELOG/INSTALL_MANUAL still absent on main) but 10 days stale: a naive merge would republish GPL and Toggle-as-default.</td></tr>
+<tr><td><a href="#pr-568">#568</a></td><td><span class="badge b-needs_rebase">Rebase first</span></td><td>@webenefits</td><td>conflicts · changes requested</td><td>2026-07-29</td><td>Useful opt-in D-Bus activation, but the branch is still DIRTY vs current main; the claimed rebase stopped at cc69c7e.</td></tr>
+<tr><td><a href="#pr-543">#543</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@jatinkrmalik</td><td>draft · conflicts · review required</td><td>2026-07-18</td><td>Useful optional faster-whisper extra, but draft+conflicting, Engine registry unused, and install.sh claims CUDA while installing CPU PyTorch.</td></tr>
+<tr><td><a href="#pr-519">#519</a></td><td><span class="badge b-needs_changes">Needs changes</span></td><td>@jatinkrmalik</td><td>conflicts · review required</td><td>2026-07-15</td><td>In-repo snap recipe can land without a Snap Store account, but it is conflicting, codecov-red, ships a 315KB duplicate SVG, and requests network-bind + home it does not need.</td></tr>
+<tr><td><a href="#pr-516">#516</a></td><td><span class="badge b-needs_changes">Needs changes</span></td><td>@jatinkrmalik</td><td>conflicts · review required</td><td>2026-07-15</td><td>Overlay work is real (optional GtkLayerShell, no present(), opacity instead of hide/show) but default-on plus a full-width always-mapped 30fps strip is the wrong first ship on GNOME Wayland.</td></tr>
+<tr><td><a href="#pr-487">#487</a></td><td><span class="badge b-needs_changes">Needs changes</span></td><td>@LuigiKraken</td><td>conflicts · review required</td><td>2026-07-01</td><td>Useful tray recovery feature with a sound in-memory store, but it is conflicting, defaults history on, and &quot;delete that&quot; does not actually purge the dictated text.</td></tr>
+<tr><td><a href="#pr-479">#479</a></td><td><span class="badge b-needs_changes">Needs changes</span></td><td>@karottenreibe</td><td>conflicts · review required</td><td>2026-07-01</td><td>Clean stdin/stdout hook with timeout and no shell=True, but Jatin already put it on hold for the settings refactor (now landed) and example scripts, and the executable path needs hardening.</td></tr>
+<tr><td><a href="#pr-424">#424</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@juanfradb</td><td>draft · ok · review required</td><td>2026-05-08</td><td>Useful whisper.cpp auto-detect constraint, not on main, but needs a rewrite against resolve_whisper_language and must not force a language at 0% confidence.</td></tr>
+<tr><td><a href="#pr-387">#387</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@jatinkrmalik</td><td>conflicts · review required</td><td>2026-06-07</td><td>Default-off is correct, but Whisper streaming is not real streaming, LA-2 is wrong in places, live injection is a stub, and the branch is stale/conflicting with 3.13 CI red — keep draft until redesigned.</td></tr>
+<tr><td><a href="#pr-503">#503</a></td><td><span class="badge b-keep_draft">Keep draft</span></td><td>@jatinkrmalik</td><td>draft · conflicts · review required</td><td>2026-07-11</td><td>Still a useful cleanup thesis, but this branch is too stale to merge: it deletes APIs and files that current main now uses, and conflicts with the settings/IBus/About rewrite.</td></tr>
+<tr><td><a href="#pr-556">#556</a></td><td><span class="badge b-close">Close</span></td><td>@Nosion</td><td>conflicts · changes requested</td><td>2026-08-04</td><td>Clipboard restore already landed on main as always-on (#588/#646); this opt-in branch would regress that and still conflicts.</td></tr>
+<tr><td><a href="#pr-402">#402</a></td><td><span class="badge b-close">Close</span></td><td>@sabbari</td><td>conflicts · review required</td><td>2026-06-07</td><td>Stale 9-file backend picker; superseded by VOCALINUX_FORCE_BACKEND on main and the narrower config pin in #649. Lint red, conflicts, runtime reload does not rewire dictation.</td></tr>
+<tr><td><a href="#pr-425">#425</a></td><td><span class="badge b-close">Close</span></td><td>@juanfradb</td><td>draft · conflicts · review required</td><td>2026-05-08</td><td>Draft Firefox+xdotool special case; #665 did not fix silent IBus drops, but this heuristic is wrong and main&#x27;s clipboard-paste/backend-pin work supersedes it.</td></tr>
+<tr><td><a href="#pr-353">#353</a></td><td><span class="badge b-close">Close</span></td><td>@farconada</td><td>conflicts · review required</td><td>2026-05-07</td><td>suspend_handler.py and tray resume logic already live on main; super+super was later deprecated; double-tap Super fights GNOME Activities; --settings is the only leftover and belongs in a tiny new PR.</td></tr>
+<tr><td><a href="#pr-291">#291</a></td><td><span class="badge b-close">Close</span></td><td>@matz-man</td><td>conflicts · review required</td><td>2026-06-07</td><td>Custom shortcuts plus a Record/capture UI already shipped on main in #493; the parse_keys vs parse_shortcut single-key contract bug was never fixed and a rebase would collide with parse_shortcut_spec.</td></tr>
+</tbody></table>
+<h2 id="merge_lane">Merge this week</h2>
+<p class="lede">Approved or nearly there. Rebase / one CI fix, then squash-merge.</p>
+<article class="card v-needs_rebase" id="pr-635">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/635">#635 fix(installer): gate util-linux-extra to Ubuntu 24.04+</a></h3>
+<span class="badge b-needs_rebase">Rebase first</span>
+</div>
+<p class="one">Correct apt-cache gate for #526; main still hardcodes util-linux-extra on Ubuntu, but install.sh conflicts with the later Ayatana package-list change.</p>
+<div class="facts"><span>@flesler</span><span>+25 / −2 · 2 files</span><span>updated 2026-08-06</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: tests, installer</span></div>
+<div class="action"><strong>Do this:</strong> Rebase onto main keeping current DNF/PACMAN Ayatana names, re-apply the apt-cache util-linux-extra probe, approve/re-run CI, then merge.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Main has not gated util-linux-extra; the PR still needs a rebase, not a close</strong> — origin/main install.sh still has util-linux-extra in APT_PACKAGES_UBUNTU (unconditional) and APT_PACKAGES_DEBIAN_13_PLUS. Introduced in 48a4dd6 for sg on Ubuntu 26.04/Debian 13 (#524). Ubuntu 22.04 / Mint 21 still fail with &#x27;Unable to locate package util-linux-extra&#x27;. Issue #526 is closed (reporter closed it 2026-07-16, before this PR) but the installer bug is live. Do not treat the closed issue as &#x27;already fixed&#x27;. <code>install.sh</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Conflict is mechanical; keep main&#x27;s Ayatana package names</strong> — merge-tree conflicts only in install.sh. PR head still has &#x27;libappindicator-gtk3&#x27; on DNF_PACKAGES and PACMAN_PACKAGES; main removed those in afc4b37 (#621). Rebase must take main&#x27;s DNF/PACMAN lines and re-apply only: drop util-linux-extra from the two APT base strings, then append via apt-cache show after Ubuntu/Debian list selection. Tests file has no conflict. <code>install.sh</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Regression test is a source grep, not a probe execution</strong> — test_ubuntu_22_package_list_omits_util_linux_extra asserts the Ubuntu/Debian-13 lines omit the package and that &#x27;apt-cache show util-linux-extra&#x27; plus the append assignment exist. Same style as test_installer_includes_xsel_for_wayland_clipboard_fallback. Adequate for this change; does not execute the probe. <code>tests/test_installer_cuda_diagnostics.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-635">Copy comment</button></div>
+<pre class="comment" id="comment-635">## Review
+
+Still needed. `main` has **not** gated `util-linux-extra`:
+
+```text
+APT_PACKAGES_UBUNTU=... wl-clipboard util-linux-extra $PYWHISPERCPP_BUILD_DEPS
+APT_PACKAGES_DEBIAN_13_PLUS=... gir1.2-ayatanaappindicator3-0.1 util-linux-extra
+```
+
+That is exactly the jammy/Mint 21.3 failure in #526 (`E: Unable to locate package util-linux-extra`). #526 is closed by the reporter, not because this landed.
+
+Head `49730ef` is the right design: drop it from both base lists, then
+
+```bash
+if apt-cache show util-linux-extra &amp;&gt;/dev/null 2&gt;&amp;1; then
+    APT_PACKAGES=&quot;$APT_PACKAGES util-linux-extra&quot;
+fi
+```
+
+after Ubuntu vs Debian list selection. That matches the existing `glslc` / `libgirepository-2.0-dev` probes and is why Mint/Zorin `VERSION_ID` is not used (the first commit’s `UBUNTU_MAJOR -ge 24` gate would skip the package on Mint 22, which is noble-based). Maintainer already approved that follow-up; author verified `./install.sh --auto` deps on Ubuntu 22.04.
+
+Wrappers still have `command -v sg` fallback from #524, so skipping the package on 22.04 is safe.
+
+### Blockers
+
+- **Rebase `install.sh`.** Conflict is the #621 Ayatana hunk sitting next to this edit. Keep main’s Fedora/Arch package lines (no `libappindicator-gtk3`); re-apply only the util-linux-extra probe.
+- **Re-run CI on the rebased head.** Fork PRs often only get the labeler check until workflows are approved.
+
+No other code issues. After rebase + green CI this is mergeable.</pre>
+</details>
+</article>
+<article class="card v-merge_after_fix" id="pr-649">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/649">#649 feat(text-injection): let config.json pin the injection backend</a></h3>
+<span class="badge b-merge_after_fix">Fix, then merge</span>
+</div>
+<p class="one">Narrow, correct config.json pin for #476; main still only has VOCALINUX_FORCE_BACKEND. CI never ran (first-time contributor cancel), not a code defect.</p>
+<div class="facts"><span>@HashimAbdulaziz</span><span>+217 / −4 · 5 files</span><span>updated 2026-08-06</span><span>ready</span><span>MERGEABLE</span><span>confidence high</span><span>labels: documentation, app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Approve first-time-contributor workflows and re-run CI. Optional: fix the leftover VOCALINUX_FORCE_BACKEND success logs. Prefer this over #402. Squash-merge once CI is green.</div>
+<ul class='findings'>
+<li><span class="sev sev-minor">minor</span><strong>Later selection logs still claim VOCALINUX_FORCE_BACKEND when the pin came from config</strong> — _check_dependencies is updated to log source as VOCALINUX_FORCE_BACKEND vs text_injection.backend, but the Wayland branch on current main still hardcodes `VOCALINUX_FORCE_BACKEND=wtype: using wtype...` / `...ydotool...` (text_injector.py:579 and :583 on main). After merge, a config-only pin will log the new source line then a contradictory env-var line. Update those two messages to use the same `source` variable. Pre-existing wording, made wrong by this PR. <code>src/vocalinux/text_injection/text_injector.py:548</code></li>
+<li><span class="sev sev-nit">nit</span><strong>No Settings UI; overlaps #402 but is the right slice</strong> — #402 (CONFLICTING, 9 files) adds a GTK combo, xdotool as a value, and runtime injector rebuild. This PR is additive auto-default, reads config the same way as _should_copy_to_clipboard, and leaves _forced_backend() env-only. Current main has no text_injection.backend key and USER_GUIDE.md has no injection-backend section — #476 is not already solved. Prefer this PR; park/close #402 rather than merging both. <code>src/vocalinux/ui/config_manager.py:83</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Pinning wtype on X11 silently selects xdotool — documented, still easy to misread</strong> — Accepted values stay ibus/wtype/ydotool/auto to match the env enum. USER_GUIDE.md correctly says X11&#x27;s real choice is ibus vs anything else. No code bug. A debug log when environment is X11 and preference is wtype/ydotool (&#x27;using xdotool&#x27;) would save a support thread. <code>docs/USER_GUIDE.md</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-649">Copy comment</button></div>
+<pre class="comment" id="comment-649">## Review (@HashimAbdulaziz)
+
+This is the right shape for #476. Current `main` still only honors `VOCALINUX_FORCE_BACKEND`; there is no `text_injection.backend` default, no disk reader, and no user-guide section. Autodetect stays byte-for-byte when the key is missing/`auto`.
+
+Resolution order (env, then config, else auto), unknown-value warning, and corrupt-JSON fallback match `_forced_backend()` / `_should_copy_to_clipboard()`. Tests cover the preference matrix, including invalid env falling through to a valid saved setting. Staying off `ConfigManager` in this package is consistent with the clipboard helper.
+
+CI red Xes are not a test failure: both `Vocalinux CI` and `Flatpak` were cancelled at `steps=0` (first-time-contributor `pull_request` approval). Labeler on `pull_request_target` ran. I am treating that as workflow gating, not a defect in this diff.
+
+Versus #402: please keep this PR. #402 is conflicting, rebuilds the injector at runtime, and adds Settings/tray UI across 9 files. This change is the persistent pin the issue asked for. Settings toggle can be a follow-up.
+
+One follow-up in the same file after rebase: `_check_dependencies` now logs `text_injection.backend=wtype`, but the Wayland success path on main still logs `VOCALINUX_FORCE_BACKEND=wtype: using wtype for Wayland injection`. Please thread the `source` name into those two lines so `--debug` is not lying.
+
+Approve workflows, confirm `tests/test_text_injector.py` + `tests/test_text_injector_ext.py`, then squash-merge. GitHub reports MERGEABLE against main (including the later ibus XKB work); no rebase required unless you want that log tweak in the same commit.</pre>
+</details>
+</article>
+<article class="card v-merge_after_fix" id="pr-667">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/667">#667 fix(tray): reuse open Settings/Logs dialog instead of duplicating it</a></h3>
+<span class="badge b-merge_after_fix">Fix, then merge</span>
+</div>
+<p class="one">Production reuse logic is sound, but the new tests ignore the file&#x27;s own patch.object pattern and fail Python 3.9/3.10 in the full suite.</p>
+<div class="facts"><span>@AmirF194</span><span>+85 / −0 · 2 files</span><span>updated 2026-08-12</span><span>ready</span><span>MERGEABLE</span><span>confidence high</span><span>labels: app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Request the test isolation wrap (patch.object, matching test_settings_callback). Re-run CI. Ignore AppImage 503s. Squash-merge when Python 3.9/3.10 pass.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>New reuse tests fail in the full 3.9/3.10 suite</strong> — CI run 31631035019: test_about_reuses_open_settings_dialog (SettingsDialog called 0 times), test_settings_dialog_reused_on_repeated_click and test_settings_dialog_destroy_allows_a_fresh_one (StopIteration; SettingsDialog is a MagicMock spec=&#x27;str&#x27; with an exhausted tuple side_effect, and config_manager is a real ConfigManager). test_settings_callback already documents the fix: &#x27;Use patch.object to patch SettingsDialog on the actual module object / This ensures the patch applies to the reference that _on_settings_clicked uses.&#x27; The new tests call self.mock_settings_dialog_class from setUp and skip that wrap, so they pass in isolation / on 3.11+ and fail in the 3.9/3.10 full run. Wrap each new test the same way as test_settings_callback. <code>tests/test_tray_indicator.py:267</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Settings click while About is showing does not navigate off About</strong> — _show_settings_page(None) reuses with `if page_name:` so a falsy page_name only present()s. About and Settings share one dialog; opening About then clicking Settings leaves the user on the About page. First-open Settings uses initial_page=None and selects sidebar row 0. Either navigate to the default page when page_name is None, or document that a second Settings click only raises. <code>src/vocalinux/ui/tray_indicator.py:573</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Destroy handlers should identity-check before clearing</strong> — _on_settings_dialog_destroy / _on_logging_dialog_destroy unconditionally set the slot to None. If destroy is delivered after a replacement instance is stored, the live dialog becomes untracked and the next click duplicates again. Use `if self._settings_dialog is dialog:`. Unlikely with the current single-instance path, but it is the usual GTK pattern. <code>src/vocalinux/ui/tray_indicator.py:596</code></li>
+<li><span class="sev sev-nit">nit</span><strong>AppImage x86_64/aarch64 failures are unrelated 503s</strong> — x86_64: curl 503 fetching AppImage tooling. aarch64: appimagetool &#x27;Failed to download runtime: server returned status code 503&#x27; from AppImage/type2-runtime. Not caused by this diff. Website, lint, Flatpak, and Python 3.11/3.13 are green.</li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-667">Copy comment</button></div>
+<pre class="comment" id="comment-667">## Review (@AmirF194)
+
+The tray change itself is the right fix for duplicate Settings/Logs windows. Tracking one instance, connecting `destroy` to drop it, and `present()` / `navigate_to_page()` on a repeat click matches how this GTK dialog should work. `navigate_to_page` exists on `SettingsDialog` (settings_dialog.py:1353). Current `main` still constructs a new dialog every click in `_show_settings_page` / `_on_logs_clicked` — this is not already landed.
+
+**Required before merge:** the three new tests fail Python 3.9 and 3.10 in the full CI suite (run `31631035019`).
+
+- `test_about_reuses_open_settings_dialog` — `SettingsDialog` called 0 times
+- `test_settings_dialog_reused_on_repeated_click` / `test_settings_dialog_destroy_allows_a_fresh_one` — `StopIteration` from a polluted `SettingsDialog` mock (`spec=&#x27;str&#x27;`, tuple iterator side_effect). The `config_manager` passed in is a real `ConfigManager`, so setUp&#x27;s patches are not the object `_show_settings_page` is calling.
+
+`test_settings_callback` already explains this and uses `patch.object` on the imported module:
+
+```python
+import vocalinux.ui.tray_indicator as tray_module
+with patch.object(tray_module, &quot;SettingsDialog&quot;, mock_dialog_class):
+    ...
+```
+
+Please wrap the new Settings tests the same way (and keep the logs tests&#x27; `patch.dict(sys.modules, ...)` style, which did stay green). Author-reported local green was against a subset; CI&#x27;s 3.9/3.10 jobs run the whole `tests/` tree.
+
+AppImage x86_64/aarch64 red Xes are GitHub 503s downloading linuxdeploy/type2-runtime, not this diff.
+
+**Optional:** `_show_settings_page` reuse does `if page_name:` so Settings (page_name=None) while About is open only raises the window and leaves the About page selected. If that is unintended, navigate to the default page when `page_name` is None. Also consider `if self._settings_dialog is dialog:` in the destroy handlers.
+
+Happy to merge once 3.9/3.10 are green.</pre>
+</details>
+</article>
+<article class="card v-merge_after_fix" id="pr-575">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/575">#575 feat(security): pin and verify every model download with secured UX</a></h3>
+<span class="badge b-merge_after_fix">Fix, then merge</span>
+</div>
+<p class="one">Solid hash pinning and zip-slip work, but Bugbot&#x27;s high-severity false-success dialog is still open and the installer/runtime checks are fail-open by default.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+1897 / −90 · 16 files</span><span>updated 2026-08-03</span><span>ready</span><span>MERGEABLE</span><span>confidence high</span><span>labels: documentation, dependencies, app, ci, tests, installer</span></div>
+<div class="action"><strong>Do this:</strong> Request changes. Do not merge until the false-success dialog and installer symlink check are fixed; decide fail-open vs STRICT-by-default in the same pass.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Failed integrity/apply still shows SHA256 success</strong> — download_and_apply always GLib.idle_add(download_dialog.set_complete, True) after _apply_settings_internal(settings) without checking the bool. _apply_settings_internal catches ModelIntegrityError (and any reconfigure failure), shows an error dialog, and returns False. The exception never reaches download_and_apply&#x27;s except, so the secured dialog still flips to success. If the hash already matched, set_complete sees _integrity_verified True and paints &#x27;SHA256 verified · Model ready to use&#x27; for a model that was discarded / settings that were not applied. Same pattern at both call sites. Bugbot flagged this as High on e96e6ba; still unfixed. <code>src/vocalinux/ui/settings_dialog.py:4493-4495</code></li>
+<li><span class="sev sev-major">major</span><strong>Installer zip check skips symlinks that runtime refuses</strong> — verify_zip_members_safe only greps unzip -Z1 names for absolute paths and &#x27;..&#x27; segments, then install.sh still unzip -d. It never inspects member type. Runtime safe_extract_zip rejects Unix symlink entries via external_attr 0xA000. SECURITY.md says VOSK archives with symlink members are refused. The installer path does not honor that. Bugbot Medium, still open. <code>install.sh:3345-3357</code></li>
+<li><span class="sev sev-major">major</span><strong>Verification is fail-open unless VOCALINUX_STRICT_MODEL_VERIFICATION is set</strong> — load_registry() returns {} on OSError/JSONDecodeError, so a missing or corrupt model_hashes.json silently disables every pin. verify_downloaded_model then warns and returns if get_pinned_digest is None (strict=False, the default). install.sh verify_model_sha256 returns 0 when the registry/python3 lookup fails or sha256sum is missing. Tests explicitly assert this degradation. For a change titled &#x27;pin and verify every model download&#x27;, the shipped default still installs unverified bytes whenever the pin lookup fails. STRICT exists but is opt-in and not used by install.sh at all. <code>src/vocalinux/utils/model_integrity.py:77-147</code></li>
+<li><span class="sev sev-major">major</span><strong>Cancel is ignored during SHA256 and VOSK extract</strong> — _download_cancelled is only observed in _interruptible_pause and the streaming loops. After the last byte, _verify_download_with_status hashes the whole file and the VOSK path then safe_extract_zip + rename without re-reading the flag. A Cancel click while the dialog says &#x27;Verifying SHA256 checksum…&#x27; still installs the model and later hits set_complete(True). Bugbot Medium, still open. Large VOSK/whisper.cpp files make this a multi-second window. <code>src/vocalinux/speech_recognition/recognition_manager.py:1909-1935</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Hash refresh script KeyError on missing Content-Length</strong> — collect_whisper does int(response.headers[&#x27;content-length&#x27;]) after HEAD. OpenAI&#x27;s CDN can omit that header; the whole Whisper pin refresh then aborts. Bugbot Low, still open. Use headers.get and skip/size-from-GET. <code>scripts/update_model_hashes.py:100-105</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Pins are only checked at download time, not at load</strong> — A file already in the models dir, or replaced after a successful verify+rename, is loaded with no digest check. The tmp-file verify-then-os.rename path is fine against network tampering; it is not a load-time TOCTOU control. Out of the stated download scope, but the lock-badge copy implies ongoing integrity. <code>src/vocalinux/speech_recognition/recognition_manager.py:2054-2058</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Hash supply chain is the upstream API, reviewed only as a JSON diff</strong> — collect_whispercpp copies Hugging Face LFS sha256 from the repo API; collect_vosk hashes live zips and cross-checks Alphacephei&#x27;s MD5. SECURITY.md already says pinning is integrity not authenticity. Treat model_hashes.json diffs as security-sensitive in review; a compromised HF/Alphacephei response would produce a matching pin PR. <code>scripts/update_model_hashes.py:68-77</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-575">Copy comment</button></div>
+<pre class="comment" id="comment-575">## Review @jatinkrmalik
+
+The pinning, HTTPS/host checks, HTTP-downgrade guard, and runtime `safe_extract_zip` are the right shape. Registry coverage tests and the packaging fix (`pyproject.toml` + `MANIFEST.in`) close the earlier Bugbot holes (placeholder VOSK hash, JSON omitted from the wheel, false &quot;hash matches&quot; on unpinned files).
+
+I am not merging this while two unresolved Bugbot findings still hold on `e96e6ba`.
+
+### Blocker: success UI after a failed apply
+
+`download_and_apply` does this in both places (`settings_dialog.py:4493-4495` and `:4783-4785`):
+
+```python
+self._apply_settings_internal(settings)
+GLib.idle_add(download_dialog.set_complete, True, &quot;&quot;)
+```
+
+`_apply_settings_internal` (`:4809-4839`) swallows `ModelIntegrityError`, shows an error dialog, and returns `False`. That exception never reaches the `except Exception` in `download_and_apply`, so the secured dialog still calls `set_complete(True)`. If the digest already matched, `_integrity_verified` is set (`:1235-1236`) and the user sees **SHA256 verified · Model ready to use** for a download that was discarded.
+
+Honor the return value (or let integrity errors propagate). Do not paint success unless `reconfigure` actually succeeded.
+
+### Still open from Bugbot
+
+- **Installer zip-slip vs runtime** (`install.sh:3345-3357`): `verify_zip_members_safe` greps names only. `unzip` will still create symlink members. `safe_extract_zip` (`model_integrity.py:210-213`) refuses them. `SECURITY.md` says they are refused. Make the installer check `unzip -Z` / `file_type` (or skip `unzip` and share the Python helper).
+- **Cancel during verify** (`recognition_manager.py:1909-1935`, VOSK `:2235-2243`): after the stream ends, SHA256 + extract/rename never read `_download_cancelled`. Check it after `verify_downloaded_model` and before `os.rename` / `safe_extract_zip`, and delete the temp file.
+- **`collect_whisper` KeyError** (`scripts/update_model_hashes.py:104`): `response.headers[&quot;content-length&quot;]` will abort the whole Whisper refresh if the HEAD has no length. `.get()` and skip.
+
+### Fail-open (not a merge blocker if you document it as the product choice, but it fights the PR title)
+
+`load_registry()` returns `{}` on a missing/corrupt JSON (`model_integrity.py:77-85`). Unpinned files then download with a warning (`:139-147`). `install.sh` `verify_model_sha256` returns 0 when the pin lookup or `sha256sum` is missing (`:3319-3327`). Tests lock that in. Default-off `VOCALINUX_STRICT_MODEL_VERIFICATION` is the only fail-closed switch, and the installer never reads it.
+
+If the claim is &quot;every model download is verified&quot;, a missing registry should refuse the download, not warn. Otherwise say plainly in SECURITY.md that verification is best-effort unless STRICT is set, including on `install.sh`.
+
+### What I am not blocking on
+
+- Zip-slip in the Python path looks correct: absolute names, `resolve()` escape check, symlink attr, 8 GiB cap, then `extractall` on the same `ZipFile`.
+- Runtime flow is verify-the-tmp-file then `os.rename`; that is the right TOCTOU story for the network attacker.
+- Whisper pins matching the OpenAI URL digest is tested. VOSK `TODO_DOWNLOAD_AND_COMPUTE` is gone (`vosk-model-small-en-us-0.15.zip` has a real sha256).
+- Portuguese medium/large ID change to `vosk-model-pt-fb-v0.1.1-20220516_2113` is required for the coverage test; fine as part of this PR.
+- No equivalent of this exists on `main`.
+
+CI is green and GitHub reports MERGEABLE (install.sh overlap with later util-linux-extra commits looks auto-mergeable). Fix the false-success dialog and the installer symlink gap, then this is mergeable.
+</pre>
+</details>
+</article>
+<h2 id="later">Worth keeping, not mergeable yet</h2>
+<p class="lede">Real features. Need rebase, design fixes, or a rewrite against current main.</p>
+<article class="card v-needs_changes" id="pr-662">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/662">#662 chore(deps): bump the npm_and_yarn group across 1 directory with 3 updates</a></h3>
+<span class="badge b-needs_changes">Needs changes</span>
+</div>
+<p class="one">Dependabot&#x27;s &#x27;postcss&#x27; group PR also major-bumps Next.js 15.5.21 → 16.3.0; the website build dies on default Turbopack plus a webpack-only next.config.js.</p>
+<div class="facts"><span>@app/dependabot</span><span>+310 / −191 · 2 files</span><span>updated 2026-08-08</span><span>ready</span><span>MERGEABLE</span><span>confidence high</span><span>labels: dependencies, javascript, web</span></div>
+<div class="action"><strong>Do this:</strong> Close or refuse merge. Recreate a postcss/nanoid-only bump; keep Next 15 until there is a dedicated Next 16 migration PR. Do not squash-merge.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Unadvertised Next.js 16 major bump breaks the site build</strong> — PR body lists postcss 8.5.19→8.5.26, nanoid 3.3.16→3.3.18, sharp 0.34.5→0.35.3. The actual package.json diff also changes next ^15.5.21 → ^16.3.0 (and the lockfile root + node_modules/next follow). CI run 31276436442: `▲ Next.js 16.3.0 (Turbopack)` then `ERROR: This build is using Turbopack, with a webpack config and no turbopack config`. Secondary: tsc `next.config.js:23` — `eslint` is not in NextConfig (Next 16 removed that key). This is a framework migration, not a postcss patch. Main is still Next 15.5.21 (confirmed in /workspace web/package.json and lockfile). <code>web/package.json:32</code></li>
+<li><span class="sev sev-major">major</span><strong>sharp 0.34.5 → 0.35.3 rides along as a 0.x breaking bump</strong> — Lockfile replaces @img/sharp-* 0.34.5 with 0.35.3 (engines node &gt;=20.9.0, libvips 1.3.2). Fine only as a Next 16 companion; not an independent, reviewable postcss fix. nanoid 3.3.18 (zero-size loop) is a real patch and can come back in a postcss-only PR. <code>web/package-lock.json</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Intended postcss bump is still missing on main</strong> — Main lockfile still resolves postcss 8.5.19 (package.json ^8.5.12). 8.5.23&#x27;s &#x27;do not load source map without opts.from&#x27; is the actual security-ish reason to want this group. Recreate without touching next. <code>web/package.json:55</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-662">Copy comment</button></div>
+<pre class="comment" id="comment-662">## Review (Dependabot)
+
+Do not merge. The title says postcss, but `web/package.json` also does:
+
+```diff
+-    &quot;next&quot;: &quot;^15.5.21&quot;,
++    &quot;next&quot;: &quot;^16.3.0&quot;,
+```
+
+CI `Build Website` (run `31276436442`) installs Next 16.3.0, enables Turbopack by default, and fails:
+
+```
+ERROR: This build is using Turbopack, with a `webpack` config and no `turbopack` config.
+```
+
+`npm run test:types` also errors on `eslint` in `next.config.js` (removed in Next 16). Current `main` still pins Next 15.5.21 and the website job is green there.
+
+postcss 8.5.26 / nanoid 3.3.18 are still worth taking. Next 16 is a separate migration (Turbopack or `--webpack`, drop the `eslint` config key, re-verify static export).
+
+Please close this PR and open a postcss-only bump (`@dependabot ignore next major version` on this group, then recreate), or replace this branch with a lockfile that leaves `next` at 15.5.x.</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-642">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/642">#642 feat(commands): localize punctuation voice commands (#640)</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Real #640 fix (language-aware punctuation aliases) that is still missing on main, but it is a draft with a PRODUCT.md conflict and no live dictation check.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+355 / −52 · 8 files</span><span>updated 2026-08-04</span><span>draft</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, app, web, tests</span></div>
+<div class="action"><strong>Do this:</strong> Rebase onto main, resolve PRODUCT.md by keeping AGPL + Right-Alt PTT default and only updating the voice-command bullet, run a live Italian dictation check, then undraft.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Cannot merge until PRODUCT.md is rebased against current main</strong> — git merge-tree vs origin/main conflicts only in web/PRODUCT.md. Main now says &#x27;Shortcut modes: push-to-talk default (hold Right Alt / Option)&#x27; and &#x27;AGPL-3.0&#x27;; the PR still has &#x27;toggle and push-to-talk&#x27; and &#x27;GPL-3.0&#x27;. A careless resolve would revert #648 and #660 in the product-truth file. command_processor.py itself has not changed on main since merge-base 45acb10, so the feature hunks should apply cleanly. <code>web/PRODUCT.md</code></li>
+<li><span class="sev sev-minor">minor</span><strong>auto language keeps English-only aliases by design</strong> — normalize_command_language(&#x27;auto&#x27;) returns &#x27;en&#x27;, and test_auto_language_keeps_english_only_aliases asserts &#x27;virgola&#x27; is not loaded. That matches the PR body, but #640&#x27;s reporter may have been dictating Italian under Auto-detect. Whisper&#x27;s detected language is never fed into CommandProcessor. Documented; not a code bug, but it is the gap most likely to make the issue look unfixed. <code>src/vocalinux/speech_recognition/command_phrases.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>NL/PL/RU alias maps are untested</strong> — Tests cover IT/FR/DE/ES/PT plus English &#x27;dot&#x27;, auto, and set_language. Dutch/Polish/Russian tables (including Cyrillic) have no process_text cases. Codecov reported 4 uncovered lines in command_phrases.py. Not a merge blocker. <code>tests/test_command_processor.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-642">Copy comment</button></div>
+<pre class="comment" id="comment-642">## Review (draft / do not merge yet)
+
+This is the right fix for #640. Current `main` still constructs `CommandProcessor()` with no language (`recognition_manager.py` ~927) and the English-only `text_commands` map. Spoken Italian/French punctuation is still injected as words.
+
+The implementation is small and coherent:
+- `command_phrases.py` keyed by Whisper ISO codes (`it`/`fr`/`de`/`es`/`pt`/`nl`/`pl`/`ru`), English extras always merged (`dot` → `.`)
+- `CommandProcessor(language=…)` / `set_language()` rebuild aliases and sort longest-first so `punto interrogativo` does not collapse to `.` + leftover `interrogativo`
+- attach-left spacing keyed by replacement char (`.,?;:`) so locale phrases get the same `ciao,mondo` behavior as English `comma`
+- `SpeechRecognitionManager` passes language on init and on `reconfigure` when it actually changes
+
+CI on the head commit is green (Python 3.9–3.13, Bugbot). I did not invent issues in the alias tables; longest-first + `re.IGNORECASE` is the correct matcher for these phrases.
+
+### Blockers
+
+1. **Draft + unchecked manual test.** The Italian “ciao virgola mondo punto” live check in the test plan is still open. Unit tests cannot catch ASR tokenization (`point d&#x27;interrogation` vs `point d interrogation` is already aliased; curly apostrophes are not).
+2. **Conflict in `web/PRODUCT.md` only.** Rebase and keep main’s PTT-default + AGPL-3.0 lines; only swap the English-only voice-command bullet. Do not take the PR’s `GPL-3.0` / old shortcut wording.
+
+### After rebase
+
+- Mark ready once one real Italian (or French) dictation pass works with voice commands on.
+- Optional: one NL/PL/RU `process_text` case; optional note in USER_GUIDE that Auto-detect does not load locale punctuation aliases.
+
+Out of scope as stated (action/format phrases stay English) is fine for this PR.</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-634">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/634">#634 docs: improve project documentation for a clearer public surface</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Useful docs split (CoC/SUPPORT/CHANGELOG/INSTALL_MANUAL still absent on main) but 10 days stale: a naive merge would republish GPL and Toggle-as-default.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+1379 / −1919 · 20 files</span><span>updated 2026-08-03</span><span>draft</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, web, ci</span></div>
+<div class="action"><strong>Do this:</strong> Keep draft. Rebase onto main and explicitly restore AGPL, Right-Alt PTT default, Ayatana Fedora/Arch packages, and the CUDA device-0 note before considering undraft.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Would regress the public license to GPL-3.0</strong> — PR README badge is still &#x27;License: GPL v3&#x27; linking gnu.org/licenses/gpl-3.0. Main is AGPL-3.0 after #660 (badge, intro, license section). PRODUCT.md on main also says AGPL-3.0. Merging the rewrite without that update puts the wrong license on the repo front door. <code>README.md</code></li>
+<li><span class="sev sev-major">major</span><strong>USER_GUIDE still documents Toggle + Ctrl as the default shortcut</strong> — PR USER_GUIDE: &#x27;Toggle (default) | Double-tap the shortcut key (Ctrl by default)&#x27; and &#x27;Start dictation with the tray menu or your keyboard shortcut&#x27;. Main after #648: &#x27;Hold Right Alt (Option) by default&#x27; and &#x27;Push-to-talk mode (default)&#x27;. Rebasing USER_GUIDE by taking the PR side would undo that user-facing change. <code>docs/USER_GUIDE.md</code></li>
+<li><span class="sev sev-major">major</span><strong>INSTALL_MANUAL Fedora/Arch package lists predate the Ayatana switch</strong> — PR new docs/INSTALL_MANUAL.md still has &#x27;python3-gobject gtk3 libappindicator-gtk3&#x27; (Fedora) and &#x27;libappindicator-gtk3&#x27; (Arch). Main docs/INSTALL.md after #638 uses libayatana-appindicator-gtk3 / libayatana-appindicator. Splitting INSTALL without carrying #638 recreates the wrong tray packages in the manual path. <code>docs/INSTALL_MANUAL.md</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Main USER_GUIDE CUDA device-0 note is missing from the PR</strong> — #644 added the pywhispercpp CUDA device 0 / hybrid-GPU warning to docs/USER_GUIDE.md on main. The PR rewrite of that file does not include it. Easy to drop in a conflict resolve. <code>docs/USER_GUIDE.md</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Structural docs work is still not on main — do not close</strong> — main still has no CHANGELOG.md, CODE_OF_CONDUCT.md, SUPPORT.md, docs/INSTALL_MANUAL.md, docs/TROUBLESHOOTING.md, or docs/README.md. README is still 510 lines with three badge rows and a full v0.15 highlight table; INSTALL.md is still 715 lines including pipe-to-bash. The split and calmer templates remain worth landing after a careful rebase. <code>README.md</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-634">Copy comment</button></div>
+<pre class="comment" id="comment-634">## Review (keep draft)
+
+Docs-only, and the *shape* is still worth it: main has no CoC / SUPPORT / CHANGELOG / INSTALL_MANUAL / TROUBLESHOOTING / docs index. README on main is still badge-heavy (510 lines) and INSTALL.md is still a 715-line grab bag with `curl … | bash`.
+
+Do **not** merge this tree as-is. It diverged from main on purpose-user facts, not just wording.
+
+### Must carry forward on rebase
+
+| Landed on main | PR still has |
+|---|---|
+| AGPL-3.0 badge + copy (#660) | GPL v3 badge |
+| Push-to-talk / hold Right Alt default (#648) | Toggle default, Ctrl double-tap in USER_GUIDE |
+| Fedora/Arch Ayatana package names (#638) | `libappindicator-gtk3` in the new INSTALL_MANUAL lists |
+| CUDA device 0 hybrid-GPU note (#644) | absent from rewritten USER_GUIDE |
+
+Conflicts: `CONTRIBUTING.md`, `README.md`, `docs/INSTALL.md`, `docs/UPDATE.md`, `docs/USER_GUIDE.md`. Auto-merge will not save the license or shortcut default — those are content choices in the rewrite.
+
+`CODE_OF_CONDUCT.md` (Contributor Covenant), root `SUPPORT.md` / `CHANGELOG.md` (pointers, not a dump), and download-then-run install snippets are fine. No application code in the diff.
+
+Rebase, re-read README + USER_GUIDE + INSTALL_MANUAL against current main, then undraft.</pre>
+</details>
+</article>
+<article class="card v-needs_rebase" id="pr-568">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/568">#568 feat: opt-in D-Bus activation for compositor global shortcuts</a></h3>
+<span class="badge b-needs_rebase">Rebase first</span>
+</div>
+<p class="one">Useful opt-in D-Bus activation, but the branch is still DIRTY vs current main; the claimed rebase stopped at cc69c7e.</p>
+<div class="facts"><span>@webenefits</span><span>+842 / −7 · 9 files</span><span>updated 2026-07-29</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, stale, app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Do not merge. Ask author to rebase onto current main (not cc69c7e) and update USER_GUIDE; re-review after GitHub reports MERGEABLE.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Still conflicting; rebase claim is stale</strong> — Maintainer asked for a rebase (CHANGES_REQUESTED). Author replied that the branch is linear on cc69c7e with no merge commits. GitHub still reports DIRTY. Current main is not that commit: tray_indicator.py now prefers Ayatana AppIndicator (#621), default shortcut is hold Right Alt PTT (#648), and USER_GUIDE/settings/tray have all moved. The PR body still says &#x27;double-tap Ctrl still works out of the box&#x27;, which is no longer true on main. A rebase is required before any code review of the conflicted files can be trusted. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Session D-Bus Toggle/Start/Stop is always registered, not gated on the opt-in</strong> — TrayIndicator.__init__ always constructs VocalinuxDBusService. shortcuts.disable_internal_hotkey only skips the evdev/pynput listener. Any same-user process on the session bus can call com.vocalinux.Vocalinux.Toggle/Start/Stop and start the microphone, even when the user never enabled &#x27;external activation&#x27;. That is normal for an unauthenticated session-bus API and is probably how vocalinux --toggle is meant to work without extra config, but it is new attack surface vs main (where only the hotkey listener / tray can start recognition). Document it; consider Restricting to the same uid is already implied by the session bus, so this is mostly a product note, not a Polkit request. Do not silently leave it undocumented in USER_GUIDE. <code>src/vocalinux/ui/tray_indicator.py:165-176</code></li>
+<li><span class="sev sev-minor">minor</span><strong>D-Bus method returns success before the handler runs</strong> — _handle_method_call GLib.idle_add(self._invoke, callback) then invocation.return_value(None). send_command / vocalinux --toggle therefore exits 0 even if _toggle_recognition later throws. Fine as fire-and-forget if documented; the CLI cannot report &#x27;started&#x27;. <code>src/vocalinux/dbus_service.py:131-134</code></li>
+<li><span class="sev sev-nit">nit</span><strong>No equivalent on main</strong> — main.py has no --toggle/--start/--stop, no dbus_service.py, and no disable_internal_hotkey. The feature is still unique. Keep it; just rebase. Bus name com.vocalinux.Vocalinux matches the Flatpak id, which is the right name if you later export it from the manifest. <code>src/vocalinux/dbus_service.py:19-21</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-568">Copy comment</button></div>
+<pre class="comment" id="comment-568">## Review @webenefits
+
+The design is still the one I want: compositor shortcut runs `vocalinux --toggle`, CLI talks to the running instance **before** the single-instance lock, and `disable_internal_hotkey` actually `stop()`s the shortcut manager before returning (`tray_indicator.py:177-194`). Tests for CLI dispatch and the config gate look real.
+
+I cannot review-to-merge a DIRTY branch.
+
+You wrote that this was rebased onto current main through `cc69c7e`. GitHub still has **mergeable=CONFLICTING** / **DIRTY**, and `main` has moved since that commit (Ayatana-first tray, default hold-Right-Alt PTT in #648, update checker, AGPL, clipboard restore, …). Conflicts are in `settings_dialog.py`, `tray_indicator.py`, `config_manager.py`, `docs/USER_GUIDE.md`, and `tests/test_settings_shortcuts.py`. Please rebase onto **current** `main` and push; the PR body still says double-tap Ctrl is the default, which is no longer true.
+
+Until that exists I am not treating the conflicted files as reviewable. Two notes to handle in the rebase, not as reasons to abandon the PR:
+
+1. `VocalinuxDBusService` is constructed unconditionally (`tray_indicator.py` init). The opt-in only drops `/dev/input`. That is probably what you want so `vocalinux --toggle` works without flipping a setting, but USER_GUIDE should say any same-user session-bus client can Start/Stop the mic. This API does not exist on `main` today.
+2. `_handle_method_call` acks the D-Bus call before `_invoke` runs (`dbus_service.py:131-134`). `--toggle` can exit 0 and then the handler can fail. Acceptable if the docs call it fire-and-forget.
+
+No equivalent feature on `main`; this should not be closed. Rebase, fix the USER_GUIDE default-shortcut text, then ping for re-review.
+</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-543">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/543">#543 feat(speech_recognition): add faster-whisper engine backend</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Useful optional faster-whisper extra, but draft+conflicting, Engine registry unused, and install.sh claims CUDA while installing CPU PyTorch.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+1108 / −14 · 13 files</span><span>updated 2026-07-18</span><span>draft</span><span>CONFLICTING</span><span>confidence high</span><span>labels: dependencies, app, tests, installer</span></div>
+<div class="action"><strong>Do this:</strong> Keep draft. Rebase onto current main. Fix install.sh CUDA lie (CPU torch URL). Either wire SpeechRecognitionManager through ENGINES or delete the unused Protocol/registry. Extend settings model/download paths after rebase.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Installer CUDA claim is false</strong> — In the HAS_NVIDIA_GPU==yes branch the installer says it is installing PyTorch with CUDA support and may download ~2GB of CUDA runtime, then immediately runs `pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu`. That is the CPU wheel index. faster-whisper inference is CTranslate2, not torch; this PR never installs a CUDA ctranslate2 build either. `_has_torch_cuda()` will therefore stay false after a &#x27;GPU&#x27; install, `get_compute_type` will pick int8/CPU, and the menu copy &#x27;Best performance on NVIDIA GPUs (CUDA)&#x27; is advertising a path the installer does not create. INT8-on-CPU (`get_compute_type(&#x27;cpu&#x27;) == &#x27;int8&#x27;`) is the one claim that matches the code. <code>install.sh</code></li>
+<li><span class="sev sev-major">major</span><strong>Engine Protocol / engines/ registry is dead code</strong> — `src/vocalinux/speech_recognition/engines/` does NOT exist on main — this is new, not a duplicate. But it is also not wired up. ENGINES is only populated for FasterWhisperEngine (bare `except Exception: pass`), and SpeechRecognitionManager never reads ENGINES: it still uses engine == &#x27;vosk&#x27;|&#x27;whisper&#x27;|&#x27;whisper_cpp&#x27;|&#x27;remote_api&#x27;|&#x27;faster_whisper&#x27; if/elif in __init__, _process_audio_buffer, reconfigure, and reinitialize_after_resume. Existing engines do not implement the Protocol. For one optional backend this is a premature abstraction; either route the manager through ENGINES or drop the Protocol/registry until a second backend actually uses it. <code>src/vocalinux/speech_recognition/engines/__init__.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Must rebase; settings/manager surfaces have moved on</strong> — Default engine is correctly still whisper_cpp (DEFAULT_CONFIG, --auto, CLI help). Optional extra `faster_whisper = [faster-whisper&gt;=1.0.0]` in pyproject.toml is the right dep shape. After rebase the manager still needs faster_whisper arms in reconfigure/reinitialize_after_resume (main now also has auto-pause / idle-unload reinit). settings_dialog.py on main has ENGINE_MODELS, variant picker, and _auto_apply_settings download branches only for whisper/whisper_cpp/vosk — the PR&#x27;s 36-line _populate_model_options patch will not apply cleanly and does not teach the download/info cards about HF-cached faster-whisper models. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Settings model list and MODEL_INFO disagree</strong> — FASTER_WHISPER_MODEL_INFO includes tiny.en/base.en/large-v1/large-v2, but ENGINE_MODELS[&#x27;faster_whisper&#x27;] only lists tiny/base/small/medium/large-v3. Harmless if intentional, but the UI cannot select the .en variants the metadata describes. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Registry swallows all exceptions</strong> — `try: from .faster_whisper_engine import FasterWhisperEngine except Exception: pass` hides packaging/syntax errors, not just a missing optional extra. Limit to ImportError. <code>src/vocalinux/speech_recognition/engines/__init__.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-543">Copy comment</button></div>
+<pre class="comment" id="comment-543">## Review (adversarial) — keep draft, do not mark ready
+
+`src/vocalinux/speech_recognition/engines/` does **not** exist on current `main`. This is new work, not a duplicate of an already-landed engine package. Default engine is still `whisper_cpp`. The `[faster_whisper]` extra is optional. Those three are fine.
+
+This still should not leave draft, and it cannot merge as-is.
+
+### Blocker: installer CUDA copy is false
+
+```bash
+print_info &quot;NVIDIA GPU detected - installing PyTorch with CUDA support...&quot;
+print_info &quot;Note: This may download ~2GB of CUDA runtime packages&quot;
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+That index is CPU wheels. faster-whisper runs on **CTranslate2**, and this PR never installs a CUDA CT2 build. After this &quot;GPU&quot; path, `_has_torch_cuda()` stays false and `get_compute_type` selects `int8` on CPU. The interactive menu&#x27;s &quot;Fast on CPU with INT8 quantization&quot; is accurate; &quot;Best performance on NVIDIA GPUs (CUDA)&quot; is not something the installer delivers.
+
+The existing OpenAI Whisper branch already installs CPU torch without pretending it is CUDA. Do not copy that pattern and then label it CUDA.
+
+### Major: Engine Protocol is unused
+
+`ENGINES` is populated only for `FasterWhisperEngine` (and `except Exception: pass` will hide real import bugs). `SpeechRecognitionManager` never consults the registry — it hardcodes another `elif engine == &quot;faster_whisper&quot;` next to vosk/whisper/whisper_cpp/remote_api, and the other engines do not implement `Engine`. For one optional backend, drop the Protocol/registry or actually dispatch through it.
+
+### Rebase is mandatory
+
+Head is `0184b8ec` vs a July 18 base. `install.sh`, `recognition_manager.py` (auto-pause / idle unload reinit), and `settings_dialog.py` (variant picker, `_auto_apply_settings` download only for whisper/whisper_cpp/vosk) have all moved. A naive remount of the 36-line settings patch will miss download/info-card paths.
+
+**Action:** keep draft. Rebase. Either use `ENGINES` or delete it. Fix the installer so NVIDIA/CUDA text matches what pip actually installs (CPU INT8 is enough for v1). Then re-request review.</pre>
+</details>
+</article>
+<article class="card v-needs_changes" id="pr-519">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/519">#519 feat(snap): Snap packaging recipe and Snap Store publish strategy</a></h3>
+<span class="badge b-needs_changes">Needs changes</span>
+</div>
+<p class="one">In-repo snap recipe can land without a Snap Store account, but it is conflicting, codecov-red, ships a 315KB duplicate SVG, and requests network-bind + home it does not need.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+6588 / −45 · 15 files</span><span>updated 2026-07-15</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Rebase onto main. Drop network-bind and home unless justified. Remove duplicate 315KB snap/gui SVG. Add tests for evdev list_devices fallback and snap permission hints so codecov/patch passes. Store account is not a merge requirement.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>network-bind is unnecessary privilege</strong> — apps.vocalinux.plugs includes network-bind &#x27;optional remote_api engine&#x27;. Remote API is an outbound HTTP client; `network` is sufficient to connect to a whisper.cpp/OpenAI-compatible server. network-bind lets the snap listen on ports. packaging/snap/README.md repeats the same justification. Drop network-bind unless there is a concrete in-snap server this recipe actually starts (there is not). <code>snap/snapcraft.yaml</code></li>
+<li><span class="sev sev-major">major</span><strong>home plug is broader than snap-private config</strong> — The recipe already documents that config/models live under ~/snap/vocalinux/ via snap-private HOME remapping of ~/.config and ~/.local/share. The extra `home` plug grants the confined app the user&#x27;s real home directory. Flatpak finish-args on main do not use --filesystem=home. A dictation app that also has network + audio-record (+ optional raw-input) does not need to read ~/Documents to function. Drop `home` or document a specific file the host home is required for. <code>snap/snapcraft.yaml</code></li>
+<li><span class="sev sev-major">major</span><strong>Codecov patch gate is failing</strong> — codecov/patch 51.13% (43 lines missing), codecov/project FAILURE. Almost all of that is src/vocalinux/ui/keyboard_backends/evdev_backend.py (25 missing + 4 partials) plus keyboard_shortcuts.py and audio_feedback.py. tests/test_snap_packaging.py only YAML-asserts the recipe; _find_keyboard_devices_from_evdev() and the SNAP/raw-input permission-hint branches are largely untested. This will stay red after rebase unless those paths get tests or codecov is explicitly waived for packaging. <code>src/vocalinux/ui/keyboard_backends/evdev_backend.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>snap/gui/vocalinux.svg is a 315KB duplicate</strong> — The added snap/gui/vocalinux.svg is 5873 lines / ~315KB of traced paths — the same blob as resources/icons/scalable/vocalinux.svg already in the tree. snapcraft.yaml override-build already installs the resources icon into usr/share/icons and meta/gui/icon.svg. Keep one copy (symlink or just the resources file). tests/test_snap_packaging.py asserting SNAP_ICON exists is what forces the duplicate. <code>snap/gui/vocalinux.svg</code></li>
+<li><span class="sev sev-minor">minor</span><strong>raw-input is the right interface, but it is a sandbox escalation</strong> — Strict confinement + documented `sudo snap connect vocalinux:raw-input` is honest. raw-input is not auto-connected, tray still works without it, and the evdev fallback via evdev.list_devices() is a real fix because snap raw-input grants /dev/input/event* but often still denies /proc/bus/input/devices. That fallback is also useful on non-snap hosts where /proc is unreadable. Do not treat raw-input as a silent auto-connect later. <code>src/vocalinux/ui/keyboard_backends/evdev_backend.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Stale fallback version and DISTRO_COMPATIBILITY conflict</strong> — snapcraft.yaml fallback version is 0.14.0-beta; main is 0.15.0 (adopt-info from version.py still wins). docs/DISTRO_COMPATIBILITY.md on main already marks Phase 7 Flatpak complete; this PR still patches a &#x27;Phase 7 Planned&#x27; table. Rebase carefully or Phase 7 status regresses. <code>docs/DISTRO_COMPATIBILITY.md</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-519">Copy comment</button></div>
+<pre class="comment" id="comment-519">## Review (adversarial) — needs changes, not mergeable now
+
+**Snap Store account is not required to merge this.** The PR is a recipe + docs + a couple of runtime fallbacks. `snapcraft pack` and `snap install --dangerous` work without registering `vocalinux`. Store login is only for `snapcraft register` / `upload`. The PR already says that; do not close it for lacking a store listing.
+
+It is also not mergeable today: `CONFLICTING`, codecov/patch **51%** (gate 80%), and the plug set is wider than the app needs.
+
+### Sandbox
+
+`snap/snapcraft.yaml` is `confinement: strict` (good, matches the Flatpak-first-ship story). Plugs that are justified:
+
+- `audio-record` — microphone; documented as maybe-manual-connect
+- `audio-playback` — UI tones
+- `network` — model download / remote client
+- `raw-input` — evdev hotkeys; **not** auto-connected; tray remains the fallback
+
+Plugs that are not justified by this recipe:
+
+- **`network-bind`** — Remote API is outbound HTTP. Nothing in this snap listens. `network` is enough.
+- **`home`** — snap-private HOME already remaps `~/.config` / `~/.local/share` to `~/snap/vocalinux/`. The `home` interface is the user&#x27;s real `$HOME`. Flatpak on main does not grant `--filesystem=home`. Drop it unless you can name a host path this app must read.
+
+`raw-input` is super-privileged (keylogger-class). Keeping it manual-connect is the right call; do not auto-connect it in a follow-up &quot;to make hotkeys work.&quot;
+
+### evdev changes
+
+The `/proc/bus/input/devices` → `evdev.list_devices()` fallback is the actually useful code in this PR. Snap `raw-input` often grants `/dev/input/event*` and still denies `/proc/bus/input`. `get_permission_hint()` printing `sudo snap connect vocalinux:raw-input` is correct. Cover `_find_keyboard_devices_from_evdev` and the snap hint branches so codecov is not 51%.
+
+### Huge SVG
+
+`snap/gui/vocalinux.svg` is a 5873-line / ~315KB duplicate of `resources/icons/scalable/vocalinux.svg`. `override-build` already copies the resources icon into the snap. Delete the gui copy or point the test at the existing icon.
+
+### Rebase
+
+README / INSTALL / DISTRO_COMPATIBILITY / evdev / audio_feedback / keyboard_shortcuts all moved. Main already completed Phase 7 Flatpak — do not revert that row to &quot;Planned&quot; while flipping Phase 8.
+
+**Action:** rebase, drop `network-bind` and `home` (or justify them with a real path), delete the duplicate SVG, add evdev fallback tests until codecov/patch is green. Store publish stays a human follow-up.</pre>
+</details>
+</article>
+<article class="card v-needs_changes" id="pr-516">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/516">#516 feat(ui): floating glowing dictation overlay</a></h3>
+<span class="badge b-needs_changes">Needs changes</span>
+</div>
+<p class="one">Overlay work is real (optional GtkLayerShell, no present(), opacity instead of hide/show) but default-on plus a full-width always-mapped 30fps strip is the wrong first ship on GNOME Wayland.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+1485 / −0 · 9 files</span><span>updated 2026-07-15</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, app, tests, resources</span></div>
+<div class="action"><strong>Do this:</strong> Rebase onto current settings/tray APIs. Default show_overlay to false. Avoid keeping a full-width mapped idle window; clip or shrink the 30fps cairo redraw to the orb. Re-verify GNOME Wayland focus and IBus inject before ready-for-review.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Default-on is too aggressive given Wayland residual risk</strong> — DEFAULT_CONFIG ui.show_overlay is True and Settings loads show_overlay default True. The PR itself needed a follow-up commit because hide()/show() re-activated the window on Wayland and broke IBus inject. GtkLayerShell is correctly optional and only used when is_supported(); GNOME/Mutter typically will not take that path. Default-on therefore ships the fallback TOPLEVEL (keep_above, NOTIFICATION hint, show_all, never present()) to the majority Ubuntu Wayland audience. Default this False until X11 + GNOME Wayland + a wlroots compositor have been checked; the switch already exists. <code>src/vocalinux/ui/config_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Idle overlay stays mapped as a full-width strip</strong> — To avoid focus theft, _sync_window() maps once via show_all() then set_opacity(0.0) on IDLE instead of hide(). After the first LISTENING, a Gtk.WindowType.TOPLEVEL full-monitor-width × 120px surface remains mapped for the rest of the process. Click-through is cairo.Region() + input_shape_combine_region (and shape_combine_region(None)). That works on X11; on Wayland it is compositor-specific. If the empty input region is ignored, the bottom 120px plus _BOTTOM_MARGIN (48px) becomes a dead click zone after the first dictation — including over the GNOME dock / XFCE panel. Either hide() on X11, or keep a ~96px orb window instead of a full-width strip, or unmap when idle on compositors that do not steal focus. <code>src/vocalinux/ui/dictation_overlay.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Glow animation redraws the entire strip at ~30fps</strong> — _ANIMATION_TICK_MS = 33, _on_anim_tick always queue_draw()s the DrawingArea. _on_draw does OPERATOR_SOURCE paint of the full allocation (monitor width × 120) then several cairo arcs. On 1080p that is ~230k pixels/frame; on 4K ~460k, 30 times a second, typically in software cairo, concurrently with whisper.cpp on the same CPU. Animation does stop when not visible (good). Clip the draw to the orb (~96px) or lower the tick rate; do not SOURCE-clear a full-width strip every frame. <code>src/vocalinux/ui/dictation_overlay.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>GtkLayerShell optional path is done correctly</strong> — _try_import_layer_shell() catches Exception and returns None. KeyboardMode.NONE / set_keyboard_interactivity(False), exclusive_zone 0, OVERLAY layer, bottom+left+right anchors. Tests cover missing GI, is_supported() false, setup failure fallback, and both keyboard APIs. No new hard dependency. This part is fine. <code>src/vocalinux/ui/dictation_overlay.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Focus-stealing was actually worked — residual is first map</strong> — set_accept_focus/can_focus/focus_on_map False, skip taskbar/pager, never present() (tests assert this), opacity instead of hide/show. That is the right GTK3 approach. Remaining hole is the first show_all() on the GNOME-without-layer-shell path, which is still enough to yank focus from the editor and break IBus/wtype — the bug they already hit. Do not treat the opacity trick as a GNOME Wayland fix without a session test. <code>src/vocalinux/ui/dictation_overlay.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Rebase vs current Settings/tray API</strong> — SettingsDialog.__init__ on main now takes initial_page, pending_update, update_status_callback; tray opens settings via _show_settings_page(). Overlay&#x27;s extra overlay_enabled_callback and the _build_general_section insert next to copy_to_clipboard (which has moved off the General page) will not apply cleanly. 886 lines of overlay tests vs 422 lines of implementation is coverage-gate padding; keep the controller/focus tests, drop the string-grep style once already removed in the ponytail pass. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-516">Copy comment</button></div>
+<pre class="comment" id="comment-516">## Review (adversarial) — needs changes
+
+This is a real overlay, not a stub. Controller is testable without GTK. GtkLayerShell is a soft import (`_try_import_layer_shell` → None). Keyboard is explicitly not grabbed. `present()` is avoided (tests assert that). hide()/show() was replaced with opacity because it stole focus and broke IBus — that diagnosis is correct.
+
+It still should not merge as drafted.
+
+### Default on
+
+`ui.show_overlay: True`. The majority Ubuntu session is GNOME Wayland, which typically **does not** get GtkLayerShell. Those users get the fallback `TOPLEVEL` + `set_keep_above(True)` + `show_all()`. You already needed a follow-up because mapping this window yanked editor focus. Default the switch **off** until that path is checked on GNOME Wayland and at least one wlroots compositor. The Settings row is enough for people who want SuperWhisper-style glow.
+
+### Click-through vs idle mapped strip
+
+After the first LISTENING, the window stays mapped at opacity 0 as a **full-width × 120px** surface (`_STRIP_HEIGHT`, left+right anchors / `resize(geom.width, 120)`). Click-through is an empty `cairo.Region` + `input_shape_combine_region`. If a compositor ignores that, the bottom of the screen (panel/dock included) stops receiving clicks for the rest of the process. Prefer a ~96px orb, or unmap when idle on compositors that do not refocus on map.
+
+### Glow cost
+
+`timeout_add(33ms)` → `queue_draw()` of the whole strip, `OPERATOR_SOURCE` clear of monitor-width × 120, then glow rings. That runs for the entire LISTENING/PROCESSING interval, on the same machine that is transcribing. Clip to the orb or tick slower. Stopping the source when hidden is already correct.
+
+### Rebase
+
+`SettingsDialog` gained `initial_page` / update kwargs; tray uses `_show_settings_page`; General no longer hosts copy-to-clipboard. The overlay callback has to land on the current constructor.
+
+**Action:** rebase. Default `show_overlay` to false. Do not leave a full-width mapped window idle. Re-test GNOME Wayland focus + IBus inject before marking ready.</pre>
+</details>
+</article>
+<article class="card v-needs_changes" id="pr-487">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/487">#487 feat(tray): add recent dictation snippets history menu 🤖🤖🤖</a></h3>
+<span class="badge b-needs_changes">Needs changes</span>
+</div>
+<p class="one">Useful tray recovery feature with a sound in-memory store, but it is conflicting, defaults history on, and &quot;delete that&quot; does not actually purge the dictated text.</p>
+<div class="facts"><span>@LuigiKraken</span><span>+494 / −4 · 8 files</span><span>updated 2026-07-01</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Ask LuigiKraken to rebase onto current main, default history off, purge undone text on delete_last, drop clipboard.store() (or document it), import Gdk, and attach the settings group to the Application sidebar page with live apply.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>History is on by default</strong> — DEFAULT_CONFIG sets history.enabled True. Vocalinux sees passwords, messages, 2FA phrases. copy_to_clipboard already defaults False for the same reason. Make history opt-in. The in-memory deque (nothing on disk, clears on quit) is the right persistence model; the default is not. <code>src/vocalinux/ui/config_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>delete that does not exclude the undone text</strong> — Action commands take a separate callback, so the phrase &quot;delete that&quot; is not stored as its own snippet. The preceding segment is still appended to session_segments in text_callback_wrapper and committed on IDLE. Dictating a secret then saying &quot;delete that&quot; in the same session still lands in Recent Snippets. Pop the last segment on delete_last, or skip commit of undone text. There is no test for this path in main.py. <code>src/vocalinux/main.py</code></li>
+<li><span class="sev sev-major">major</span><strong>clipboard.store() can persist snippets to disk</strong> — _on_history_item_clicked calls Gtk.Clipboard.store(), which hands the text to the X clipboard manager (Klipper, CopyQ, clipman). That can write dictation to disk, contradicting the PR claim that nothing is written to disk. Use set_text without store(), or document the clipboard-manager caveat. Current tray_indicator.py also does not import Gdk; Gdk.SELECTION_CLIPBOARD will NameError until Gdk is added to the gi import. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Settings toggle requires restart; live API already exists</strong> — The UI copy says changes take effect after restart. TranscriptionHistory already has set_enabled/set_max_items and a change callback. Other settings apply immediately. After rebase, general_tab is the Application sidebar page alias (searchable sidebar landed in #601/#618), so the group can go there; do not invent a notebook tab. Wire the switches to the live store. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>No maintainer review comments yet</strong> — Issue/review comments are codecov only. No jatinkrmalik review. Rebase will also have to record snippets before trailing-space / auto-capitalize (#608/#554) so history is the user&#x27;s words, not the inject payload. <code>src/vocalinux/main.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-487">Copy comment</button></div>
+<pre class="comment" id="comment-487">@LuigiKraken The in-memory store is the right privacy model (deque, process lifetime, no file). The feature is still worth landing after a rebase, but not with history on by default and not with the current &quot;delete that&quot; behavior.
+
+Conflicts: `tray_indicator.py`, `settings_dialog.py`, and `main.py` have all moved (update checker, auto-pause, searchable sidebar, trailing space, auto-capitalize). Rebase first.
+
+Must-fix:
+
+1. Default `history.enabled` to `false`, same posture as `copy_to_clipboard`. A dictation tool should not keep recent utterances unless the user asks.
+
+2. &quot;delete that&quot; exclusion is incomplete. The command itself is not recorded (action callback). The text it undoes stays in `session_segments` and is committed on IDLE. Pop the last segment on `delete_last`, or do not commit undone text. Add a test around the callback wrapper.
+
+3. Drop `clipboard.store()` or document that clicking a snippet can persist via the clipboard manager (Klipper/CopyQ/clipman). `set_text` is enough for an immediate paste. Also import `Gdk`; current `tray_indicator.py` only imports `GdkPixbuf`, so `Gdk.SELECTION_CLIPBOARD` will NameError.
+
+4. Settings: `general_tab` is now the Application sidebar page. Put the group there. `TranscriptionHistory.set_enabled` / `set_max_items` already exist, so the restart-required note should go away.
+
+Happy to re-review on a rebased branch with history off by default.
+</pre>
+</details>
+</article>
+<article class="card v-needs_changes" id="pr-479">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/479">#479 Pipe transcriptions through an optional postprocessing script</a></h3>
+<span class="badge b-needs_changes">Needs changes</span>
+</div>
+<p class="one">Clean stdin/stdout hook with timeout and no shell=True, but Jatin already put it on hold for the settings refactor (now landed) and example scripts, and the executable path needs hardening.</p>
+<div class="facts"><span>@karottenreibe</span><span>+256 / −0 · 8 files</span><span>updated 2026-07-01</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: documentation, app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Do not merge. Ask karottenreibe to rebase onto the sidebar settings UI, add the example scripts Jatin requested, require an absolute executable path, and stop logging transcription stdout. Keep the PR open per maintainer; do not close.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Settings placement: maintainer hold still applies, target UI has changed</strong> — jatinkrmalik (2026-07-01): hesitant to slot a toggle into today&#x27;s cramped dialog; wants a dedicated injection/post-processing home after a settings refactor; also wants example scripts (strip fillers, capitalization) and noted the #408 local-LLM/Ollama angle. Searchable sidebar settings landed in #601/#618. This PR still notebook.append_page(&#x27;Post-Processing&#x27;) on the old tab UI. Rebase as a SettingsPage (or under Application). Do not merge the tab as-is. Example scripts are still absent. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Arbitrary executable from config with no path checks</strong> — PostProcessor.process runs subprocess.run([self.script_path], input=text, capture_output=True, text=True, timeout=10). No shell=True (good). Timeout 10s (good). Fallback on non-zero/timeout/OSError (good). Runs as the Vocalinux user (expected). Missing: absolute-path requirement (a value like curl or bash is looked up on PATH), exists+executable check, and any UI warning that this binary receives every transcription on stdin. Config.json is user-writable; a bad script_path is local RCE with dictation on stdin. Require an absolute path to an executable file before spawn. <code>src/vocalinux/post_processor.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Logs transcription stdout at INFO</strong> — logger.info(&#x27;Post-processor returned: %r&#x27;, result.stdout[:100]) writes up to 100 chars of the transformed (or original-shaped) dictation into the log file. Vocalinux logs are a tray menu item. Do not log payload text. Log script_path, returncode, duration, and byte length only. <code>src/vocalinux/post_processor.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Empty stdout skips injection; timeout blocks the recognition thread</strong> — apply_post_processing maps empty script output to None, and main.py returns without injecting. A script that prints nothing silently drops the utterance; fallback-to-original would match the failure path. The 10s timeout runs inside text_callback_wrapper on the recognition thread, so a slow script stalls dictation. Document that. chsa-admin asked for a separate hotkey; Jatin hearted that as phase II, fine to defer. On rebase, run the hook after command processing and before trailing-space / auto-capitalize, or the script will see injected padding. <code>src/vocalinux/post_processor.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>save_config vs dialog convention</strong> — The changed handler calls save_config(), which is the non-deprecated API. Current settings_dialog.py still uses save_settings() everywhere. Either is functionally fine (save_settings warns and delegates). Match neighbors on rebase. File chooser does not restrict to executables. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-479">Copy comment</button></div>
+<pre class="comment" id="comment-479">@karottenreibe Incorporating @jatinkrmalik&#x27;s 1 July comment, plus a pass on the process helper.
+
+Jatin liked the hook shape and explicitly kept the PR open: do not merge a Post-Processing notebook tab into the old dialog; wait for the settings refactor; add a couple of example scripts (strip fillers, fix capitalization); #408/Ollama can ride this later. That refactor has landed (#601/#618 searchable sidebar). Rebase and add a sidebar page (or put it under Application / a future injection page). The tab as written will not apply.
+
+The runner itself is close: `subprocess.run([script_path], input=text, capture_output=True, text=True, timeout=10)` with no `shell=True`, fallback on non-zero/timeout, same user as Vocalinux. Keep that.
+
+Please also:
+
+1. Require an absolute path to an existing executable. `curl` / `bash` as `script_path` should not PATH-lookup. This is a user-configured hook, but config.json is enough to feed every transcription to whatever binary is named there.
+
+2. Stop logging `result.stdout[:100]` at INFO. That is dictation text in `~/.local/share/vocalinux` logs (View Logs in the tray). Log path, returncode, duration, size.
+
+3. Empty stdout currently becomes `None` and skips injection. Either treat empty as &quot;use original&quot; (same as failure) or document &quot;empty means drop this utterance&quot;.
+
+4. Ship the example scripts Jatin asked for. A hotkey to run post-processing only sometimes (chsa-admin) can wait.
+
+Happy to re-review once this sits on the sidebar and the path/logging issues are tightened.
+</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-424">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/424">#424 feat: add configurable Whisper language candidates</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Useful whisper.cpp auto-detect constraint, not on main, but needs a rewrite against resolve_whisper_language and must not force a language at 0% confidence.</p>
+<div class="facts"><span>@juanfradb</span><span>+168 / −1 · 7 files</span><span>updated 2026-05-08</span><span>draft</span><span>MERGEABLE</span><span>confidence high</span><span>labels: —</span></div>
+<div class="action"><strong>Do this:</strong> Keep draft. If revived: rebase onto resolve_whisper_language + current Advanced tab, add a probability floor, honor whispercpp_n_threads, hide the control unless engine is whisper_cpp.</div>
+<ul class='findings'>
+<li><span class="sev sev-major">major</span><strong>Forces a candidate even when all probabilities are zero</strong> — lang = max(candidate_probs, key=candidate_probs.get) always picks a code. If the user listed en,es and the audio is German, or the codes are typos, both probs are 0.0 and the first candidate is forced into transcribe(). Unrestricted auto-detect would have been better. Need a floor: if max(candidate_probs) is ~0, leave lang=None. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Bypasses resolve_whisper_language on current main</strong> — Main maps catalog ids via resolve_whisper_language() (en-us/en-in → en, auto → None, SUPPORTED_LANGUAGES[&#x27;whisper&#x27;] field). Candidate normalization does code.split(&#x27;-&#x27;, 1)[0] instead. That happens to work for en-US but will diverge from the catalog (and from the Language combo) the moment a code is not a simple region suffix. Reuse resolve_whisper_language; validate against Model.available_languages(). <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Ignores whispercpp_n_threads; extra detect pass mutates the ctx</strong> — auto_detect_language(..., n_threads=min(4, cpu_count or 1)) ignores the existing whispercpp_n_threads setting used to build the Model. auto_detect_language() runs whisper_pcm_to_mel on the shared ctx, then transcribe() does it again. pywhispercpp still exposes auto_detect_language (verified on the current venv Model), so the API is valid, but the extra pass is paid on every utterance whenever candidates are set. Use the model&#x27;s n_threads, and if max candidate prob is below a floor skip detect and leave language=None. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Only wired for whisper.cpp, not OpenAI Whisper</strong> — _transcribe_with_whisper still calls transcribe(language=resolve_whisper_language(...)) with no candidate filter. A setting named Language Candidates in Advanced will surprise users on the Whisper engine. Either hide the row unless engine is whisper_cpp, or apply the same restrict on both. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Settings insertion targets a layout that no longer exists</strong> — PR inserts a Gtk.Entry before Initial Prompt in _build_advanced_section. Current Advanced tab is behind a power-user Revealer, Initial Prompt is multiline in a ScrolledWindow, and get_current_settings() builds a different dict (gpu_device, remote API). The hunks may still apply in places, but this needs to be re-done against the current dialog, not merged by git. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-424">Copy comment</button></div>
+<pre class="comment" id="comment-424">@juanfradb Leaving this as draft. The idea is still missing from main: constrain whisper.cpp auto-detect to a user-supplied set (`en,es`). `pywhispercpp.Model.auto_detect_language` still exists, so the API choice is fine. The patch is not mergeable as current code.
+
+Main now has `resolve_whisper_language()` (`en-us` → `en`, `auto` → `None`, catalog `whisper` field). Candidate normalization should go through that, not `split(&quot;-&quot;, 1)[0]`.
+
+Do not merge until these are fixed:
+
+- `max(candidate_probs)` with all zeros still **forces** the first candidate. German audio with candidates `en,es` becomes English or Spanish. If the best candidate prob is ~0, leave `lang=None` and let unrestricted auto-detect run.
+- `n_threads=min(4, cpu_count)` ignores `whispercpp_n_threads` used to construct the Model.
+- Extra `auto_detect_language` (it calls `whisper_pcm_to_mel` on the ctx) on every utterance, then `transcribe` does it again. Acceptable if gated on candidates being set, but use the model&#x27;s thread count.
+- OpenAI Whisper `_transcribe_with_whisper` is unchanged. Hide the row unless the engine is whisper.cpp, or apply the same restrict there.
+- Advanced Settings was rebuilt (Unlock Advanced Settings + Revealer). Re-add the entry there; do not rely on GitHub&#x27;s stale MERGEABLE bit.
+
+Tests for the happy path (`en` vs `es` probs) are good. Add a case where every candidate is 0.0 / missing from `lang_probs`.
+
+Not closing: this is a real power-user knob and nothing on main replaced it. Needs a rewrite, not a click-merge.</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-387">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/387">#387 feat: experimental real-time streaming transcription (fixes #320)</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Default-off is correct, but Whisper streaming is not real streaming, LA-2 is wrong in places, live injection is a stub, and the branch is stale/conflicting with 3.13 CI red — keep draft until redesigned.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+1710 / −118 · 14 files</span><span>updated 2026-06-07</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: enhancement, stale</span></div>
+<div class="action"><strong>Do this:</strong> Convert #387 to draft (or leave closed if the stale bot already did). Do not rebase for merge. If streaming comes back, open a new Vosk-only PR with a real partial UI and a streaming-aware stop/PTT path; leave Whisper out until there is a real streaming decoder.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Live &#x27;show text as you speak&#x27; is not implemented</strong> — PR body claims TrayIndicator injects streaming text. The only new tray hook is `_on_streaming_update` which discards both arguments. Partials never reach any injector. Finals only land via `_emit_text` on Vosk Result()/Whisper flush(), so this is incremental utterance commit, not live hypotheses. If someone later wires the callback to inject, `_emit_text` already fires on the same finals → double injection. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>Stop/PTT path not streaming-aware — tail double-inject or drop</strong> — Streaming only enqueues from inside the record loop. After `should_record` flips, existing `_record_audio` still `_enqueue_audio_segment()`s leftover `audio_buffer` as a normal segment. Whisper leftover is often just the 200ms overlap window, transcribed independently of TranscriptBuffer (duplicate last words or garbage). Pending LA-2 words are never `flush_all()`&#x27;d unless a streaming `is_final` segment is processed. Streaming silence also ignores push-to-talk and calls `is_final=True` mid-hold, which for Vosk runs FinalResult() and resets the recognizer. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>LA-2 implementation is not LA-2, and committed-tail overlap takes the shortest match</strong> — `confidence_threshold` and `_MIN_COMMIT_LENGTH` are dead. Prefix agreement across two passes is LA-2-ish, but on divergence `insert()` immediately commits the entire previous pending hypothesis (tests encode this: &#x27;hello world&#x27; then &#x27;goodbye moon&#x27; flushes &#x27;hello world&#x27;). That is sequential-chunk dumping, which the author noted can also hold everything until stop if done strictly. Worse: the committed-tail strip loop uses `for i in range(1, max_check+1)` (first/shortest hit) while `_find_tail_head_overlap` correctly searches longest-first. Repeated boundary tokens (Whisper&#x27;s `are… are`) under-strip and re-emit. `_strip_terminal_ellipsis` only handles a literal &#x27;...&#x27; suffix, not Whisper&#x27;s other stall tokens. <code>src/vocalinux/speech_recognition/transcript_buffer.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Overlap math ignores real capture chunk size; callback list is racy</strong> — `_enqueue_streaming_segment` hardcodes `chunk_duration_s = 1024/16000` instead of CHUNK and `_capture_sample_rate`. Current main already resamples non-16kHz captures. `_streaming_callbacks` is a plain list mutated from GTK (`add/remove`) and iterated from the recognition thread. `experimental_streaming` / chunk duration are read on the audio thread and written from `reconfigure()` with no lock. `_signal_recognition_stop` no longer forces the None sentinel through a full queue. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Default-off is done right; UI still oversells it</strong> — `experimental_streaming: False` in DEFAULT_CONFIG and constructor kwargs default False. Settings switch starts inactive. That part is correct. The toggle subtitle is still &#x27;Show text as you speak&#x27; with no engine caveat, and overlap_ms is not exposed. Voice-commands handler is rewritten to only `_auto_apply_settings()` (drops the immediate reconfigure current main still has) — unrelated drive-by. <code>src/vocalinux/ui/config_manager.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>Stale vs main: this is a rewrite, not a rebase</strong> — recognition_manager.py on main now has remote_api, silero VAD, model keepalive, download buffering. The PR deletes `is_model_downloaded` from the whispercpp import. Settings/tray/main constructor tests will not apply cleanly. 23+785 new tests mock `sys.modules[&#x27;tempfile&#x27;|&#x27;numpy&#x27;|&#x27;zipfile&#x27;]` globally — a likely 3.13 isolation landmine even after rebase. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-387">Copy comment</button></div>
+<pre class="comment" id="comment-387">## Verdict: keep as draft — do not merge, do not rebase-to-land
+
+@jatinkrmalik this matches the note you already left on 2026-05-07: Vosk has a real incremental API; Whisper does not. The branch should stay draft until that split is designed on purpose. Current main has moved far enough (remote_api, silero, keepalive) that a rebase would be a rewrite anyway. Python 3.13 CI is red.
+
+### What is actually correct
+Default-off is real: `experimental_streaming: False` in `DEFAULT_CONFIG`, constructor, and the settings switch. That is the only reason this is not a `close`.
+
+### Blockers
+
+**1. Advertised UX is a stub.** Tray registers `_on_streaming_update` and then does `_ = (text, is_final)`. Partials never inject. Finals only land through `_emit_text`. The PR description&#x27;s `TrayIndicator → inject_text` pipeline is not in the diff. Wiring that callback later without removing `_emit_text` on the same finals will double-inject.
+
+**2. Stop path is not streaming-aware.** After `should_record` goes false, leftover `audio_buffer` still goes through `_enqueue_audio_segment()` → `_process_audio_buffer()` (no TranscriptBuffer). For Whisper that leftover is often the overlap window, so the tail can duplicate or the unconfirmed pending words can vanish because `flush_all()` only runs on a streaming `is_final` segment. Streaming silence also skips the PTT deferral and calls `FinalResult()` mid-hold on Vosk.
+
+**3. `TranscriptBuffer` is not LA-2.** `confidence_threshold` / `_MIN_COMMIT_LENGTH` are unused. Divergence commits the previous pending hypothesis in one shot (see `test_diverging_text_resets_buffer`). The committed-tail overlap loop takes the **shortest** match (`range(1, max_check+1)`); `_find_tail_head_overlap` correctly searches longest-first. Repeated boundary words (`are… are`) will under-strip.
+
+### If this is ever revived
+Ship Vosk `PartialResult()` as the only streaming engine, with a real partial-replacement story (or overlay, not raw injection). Treat Whisper/whisper.cpp as out of scope until there is a proper streaming backend, not overlapping `transcribe()` windows. Do not land this on main as-is.</pre>
+</details>
+</article>
+<article class="card v-keep_draft" id="pr-503">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/503">#503 refactor: mega-cleanup of dead bloat</a></h3>
+<span class="badge b-keep_draft">Keep draft</span>
+</div>
+<p class="one">Still a useful cleanup thesis, but this branch is too stale to merge: it deletes APIs and files that current main now uses, and conflicts with the settings/IBus/About rewrite.</p>
+<div class="facts"><span>@jatinkrmalik</span><span>+656 / −6386 · 50 files</span><span>updated 2026-07-11</span><span>draft</span><span>CONFLICTING</span><span>confidence high</span><span>labels: dependencies, app, web, ci, tests, installer</span></div>
+<div class="action"><strong>Do this:</strong> Keep draft. Do not merge. Slice the still-valid cleanup (unused Python/npm deps, dead web modules, command-processor rewrite, download helper) into new PRs against current main. Do not replay deletions of shortcut display helpers, show_notifications, about_dialog.py, or the Flatpak resource path.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Deletes shortcut display helpers that settings now call</strong> — The diff removes SHORTCUT_MODE_DISPLAY_NAMES and get_shortcut_display_name from keyboard_backends. On current main those are imported by settings_dialog.py (shortcut rows) and keyboard_shortcuts.py. This was dead at PR time; it is not dead now. Merging would break the shortcuts UI. <code>src/vocalinux/ui/keyboard_backends/base.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>Edits about_dialog.py, which main already deleted</strong> — PR trims an unused custom AboutDialog class and keeps show_about_dialog() / Gtk.AboutDialog. #631 deleted src/vocalinux/ui/about_dialog.py entirely and moved About into Settings (tray _on_about_clicked -&gt; _show_settings_page(&#x27;about&#x27;)). There is no AboutDialog class on main. This hunk cannot apply. <code>src/vocalinux/ui/about_dialog.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>Drops ui.show_notifications default that tray now reads</strong> — config_manager DEFAULT_CONFIG loses ui.show_notifications. tray_indicator.py currently gates update notifications with get_bool(&#x27;ui&#x27;, &#x27;show_notifications&#x27;, True) from #631. Removing the key is no longer dead-config cleanup. <code>src/vocalinux/ui/config_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>ResourceManager rewrite drops the Flatpak path</strong> — Current _find_resources_dir still lists /app/share/vocalinux/resources plus lib/lib64 candidates. The PR requires a complete icon+sound set (good vs #330) but drops the Flatpak candidate. Flatpak packaging landed in #484 and is on main. Do not replay this hunk as-is. <code>src/vocalinux/utils/resource_manager.py</code></li>
+<li><span class="sev sev-major">major</span><strong>command_processor rewrite must keep capitalize_sentences</strong> — Replacing the fixture if text.lower() == ... chain with a left-to-right matcher is still the right fix; that chain is still on main. #554 added capitalize_sentences() used from main.py for Vosk. Any replay of this file has to keep that helper and its tests. <code>src/vocalinux/speech_recognition/command_processor.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Unused-deps claim is still true on main</strong> — pydub, tqdm, and python-xlib remain in pyproject.toml and packaging/flatpak/python3-dependencies.yaml. Grep of src/ finds no imports. tqdm is only mocked in tests (likely a pywhispercpp transitive). Sphinx docs extra is still unused. Dead web modules still unused: code-block.tsx, logo.tsx, ui/button.tsx, lib/api/util.ts, lib/utils.ts (only pulled by those dead components). dictation-overlay.tsx and use-double-press.ts are already gone from main. Salvage these as a small follow-up PR, not this 50-file branch. <code>pyproject.toml</code></li>
+<li><span class="sev sev-nit">nit</span><strong>_process_final_buffer is still test-only</strong> — Production recognition_manager never calls _process_final_buffer; only tests do. Deleting it is still valid. Just do not delete overlapping recognition tests without checking unique contracts against the files that grew after this PR. <code>src/vocalinux/speech_recognition/recognition_manager.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-503">Copy comment</button></div>
+<pre class="comment" id="comment-503">@jatinkrmalik Keep this draft. Do not merge this branch onto current main.
+
+The cleanup thesis is still right in places. On today&#x27;s main, `src/` still does not import `pydub`, `tqdm`, or `python-xlib`; the Sphinx extra is still unused; `_process_final_buffer` is still only called from tests; and the command processor is still the fixture `if text.lower() == ...` chain. The web leftovers (`code-block.tsx`, `logo.tsx`, `ui/button.tsx`, `lib/api/util.ts`) still have no app-page imports. `dictation-overlay.tsx` / `use-double-press.ts` are already gone.
+
+What changed since 11 July is that several &quot;dead&quot; deletions are now live:
+
+1. `get_shortcut_display_name` / `SHORTCUT_MODE_DISPLAY_NAMES` are used by `settings_dialog.py` and `keyboard_shortcuts.py`. Deleting them breaks the shortcuts UI.
+2. `src/vocalinux/ui/about_dialog.py` was removed in #631. About lives in Settings; tray `About` calls `_show_settings_page(&quot;about&quot;)`. This PR still edits the deleted file.
+3. `ui.show_notifications` is read by `tray_indicator.py` (#631). Dropping it from `DEFAULT_CONFIG` is not dead-config cleanup anymore.
+4. `ResourceManager` still needs `/app/share/vocalinux/resources` for Flatpak (#484). The rewrite drops that candidate.
+5. `command_processor.py` gained `capitalize_sentences` (#554). A wholesale replace has to keep it.
+6. `recognition_manager.py` grew auto-pause, GPU, language mapping, and audio-device filters. The download DRY helper is still worth doing, but not by replaying this hunk.
+
+Please abandon this tip and cut smaller cleanups against current main (deps / web dead files / command-processor algorithm / download helper). Resolving 50-file conflicts here will re-delete things main now depends on.
+</pre>
+</details>
+</article>
+<h2 id="close">Close</h2>
+<p class="lede">Superseded by main, duplicated by a better PR, or the wrong approach.</p>
+<article class="card v-close" id="pr-556">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/556">#556 feat(text-injection): opt-in &quot;Preserve Clipboard&quot; for the Wayland paste fallback 🤖🤖🤖</a></h3>
+<span class="badge b-close">Close</span>
+</div>
+<p class="one">Clipboard restore already landed on main as always-on (#588/#646); this opt-in branch would regress that and still conflicts.</p>
+<div class="facts"><span>@Nosion</span><span>+483 / −10 · 4 files</span><span>updated 2026-08-04</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: stale, app, tests</span></div>
+<div class="action"><strong>Do this:</strong> Close as superseded by #588/#646. Invite a tiny follow-up for wl-copy --sensitive only. Do not merge; a rebase of the current branch would regress always-on restore.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Restore is already on main, and this PR&#x27;s default would regress it</strong> — On current main, _inject_via_clipboard_paste always saves the previous clipboard and restores it after 300ms unless copy_to_clipboard is on (text_injector.py:1311-1403). It also handles overlapping pastes via _clipboard_restore_generation / _clipboard_restore_target, skips restore if the user copied something else, and can clear an empty clipboard. #556 adds text_injection.restore_clipboard_after_paste default False plus a Settings toggle, and a simpler save/restore with a 150ms sleep and no generation counter. Merging or naively rebasing that on top of #588/#646 would make restore opt-in again. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Still conflicting after the author claimed a sync</strong> — Maintainer requested conflict fixes (2026-07-28). Author said they synced to latest main on 2026-08-04. GitHub is still DIRTY. The conflicts are exactly the files #588/#646 rewrote (text_injector.py, config_manager.py, settings_dialog.py). A rebase now is a rewrite of the injector hunks, not a textual merge. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Only unique leftover is wl-copy --sensitive (Klipper history)</strong> — main never passes --sensitive, so dictation still lands in Klipper/etc. history. #556 probes wl-copy --help, caches the result, and marks the transient dictation copy sensitive while restoring with a plain copy. That part is still useful. It is ~40 lines on current _run_clipboard_command, not a 483-line PR. Do not drag the Settings toggle or the opt-in default along with it; restore is already the default. <code>src/vocalinux/text_injection/text_injector.py:680-720</code></li>
+<li><span class="sev sev-nit">nit</span><strong>#425 is a different clipboard-paste bug</strong> — #425 (juanfradb, still CONFLICTING) pastes into Firefox via clipboard when IBus commit is ignored on X11. It shares the paste fallback, not clipboard preservation. Closing #556 does not resolve #425. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-556">Copy comment</button></div>
+<pre class="comment" id="comment-556">## Review @Nosion
+
+Thank you for the KDE live testing and for addressing the earlier nits (`--no-newline` is the byte-faithful `wl-paste` read; coverage on the helpers).
+
+I am going to close this rather than ask for another rebase.
+
+Clipboard restore after the ydotool paste fallback is already on `main`, and it is stricter than this branch:
+
+- #588 (`a15baa8`) restores after paste by default (no Settings toggle).
+- #646 (`4a1d3ed`) adds overlapping-paste generation counters, text-only reads, and skip-if-the-user-copied-something-else.
+
+This PR still adds `restore_clipboard_after_paste: false` and a Preserve Clipboard switch. Merging that on current `main` would make restore opt-in again. GitHub is also still **DIRTY** on `text_injector.py` / `config_manager.py` / `settings_dialog.py`, which are exactly the files those two commits rewrote.
+
+The one piece `main` does not have is `wl-copy --sensitive` so Klipper does not keep the transient dictation copy. That is a small, feature-probed change on `_run_clipboard_command`. If Klipper history still bothers you, please open a new PR against current `main` with only that flag (gated so Copy to Clipboard stays a normal, non-sensitive offer). No toggle, no second restore path.
+
+#425 is a different bug (Firefox IBus commit on X11) and is not a substitute for either this PR or #588.
+</pre>
+</details>
+</article>
+<article class="card v-close" id="pr-402">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/402">#402 feat(injection): add selectable text injection backends</a></h3>
+<span class="badge b-close">Close</span>
+</div>
+<p class="one">Stale 9-file backend picker; superseded by VOCALINUX_FORCE_BACKEND on main and the narrower config pin in #649. Lint red, conflicts, runtime reload does not rewire dictation.</p>
+<div class="facts"><span>@sabbari</span><span>+302 / −71 · 9 files</span><span>updated 2026-06-07</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: stale</span></div>
+<div class="action"><strong>Do this:</strong> Close as superseded by VOCALINUX_FORCE_BACKEND + #649. If xdotool pinning is still wanted, add that value on #649 instead of reviving this rewrite.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Superseded by FORCE_BACKEND on main and #649</strong> — Main already pins backend via VOCALINUX_FORCE_BACKEND (ibus/wtype/ydotool/auto) inside TextInjector._forced_backend(). #649 (OPEN, MERGEABLE, updated 2026-08-06) adds the persistent config.json setting the issue asked for, with env overriding config and default auto unchanged. #649&#x27;s own writeup is explicit: &#x27;Deliberately narrower than #402, which also rebuilt the injector at runtime and added Settings/tray UI across 9 files.&#x27; Close this; take #649. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>Runtime reload does not update the injector that actually dictates</strong> — tray_indicator.update_text_injection_backend() constructs a new TextInjector and assigns self.text_injector. main() holds text_system and ActionHandler(text_system); the dictation callback calls text_system.inject_text(). Changing the setting in the dialog therefore saves config and rebuilds the tray&#x27;s copy, while dictation and voice-command shortcuts keep using the old backend until restart. That is the feature this PR adds on top of #649, and it does not work. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Reverts scoped IBus and ignores current selection logic</strong> — _configure_ibus() constructs IBusTextInjector(auto_activate=True). Main uses auto_activate=False plus per-inject engine switch, compositor denylist, ibus-wayland bridge, KDE VirtualKeyboard (#574), and VOCALINUX_FORCE_BACKEND. A rebase that keeps this helper would undo that. _configure_wayland_tool also prefers ydotool then wtype with no denylist and no ydotoold auto-start from main. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Lint failed; tests grep source and stole a TestMainFunction method</strong> — CI Lint Python failed 2026-04-16 (black; at least the ydotoold RuntimeError line is 104 cols vs 100). Tests never ran (matrix skipped after lint). test_settings_dialog and test_main_args_deps assert that source files contain strings. Inserting class TestTrayIndicatorBackendReload in the middle of TestMainFunction moved test_main_initialization_error onto the new class. <code>tests/test_main_args_deps.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>xdotool as a pinable value is the one gap #649 left</strong> — VOCALINUX_FORCE_BACKEND and #649 accept ibus/wtype/ydotool/auto only. #649 says xdotool was omitted to avoid touching X11 selection. That is the actual remaining ask from #476&#x27;s X11 reporter (and from #425&#x27;s Firefox case). Add xdotool on #649 if wanted. Do not keep this PR alive for that one enum value. <code>src/vocalinux/ui/config_manager.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-402">Copy comment</button></div>
+<pre class="comment" id="comment-402">@sabbari Closing in favor of what landed and of #649.
+
+I asked for a rebase on 7 May so this could make the next release. There has been no update. The PR is conflicting, tagged stale, and lint has been red since 16 April (black; the test matrix never ran).
+
+Main already has `VOCALINUX_FORCE_BACKEND` (`ibus` / `wtype` / `ydotool` / `auto`) in `TextInjector._forced_backend()`. #649 is the persistent `text_injection.backend` setting, env-overrides-config, default `auto` byte-identical. That PR is explicit that it is the narrow version of this one (no Settings combo, no runtime rebuild, 9 files vs a contained config read).
+
+The extra work here is also broken:
+
+- `update_text_injection_backend` replaces `tray.text_injector` only. `main()`&#x27;s `text_system` and `ActionHandler` still hold the old instance, so dictation does not switch until restart.
+- `_configure_ibus()` uses `IBusTextInjector(auto_activate=True)`. Current main is scoped injection (`auto_activate=False`) plus compositor denylist / `ibus-wayland` / KDE VirtualKeyboard. This helper cannot be rebased without rewriting it against that.
+- Tests grep source. Inserting `TestTrayIndicatorBackendReload` in the middle of `TestMainFunction` moved `test_main_initialization_error` onto the new class.
+
+The one thing #649 left out on purpose is pinning `xdotool`. If that is still needed (X11 #476, Firefox IBus), add it on #649. Please do not rebase this branch.</pre>
+</details>
+</article>
+<article class="card v-close" id="pr-425">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/425">#425 fix: paste into Firefox through clipboard fallback</a></h3>
+<span class="badge b-close">Close</span>
+</div>
+<p class="one">Draft Firefox+xdotool special case; #665 did not fix silent IBus drops, but this heuristic is wrong and main&#x27;s clipboard-paste/backend-pin work supersedes it.</p>
+<div class="facts"><span>@juanfradb</span><span>+135 / −0 · 2 files</span><span>updated 2026-05-08</span><span>draft</span><span>CONFLICTING</span><span>confidence high</span><span>labels: —</span></div>
+<div class="action"><strong>Do this:</strong> Close as superseded. Remaining Firefox-on-X11 IBus gap belongs as an xdotool value on VOCALINUX_FORCE_BACKEND/#649, or a WM_CLASS denylist that reuses _inject_via_clipboard_paste.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Firefox IBus drop is not fixed by #665, and this PR does not fix it either</strong> — #665 (merged 2026-08-10) restores the XKB layout after scoped IBus injection. That is a different bug (#664, Brazilian ABNT2 flipping to US). IBusTextInjector.inject_text() still returns True whenever commit_text() does not throw (ibus_engine.py), so main&#x27;s _switch_to_non_ibus_backend() never runs when Firefox swallows the commit. The underlying failure mode can still exist. This PR papers over it with an app heuristic instead of making IBus failure detectable or letting the user pin xdotool. <code>src/vocalinux/text_injection/ibus_engine.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>App detection uses window title, so any title containing &#x27;firefox&#x27; triggers paste</strong> — _get_current_x11_app_id() concatenates getwindowclassname, getwindowname (page title), /proc/pid/comm, and cmdline, then checks if &#x27;firefox&#x27; is in the joined string. A Chrome/VS Code/terminal window whose title mentions Firefox (docs, GH issue, man page) takes the clipboard path and skips IBus. Match WM_CLASS/comm only (firefox, Navigator), never getwindowname. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-major">major</span><strong>WAYLAND_IBUS also uses xdotool ctrl+v</strong> — The Firefox branch runs whenever environment is X11_IBUS or WAYLAND_IBUS. Native Wayland Firefox is not an X11 window; xdotool key ctrl+v either hits the wrong XWayland window or does nothing. Main already has _inject_via_clipboard_paste() for ydotool on Wayland, with clipboard save/restore. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Duplicates paste and clobbers the clipboard</strong> — _inject_via_x11_clipboard_paste copies text and sends xdotool ctrl+v with no restore. Main&#x27;s _inject_via_clipboard_paste already does copy+Ctrl+V and restores the previous clipboard (generation counter, delayed restore). #556 is the opt-in Preserve Clipboard/wl-copy --sensitive follow-up; it is still OPEN, but the restore itself is already on main. A new helper that skips restore is a regression against current behavior. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Pays four xdotool subprocesses plus /proc reads on every IBus injection</strong> — target_app is resolved for every X11_IBUS/WAYLAND_IBUS inject_text call, not only Firefox. That is extra latency on the dictation hot path. Main already logs window info via _log_x11_window_info(); this reimplements it for a boolean. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+<li><span class="sev sev-nit">nit</span><strong>codecov/patch was red at 65%</strong> — _get_current_x11_app_id itself is untested; tests only mock it. 16 new lines uncovered. <code>src/vocalinux/text_injection/text_injector.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-425">Copy comment</button></div>
+<pre class="comment" id="comment-425">@juanfradb Closing this. Thanks for the Firefox report, but the patch should not land.
+
+**#665 did not fix Firefox ignoring IBus.** That PR restores the XKB layout after scoped injection (#664). `IBusTextInjector.inject_text()` still returns `True` as soon as `commit_text()` succeeds at the IBus layer, so main&#x27;s `_switch_to_non_ibus_backend()` never runs when Firefox drops the text. That failure mode can still be real. This is not the fix.
+
+What is wrong here:
+
+1. `&quot;firefox&quot; in target_app` after joining **window title** + class + `/proc/cmdline`. Any focused window whose title mentions Firefox (Chrome, VS Code, a terminal) skips IBus and pastes. Detect `WM_CLASS`/`comm` only.
+2. The same branch runs on `WAYLAND_IBUS` and then calls `xdotool key ctrl+v`, which does not inject into native Wayland Firefox.
+3. `_inject_via_x11_clipboard_paste` reimplements paste and **overwrites the clipboard with no restore**. Main already has `_inject_via_clipboard_paste` (restore + generation counter). #556 is the Klipper/`--sensitive` follow-up; do not add a third paste path.
+4. Conflicts with current `inject_text()` (state lock, IBus runtime fallback). Draft, untouched since 8 May.
+
+If Firefox-on-X11 still silently drops IBus commits, the right knobs are already in flight: pin a non-IBus backend (`VOCALINUX_FORCE_BACKEND` on main; config pin in #649). Neither accepts `xdotool` today — that is the actual X11 gap. Add `xdotool` there, or denylist WM_CLASS `firefox`/`Navigator` and reuse `_inject_via_clipboard_paste`. Do not special-case by window title.</pre>
+</details>
+</article>
+<article class="card v-close" id="pr-353">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/353">#353 Add double-tap Super key shortcut and --settings CLI option (fixes from PR #332) 🤖🤖🤖</a></h3>
+<span class="badge b-close">Close</span>
+</div>
+<p class="one">suspend_handler.py and tray resume logic already live on main; super+super was later deprecated; double-tap Super fights GNOME Activities; --settings is the only leftover and belongs in a tiny new PR.</p>
+<div class="facts"><span>@farconada</span><span>+829 / −80 · 13 files</span><span>updated 2026-05-07</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: stale</span></div>
+<div class="action"><strong>Do this:</strong> Close #353 as superseded/conflicting. If --settings is still wanted, file a new small PR against current main (CLI flag + get_running_pid/SIGUSR1 or D-Bus) that calls TrayIndicator._show_settings_page(). Do not revive Super-as-preset or a second KeyboardShortcutManager.</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>suspend_handler.py is a duplicate of code already on main</strong> — PR adds a new 126-line suspend_handler.py and wires SuspendHandler plus a large post-resume Gio.Settings input-source monitor into tray_indicator.py. Current main already has src/vocalinux/suspend_handler.py, tests/test_suspend_handler.py, and TrayIndicator constructing SuspendHandler(on_suspend=..., on_resume=...). The PR&#x27;s getattr(handler, &#x27;start&#x27;, None) dance does not match main&#x27;s constructor-connects-immediately API. Merging would conflict and likely regress AutoPauseMonitor / keepalive / update-monitor shutdown in _quit. <code>src/vocalinux/suspend_handler.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>super+super is deprecated on main; this PR makes it a product feature</strong> — ConfigManager._migrate_shortcuts_config() on main rewrites toggle_recognition == &#x27;super+super&#x27; to &#x27;ctrl+ctrl&#x27;. SUPPORTED_SHORTCUTS has no Super presets. This PR adds super+super / left_super+left_super / right_super+right_super to the dropdown and starts a second KeyboardShortcutManager(shortcut=&#x27;super+super&#x27;) for Settings. That fights a later product decision and needs left_super in MODIFIER_NAMES (not present on main). <code>src/vocalinux/ui/keyboard_backends/base.py</code></li>
+<li><span class="sev sev-major">major</span><strong>Double-tap Super vs GNOME Activities is still unsolved</strong> — Reviewer asked for a startup log; the PR added one. GNOME still uses Super (and Super double-tap / hold) for Overview. A second global listener does not prevent the shell from seeing the same key. There is no UI warning, no opt-in, no setting to disable it. Conflict detection only covers Vocalinux&#x27;s own recognition shortcut, not the DE. Two KeyboardShortcutManager instances also mean two pynput/evdev listeners. <code>src/vocalinux/ui/tray_indicator.py</code></li>
+<li><span class="sev sev-major">major</span><strong>--settings CLI is the only unique piece, and it is not on main</strong> — parse_arguments() on main has no --settings. get_running_pid() does not exist in single_instance.py. SIGUSR1 is a reasonable IPC hack (lock file already stores PID) but Python signal.signal(SIGUSR1) in the tray is another handler next to SIGINT/SIGTERM, and the second-instance path still shows the &#x27;already running&#x27; error notification if kill() fails. This is salvageable as a ~40-line follow-up that calls current _show_settings_page(), not as this 829-line conflicting PR. <code>src/vocalinux/main.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>PR would drop remote_api from --engine choices and is agent-duplicated</strong> — Diff still has choices=[&#x27;vosk&#x27;,&#x27;whisper&#x27;,&#x27;whisper_cpp&#x27;] while main includes remote_api. Title/body repeat &#x27;Created by Maestro&#x27; twice. No CI. engine-choice / tray / test_main patches will not apply. <code>src/vocalinux/main.py</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-353">Copy comment</button></div>
+<pre class="comment" id="comment-353">## Verdict: close
+
+@farconada thanks for the #332 follow-up, but this branch has been overtaken by main.
+
+**Already on main (do not re-add):**
+- `src/vocalinux/suspend_handler.py` and tray suspend/resume — current `TrayIndicator` already constructs `SuspendHandler` and shuts it down in `_quit`
+- Super as a *modifier in combos* (`super+space`) via `parse_shortcut_spec` / #493
+
+**Contradicted by main:**
+- `super+super` is explicitly migrated to `ctrl+ctrl` in `ConfigManager._migrate_shortcuts_config()`. This PR puts Super presets back in the dropdown and starts a second `KeyboardShortcutManager(shortcut=&quot;super+super&quot;)` for Settings.
+
+**Still a GNOME footgun:**
+Double-tap Super is Overview/Activities. A log line does not fix that. Conflict detection only looks at Vocalinux&#x27;s own recognition shortcut.
+
+**Still missing, worth a new tiny PR:**
+`--settings` + `get_running_pid()` / SIGUSR1 (or better, a D-Bus/GLib action) to open the *current* `_show_settings_page()`. Do not rebase this 829-line patch to get that.
+
+Please close #353. If you still want `--settings`, open a new PR against current main with just CLI + single-instance signaling.</pre>
+</details>
+</article>
+<article class="card v-close" id="pr-291">
+<div class="head">
+<h3><a href="https://github.com/VocaHQ/vocalinux/pull/291">#291 feat(shortcuts): custom keyboard shortcut capture widget</a></h3>
+<span class="badge b-close">Close</span>
+</div>
+<p class="one">Custom shortcuts plus a Record/capture UI already shipped on main in #493; the parse_keys vs parse_shortcut single-key contract bug was never fixed and a rebase would collide with parse_shortcut_spec.</p>
+<div class="facts"><span>@matz-man</span><span>+1155 / −142 · 13 files</span><span>updated 2026-06-07</span><span>ready</span><span>CONFLICTING</span><span>confidence high</span><span>labels: stale</span></div>
+<div class="action"><strong>Do this:</strong> Close #291 as superseded by #493/#509. Do not rebase. If a richer chord-capture widget is still desired, new PR against current parse_shortcut_spec only — no parallel parse_keys().</div>
+<ul class='findings'>
+<li><span class="sev sev-blocker">blocker</span><strong>Custom shortcut capture already exists on main</strong> — Current settings_dialog.py has custom_shortcut_entry, record_shortcut_button, _gdk_event_to_shortcut, _on_shortcut_key_press, and tests/test_shortcut_capture.py. base.py has ShortcutSpec / parse_shortcut_spec / is_valid_shortcut, and backends map Super + F-keys + named keys. docs/UPDATE.md credits #493. Landing this PR would duplicate that stack with a parallel parse_keys()/PRESET_SHORTCUTS/ShortcutCaptureWidget design. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-blocker">blocker</span><strong>parse_keys vs parse_shortcut contract still broken (maintainer bug, unfixed)</strong> — parse_keys() accepts &#x27;f5&#x27; and &#x27;ctrl&#x27;. parse_shortcut() then requires len(keys)&gt;=2 for non-presets. ShortcutCaptureWidget._finalize_capture() also requires 2+ keys. KeyboardShortcutManager.set_shortcut() / restart_with_shortcut() only validate via parse_keys(), so config `f5` or README-claimed F-keys pass the manager and blow up in backend setup. Maintainer asked to pick one canonical rule on 2026-03-14; this diff still has both. Main&#x27;s parse_shortcut_spec solved this differently: require at least one modifier, reject bare &#x27;ctrl&#x27;, allow &#x27;alt+f5&#x27; not &#x27;f5&#x27;. <code>src/vocalinux/ui/keyboard_backends/base.py</code></li>
+<li><span class="sev sev-major">major</span><strong>meta mapping still backend-dependent; capture widget focus/grab is fragile</strong> — Maintainer already noted `meta` is accepted in the parser/pynput but not evdev. ShortcutCaptureWidget uses grab_focus() without gtk_grab_add / a modal grab, so key-presses can miss the widget; main&#x27;s capture listens on the dialog itself (`self.connect(&#x27;key-press-event&#x27;, ...)`), which is the more reliable GTK3 pattern. is_combo_shortcut() is `not is_double_tap_shortcut()`, so a one-key &#x27;f5&#x27; is classified as a combo. <code>src/vocalinux/ui/settings_dialog.py</code></li>
+<li><span class="sev sev-minor">minor</span><strong>Preset UI copy and changelog file are leftover debt</strong> — Maintainer: info text can show &#x27;Ctrl + Ctrl&#x27; instead of &#x27;Double-tap Ctrl&#x27; because format_shortcut_display() is used instead of get_shortcut_display_name(). PR also ADDs CHANGELOG.md at repo root; this project documents releases in docs/UPDATE.md and has no CHANGELOG.md on main. <code>CHANGELOG.md</code></li>
+</ul>
+<details>
+<summary>Paste-ready review comment</summary>
+<div class="toolbar"><button class="copy" type="button" data-target="comment-291">Copy comment</button></div>
+<pre class="comment" id="comment-291">## Verdict: close — superseded by main
+
+@matz-man the capture-widget idea was right, and it already landed in a different shape.
+
+On current `main`:
+- Settings → Custom Shortcut with **Record** / **Set** (`_on_record_shortcut_clicked`, `_gdk_event_to_shortcut`)
+- Canonical parser is `parse_shortcut_spec()` / `ShortcutSpec`, not `parse_keys()`
+- Combos like `alt+r`, `ctrl+shift+v`, `super+space` are documented in #493 / #509
+
+Please do **not** rebase this branch onto that. You would be merging a second parser (`parse_keys` vs `parse_shortcut`, min-2-keys vs F5-in-README) into code that already picked a contract: at least one modifier, no bare `ctrl`, no single-key `f5`.
+
+The 2026-03-14 blocking comment still applies to *this* diff: `set_shortcut()` validates with `parse_keys()` (allows `f5`) while `parse_shortcut()` and the capture widget reject &lt;2 keys. That never got a canonical rule.
+
+Close #291. If anything from ShortcutCaptureWidget is still nicer than the Record button (press-and-release chord UI), cherry-pick that widget onto current `parse_shortcut_spec` in a new PR — do not revive this file-level rewrite.</pre>
+</details>
+</article>
+
+<div class="footer">
+  <p>Adversarial review of all open PRs, run in parallel against current main. Overlaps checked: #649 vs #402 (injection backend), #556 vs clipboard restore already on main (#588/#646), #425 vs IBus Firefox, #291 vs #493 custom shortcuts, #353 vs suspend_handler on main.</p>
+  <p>Print / Save as PDF from the browser if you want a file copy. Do not merge this triage document into main.</p>
+</div>
+</div>
+<script>
+document.querySelectorAll("button.copy").forEach(function(btn){
+  btn.addEventListener("click", function(){
+    var el = document.getElementById(btn.getAttribute("data-target"));
+    navigator.clipboard.writeText(el.textContent).then(function(){
+      btn.textContent = "Copied";
+      setTimeout(function(){ btn.textContent = "Copy comment"; }, 1400);
+    });
+  });
+});
+</script>
+</body></html>
