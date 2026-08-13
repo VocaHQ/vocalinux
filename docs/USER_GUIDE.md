@@ -168,6 +168,23 @@ To check which backend is being used, look for these log messages when starting 
 [INFO] whisper.cpp configured with n_threads=16
 ```
 
+### Auto-pause and model keep-alive
+
+Optional power-saving controls live under settings:
+
+- **Auto-pause apps** — unload the speech model while configured apps/games are running, then reload when they exit
+- **Model keep-alive** — unload the model after a configurable idle timeout so idle dictation does not keep GPU/CPU resources warm
+
+## Troubleshooting
+
+If you encounter issues, check the [Installation Guide](INSTALL.md) troubleshooting section or run the application with debug logging:
+
+```bash
+vocalinux --debug
+```
+
+Check the logs for error messages and possible solutions.
+
 ### Text injection backend
 
 Vocalinux types your dictated text using one of several backends. It picks one
@@ -214,20 +231,3 @@ VOCALINUX_FORCE_BACKEND=wtype vocalinux --debug
 
 Either way, the startup log records which backend was pinned and where the
 choice came from, so `vocalinux --debug` will confirm it took effect.
-
-### Auto-pause and model keep-alive
-
-Optional power-saving controls live under settings:
-
-- **Auto-pause apps** — unload the speech model while configured apps/games are running, then reload when they exit
-- **Model keep-alive** — unload the model after a configurable idle timeout so idle dictation does not keep GPU/CPU resources warm
-
-## Troubleshooting
-
-If you encounter issues, check the [Installation Guide](INSTALL.md) troubleshooting section or run the application with debug logging:
-
-```bash
-vocalinux --debug
-```
-
-Check the logs for error messages and possible solutions.
