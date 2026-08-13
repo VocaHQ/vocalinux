@@ -12,7 +12,7 @@ import subprocess
 from functools import lru_cache
 from typing import Optional
 
-from .paths import models_dir
+from .paths import is_within_directory, models_dir
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +426,37 @@ def is_model_downloaded(model_name: str) -> bool:
     """
     model_path = get_model_path(model_name)
     return os.path.exists(model_path)
+
+
+def list_downloaded_models() -> list[str]:
+    """Return catalog model names whose files are present on disk."""
+    return [name for name in AVAILABLE_MODELS if is_model_downloaded(name)]
+
+
+def delete_model(model_name: str) -> str:
+    """Delete a downloaded whisper.cpp model file.
+
+    Returns:
+        The removed filesystem path.
+
+    Raises:
+        ValueError: Unknown model name, or path outside the models directory.
+        FileNotFoundError: The model file is not present.
+        OSError: The file could not be removed.
+    """
+    if model_name not in WHISPERCPP_MODEL_INFO:
+        raise ValueError(f"Unknown whisper.cpp model: {model_name}")
+
+    model_path = get_model_path(model_name)
+    whispercpp_dir = os.path.join(models_dir(), "whispercpp")
+    if not is_within_directory(model_path, whispercpp_dir):
+        raise ValueError("Refusing to delete a path outside the whisper.cpp models directory")
+    if not os.path.isfile(model_path):
+        raise FileNotFoundError(model_path)
+
+    os.remove(model_path)
+    logger.info("Deleted whisper.cpp model %s (%s)", model_name, model_path)
+    return model_path
 
 
 def get_backend_display_name(backend: str) -> str:

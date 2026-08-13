@@ -342,7 +342,9 @@ Configuration is stored in `~/.config/vocalinux/config.json`:
 For whisper.cpp, `model_size` may be a size such as `tiny` or an exact ggml model ID
 such as `medium.en-q5_0` or `large-v3-turbo`. You can also configure this through
 the graphical Settings dialog, where whisper.cpp models are split into **Model Size**
-and **Specialization** controls.
+and **Specialization** controls. Unused leftover downloads can be deleted from
+**Unused downloads** on the Speech Model page (expand the section, then delete
+one model at a time).
 
 ### Neural Voice Activity Detection
 

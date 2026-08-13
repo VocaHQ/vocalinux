@@ -36,3 +36,16 @@ class TestXdgHelpers:
         flatpak_data = "/home/user/.var/app/com.vocalinux.Vocalinux/data"
         with patch.dict(os.environ, {"XDG_DATA_HOME": flatpak_data}, clear=True):
             assert paths.models_dir() == os.path.join(flatpak_data, "vocalinux", "models")
+
+    def test_is_within_directory(self, tmp_path):
+        nested = tmp_path / "models" / "ggml-tiny.bin"
+        nested.parent.mkdir()
+        nested.write_bytes(b"x")
+
+        assert paths.is_within_directory(str(nested), str(tmp_path / "models"))
+        assert not paths.is_within_directory(str(tmp_path / "models"), str(tmp_path / "models"))
+        assert paths.is_within_directory(
+            str(tmp_path / "models"), str(tmp_path / "models"), allow_root=True
+        )
+        assert not paths.is_within_directory(str(tmp_path / "other"), str(tmp_path / "models"))
+        assert not paths.is_within_directory("/etc/passwd", str(tmp_path / "models"))

@@ -712,6 +712,34 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "auto"), "medium")
 
+    def test_whisper_delete_unknown_model(self):
+        """Test deleting an unknown Whisper model raises ValueError."""
+        from vocalinux.ui.settings_dialog import _delete_whisper_model
+
+        with self.assertRaises(ValueError):
+            _delete_whisper_model("not-a-whisper-model")
+
+    def test_unused_downloads_group_exists_in_source(self):
+        """Test that unused downloads live in their own group, not Speech Engine."""
+        import os
+
+        source_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "vocalinux",
+            "ui",
+            "settings_dialog.py",
+        )
+        with open(source_path, "r") as handle:
+            source_code = handle.read()
+
+        self.assertIn('label="Unused downloads"', source_code)
+        self.assertIn("self.unused_expander", source_code)
+        self.assertIn("self._on_unused_download_delete_clicked", source_code)
+        self.assertNotIn('title="Remove Model"', source_code)
+        self.assertIn("self._refresh_unused_downloads()", source_code)
+
 
 class TestLanguageComboSearch(unittest.TestCase):
     """Searchable language ComboBox matching and commit helpers."""

@@ -1,3 +1,14 @@
+"""Language definitions and VOSK model metadata."""
+
+import logging
+import os
+import shutil
+from typing import Any, NamedTuple, Optional
+
+from .paths import is_within_directory, models_dir
+
+logger = logging.getLogger(__name__)
+
 # Language definitions with display names and Whisper/VOSK codes
 # Supported languages for speech recognition
 #
@@ -269,3 +280,101 @@ VOSK_MODEL_INFO = {
         },
     },
 }
+
+
+class DownloadedVoskModel(NamedTuple):
+    """A VOSK model directory present in the user models folder."""
+
+    dirname: str
+    language: str
+    size: str
+    size_mb: int
+    path: str
+
+
+def _vosk_catalog_entry(size: str) -> Optional[dict[str, Any]]:
+    info = VOSK_MODEL_INFO.get(size)
+    return info if isinstance(info, dict) else None
+
+
+def _vosk_language_map(info: dict[str, Any]) -> dict[str, str]:
+    languages = info.get("languages")
+    if not isinstance(languages, dict):
+        return {}
+    return {str(key): str(value) for key, value in languages.items()}
+
+
+def vosk_model_dirname(size: str, language: str) -> Optional[str]:
+    """Return the on-disk directory name for a VOSK size and language."""
+    info = _vosk_catalog_entry(size)
+    if info is None:
+        return None
+    languages = _vosk_language_map(info)
+    if language == "auto" or language not in languages:
+        language = "en-us"
+    return languages.get(language)
+
+
+def _known_vosk_dirnames() -> set[str]:
+    names: set[str] = set()
+    for info in VOSK_MODEL_INFO.values():
+        if isinstance(info, dict):
+            names.update(_vosk_language_map(info).values())
+    return names
+
+
+def list_downloaded_vosk_models() -> list[DownloadedVoskModel]:
+    """Return unique user-installed VOSK model directories.
+
+    System-wide preinstalled models are ignored; only ``models_dir()`` is
+    scanned so Settings can offer deletion without touching package files.
+    """
+    seen: set[str] = set()
+    found: list[DownloadedVoskModel] = []
+    models_root = models_dir()
+    for size, info in VOSK_MODEL_INFO.items():
+        if not isinstance(info, dict):
+            continue
+        size_mb_raw = info.get("size_mb", 0)
+        size_mb = int(size_mb_raw) if isinstance(size_mb_raw, (int, float)) else 0
+        for language, dirname in _vosk_language_map(info).items():
+            if dirname in seen:
+                continue
+            path = os.path.join(models_root, dirname)
+            if os.path.isdir(path):
+                seen.add(dirname)
+                found.append(
+                    DownloadedVoskModel(
+                        dirname=dirname,
+                        language=language,
+                        size=size,
+                        size_mb=size_mb,
+                        path=path,
+                    )
+                )
+    return found
+
+
+def delete_vosk_model(dirname: str) -> str:
+    """Delete a user-installed VOSK model directory.
+
+    Returns:
+        The removed filesystem path.
+
+    Raises:
+        ValueError: Unknown model name, or path outside the models directory.
+        FileNotFoundError: The model directory is not present.
+        OSError: The directory could not be removed.
+    """
+    if dirname not in _known_vosk_dirnames() or os.path.basename(dirname) != dirname:
+        raise ValueError(f"Unknown VOSK model: {dirname}")
+
+    path = os.path.join(models_dir(), dirname)
+    if not is_within_directory(path, models_dir()):
+        raise ValueError("Refusing to delete a path outside the models directory")
+    if not os.path.isdir(path):
+        raise FileNotFoundError(path)
+
+    shutil.rmtree(path)
+    logger.info("Deleted VOSK model %s (%s)", dirname, path)
+    return path
