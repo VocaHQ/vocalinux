@@ -138,11 +138,12 @@ English-only whisper.cpp specializations limit the language selector to English.
 
 ### Removing unused models
 
-Open Settings and go to **Speech Model**. **Remove Model** lists speech models already
-downloaded into `~/.local/share/vocalinux`. The model currently selected is marked
-in use; switch to another model first if you want to delete that one. Confirming
-**Delete** removes the files from disk. Vocalinux will download the model again if
-you select it later. Packaged system-wide VOSK models are left alone.
+Open Settings and go to **Speech Model**. If you have leftover files that are not
+the model currently selected, an **Unused downloads** list appears under the
+model info card. Each row has a **Delete** button. Confirming removes those
+files from `~/.local/share/vocalinux`. Vocalinux will download a model again if
+you select it later. Packaged system-wide VOSK models are left alone. The list
+is hidden when there is nothing unused to delete.
 
 ### When to Use Each Model
 

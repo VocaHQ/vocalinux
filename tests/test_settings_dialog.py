@@ -707,8 +707,8 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         with self.assertRaises(ValueError):
             _delete_whisper_model("not-a-whisper-model")
 
-    def test_remove_model_row_exists_in_source(self):
-        """Test that the Speech Engine page has a Remove Model control."""
+    def test_unused_downloads_group_exists_in_source(self):
+        """Test that unused downloads live in their own group, not Speech Engine."""
         import os
 
         source_path = os.path.join(
@@ -722,12 +722,10 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         with open(source_path, "r") as handle:
             source_code = handle.read()
 
-        self.assertIn('title="Remove Model"', source_code)
-        self.assertIn("self._on_remove_model_clicked", source_code)
-        self.assertIn(
-            'keywords=("delete", "remove", "unused", "disk", "storage", "downloaded")',
-            source_code,
-        )
+        self.assertIn('title="Unused downloads"', source_code)
+        self.assertIn("self._on_unused_download_delete_clicked", source_code)
+        self.assertNotIn('title="Remove Model"', source_code)
+        self.assertIn("self._refresh_unused_downloads()", source_code)
 
 
 class TestSettingsSearch(unittest.TestCase):

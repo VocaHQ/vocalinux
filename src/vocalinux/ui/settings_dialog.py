@@ -979,6 +979,12 @@ class PreferencesGroup(Gtk.Box):
         self.listbox.add(widget)
         self.rows.append(widget)
 
+    def clear_rows(self):
+        """Remove all preference rows from the group."""
+        for row in list(self.listbox.get_children()):
+            self.listbox.remove(row)
+        self.rows.clear()
+
 
 class PreferenceRow(Gtk.ListBoxRow):
     """A single preference row with title, subtitle, and a control widget."""
@@ -2216,29 +2222,6 @@ class SettingsDialog(Gtk.Dialog):
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
         group.add_row(self.language_row)
 
-        remove_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.remove_model_combo = Gtk.ComboBoxText()
-        self.remove_model_combo.set_size_request(160, -1)
-        self.remove_model_combo.set_tooltip_text("Choose a downloaded model to remove from disk")
-        _prevent_scroll_on_hover(self.remove_model_combo)
-        remove_box.pack_start(self.remove_model_combo, False, False, 0)
-
-        self.remove_model_btn = Gtk.Button(label="Delete")
-        self.remove_model_btn.set_tooltip_text("Delete the selected downloaded model")
-        self.remove_model_btn.get_style_context().add_class("destructive-action")
-        remove_box.pack_start(self.remove_model_btn, False, False, 0)
-
-        self.remove_model_row = PreferenceRow(
-            title="Remove Model",
-            subtitle="Free disk space by deleting unused downloads",
-            widget=remove_box,
-            keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
-        )
-        self.remove_model_row.set_tooltip_text(
-            "Switch to another model before deleting the one currently in use"
-        )
-        group.add_row(self.remove_model_row)
-
         self.content_box.pack_start(group, False, False, 0)
 
         # Model info card (shown below the group)
@@ -2276,13 +2259,18 @@ class SettingsDialog(Gtk.Dialog):
 
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
+        self.unused_models_group = PreferencesGroup(
+            title="Unused downloads",
+            description="On disk, but not the model currently selected",
+            keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
+        )
+        self.content_box.pack_start(self.unused_models_group, False, False, 0)
+
         # Connect signals
         self.engine_combo.connect("changed", self._on_engine_changed)
         self.model_combo.connect("changed", self._on_model_changed)
         self.model_variant_combo.connect("changed", self._on_model_variant_changed)
         self.language_combo.connect("changed", self._on_language_changed)
-        self.remove_model_combo.connect("changed", self._on_remove_model_combo_changed)
-        self.remove_model_btn.connect("clicked", self._on_remove_model_clicked)
 
     def _on_remote_api_settings_changed(self, widget):
         """Handle remote API URL/Key/endpoint changes."""
@@ -4060,7 +4048,7 @@ class SettingsDialog(Gtk.Dialog):
             logger.info(f"Final selected model: {self.model_combo.get_active_text()}")
         finally:
             self._populating_models = False
-            self._populate_remove_model_options()
+            self._refresh_unused_downloads()
 
     def _populate_whispercpp_model_options(self, saved_model_for_engine: str):
         """Populate whisper.cpp size and specialization selectors."""
@@ -4132,24 +4120,44 @@ class SettingsDialog(Gtk.Dialog):
             return vosk_model_dirname(size, language)
         return None
 
-    def _list_removable_models(self) -> list[tuple[str, str, bool]]:
-        """Return (id, label, in_use) for downloaded models of the current engine."""
+    def _list_unused_downloads(self) -> list[tuple[str, str, str]]:
+        """Return (id, title, size_label) for unused downloaded models."""
+        return [
+            (model_id, label, size_label)
+            for model_id, label, size_label, in_use in self._list_downloaded_models()
+            if not in_use
+        ]
+
+    def _list_downloaded_models(self) -> list[tuple[str, str, str, bool]]:
+        """Return (id, title, size_label, in_use) for downloaded models."""
         engine = self._get_selected_engine()
         active_id = self._active_removable_model_id()
-        items: list[tuple[str, str, bool]] = []
+        items: list[tuple[str, str, str, bool]] = []
 
         if engine == "whisper_cpp":
             for name in list_downloaded_whispercpp_models():
                 info = WHISPERCPP_MODEL_INFO[name]
                 size_mb = info["size_mb"] if isinstance(info.get("size_mb"), int) else 0
-                label = f"{_model_display_name(name)} ({_format_size(size_mb)})"
-                items.append((name, label, name == active_id))
+                items.append(
+                    (
+                        name,
+                        _model_display_name(name),
+                        _format_size(size_mb),
+                        name == active_id,
+                    )
+                )
         elif engine == "whisper":
             for name in _list_downloaded_whisper_models():
                 info = WHISPER_MODEL_INFO[name]
                 size_mb = info["size_mb"] if isinstance(info.get("size_mb"), int) else 0
-                label = f"{_model_display_name(name)} ({_format_size(size_mb)})"
-                items.append((name, label, name == active_id))
+                items.append(
+                    (
+                        name,
+                        _model_display_name(name),
+                        _format_size(size_mb),
+                        name == active_id,
+                    )
+                )
         elif engine == "vosk":
             for model in list_downloaded_vosk_models():
                 lang_info = SUPPORTED_LANGUAGES.get(model.language, {})
@@ -4158,106 +4166,93 @@ class SettingsDialog(Gtk.Dialog):
                     name = lang_info.get("name")
                     if isinstance(name, str):
                         lang_name = name
-                label = (
-                    f"{lang_name} · {_model_display_name(model.size)} "
-                    f"({_format_size(model.size_mb)})"
+                items.append(
+                    (
+                        model.dirname,
+                        f"{lang_name} · {_model_display_name(model.size)}",
+                        _format_size(model.size_mb),
+                        model.dirname == active_id,
+                    )
                 )
-                items.append((model.dirname, label, model.dirname == active_id))
 
         return items
 
-    def _populate_remove_model_options(self):
-        """Refresh the Remove Model dropdown for the selected engine."""
-        if not hasattr(self, "remove_model_combo"):
+    def _refresh_unused_downloads(self):
+        """Rebuild the Unused downloads list, or hide it when empty."""
+        if not hasattr(self, "unused_models_group"):
             return
 
         if self._get_selected_engine() == "remote_api":
-            self.remove_model_row.hide()
+            self.unused_models_group.hide()
             return
 
-        self.remove_model_row.show_all()
-        items = self._list_removable_models()
-        previous = self.remove_model_combo.get_active_id()
-        self.remove_model_combo.remove_all()
-
-        if not items:
-            self.remove_model_combo.append("none", "None downloaded")
-            self.remove_model_combo.set_active_id("none")
-            self.remove_model_combo.set_sensitive(False)
-            self.remove_model_btn.set_sensitive(False)
-            self.remove_model_btn.set_tooltip_text("No unused downloaded models")
+        unused = self._list_unused_downloads()
+        self.unused_models_group.clear_rows()
+        if not unused:
+            self.unused_models_group.hide()
             return
 
-        preferred = None
-        for model_id, label, in_use in items:
-            text = f"{label} · in use" if in_use else label
-            self.remove_model_combo.append(model_id, text)
-            if preferred is None and not in_use:
-                preferred = model_id
-
-        self.remove_model_combo.set_sensitive(True)
-        available_ids = {item[0] for item in items}
-        target = previous if previous in available_ids else (preferred or items[0][0])
-        self.remove_model_combo.set_active_id(target)
-        self._update_remove_model_button()
-
-    def _update_remove_model_button(self):
-        """Enable Delete only for downloaded models that are not in use."""
-        if not hasattr(self, "remove_model_btn"):
-            return
-
-        model_id = self.remove_model_combo.get_active_id()
-        in_use = model_id is not None and model_id == self._active_removable_model_id()
-        can_delete = bool(model_id) and model_id != "none" and not in_use
-        self.remove_model_btn.set_sensitive(can_delete)
-        if in_use:
-            self.remove_model_btn.set_tooltip_text(
-                "Switch to another model before deleting this one"
+        for model_id, title, size_label in unused:
+            delete_btn = Gtk.Button(label="Delete")
+            delete_btn.set_tooltip_text(f"Delete {title} from disk")
+            delete_btn.get_style_context().add_class("destructive-action")
+            delete_btn.connect(
+                "clicked",
+                self._on_unused_download_delete_clicked,
+                model_id,
+                f"{title} ({size_label})",
             )
-        elif can_delete:
-            self.remove_model_btn.set_tooltip_text("Delete the selected downloaded model")
-        else:
-            self.remove_model_btn.set_tooltip_text("No unused downloaded models")
+            row = PreferenceRow(
+                title=title,
+                subtitle=size_label,
+                widget=delete_btn,
+                keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
+            )
+            self.unused_models_group.add_row(row)
 
-    def _on_remove_model_combo_changed(self, widget):
-        """Keep the Delete button in sync with the selected downloaded model."""
-        self._update_remove_model_button()
+        self.unused_models_group.show_all()
 
-    def _on_remove_model_clicked(self, widget):
-        """Confirm and delete the selected unused downloaded model."""
-        model_id = self.remove_model_combo.get_active_id()
-        if not model_id or model_id == "none" or model_id == self._active_removable_model_id():
-            return
-
-        engine = self._get_selected_engine()
-        label = self.remove_model_combo.get_active_text() or model_id
+    def _confirm_model_delete(self, text: str, secondary: str) -> bool:
+        """Ask before deleting model files from disk."""
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=Gtk.DialogFlags.MODAL,
             message_type=Gtk.MessageType.WARNING,
             buttons=Gtk.ButtonsType.NONE,
-            text="Delete downloaded model?",
+            text=text,
         )
-        dialog.format_secondary_text(
-            f"{label} will be removed from disk. You can download it again later if needed."
-        )
+        dialog.format_secondary_text(secondary)
         dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
         delete_btn = dialog.add_button("_Delete", Gtk.ResponseType.YES)
         delete_btn.get_style_context().add_class("destructive-action")
         response = dialog.run()
         dialog.destroy()
-        if response != Gtk.ResponseType.YES:
+        return response == Gtk.ResponseType.YES
+
+    def _delete_model_from_disk(self, model_id: str) -> None:
+        """Delete a downloaded model for the selected engine."""
+        engine = self._get_selected_engine()
+        if engine == "whisper_cpp":
+            delete_whispercpp_model(model_id)
+        elif engine == "whisper":
+            _delete_whisper_model(model_id)
+        elif engine == "vosk":
+            delete_vosk_model(model_id)
+        else:
+            raise ValueError(f"No local models to delete for engine {engine}")
+
+    def _on_unused_download_delete_clicked(self, widget, model_id: str, label: str):
+        """Confirm and delete one unused downloaded model."""
+        if model_id == self._active_removable_model_id():
+            return
+        if not self._confirm_model_delete(
+            "Delete unused download?",
+            f"{label} will be removed from disk. You can download it again later if needed.",
+        ):
             return
 
         try:
-            if engine == "whisper_cpp":
-                delete_whispercpp_model(model_id)
-            elif engine == "whisper":
-                _delete_whisper_model(model_id)
-            elif engine == "vosk":
-                delete_vosk_model(model_id)
-            else:
-                return
+            self._delete_model_from_disk(model_id)
         except (OSError, ValueError, FileNotFoundError) as e:
             logger.error("Failed to delete model %s: %s", model_id, e)
             err = Gtk.MessageDialog(
@@ -4325,7 +4320,7 @@ class SettingsDialog(Gtk.Dialog):
                 self._sync_language_options_for_selected_model()
 
         self._update_model_info()
-        self._populate_remove_model_options()
+        self._refresh_unused_downloads()
         self._auto_apply_settings()
 
     def _on_model_variant_changed(self, widget):
@@ -4335,7 +4330,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self._sync_language_options_for_selected_model()
         self._update_model_info()
-        self._populate_remove_model_options()
+        self._refresh_unused_downloads()
         self._auto_apply_settings()
 
     def _on_vad_changed(self, widget):
@@ -4445,7 +4440,7 @@ class SettingsDialog(Gtk.Dialog):
         if is_remote:
             self.model_row.hide()
             self.model_variant_row.hide()
-            self.remove_model_row.hide()
+            self.unused_models_group.hide()
             self.model_info_card.hide()
             self.remote_server_group.show_all()
             self.remote_status_label.show()
@@ -4455,12 +4450,11 @@ class SettingsDialog(Gtk.Dialog):
                 self.model_variant_row.show_all()
             else:
                 self.model_variant_row.hide()
-            self.remove_model_row.show_all()
             self.remote_server_group.hide()
             self.remote_status_label.hide()
 
         self._update_model_info()
-        self._populate_remove_model_options()
+        self._refresh_unused_downloads()
         self._update_language_warning()
         self._update_model_picker_tooltips()
         self._update_advanced_tab_sensitivity()
