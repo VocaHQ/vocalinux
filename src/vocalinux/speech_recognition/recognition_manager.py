@@ -2093,6 +2093,13 @@ class SpeechRecognitionManager:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise
+        except RuntimeError:
+            # Cancel and other runtime failures must be matched before
+            # RequestException: tests mock requests, and a MagicMock exception
+            # type raises TypeError while Python is selecting a handler.
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
         # Use RequestException when available; tests mock requests and set
         # RequestException=Exception. Do not catch Timeout separately — under a
         # MagicMock that is not a real exception type (TypeError in CI).
@@ -2107,7 +2114,7 @@ class SpeechRecognitionManager:
                     "Check your network and try again."
                 ) from e
             raise RuntimeError(f"Failed to download whisper.cpp model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during whisper.cpp model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
@@ -2282,6 +2289,9 @@ class SpeechRecognitionManager:
         except ModelIntegrityError:
             self._discard_failed_vosk_download(zip_path, model_path)
             raise
+        except RuntimeError:
+            self._discard_failed_vosk_download(zip_path, model_path)
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download VOSK model from {url}: {e}")
             # Clean up potentially incomplete download
@@ -2294,7 +2304,7 @@ class SpeechRecognitionManager:
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             raise RuntimeError("Downloaded VOSK model file is corrupted.")
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during VOSK model download/extraction: {e}")
             self._discard_failed_vosk_download(zip_path, model_path)
             raise
@@ -2392,12 +2402,16 @@ class SpeechRecognitionManager:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise
+        except RuntimeError:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download Whisper model from {url}: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise RuntimeError(f"Failed to download Whisper model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during Whisper model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
