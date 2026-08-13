@@ -2282,16 +2282,19 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.unused_expander.get_style_context().add_class("unused-downloads-expander")
 
-        unused_scroll = Gtk.ScrolledWindow()
-        unused_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        unused_scroll.set_min_content_height(0)
-        unused_scroll.set_max_content_height(200)
-        unused_scroll.set_propagate_natural_height(True)
-        unused_scroll.set_shadow_type(Gtk.ShadowType.NONE)
+        self.unused_models_scroll = Gtk.ScrolledWindow()
+        self.unused_models_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.unused_models_scroll.set_shadow_type(Gtk.ShadowType.NONE)
+        self.unused_models_scroll.set_propagate_natural_height(True)
+        self.unused_models_scroll.set_max_content_height(220)
 
+        # ListBox is GtkScrollable, so wrapping it in a Box forces a Viewport
+        # and lets the expander child report a real height.
+        list_holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.unused_models_group.remove(self.unused_models_group.listbox)
-        unused_scroll.add(self.unused_models_group.listbox)
-        self.unused_expander.add(unused_scroll)
+        list_holder.pack_start(self.unused_models_group.listbox, False, False, 0)
+        self.unused_models_scroll.add(list_holder)
+        self.unused_expander.add(self.unused_models_scroll)
         self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
         self.content_box.pack_start(self.unused_models_group, False, False, 0)
 
@@ -4224,6 +4227,7 @@ class SettingsDialog(Gtk.Dialog):
         count = len(unused)
         leftover = "leftover model" if count == 1 else "leftover models"
         self.unused_expander.set_label(f"Unused downloads ({count} {leftover})")
+        self.unused_models_scroll.set_min_content_height(min(220, 56 * count))
 
         was_expanded = self.unused_expander.get_expanded()
         for model_id, title, size_label in unused:
