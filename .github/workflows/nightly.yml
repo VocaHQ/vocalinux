@@ -49,7 +49,12 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc
 
       - name: Install build dependencies
         run: |
@@ -97,6 +102,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (x86_64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ steps.version.outputs.version }}" dist
           ls -la dist/*.AppImage
@@ -298,7 +305,12 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc
 
       - name: Install build dependencies
         run: |
@@ -310,6 +322,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (aarch64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ needs.nightly.outputs.version }}" dist
           ls -la dist/*.AppImage

@@ -984,6 +984,7 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("def _build_gpu_section(self):", self.source_code)
         gpu_body = self.source_code.split("def _build_gpu_section")[1].split("\n    def ")[0]
         self.assertIn("self.power_tab.pack_start(gpu_group", gpu_body)
+        self.assertIn("_gpu_acceleration_subtitle", gpu_body)
         advanced_body = self.source_code.split("def _build_advanced_section")[1].split(
             "\n    def "
         )[0]

@@ -3598,6 +3598,20 @@ class SettingsDialog(Gtk.Dialog):
         self.release_notes_group.show()
         return False
 
+    def _gpu_acceleration_subtitle(self) -> str:
+        """Describe whether the bundled pywhispercpp can use the GPU picker."""
+        try:
+            from ..speech_recognition.recognition_manager import detect_pywhispercpp_gpu_backend
+
+            bundled = detect_pywhispercpp_gpu_backend()
+        except (ImportError, OSError, AttributeError):
+            return "Device used by the whisper.cpp engine"
+        if bundled == "cpu":
+            return "This install has no GPU libraries; whisper.cpp will run on the CPU"
+        if bundled == "cuda":
+            return "CUDA build uses NVIDIA device 0; this picker applies to Vulkan builds"
+        return "Device used by the whisper.cpp Vulkan engine"
+
     def _build_gpu_section(self):
         """Build the GPU device group on the Performance page.
 
@@ -3608,13 +3622,14 @@ class SettingsDialog(Gtk.Dialog):
         self.gpu_device_combo = Gtk.ComboBoxText()
         self.gpu_device_combo.set_size_request(_CONTROL_WIDTH, -1)
         self.gpu_device_combo.set_tooltip_text(
-            "Select which GPU to use for whisper.cpp Vulkan acceleration"
+            "Select which GPU to use for whisper.cpp Vulkan acceleration. "
+            "Has no effect when pywhispercpp was built without GPU libraries."
         )
         _prevent_scroll_on_hover(self.gpu_device_combo)
         self._populate_gpu_devices()
         gpu_row = PreferenceRow(
             title="Vulkan GPU",
-            subtitle="Device used by the whisper.cpp engine",
+            subtitle=self._gpu_acceleration_subtitle(),
             widget=self.gpu_device_combo,
             keywords=("graphics", "hardware", "acceleration", "device"),
         )

@@ -890,6 +890,22 @@ def _get_system_model_paths() -> list:
 SYSTEM_MODELS_DIRS = _get_system_model_paths()
 
 
+def detect_pywhispercpp_gpu_backend() -> str:
+    """Detect whether pywhispercpp's native library actually has GPU support."""
+    _preload_pywhispercpp_shared_libraries()
+    for library_dir in _find_pywhispercpp_shared_library_dirs():
+        root = Path(library_dir)
+        for pattern in ("libggml-vulkan*.so*", "libggml-cuda*.so*"):
+            matches = list(root.glob(pattern))
+            if matches:
+                lib_name = matches[0].name.lower()
+                if "vulkan" in lib_name:
+                    return "vulkan"
+                if "cuda" in lib_name:
+                    return "cuda"
+    return "cpu"
+
+
 class SpeechRecognitionManager:
     """
     Manager class for speech recognition engines.
@@ -1216,7 +1232,7 @@ class SpeechRecognitionManager:
         """Initialize the whisper.cpp speech recognition engine."""
         try:
             _preload_pywhispercpp_shared_libraries()
-            from pywhispercpp.model import Model  # noqa: F401 — used in _load_whispercpp_model
+            from pywhispercpp.model import Model  # noqa: F401 — fail fast if missing
 
             # Validate model size for whisper.cpp
             valid_models = list(WHISPERCPP_MODEL_INFO.keys())
@@ -1365,18 +1381,7 @@ class SpeechRecognitionManager:
 
     def _detect_pywhispercpp_gpu_backend(self) -> str:
         """Detect whether pywhispercpp's native library actually has GPU support."""
-        _preload_pywhispercpp_shared_libraries()
-        for library_dir in _find_pywhispercpp_shared_library_dirs():
-            root = Path(library_dir)
-            for pattern in ("libggml-vulkan*.so*", "libggml-cuda*.so*"):
-                matches = list(root.glob(pattern))
-                if matches:
-                    lib_name = matches[0].name.lower()
-                    if "vulkan" in lib_name:
-                        return "vulkan"
-                    if "cuda" in lib_name:
-                        return "cuda"
-        return "cpu"
+        return detect_pywhispercpp_gpu_backend()
 
     def _load_whispercpp_model(self, model_path: str):
         """Load the whisper.cpp model file and configure the compute backend.
@@ -1390,27 +1395,23 @@ class SpeechRecognitionManager:
         import multiprocessing
         import time
 
-        from pywhispercpp.model import Model
-
         from ..utils.whispercpp_model_info import (
             ComputeBackend,
             _prefer_discrete_vulkan_device,
             detect_compute_backend,
+            detect_cpu_info,
             detect_vulkan_devices,
             get_backend_display_name,
         )
 
-        # Detect and log compute backend
-        backend, backend_info = detect_compute_backend()
-        logger.info(f"whisper.cpp backend selection priority: Vulkan -> CUDA -> CPU")
-        logger.info(
-            f"whisper.cpp using {get_backend_display_name(backend)} backend: {backend_info}"
-        )
-
+        host_backend, host_info = detect_compute_backend()
         actual_gpu_backend = self._detect_pywhispercpp_gpu_backend()
+        logger.info("whisper.cpp backend selection priority: Vulkan -> CUDA -> CPU")
 
-        # Select GPU device for pywhispercpp context_params.
         selected_gpu_device = None
+        runtime_backend = ComputeBackend.CPU
+        runtime_info = detect_cpu_info()
+
         if actual_gpu_backend == "cuda":
             # pywhispercpp CUDA uses CUDA device ordinals (0 = first NVIDIA GPU).
             # Vulkan enumeration on hybrid laptops lists iGPU as GPU0 and dGPU as
@@ -1426,27 +1427,66 @@ class SpeechRecognitionManager:
             else:
                 logger.info("pywhispercpp is CUDA-backed; using CUDA device 0")
             selected_gpu_device = 0
+            runtime_backend = ComputeBackend.CUDA
+            runtime_info = host_info if host_backend == ComputeBackend.CUDA else "NVIDIA GPU"
         elif actual_gpu_backend == "vulkan":
             gpu_device_index = self.whispercpp_gpu_device
             if gpu_device_index is None or gpu_device_index < 0:
                 gpu_device_index = _prefer_discrete_vulkan_device()
 
+            devices = detect_vulkan_devices()
+            runtime_backend = ComputeBackend.VULKAN
             if gpu_device_index is not None:
-                devices = detect_vulkan_devices()
                 device_name = next(
                     (d["name"] for d in devices if d["index"] == gpu_device_index),
                     "unknown",
                 )
                 logger.info(f"Using Vulkan GPU [{gpu_device_index}]: {device_name}")
                 selected_gpu_device = gpu_device_index
+                runtime_info = device_name
+            elif devices:
+                runtime_info = devices[0]["name"]
+                logger.warning(
+                    "pywhispercpp is Vulkan-backed but no preferred GPU was selected. "
+                    "whisper.cpp will default to GPU 0, which may be an iGPU on hybrid laptops."
+                )
+            else:
+                logger.warning(
+                    "pywhispercpp is Vulkan-backed but vulkaninfo found no devices. "
+                    "Install vulkan-tools so Vocalinux can pick a discrete GPU. "
+                    "whisper.cpp will default to GPU 0, which may be an iGPU on hybrid laptops."
+                )
+        elif host_backend != ComputeBackend.CPU:
+            logger.warning(
+                "Host reports %s (%s), but pywhispercpp has no GPU libraries. "
+                "Inference will use the CPU. The Vulkan GPU picker in Settings cannot "
+                "accelerate a CPU-only wheel or AppImage. Install via install.sh "
+                "(rebuilds pywhispercpp with Vulkan/CUDA) or use an AppImage built "
+                "with GPU support.",
+                get_backend_display_name(host_backend),
+                host_info,
+            )
 
-        # Log hardware summary
+        if actual_gpu_backend in ("vulkan", "cuda") and host_backend != actual_gpu_backend:
+            logger.info(
+                "Host capability label is %s; bundled pywhispercpp libraries are %s. "
+                "Using the bundled %s backend.",
+                host_backend,
+                actual_gpu_backend,
+                actual_gpu_backend,
+            )
+
+        logger.info(
+            f"whisper.cpp using {get_backend_display_name(runtime_backend)} backend: {runtime_info}"
+        )
+
         import psutil
 
         total_ram_gb = psutil.virtual_memory().total // (1024**3)
-        logger.info(f"whisper.cpp hardware: {backend} | {backend_info} | RAM: {total_ram_gb}GB")
+        logger.info(
+            f"whisper.cpp hardware: {runtime_backend} | {runtime_info} | RAM: {total_ram_gb}GB"
+        )
 
-        # Validate model file exists and get size
         if os.path.exists(model_path):
             model_size_mb = os.path.getsize(model_path) / (1024 * 1024)
             logger.info(f"whisper.cpp model file: {model_path} ({model_size_mb:.1f} MB)")
@@ -1466,11 +1506,10 @@ class SpeechRecognitionManager:
             n_threads = max(1, min(multiprocessing.cpu_count() - 2, 8))
 
         load_start_time = time.time()
-        loaded_backend = backend
+        loaded_backend = runtime_backend
 
         model_kwargs = self._build_whispercpp_model_kwargs(n_threads)
 
-        # Attempt to load model; filter unsupported params and fall back to CPU if needed
         try:
             self.model = self._load_model_with_compatible_params(
                 model_path, model_kwargs, gpu_device=selected_gpu_device

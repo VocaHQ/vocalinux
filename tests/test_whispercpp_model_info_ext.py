@@ -323,6 +323,48 @@ class TestDetectVulkanDevices(unittest.TestCase):
             devices = detect_vulkan_devices()
             self.assertEqual(devices, [])
 
+    def test_detect_vulkan_devices_falls_back_without_summary(self):
+        """Older vulkaninfo without --summary still enumerates GPUs."""
+        vulkaninfo_output = (
+            "GPU0:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+            "\tdeviceName         = NVIDIA RTX 2060\n"
+        )
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd == ["vulkaninfo", "--summary"]:
+                return MagicMock(returncode=1, stdout="")
+            if cmd == ["vulkaninfo"]:
+                return MagicMock(returncode=0, stdout=vulkaninfo_output)
+            return MagicMock(returncode=1, stdout="")
+
+        with patch("subprocess.run", side_effect=run_side_effect):
+            from vocalinux.utils.whispercpp_model_info import detect_vulkan_devices
+
+            devices = detect_vulkan_devices()
+            self.assertEqual(len(devices), 1)
+            self.assertEqual(devices[0]["name"], "NVIDIA RTX 2060")
+            self.assertEqual(devices[0]["device_type"], "discrete")
+
+    def test_detect_vulkan_devices_marks_llvmpipe_software(self):
+        """Software renderers are classified separately from hardware GPUs."""
+        vulkaninfo_output = (
+            "GPU0:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU\n"
+            "\tdeviceName         = llvmpipe (LLVM 19.1.7, 256 bits)\n"
+            "GPU1:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+            "\tdeviceName         = NVIDIA GeForce RTX 2060\n"
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=vulkaninfo_output)
+
+            from vocalinux.utils.whispercpp_model_info import detect_vulkan_devices
+
+            devices = detect_vulkan_devices()
+            self.assertEqual(devices[0]["device_type"], "software")
+            self.assertEqual(devices[1]["device_type"], "discrete")
+
 
 class TestPreferDiscreteVulkanDevice(unittest.TestCase):
     """Test cases for _prefer_discrete_vulkan_device function."""
@@ -375,6 +417,53 @@ class TestPreferDiscreteVulkanDevice(unittest.TestCase):
 
             preferred_idx = _prefer_discrete_vulkan_device()
             self.assertIsNone(preferred_idx)
+
+    def test_prefer_discrete_skips_software_renderer(self):
+        """Auto-select must not pick llvmpipe when a real GPU exists."""
+        vulkaninfo_output = (
+            "GPU0:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU\n"
+            "\tdeviceName         = llvmpipe (LLVM 19.1.7, 256 bits)\n"
+            "GPU1:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+            "\tdeviceName         = NVIDIA RTX 2060\n"
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=vulkaninfo_output)
+
+            from vocalinux.utils.whispercpp_model_info import _prefer_discrete_vulkan_device
+
+            preferred_idx = _prefer_discrete_vulkan_device()
+            self.assertEqual(preferred_idx, 1)
+
+    def test_prefer_discrete_ignores_software_only(self):
+        """Software-only Vulkan should not produce an auto-selected device."""
+        vulkaninfo_output = (
+            "GPU0:\n"
+            "\tdeviceType         = PHYSICAL_DEVICE_TYPE_CPU\n"
+            "\tdeviceName         = llvmpipe (LLVM 19.1.7, 256 bits)\n"
+        )
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=vulkaninfo_output)
+
+            from vocalinux.utils.whispercpp_model_info import (
+                ComputeBackend,
+                _prefer_discrete_vulkan_device,
+                detect_compute_backend,
+                detect_cuda_support,
+                detect_vulkan_support,
+            )
+
+            self.assertIsNone(_prefer_discrete_vulkan_device())
+            detect_vulkan_support.cache_clear()
+            is_available, device_name = detect_vulkan_support()
+            self.assertFalse(is_available)
+            self.assertIsNone(device_name)
+
+            detect_cuda_support.cache_clear()
+            detect_compute_backend.cache_clear()
+            backend, _info = detect_compute_backend()
+            self.assertNotEqual(backend, ComputeBackend.VULKAN)
 
     def test_prefer_discrete_with_noncontiguous_gpu_ids(self):
         """Preferred index is the Vulkan GPU id, not the list position."""

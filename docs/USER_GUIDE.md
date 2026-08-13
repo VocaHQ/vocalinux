@@ -159,22 +159,31 @@ is hidden when there is nothing unused to delete.
 
 ### GPU Acceleration
 
-**whisper.cpp** automatically uses GPU acceleration when available:
+**whisper.cpp** uses GPU acceleration when the bundled pywhispercpp libraries include Vulkan or CUDA:
 
-- **Vulkan** (AMD, Intel, NVIDIA) - Automatically detected and used
-- **CUDA** (NVIDIA only) - Fallback if Vulkan not available
-- **CPU** - Always works as fallback
+- **Vulkan** (AMD, Intel, NVIDIA) when `libggml-vulkan` is present
+- **CUDA** (NVIDIA) when `libggml-cuda` is present
+- **CPU** when those libraries are missing, even if Settings lists a GPU
 
-On multi-GPU machines, Vocalinux prefers a **discrete** Vulkan device when one is present. You can override the device under **Advanced** settings (`whispercpp_gpu_device`).
+Host tools such as `vulkaninfo` only describe the machine. The engine follows the libraries actually loaded. Look for `GPU backend: vulkan` or `GPU backend: cuda` after the model loads. `CPU-only; pywhispercpp lacks GPU libraries` means inference is on the CPU.
+
+On multi-GPU machines, Vocalinux prefers a discrete Vulkan device when one is present and skips software renderers such as llvmpipe. Override the device under **Settings → Performance → Vulkan GPU**.
 
 Pip wheels of pywhispercpp are often CUDA builds. In that case Vocalinux always uses CUDA device 0 (the first NVIDIA GPU), because Vulkan GPU indices do not match CUDA ordinals. On a hybrid laptop the NVIDIA GPU is usually Vulkan GPU 1; feeding that index into CUDA would land on the CPU fallback instead.
 
-If you need a second NVIDIA GPU, either set `CUDA_VISIBLE_DEVICES` before starting Vocalinux or install a Vulkan-built pywhispercpp so the Advanced GPU picker applies.
+If you need a second NVIDIA GPU, either set `CUDA_VISIBLE_DEVICES` before starting Vocalinux or install a Vulkan-built pywhispercpp so the Performance GPU picker applies.
 
-To check which backend is being used, look for these log messages when starting Vocalinux:
+`install.sh` rebuilds pywhispercpp with Vulkan or CUDA when it can. Prefer that launcher (or the wrapper it installs) so `LD_LIBRARY_PATH` includes the GPU libs. Raw `venv/bin` binaries can come up CPU-only.
+
+AppImages built from this tree compile pywhispercpp with Vulkan and use the host Vulkan driver at runtime. Older AppImages shipped the CPU-only wheel; if you see the `lacks GPU libraries` line, download a newer AppImage or use `install.sh`.
+
+Hybrid / PRIME / Optimus laptops: picking NVIDIA in Settings is enough when pywhispercpp is Vulkan-built. `prime-run` is not required for Vulkan, and it cannot fix a CPU-only wheel. Install `vulkan-tools` so `vulkaninfo` can enumerate devices; without it, whisper.cpp may default to GPU 0 (often the iGPU).
+
+To check which backend is being used, look for these log messages when starting Vocalinux (`vocalinux --debug`):
 ```
 [INFO] whisper.cpp using Vulkan GPU backend: AMD Radeon RX 6800
-[INFO] whisper.cpp configured with n_threads=16
+[INFO] Using Vulkan GPU [0]: AMD Radeon RX 6800
+[INFO] whisper.cpp configured with n_threads=4 (GPU backend: vulkan)
 ```
 
 ### Auto-pause and model keep-alive

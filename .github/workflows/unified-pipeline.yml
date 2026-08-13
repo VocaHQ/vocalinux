@@ -213,7 +213,12 @@ jobs:
             gobject-introspection \
             libcairo-gobject2 \
             gir1.2-gtk-3.0 \
-            portaudio19-dev
+            portaudio19-dev \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc
 
       - name: Install GObject introspection dependencies
         run: |
@@ -227,6 +232,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/vocalinux/version.py)
           WHEEL=$(ls dist/*.whl)

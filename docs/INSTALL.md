@@ -38,8 +38,11 @@ chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
 ```
 
 AppImage still needs host text-injection tools (`xdotool` on X11; `wtype` /
-`ydotool` / clipboard tools on Wayland), same as the PyPI path. Prefer the
-one-liner installer above when you want system deps and models set up for you.
+`ydotool` / clipboard tools on Wayland), same as the PyPI path. Current
+AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver; you
+still need working Vulkan on the machine (`vulkaninfo --summary`). Prefer the
+one-liner installer above when you want system deps, a CUDA build, and models
+set up for you.
 
 ### From PyPI
 
@@ -501,6 +504,11 @@ vulkaninfo --summary | grep -i "deviceName"
 # In Vocalinux, look for these log messages:
 # [INFO] whisper.cpp backend selection priority: Vulkan -> CUDA -> CPU
 # [INFO] whisper.cpp using Vulkan GPU backend: AMD Radeon RX 6800
+# [INFO] whisper.cpp configured with n_threads=4 (GPU backend: vulkan)
+
+# If you instead see "CPU-only; pywhispercpp lacks GPU libraries", the
+# bundled pywhispercpp was built without GPU libs (older AppImage, or a
+# CPU pip wheel). install.sh rebuilds it with Vulkan/CUDA when possible.
 ```
 
 ### Reusing Existing whisper.cpp Builds

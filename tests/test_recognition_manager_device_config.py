@@ -1052,6 +1052,76 @@ class TestWhispercppGpuDeviceSelection(unittest.TestCase):
                     "'whisper_full_params' object has no attribute 'context_params'"
                 )
 
+    def _init_with_backends(
+        self,
+        manager,
+        *,
+        host_backend,
+        host_info,
+        actual_backend,
+        vulkan_devices=None,
+        prefer_index=None,
+    ):
+        mock_pywhispercpp = MagicMock()
+        self.ContextParamsModel.calls = []
+        mock_pywhispercpp.Model = self.ContextParamsModel
+        mock_pywhispercpp.model.Model = self.ContextParamsModel
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value.total = 8 * 1024 * 1024 * 1024
+        vulkan_devices = vulkan_devices or []
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.WHISPERCPP_MODEL_INFO", {"tiny": {}}
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value="/fake/model.bin",
+            ):
+                with patch("os.path.getsize", return_value=100000000):
+                    with patch("os.path.exists", return_value=True):
+                        with patch.dict(
+                            "sys.modules",
+                            {
+                                "pywhispercpp": mock_pywhispercpp,
+                                "pywhispercpp.model": mock_pywhispercpp,
+                                "psutil": mock_psutil,
+                            },
+                        ):
+                            import vocalinux.utils.whispercpp_model_info as whispercpp_info
+
+                            with patch.object(
+                                whispercpp_info,
+                                "detect_compute_backend",
+                                return_value=(host_backend, host_info),
+                            ):
+                                with patch.object(
+                                    whispercpp_info,
+                                    "get_backend_display_name",
+                                    side_effect=lambda backend: backend,
+                                ):
+                                    with patch.object(
+                                        whispercpp_info,
+                                        "detect_cpu_info",
+                                        return_value="Test CPU",
+                                    ):
+                                        with patch.object(
+                                            whispercpp_info,
+                                            "detect_vulkan_devices",
+                                            return_value=vulkan_devices,
+                                        ):
+                                            with patch.object(
+                                                whispercpp_info,
+                                                "_prefer_discrete_vulkan_device",
+                                                return_value=prefer_index,
+                                            ):
+                                                with patch.object(
+                                                    manager,
+                                                    "_detect_pywhispercpp_gpu_backend",
+                                                    return_value=actual_backend,
+                                                ):
+                                                    manager._init_whispercpp()
+        return self.ContextParamsModel.calls
+
     def test_gpu_device_auto_select_discrete(self):
         """Test auto-selection of discrete GPU when configured as None."""
         manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=None)
@@ -1435,6 +1505,69 @@ class TestWhispercppGpuDeviceSelection(unittest.TestCase):
             }
             assert "context_params" not in self.AttributeErrorContextParamsModel.calls[1][1]
 
+    def test_host_cuda_label_runtime_vulkan_selects_discrete(self):
+        """Device selection follows bundled Vulkan libs, not a host CUDA label (#604)."""
+        manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=None)
+        manager.model_size = "tiny"
+        vulkan_devices = [
+            {"index": 0, "name": "Intel UHD 630", "device_type": "integrated"},
+            {"index": 1, "name": "NVIDIA RTX 2060", "device_type": "discrete"},
+        ]
+        import vocalinux.utils.whispercpp_model_info as whispercpp_info
+
+        calls = self._init_with_backends(
+            manager,
+            host_backend=whispercpp_info.ComputeBackend.CUDA,
+            host_info="NVIDIA GeForce RTX 2060 (6 GiB)",
+            actual_backend="vulkan",
+            vulkan_devices=vulkan_devices,
+            prefer_index=1,
+        )
+        assert calls[-1][1].get("context_params") == {"gpu_device": 1}
+
+    def test_cpu_wheel_skips_device_when_host_reports_vulkan(self):
+        """CPU-only pywhispercpp must not pass gpu_device even if vulkaninfo sees a GPU."""
+        manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=1)
+        manager.model_size = "tiny"
+        vulkan_devices = [
+            {"index": 1, "name": "NVIDIA GeForce GTX 950M", "device_type": "discrete"},
+        ]
+        import vocalinux.utils.whispercpp_model_info as whispercpp_info
+
+        with self.assertLogs(
+            "vocalinux.speech_recognition.recognition_manager", level="WARNING"
+        ) as logs:
+            calls = self._init_with_backends(
+                manager,
+                host_backend=whispercpp_info.ComputeBackend.VULKAN,
+                host_info="NVIDIA GeForce GTX 950M",
+                actual_backend="cpu",
+                vulkan_devices=vulkan_devices,
+                prefer_index=1,
+            )
+        assert "context_params" not in calls[-1][1]
+        assert any("no GPU libraries" in message for message in logs.output)
+
+    def test_vulkan_runtime_without_enumerated_devices_skips_context_params(self):
+        """Vulkan libs with no vulkaninfo devices leave gpu_device unset."""
+        manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=None)
+        manager.model_size = "tiny"
+        import vocalinux.utils.whispercpp_model_info as whispercpp_info
+
+        with self.assertLogs(
+            "vocalinux.speech_recognition.recognition_manager", level="WARNING"
+        ) as logs:
+            calls = self._init_with_backends(
+                manager,
+                host_backend=whispercpp_info.ComputeBackend.CUDA,
+                host_info="NVIDIA GeForce RTX 2060 (6 GiB)",
+                actual_backend="vulkan",
+                vulkan_devices=[],
+                prefer_index=None,
+            )
+        assert "context_params" not in calls[-1][1]
+        assert any("vulkaninfo found no devices" in message for message in logs.output)
+
     def test_gpu_device_not_set_for_cpu_backend(self):
         """Test that GPU device selection is skipped on CPU backend."""
         manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=None)
@@ -1477,11 +1610,16 @@ class TestWhispercppGpuDeviceSelection(unittest.TestCase):
                                     "get_backend_display_name",
                                     return_value="CPU",
                                 ):
-                                    manager._init_whispercpp()
-                                    assert (
-                                        "context_params"
-                                        not in mock_pywhispercpp.Model.call_args.kwargs
-                                    )
+                                    with patch.object(
+                                        manager,
+                                        "_detect_pywhispercpp_gpu_backend",
+                                        return_value="cpu",
+                                    ):
+                                        manager._init_whispercpp()
+                                        assert (
+                                            "context_params"
+                                            not in mock_pywhispercpp.Model.call_args.kwargs
+                                        )
 
 
 class TestTranscription(unittest.TestCase):
