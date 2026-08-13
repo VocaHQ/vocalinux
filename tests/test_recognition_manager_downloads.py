@@ -446,6 +446,33 @@ class TestSecuredDownloadStatusReporting:
         with pytest.raises(RuntimeError, match="cancelled"):
             manager._interruptible_pause(1.0)
 
+    def test_verify_honours_cancel_before_hashing(self, tmp_path):
+        manager = _make_manager(engine="whisper_cpp")
+        manager._download_cancelled = True
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"weights")
+        with pytest.raises(RuntimeError, match="cancelled"):
+            manager._verify_download_with_status(str(model), "whispercpp", "ggml-tiny.bin")
+
+    def test_verify_honours_cancel_during_hash(self, tmp_path):
+        manager = _make_manager(engine="whisper_cpp")
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"weights")
+
+        def cancel_mid_hash(*_args, **_kwargs):
+            manager._download_cancelled = True
+            raise RuntimeError("Download cancelled")
+
+        with (
+            patch("time.sleep"),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.verify_downloaded_model",
+                side_effect=cancel_mid_hash,
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="cancelled"):
+                manager._verify_download_with_status(str(model), "whispercpp", "ggml-tiny.bin")
+
 
 class TestDownloadIntegrityEnforcement:
     """The download paths must refuse artifacts that fail an integrity check."""
@@ -532,6 +559,30 @@ class TestDownloadIntegrityEnforcement:
 
         assert not (tmp_path / "pwned.txt").exists()
         assert list(models_dir.iterdir()) == [], "the archive must be cleaned up"
+
+    def test_whispercpp_cancel_after_verify_does_not_install(self, tmp_path):
+        """Cancel during SHA256 verify must not rename the temp file into place."""
+        manager = _make_manager(engine="whisper_cpp")
+        manager.model_size = "tiny"
+        model_file = str(tmp_path / "ggml-tiny.bin")
+
+        def verify_then_cancel(*_args, **_kwargs):
+            manager._download_cancelled = True
+
+        with patch.dict("sys.modules", {"requests": self._mock_requests([b"payload"])}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=model_file,
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.verify_downloaded_model",
+                    side_effect=verify_then_cancel,
+                ):
+                    with pytest.raises(RuntimeError, match="cancelled"):
+                        manager._download_whispercpp_model()
+
+        assert not os.path.exists(model_file)
+        assert not os.path.exists(model_file + ".tmp")
 
 
 class TestAudioReconnection:

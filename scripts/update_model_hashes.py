@@ -99,9 +99,25 @@ def collect_whisper() -> Dict[str, dict]:
         logger.info("HEAD %s", url)
         response = requests.head(url, timeout=HTTP_TIMEOUT, allow_redirects=True)
         response.raise_for_status()
+        content_length = response.headers.get("content-length")
+        if not content_length:
+            logger.warning(
+                "HEAD for Whisper %s omitted Content-Length; leaving any existing pin untouched",
+                size,
+            )
+            continue
+        try:
+            size_bytes = int(content_length)
+        except ValueError:
+            logger.warning(
+                "HEAD for Whisper %s had invalid Content-Length %r; leaving existing pin",
+                size,
+                content_length,
+            )
+            continue
         digests[f"{size}.pt"] = {
             "sha256": sha256,
-            "size": int(response.headers["content-length"]),
+            "size": size_bytes,
         }
     logger.info("Pinned %d Whisper models", len(digests))
     return digests

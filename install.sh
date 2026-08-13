@@ -3408,6 +3408,27 @@ verify_zip_members_safe() {
         return 1
     fi
 
+    # Match the runtime extractor: refuse symlink members (unzip -Z1 only lists
+    # names, so a link to /etc/passwd would otherwise pass the path check).
+    if ! command -v python3 >/dev/null 2>&1; then
+        print_error "python3 is required to inspect archive members"
+        return 1
+    fi
+    python3 -c '
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1]) as archive:
+    for member in archive.infolist():
+        if (member.external_attr >> 16) & 0xF000 == 0xA000:
+            sys.exit(2)
+' "$zip_file" || {
+        status=$?
+        if [ "$status" -eq 2 ]; then
+            print_error "Archive $(basename "$zip_file") contains a symlink; refusing to extract"
+            return 1
+        fi
+        print_error "Could not inspect archive $(basename "$zip_file")"
+        return 1
+    }
     return 0
 }
 

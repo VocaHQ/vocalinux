@@ -4967,7 +4967,7 @@ class SettingsDialog(Gtk.Dialog):
                         cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                         try:
-                            self._apply_settings_internal(settings)
+                            self._apply_settings_internal(settings, show_errors=False)
                             GLib.idle_add(download_dialog.set_complete, True, "")
                             GLib.idle_add(self._populate_model_options)
                         finally:
@@ -5257,7 +5257,7 @@ For now, the engine has been reverted to VOSK."""
                     cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                     try:
-                        self._apply_settings_internal(settings)
+                        self._apply_settings_internal(settings, show_errors=False)
                         GLib.idle_add(download_dialog.set_complete, True, "")
                     finally:
                         GLib.source_remove(cancel_check_id)
@@ -5282,8 +5282,13 @@ For now, the engine has been reverted to VOSK."""
 
         return self._apply_settings_internal(settings)
 
-    def _apply_settings_internal(self, settings: dict) -> bool:
-        """Internal method to apply settings."""
+    def _apply_settings_internal(self, settings: dict, *, show_errors: bool = True) -> bool:
+        """Internal method to apply settings.
+
+        When ``show_errors`` is False (the secured-download worker), failures
+        propagate so the download dialog can show them. GTK dialogs must not be
+        created from that background thread.
+        """
         try:
             self._save_selected_settings(settings)
 
@@ -5298,6 +5303,8 @@ For now, the engine has been reverted to VOSK."""
             return True
         except Exception as e:
             logger.error(f"Failed to apply settings: {e}", exc_info=True)
+            if not show_errors:
+                raise
 
             if "whisper" in str(e).lower() and "no module named" in str(e).lower():
                 self._show_whisper_install_dialog()

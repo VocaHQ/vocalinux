@@ -148,3 +148,18 @@ class TestVerifyZipMembersSafe:
 
         assert "FAIL" in result.stdout
         assert "unsafe paths" in result.stdout
+
+    def test_symlink_member_is_refused(self, tmp_path):
+        archive = tmp_path / "link.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            info = zipfile.ZipInfo("model/link")
+            info.external_attr = (0xA000 | 0o777) << 16
+            zf.writestr(info, "/etc/passwd")
+
+        result = _run(
+            f'{_PRELUDE}\n{_source("verify_zip_members_safe")}\n'
+            f'verify_zip_members_safe "{archive}" && echo PASS || echo FAIL'
+        )
+
+        assert "FAIL" in result.stdout
+        assert "symlink" in result.stdout

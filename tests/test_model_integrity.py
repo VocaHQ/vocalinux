@@ -20,7 +20,7 @@ from vocalinux.utils.model_integrity import (
     strict_mode_enabled,
     verify_downloaded_model,
 )
-from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
+from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO, vosk_model_url
 from vocalinux.utils.whisper_model_info import WHISPER_MODEL_URLS
 from vocalinux.utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO
 
@@ -74,6 +74,13 @@ class TestRegistryContents:
             url_digest = url.strip("/").split("/")[-2]
             assert get_pinned_digest("whisper", f"{size}.pt")["sha256"] == url_digest
 
+    def test_portuguese_medium_model_is_the_published_archive(self):
+        """vosk-model-pt-0.4 404s; Alphacephei ships the Facebook-trained zip."""
+        assert VOSK_MODEL_INFO["medium"]["languages"]["pt"] == (
+            "vosk-model-pt-fb-v0.1.1-20220516_2113"
+        )
+        assert get_pinned_digest("vosk", "vosk-model-pt-fb-v0.1.1-20220516_2113.zip")
+
     def test_entries_are_well_formed(self):
         registry = load_registry()
         for section in ("whispercpp", "whisper", "vosk"):
@@ -106,6 +113,19 @@ class TestVerifyDownloadedModel:
 
     def test_sha256_file_matches_hashlib(self, pinned_file):
         assert sha256_file(str(pinned_file)) == hashlib.sha256(pinned_file.read_bytes()).hexdigest()
+
+    def test_sha256_file_can_be_aborted(self, pinned_file):
+        with pytest.raises(RuntimeError, match="cancelled"):
+            sha256_file(str(pinned_file), should_abort=lambda: True)
+
+    def test_verify_can_be_aborted_while_hashing(self, pinned_file):
+        with pytest.raises(RuntimeError, match="cancelled"):
+            verify_downloaded_model(
+                str(pinned_file),
+                "whispercpp",
+                "ggml-test.bin",
+                should_abort=lambda: True,
+            )
 
     def test_tampered_contents_are_rejected(self, pinned_file):
         pinned_file.write_bytes(b"pretend model weight5")  # same length, different bytes
@@ -175,6 +195,9 @@ class TestTrustedModelUrls:
             ensure_trusted_model_url(info["url"])
         for url in WHISPER_MODEL_URLS.values():
             ensure_trusted_model_url(url)
+        for tier in VOSK_MODEL_INFO.values():
+            for name in tier["languages"].values():
+                ensure_trusted_model_url(vosk_model_url(name))
 
 
 class TestSafeExtractZip:

@@ -30,7 +30,7 @@ import logging
 import os
 import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -102,11 +102,20 @@ def get_pinned_digest(model_type: str, filename: str) -> Optional[dict]:
     return None
 
 
-def sha256_file(filepath: str) -> str:
-    """Compute the SHA256 digest of a file."""
+def sha256_file(
+    filepath: str,
+    should_abort: Optional[Callable[[], bool]] = None,
+) -> str:
+    """Compute the SHA256 digest of a file.
+
+    ``should_abort`` is checked between chunks so a UI Cancel during a large
+    model hash can stop before the file is installed.
+    """
     digest = hashlib.sha256()
     with open(filepath, "rb") as handle:
         for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
+            if should_abort is not None and should_abort():
+                raise RuntimeError("Download cancelled")
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -116,6 +125,7 @@ def verify_downloaded_model(
     model_type: str,
     filename: str,
     strict: Optional[bool] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
 ) -> None:
     """
     Check a downloaded model against its pinned digest.
@@ -126,10 +136,13 @@ def verify_downloaded_model(
         filename: Registry key for the model, e.g. "ggml-tiny.bin".
         strict: Refuse unpinned models. Defaults to the value of
             VOCALINUX_STRICT_MODEL_VERIFICATION.
+        should_abort: Optional callback checked between hash chunks. When it
+            returns True, raises RuntimeError("Download cancelled").
 
     Raises:
         ModelIntegrityError: If the size or digest does not match the pin, or if
             the model is unpinned and strict verification is enabled.
+        RuntimeError: If ``should_abort`` returns True while hashing.
     """
     if strict is None:
         strict = strict_mode_enabled()
@@ -154,7 +167,7 @@ def verify_downloaded_model(
             f"The download is incomplete or the file was replaced upstream."
         )
 
-    actual_sha256 = sha256_file(filepath)
+    actual_sha256 = sha256_file(filepath, should_abort=should_abort)
     if actual_sha256 != pinned["sha256"]:
         raise ModelIntegrityError(
             f"SHA256 mismatch for {filename}: expected {pinned['sha256']}, "

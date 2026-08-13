@@ -1889,6 +1889,14 @@ class SpeechRecognitionManager:
         if self._download_progress_callback:
             self._download_progress_callback(fraction, 0.0, status)
 
+    def _raise_if_download_cancelled(self) -> None:
+        """Abort the current download if the user has already hit Cancel."""
+        if self._download_cancelled:
+            raise RuntimeError("Download cancelled")
+
+    def _download_was_cancelled(self) -> bool:
+        return self._download_cancelled
+
     def _interruptible_pause(self, seconds: float) -> None:
         """Sleep in short slices so Cancel can abort between UI stages.
 
@@ -1897,8 +1905,7 @@ class SpeechRecognitionManager:
         """
         deadline = time.time() + seconds
         while True:
-            if self._download_cancelled:
-                raise RuntimeError("Download cancelled")
+            self._raise_if_download_cancelled()
             remaining = deadline - time.time()
             if remaining <= 0:
                 return
@@ -1929,12 +1936,15 @@ class SpeechRecognitionManager:
         out. Unpinned models (non-strict mode) get an honest "skipping" status
         so the UI never claims a verification that did not happen.
         """
+        self._raise_if_download_cancelled()
         watching = self._download_progress_callback is not None
         pinned = get_pinned_digest(model_type, filename)
+        abort = self._download_was_cancelled
 
         if pinned is None:
             # verify_downloaded_model will warn (or raise in strict mode).
-            verify_downloaded_model(filepath, model_type, filename)
+            verify_downloaded_model(filepath, model_type, filename, should_abort=abort)
+            self._raise_if_download_cancelled()
             self._report_download_status("No pinned digest — skipping hash check", 1.0)
             if watching:
                 self._interruptible_pause(0.35)
@@ -1945,7 +1955,8 @@ class SpeechRecognitionManager:
         # we burn CPU hashing; large models take long enough on their own.
         if watching:
             self._interruptible_pause(0.3)
-        verify_downloaded_model(filepath, model_type, filename)
+        verify_downloaded_model(filepath, model_type, filename, should_abort=abort)
+        self._raise_if_download_cancelled()
         self._report_download_status("Hash matches — integrity verified", 1.0)
         if watching:
             self._interruptible_pause(0.5)
@@ -2071,6 +2082,7 @@ class SpeechRecognitionManager:
             self._announce_secured_download("whispercpp", os.path.basename(model_path))
             self._stream_model_download(url, temp_file)
             self._verify_download_with_status(temp_file, "whispercpp", os.path.basename(model_path))
+            self._raise_if_download_cancelled()
             os.rename(temp_file, model_path)
             logger.info("whisper.cpp model downloaded successfully")
 
@@ -2249,6 +2261,7 @@ class SpeechRecognitionManager:
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
             self._verify_download_with_status(zip_path, "vosk", os.path.basename(zip_path))
+            self._raise_if_download_cancelled()
 
             # Update status for extraction phase
             if self._download_progress_callback:
@@ -2366,6 +2379,7 @@ class SpeechRecognitionManager:
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
             self._verify_download_with_status(temp_file, "whisper", f"{self.model_size}.pt")
+            self._raise_if_download_cancelled()
 
             # Rename temp file to final
             os.rename(temp_file, model_file)

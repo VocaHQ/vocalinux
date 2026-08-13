@@ -251,7 +251,9 @@ VOSK_MODEL_INFO = {
             "ko": "vosk-model-small-ko-0.22",
             "fa": "vosk-model-fa-0.42",
             "pl": "vosk-model-small-pl-0.22",
-            "pt": "vosk-model-pt-0.4",
+            # Alphacephei never shipped vosk-model-pt-0.4 (404). The published
+            # medium/large Portuguese archive is the Facebook-trained zip.
+            "pt": "vosk-model-pt-fb-v0.1.1-20220516_2113",
             "ru": "vosk-model-ru-0.22",
             "es": "vosk-model-es-0.42",
             "sv": "vosk-model-small-sv-rhasspy-0.15",
@@ -279,7 +281,9 @@ VOSK_MODEL_INFO = {
             "ko": "vosk-model-small-ko-0.22",
             "fa": "vosk-model-fa-0.42",
             "pl": "vosk-model-small-pl-0.22",
-            "pt": "vosk-model-pt-0.4",
+            # Alphacephei never shipped vosk-model-pt-0.4 (404). The published
+            # medium/large Portuguese archive is the Facebook-trained zip.
+            "pt": "vosk-model-pt-fb-v0.1.1-20220516_2113",
             "ru": "vosk-model-ru-0.22",
             "es": "vosk-model-es-0.42",
             "sv": "vosk-model-small-sv-rhasspy-0.15",
