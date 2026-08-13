@@ -464,6 +464,37 @@ class TextInjector:
         return False
 
     @staticmethod
+    def _forced_backend_setting() -> Optional[str]:
+        """``VOCALINUX_FORCE_BACKEND`` as three distinct states.
+
+        ``None`` when the variable is not set, ``"auto"`` when it is explicitly
+        set to auto, otherwise the backend name. The distinction matters:
+        ``auto`` is how a user asks for autodetection *this run* despite a saved
+        ``text_injection.backend`` pin, which is the one-run A/B test this
+        variable exists for. Collapsing it into "nothing was set" would let the
+        saved pin win and make the variable useless for that.
+
+        Accepts ``ibus``, ``wtype``, ``ydotool`` or ``auto``.
+        """
+        raw = os.environ.get("VOCALINUX_FORCE_BACKEND")
+        if raw is None:
+            return None
+        value = raw.strip().lower()
+        if not value:
+            return None
+        if value == "auto":
+            return "auto"
+        if value in ("ibus", "wtype", "ydotool"):
+            return value
+        logger.warning(
+            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected ibus/wtype/ydotool/auto)",
+            value,
+        )
+        # Deliberately unset rather than "auto": a typo in a shell variable should
+        # not discard a valid saved pin, only fail to override it.
+        return None
+
+    @staticmethod
     def _forced_backend() -> str:
         """Backend pinned via ``VOCALINUX_FORCE_BACKEND``, or ``"auto"``.
 
@@ -477,18 +508,11 @@ class TextInjector:
         ignored with a warning, so a typo cannot silently pin a backend.
 
         This covers the environment variable only. ``_backend_preference()``
-        combines it with the persistent ``text_injection.backend`` setting.
+        combines it with the persistent ``text_injection.backend`` setting, and
+        needs unset and an explicit ``auto`` told apart -- see
+        ``_forced_backend_setting()``.
         """
-        value = os.environ.get("VOCALINUX_FORCE_BACKEND", "").strip().lower()
-        if not value or value == "auto":
-            return "auto"
-        if value in ("ibus", "wtype", "ydotool"):
-            return value
-        logger.warning(
-            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected ibus/wtype/ydotool/auto)",
-            value,
-        )
-        return "auto"
+        return TextInjector._forced_backend_setting() or "auto"
 
     @staticmethod
     def _configured_backend() -> str:
@@ -528,10 +552,12 @@ class TextInjector:
 
         ``VOCALINUX_FORCE_BACKEND`` wins so a backend can still be A/B-tested
         for one run without editing (or permanently changing) the user's config.
+        That includes an explicit ``auto``, which asks for autodetection this run
+        and so must short-circuit here rather than fall through to the saved pin.
         """
-        forced = TextInjector._forced_backend()
-        if forced != "auto":
-            return forced
+        env = TextInjector._forced_backend_setting()
+        if env is not None:
+            return env
         return TextInjector._configured_backend()
 
     def _check_dependencies(self):

@@ -2302,11 +2302,65 @@ class TestBackendPreference(unittest.TestCase):
             with patch.dict("os.environ", {}, clear=True):
                 self.assertEqual(TextInjector._backend_preference(), "auto")
 
-    def test_invalid_environment_value_still_falls_back_to_config(self):
-        """A typo in the variable must not discard a valid saved preference."""
+    def test_explicit_auto_overrides_a_saved_pin(self):
+        """``VOCALINUX_FORCE_BACKEND=auto`` asks for autodetection *this run*.
+
+        It must not be read as "nothing was set" and fall through to the saved
+        pin, or the variable cannot undo a pin for a single run -- which is the
+        one-off A/B test it exists for.
+        """
+        with _fake_config({"text_injection": {"backend": "wtype"}}):
+            with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": "auto"}):
+                self.assertEqual(TextInjector._backend_preference(), "auto")
+
+    def test_unset_environment_uses_the_saved_pin(self):
+        """Regression guard for the case explicit ``auto`` must NOT behave like."""
+        with _fake_config({"text_injection": {"backend": "wtype"}}):
+            with patch.dict("os.environ", {}, clear=True):
+                self.assertEqual(TextInjector._backend_preference(), "wtype")
+
+    def test_typo_in_environment_is_treated_as_unset_not_as_auto(self):
+        """A typo falls through to the saved pin rather than discarding it.
+
+        Deliberate: an unrecognised value means the user failed to override
+        their preference, not that they asked for autodetection. Contrast
+        ``test_explicit_auto_overrides_a_saved_pin``, where they did ask.
+        """
         with _fake_config({"text_injection": {"backend": "wtype"}}):
             with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": "wtpye"}):
                 self.assertEqual(TextInjector._backend_preference(), "wtype")
+
+
+class TestForcedBackendSetting(unittest.TestCase):
+    """The raw three-state reading of VOCALINUX_FORCE_BACKEND.
+
+    ``_forced_backend()`` collapses unset and explicit ``auto`` together, which
+    is fine for its own callers but loses the distinction ``_backend_preference()``
+    needs to tell "no opinion" from "autodetect this run".
+    """
+
+    def test_unset_is_none_and_is_distinct_from_explicit_auto(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(TextInjector._forced_backend_setting())
+
+    def test_explicit_auto_is_the_string_not_none(self):
+        for value in ("auto", "  AUTO  "):
+            with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": value}):
+                self.assertEqual(TextInjector._forced_backend_setting(), "auto")
+
+    def test_empty_value_counts_as_unset(self):
+        with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": "   "}):
+            self.assertIsNone(TextInjector._forced_backend_setting())
+
+    def test_recognised_backends_are_returned(self):
+        for value in ("ibus", "wtype", "ydotool"):
+            with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": value.upper()}):
+                self.assertEqual(TextInjector._forced_backend_setting(), value)
+
+    def test_unknown_value_is_unset_rather_than_auto(self):
+        """See ``test_typo_in_environment_is_treated_as_unset_not_as_auto``."""
+        with patch.dict("os.environ", {"VOCALINUX_FORCE_BACKEND": "ibsu"}):
+            self.assertIsNone(TextInjector._forced_backend_setting())
 
 
 class TestForcedBackend(unittest.TestCase):
