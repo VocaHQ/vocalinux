@@ -639,6 +639,15 @@ spinbutton {
     font-size: 1.0em;
 }
 
+/* Unused downloads: one collapsed row until expanded */
+.unused-downloads-expander {
+    padding: 8px 12px;
+}
+
+.unused-downloads-expander list {
+    background-color: transparent;
+}
+
 .model-info-subtitle {
     font-size: 0.9em;
     color: @theme_unfocused_fg_color;
@@ -2260,10 +2269,30 @@ class SettingsDialog(Gtk.Dialog):
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
-            title="Unused downloads",
-            description="On disk, but not the model currently selected",
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
         )
+        self.unused_models_group.title = "Unused downloads"
+        self.unused_models_group.description = "On disk, but not the model currently selected"
+
+        self.unused_expander = Gtk.Expander(label="Unused downloads")
+        self.unused_expander.set_expanded(False)
+        self.unused_expander.set_use_underline(False)
+        self.unused_expander.set_tooltip_text(
+            "Leftover model files on disk. Expand to delete them one at a time."
+        )
+        self.unused_expander.get_style_context().add_class("unused-downloads-expander")
+
+        unused_scroll = Gtk.ScrolledWindow()
+        unused_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        unused_scroll.set_min_content_height(0)
+        unused_scroll.set_max_content_height(200)
+        unused_scroll.set_propagate_natural_height(True)
+        unused_scroll.set_shadow_type(Gtk.ShadowType.NONE)
+
+        self.unused_models_group.remove(self.unused_models_group.listbox)
+        unused_scroll.add(self.unused_models_group.listbox)
+        self.unused_expander.add(unused_scroll)
+        self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
         self.content_box.pack_start(self.unused_models_group, False, False, 0)
 
         # Connect signals
@@ -4192,6 +4221,11 @@ class SettingsDialog(Gtk.Dialog):
             self.unused_models_group.hide()
             return
 
+        count = len(unused)
+        leftover = "leftover model" if count == 1 else "leftover models"
+        self.unused_expander.set_label(f"Unused downloads ({count} {leftover})")
+
+        was_expanded = self.unused_expander.get_expanded()
         for model_id, title, size_label in unused:
             delete_btn = Gtk.Button(label="Delete")
             delete_btn.set_tooltip_text(f"Delete {title} from disk")
@@ -4211,6 +4245,7 @@ class SettingsDialog(Gtk.Dialog):
             self.unused_models_group.add_row(row)
 
         self.unused_models_group.show_all()
+        self.unused_expander.set_expanded(was_expanded)
 
     def _confirm_model_delete(self, text: str, secondary: str) -> bool:
         """Ask before deleting model files from disk."""
