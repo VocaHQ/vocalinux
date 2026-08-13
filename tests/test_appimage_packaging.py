@@ -65,3 +65,5 @@ def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():
     assert "VOCALINUX_APPIMAGE_REQUIRE_VULKAN" in text
     assert "VOCALINUX_APPIMAGE_SKIP_VULKAN" in text
     assert "rebuild_pywhispercpp_vulkan" in text
+    assert 'CC="${CC:-gcc}"' in text
+    assert 'CXX="${CXX:-g++}"' in text

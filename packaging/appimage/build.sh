@@ -233,7 +233,10 @@ rebuild_pywhispercpp_vulkan() {
   remove_appdir_pywhispercpp
   local pip_log="$WORKDIR/pywhispercpp-vulkan.log"
   export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
-  if ! GGML_VULKAN=1 \
+  # Hosts that default cc/c++ to clang (this Cloud Agent image) fail the
+  # CMAKE C++ compiler test: clang does not search gcc's libstdc++ path.
+  if ! CC="${CC:-gcc}" CXX="${CXX:-g++}" \
+      GGML_VULKAN=1 \
       CMAKE_ARGS='-DCMAKE_INSTALL_RPATH=$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON' \
       "$PYTHON" -m pip install --verbose --no-cache-dir --force-reinstall \
         --no-binary pywhispercpp --ignore-installed --prefix "$APPDIR/usr" \
