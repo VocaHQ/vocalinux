@@ -2988,6 +2988,15 @@ class SettingsDialog(Gtk.Dialog):
 
         footer.pack_start(self.test_output_revealer, False, False, 0)
 
+        # Separate Close from the dictation-test controls so it reads as
+        # dialog chrome, not as part of Test Dictation (#651).
+        close_separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        close_separator.set_margin_start(8)
+        close_separator.set_margin_end(8)
+        close_separator.set_margin_top(2)
+        close_separator.set_margin_bottom(2)
+        footer.pack_start(close_separator, False, False, 0)
+
         # In-window Close so the dialog can always be dismissed, even on WMs
         # that hide the title-bar close button for Gtk.Dialog windows (#323).
         close_button = Gtk.Button(label="Close")
