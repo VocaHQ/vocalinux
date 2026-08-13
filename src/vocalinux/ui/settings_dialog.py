@@ -4926,6 +4926,9 @@ class SettingsDialog(Gtk.Dialog):
         if self._populating_models:
             return
 
+        if self.speech_engine is None:
+            return
+
         self._applying_settings = True
         try:
             settings = self.get_selected_settings()
@@ -5221,6 +5224,10 @@ For now, the engine has been reverted to VOSK."""
 
     def apply_settings(self):
         """Apply the selected settings."""
+        if self.speech_engine is None:
+            logger.error("Cannot apply settings without a speech engine")
+            return False
+
         settings = self.get_selected_settings()
         logger.info(f"Applying settings: {settings}")
 
