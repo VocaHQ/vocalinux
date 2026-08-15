@@ -1122,6 +1122,19 @@ class TextInjector:
         Args:
             text: The text to inject
         """
+        # xdotool type is layout-dependent and garbles non-US-layout text on
+        # this fallback path (#657); prefer the layout-independent clipboard
+        # paste already used for ydotool (_inject_with_wayland_tool).
+        if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL and shutil.which("ydotool"):
+            if not self._ensure_ydotoold():
+                logger.warning("ydotoold not ready before injection")
+            if self._inject_via_clipboard_paste(text):
+                return
+            logger.warning(
+                "Clipboard paste failed, falling back to xdotool type "
+                "(character-by-character; text may be scrambled on non-US layouts)"
+            )
+
         # Create environment with explicit X11 settings for Wayland compatibility
         env = os.environ.copy()
 
