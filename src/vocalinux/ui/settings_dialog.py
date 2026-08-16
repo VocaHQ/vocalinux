@@ -4491,6 +4491,16 @@ class SettingsDialog(Gtk.Dialog):
         self._update_model_info()
         self._update_voice_commands_for_engine()
 
+        # Every other control on this page applies as soon as it changes. Without
+        # this the new engine is only displayed: the config and the running
+        # recognizer stay on the previous one until some other control is touched,
+        # and closing the dialog drops the change silently.
+        if engine == "remote_api" and not self.remote_api_url_entry.get_text().strip():
+            # Applying now would only fail validation; _on_remote_api_settings_changed
+            # applies once the server URL is filled in.
+            return
+        self._auto_apply_settings()
+
     def _update_voice_commands_for_engine(self):
         """Update voice commands switch based on current engine."""
         sr_config = self.config_manager.get_settings().get("speech_recognition", {})
@@ -4854,6 +4864,10 @@ class SettingsDialog(Gtk.Dialog):
 
                     except Exception as e:
                         error_msg = str(e)
+                        # The settings were never saved, so the previously working
+                        # model is still the configured one; put the pickers back on
+                        # it so the UI matches the config and a retry is possible.
+                        GLib.idle_add(self._resync_model_ui_from_config)
                         if "cancelled" in error_msg.lower():
                             GLib.idle_add(
                                 download_dialog.set_complete,
@@ -4877,18 +4891,31 @@ class SettingsDialog(Gtk.Dialog):
 
             logger.info(f"Auto-applying settings: {settings}")
 
-            self._save_selected_settings(settings)
-
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
             logger.info("Settings auto-applied successfully")
         except Exception as e:
             logger.error(f"Failed to auto-apply settings: {e}")
+            self._resync_model_ui_from_config()
         finally:
             self._applying_settings = False
+
+    def _resync_model_ui_from_config(self):
+        """Put the model pickers back on the settings that are actually saved.
+
+        Called when applying failed: the config still names the previous model,
+        and leaving the pickers on the rejected one also blocks a retry, since
+        re-selecting the same entry emits no "changed" signal.
+        """
+        try:
+            self._populate_model_options()
+            self._update_model_info()
+        except Exception as e:  # pragma: no cover - UI resync must never mask the original error
+            logger.debug(f"Could not resync model pickers: {e}")
 
     def _save_selected_settings(self, settings: dict):
         """Persist selected settings to their appropriate config sections."""
@@ -5199,14 +5226,16 @@ For now, the engine has been reverted to VOSK."""
                 off the main loop is not safe anyway.
         """
         try:
-            self._save_selected_settings(settings)
-
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
                 time.sleep(0.5)
 
+            # Persist only once the engine really runs these settings: this call
+            # downloads missing models, and a config saved up front would keep
+            # pointing at a model that never made it to disk.
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True
