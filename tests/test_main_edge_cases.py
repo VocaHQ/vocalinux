@@ -84,10 +84,10 @@ class TestMainFunctionExtra:
         """Test that notification is attempted when another instance is running."""
         from vocalinux.main import main
 
-        mock_single_instance = MagicMock()
-        mock_single_instance.acquire_lock.return_value = False
-
-        with patch.dict(sys.modules, {"vocalinux.single_instance": mock_single_instance}):
+        # Patch the function itself: main() binds the module via the package
+        # attribute, so a patch.dict(sys.modules, ...) entry is ignored whenever
+        # an earlier test already imported the real vocalinux.single_instance.
+        with patch("vocalinux.single_instance.acquire_lock", return_value=False):
             with pytest.raises(SystemExit) as exc_info:
                 main()
             assert exc_info.value.code == 1

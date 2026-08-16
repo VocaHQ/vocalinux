@@ -473,3 +473,19 @@ class ConfigManager:
                 self._update_dict_recursive(target[key], value)
             else:
                 target[key] = value
+
+
+# The one instance the application should share. Every ConfigManager caches the
+# whole config in memory and save_config() writes that whole cache back, so two
+# live instances silently revert each other's saves — the second save wins with
+# whatever stale values it still holds. Tests may still construct ConfigManager
+# directly; application code goes through this accessor.
+_shared_instance: Optional[ConfigManager] = None
+
+
+def get_shared_config_manager() -> ConfigManager:
+    """Return the process-wide ConfigManager, creating it on first use."""
+    global _shared_instance
+    if _shared_instance is None:
+        _shared_instance = ConfigManager()
+    return _shared_instance

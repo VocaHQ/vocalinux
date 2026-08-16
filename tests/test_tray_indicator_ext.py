@@ -72,7 +72,7 @@ class TestTrayIndicatorInitialization(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -126,7 +126,7 @@ class TestTrayIndicatorInitialization(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -193,7 +193,7 @@ class TestTrayIndicatorMenuOperations(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -232,7 +232,7 @@ class TestTrayIndicatorMenuOperations(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -293,7 +293,7 @@ class TestTrayIndicatorStateHandling(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -332,7 +332,7 @@ class TestTrayIndicatorStateHandling(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -371,7 +371,7 @@ class TestTrayIndicatorStateHandling(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -432,7 +432,7 @@ class TestTrayIndicatorSignalHandling(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 
@@ -475,7 +475,7 @@ class TestTrayIndicatorSignalHandling(unittest.TestCase):
         with (
             patch("vocalinux.ui.tray_indicator.logging"),
             patch("vocalinux.ui.tray_indicator._resource_manager") as mock_resource_manager,
-            patch("vocalinux.ui.tray_indicator.ConfigManager") as mock_config_manager,
+            patch("vocalinux.ui.tray_indicator.get_shared_config_manager") as mock_config_manager,
             patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as mock_keyboard_manager,
         ):
 

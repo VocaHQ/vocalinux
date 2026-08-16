@@ -40,7 +40,7 @@ from ..suspend_handler import SuspendHandler
 from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
-from .config_manager import ConfigManager
+from .config_manager import get_shared_config_manager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import SettingsDialog
@@ -104,7 +104,9 @@ class TrayIndicator:
         """
         self.speech_engine = speech_engine
         self.text_injector = text_injector
-        self.config_manager = ConfigManager()  # Added: Initialize ConfigManager
+        # Shared with main() and the settings dialog: separate instances would
+        # overwrite each other's saves with stale in-memory copies.
+        self.config_manager = get_shared_config_manager()
         self._syncing_autostart_menu = False
 
         # Get configured shortcut and mode from config

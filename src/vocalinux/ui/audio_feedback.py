@@ -59,9 +59,9 @@ ERROR_SOUND = _resource_manager.get_sound_path("error")
 
 def _is_sound_effects_enabled() -> bool:
     try:
-        from .config_manager import ConfigManager
+        from .config_manager import get_shared_config_manager
 
-        return ConfigManager().is_sound_effects_enabled()
+        return get_shared_config_manager().is_sound_effects_enabled()
     except Exception:
         return True
 
