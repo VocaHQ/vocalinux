@@ -4765,7 +4765,7 @@ class SettingsDialog(Gtk.Dialog):
                         cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                         try:
-                            self._apply_settings_internal(settings)
+                            self._apply_settings_internal(settings, raise_errors=True)
                             GLib.idle_add(download_dialog.set_complete, True, "")
                             GLib.idle_add(self._populate_model_options)
                         finally:
@@ -5055,7 +5055,7 @@ For now, the engine has been reverted to VOSK."""
                     cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                     try:
-                        self._apply_settings_internal(settings)
+                        self._apply_settings_internal(settings, raise_errors=True)
                         GLib.idle_add(download_dialog.set_complete, True, "")
                     finally:
                         GLib.source_remove(cancel_check_id)
@@ -5080,8 +5080,16 @@ For now, the engine has been reverted to VOSK."""
 
         return self._apply_settings_internal(settings)
 
-    def _apply_settings_internal(self, settings: dict) -> bool:
-        """Internal method to apply settings."""
+    def _apply_settings_internal(self, settings: dict, raise_errors: bool = False) -> bool:
+        """Internal method to apply settings.
+
+        Args:
+            settings: The settings to persist and hand to the engine.
+            raise_errors: Re-raise failures instead of showing an error dialog.
+                The download threads pass True: their own handlers report the
+                failure through the progress dialog, and building a Gtk dialog
+                off the main loop is not safe anyway.
+        """
         try:
             self._save_selected_settings(settings)
 
@@ -5096,6 +5104,8 @@ For now, the engine has been reverted to VOSK."""
             return True
         except Exception as e:
             logger.error(f"Failed to apply settings: {e}", exc_info=True)
+            if raise_errors:
+                raise
 
             if "whisper" in str(e).lower() and "no module named" in str(e).lower():
                 self._show_whisper_install_dialog()
