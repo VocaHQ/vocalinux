@@ -5,7 +5,7 @@ import { SeoSubpageShell } from "@/components/seo-subpage-shell";
 import { buildPageMetadata } from "@/lib/seo";
 
 const installCommand =
-  "curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive";
+  "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive";
 
 const distroGuides = [
   {
@@ -68,7 +68,7 @@ export default function InstallGuidesPage() {
         <p className="mt-4 text-sm text-muted-foreground">
           Prefer no installer? Download an{" "}
           <a
-            href="https://github.com/jatinkrmalik/vocalinux/releases"
+            href="https://github.com/VocaHQ/vocalinux/releases"
             className="font-semibold text-primary hover:underline"
           >
             AppImage

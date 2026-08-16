@@ -320,7 +320,7 @@ export default function TroubleshootingPage() {
             <ChevronRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
             <span>
               <a
-                href="https://github.com/jatinkrmalik/vocalinux/issues"
+                href="https://github.com/VocaHQ/vocalinux/issues"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
@@ -334,7 +334,7 @@ export default function TroubleshootingPage() {
             <ChevronRight className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
             <span>
               <a
-                href="https://github.com/jatinkrmalik/vocalinux/issues/new"
+                href="https://github.com/VocaHQ/vocalinux/issues/new"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"

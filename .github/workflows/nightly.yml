@@ -184,7 +184,7 @@ jobs:
 
           #### Using Install Script
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
           \`\`\`
 
           #### AppImage (no install, no root)
@@ -221,8 +221,8 @@ jobs:
           ### Links
 
           - [Documentation](https://vocalinux.com)
-          - [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-          - [Other Releases](https://github.com/jatinkrmalik/vocalinux/releases)
+          - [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+          - [Other Releases](https://github.com/VocaHQ/vocalinux/releases)
 
           ---
 

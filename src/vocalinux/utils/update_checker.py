@@ -128,20 +128,40 @@ def is_update_available(
     return is_newer_version(current, latest.version)
 
 
+# github.com/jatinkrmalik/vocalinux redirects here after the org transfer.
+_VOCALINUX_GITHUB_OWNERS = frozenset({"VocaHQ", "jatinkrmalik"})
+
+
+def _trusted_path_prefixes(repo_url: str = __url__) -> tuple[str, ...]:
+    """Return GitHub path prefixes that belong to this project."""
+    owner, repo = _repo_parts(repo_url)
+    prefixes = [f"/{owner}/{repo}"]
+    known_owners = {name.casefold() for name in _VOCALINUX_GITHUB_OWNERS}
+    if repo.casefold() == "vocalinux" and owner.casefold() in known_owners:
+        prefixes.extend(f"/{name}/vocalinux" for name in sorted(_VOCALINUX_GITHUB_OWNERS))
+    seen: set[str] = set()
+    unique: list[str] = []
+    for prefix in prefixes:
+        key = prefix.casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(prefix)
+    return tuple(unique)
+
+
 def is_trusted_release_url(url: str, repo_url: str = __url__) -> bool:
     """Return True when ``url`` points at this project's GitHub pages."""
     if not url:
         return False
     try:
-        owner, repo = _repo_parts(repo_url)
         parsed = urlparse(url)
+        prefixes = _trusted_path_prefixes(repo_url)
     except ValueError:
         return False
     if parsed.scheme != "https" or parsed.netloc.lower() != "github.com":
         return False
     path = parsed.path.rstrip("/")
-    prefix = f"/{owner}/{repo}"
-    return path == prefix or path.startswith(prefix + "/")
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
 def _release_from_payload(

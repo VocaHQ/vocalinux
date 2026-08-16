@@ -102,12 +102,12 @@ jobs:
 
             ### Quick Install (Recommended)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/${{ github.ref_name }}/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/${{ github.ref_name }}/install.sh | bash
             ```
 
             ### From Source
             ```bash
-            git clone https://github.com/jatinkrmalik/vocalinux.git
+            git clone https://github.com/VocaHQ/vocalinux.git
             cd vocalinux
             ./install.sh
             ```
@@ -141,7 +141,7 @@ jobs:
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
             ---
-            See [CHANGELOG](https://github.com/jatinkrmalik/vocalinux/releases) for detailed changes.
+            See [CHANGELOG](https://github.com/VocaHQ/vocalinux/releases) for detailed changes.
 
   build-appimage-arm64:
     name: Build and Attach AppImage (aarch64)

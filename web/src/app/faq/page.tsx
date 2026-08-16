@@ -22,7 +22,7 @@ const faqCategories = [
     questions: [
       {
         q: "How do I install Vocalinux?",
-        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection).",
+        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection).",
       },
       {
         q: "Which Linux distributions are supported?",
@@ -239,7 +239,7 @@ export default function FaqPage() {
             <span className="inline-flex items-center gap-2">
               <ChevronRight className="h-4 w-4 text-primary" />
               <a
-                href="https://github.com/jatinkrmalik/vocalinux/issues"
+                href="https://github.com/VocaHQ/vocalinux/issues"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-semibold text-primary hover:underline"

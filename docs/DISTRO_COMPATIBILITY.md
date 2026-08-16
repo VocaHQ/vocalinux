@@ -219,7 +219,7 @@ packages, creates the virtual environment, installs Vocalinux, sets up desktop
 integration, and downloads the default speech model:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ### Important: Install System Packages First
@@ -346,7 +346,7 @@ during setup.
 
 For the best experience with automatic dependency handling, use the official installer:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 This installer automatically detects your distribution and installs all required system packages.
@@ -549,4 +549,4 @@ If you successfully get Vocalinux working on an unsupported or experimental dist
 - [Installation Guide](../README.md#installation)
 - [Manual Installation](MANUAL_INSTALL.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
-- [GitHub Issue Tracker](https://github.com/jatinkrmalik/vocalinux/issues)
+- [GitHub Issue Tracker](https://github.com/VocaHQ/vocalinux/issues)

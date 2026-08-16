@@ -56,7 +56,7 @@ This guide explains how to update Vocalinux to the latest version.
 - robots.txt no longer blocks indexable pages (#610)
 - Website CI lint / action warning cleanup (#611)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0).
 
 ---
 
@@ -82,7 +82,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **IBus**: Wait for FocusIn before commit on scoped injection. Cold first activation on GNOME Wayland could commit before mutter bound a client context, so the first dictation of a session was dropped while logs still reported success (#533, fixes #523)
 - **Settings UI**: Wrap each notebook tab in a vertical ScrolledWindow so the dialog fits 1080p monitors instead of growing past the screen; forward wheel events from unfocused combos/spins to the tab scroller and drop nested Advanced ScrolledWindow shadows (#538, #541)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.2).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.2).
 
 ---
 
@@ -114,7 +114,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Refreshed v0.14 UI screenshots and website gallery (#521)
 - README Star History and related polish
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.1).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.1).
 
 ---
 
@@ -149,7 +149,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 
 - **Code style** — Removed an outdated long comment about whisper.cpp default thread counts (#505)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.0-beta).
 
 ---
 
@@ -185,7 +185,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Website**: New documentation pages for Remote API, Silero VAD, advanced whisper.cpp settings, and desktop reliability (#470)
 - **CI**: Automatic pull-request labeling by changed files (#473)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.13.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.13.0-beta).
 
 ---
 
@@ -223,7 +223,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Community** — GitHub Sponsors funding configuration added
 - **Behavioral coverage** — CUDA diagnostics and release-facing reliability fixes include targeted tests
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.12.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.12.0-beta).
 
 ---
 
@@ -253,7 +253,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Clarify missing GNOME AppIndicator support on Debian (#385)
 - Redesigned OG image for vocalinux.com (#392)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.10.2-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.10.2-beta).
 
 ---
 
@@ -293,7 +293,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Bumped `brace-expansion` in development dependencies (#357)
 - Disabled copy-to-clipboard by default in Settings (#370)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.10.1-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.10.1-beta).
 
 ---
 
@@ -328,7 +328,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Grouped shortcut selector** — Settings dropdown now organises shortcuts by Either/Left/Right side
 - **pipx documentation** — New `DISTRO_COMPATIBILITY.md` section for pipx users
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.9.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.9.0-beta).
 
 ---
 
@@ -363,7 +363,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Web SEO Enhancements** — Added 8 additional optimized pages for discoverability
 - **Homepage Refresh** — Updated voice-themed visual polish on the web landing page
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.8.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.8.0-beta).
 
 ---
 
@@ -376,7 +376,7 @@ Vocalinux checks GitHub Releases in the background about every six hours (and sh
 Simply re-run the installation command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 The installer will:
@@ -427,7 +427,7 @@ If your update doesn't go smoothly, try a clean reinstall:
 ./uninstall.sh
 
 # Reinstall fresh
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ### Old Version Still Running
@@ -467,5 +467,5 @@ sudo pacman -S python-gobject gtk3
 ## Need Help?
 
 - 📖 [Installation Guide](INSTALL.md)
-- 🐛 [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)

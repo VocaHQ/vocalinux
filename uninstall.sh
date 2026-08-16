@@ -532,7 +532,7 @@ print_uninstallation_summary() {
     if [ "$ISSUES" -gt 0 ]; then
         echo
         print_warning "If you encounter any problems, please report them at:"
-        print_warning "https://github.com/jatinkrmalik/vocalinux/issues"
+        print_warning "https://github.com/VocaHQ/vocalinux/issues"
     fi
 }
 

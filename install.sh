@@ -351,7 +351,7 @@ resolve_install_tag() {
     if command_exists curl; then
         local latest
         latest=$(curl -fsSL --connect-timeout 5 \
-            "https://api.github.com/repos/jatinkrmalik/vocalinux/releases/latest" \
+            "https://api.github.com/repos/VocaHQ/vocalinux/releases/latest" \
             2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
         if [ -n "$latest" ]; then
             INSTALL_TAG="$latest"
@@ -364,7 +364,7 @@ resolve_install_tag() {
 resolve_install_tag
 
 # Check if running from within the vocalinux repo or remotely (via curl)
-REPO_URL="https://github.com/jatinkrmalik/vocalinux.git"
+REPO_URL="https://github.com/VocaHQ/vocalinux.git"
 INSTALL_DIR=""
 CLEANUP_ON_EXIT="no"
 
@@ -776,7 +776,7 @@ detect_vulkan() {
 # Check for incompatible Intel GPUs that don't support VK_KHR_16bit_storage
 # These GPUs will fail with "device does not support 16-bit storage" error
 # Affected: Intel Gen7 and older (Ivy Bridge, Haswell, Sandy Bridge)
-# See: https://github.com/jatinkrmalik/vocalinux/issues/238
+# See: https://github.com/VocaHQ/vocalinux/issues/238
 #
 # IMPORTANT: This check filters out software renderers (llvmpipe, etc.) and only
 # evaluates real hardware GPUs. Modern AMD, Intel (Gen8+), and NVIDIA GPUs all
@@ -1414,7 +1414,7 @@ if [[ "$INTERACTIVE_MODE" == "yes" ]]; then
     if [ ! -t 0 ]; then
         print_error "Interactive mode requires a terminal (TTY)."
         print_error "Download and run the installer directly from a terminal:"
-        print_error "  curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh"
+        print_error "  curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh"
         exit 1
     fi
 
@@ -2000,7 +2000,7 @@ install_system_dependencies() {
             print_info "   pip install -e .[whisper,vad]"
             print_info ""
             print_info "For more information, see the project wiki:"
-            print_info "  https://github.com/jatinkrmalik/vocalinux/wiki"
+            print_info "  https://github.com/VocaHQ/vocalinux/wiki"
             print_info ""
             if [[ "$NON_INTERACTIVE" != "yes" ]]; then
                 read -p "Continue anyway? (y/n) " -n 1 -r
@@ -4016,9 +4016,9 @@ EOF
     echo "  📚 Need Help?"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "• Issues & Bugs:  https://github.com/jatinkrmalik/vocalinux/issues"
-    echo "• Documentation:  https://github.com/jatinkrmalik/vocalinux"
-    echo "• Star on GitHub: ⭐ https://github.com/jatinkrmalik/vocalinux"
+    echo "• Issues & Bugs:  https://github.com/VocaHQ/vocalinux/issues"
+    echo "• Documentation:  https://github.com/VocaHQ/vocalinux"
+    echo "• Star on GitHub: ⭐ https://github.com/VocaHQ/vocalinux"
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""

@@ -96,7 +96,7 @@ _COMPONENT_META = {
     "version": "1.0",
     "license": "AGPL-3.0",
     "author": "Vocalinux",
-    "homepage": "https://github.com/jatinkrmalik/vocalinux",
+    "homepage": "https://github.com/VocaHQ/vocalinux",
     "textdomain": "vocalinux",
 }
 

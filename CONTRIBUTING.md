@@ -23,15 +23,15 @@ We are committed to providing a welcoming and inclusive environment. Please be r
 
 ### Ways to Contribute
 
-- 🐛 **Report bugs** - Found a bug? [Open an issue](https://github.com/jatinkrmalik/vocalinux/issues/new)
-- 💡 **Suggest features** - Have an idea? [Start a discussion](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 **Report bugs** - Found a bug? [Open an issue](https://github.com/VocaHQ/vocalinux/issues/new)
+- 💡 **Suggest features** - Have an idea? [Start a discussion](https://github.com/VocaHQ/vocalinux/discussions)
 - 📖 **Improve documentation** - Docs can always be better!
-- 🔧 **Fix bugs** - Check the [issues](https://github.com/jatinkrmalik/vocalinux/issues) for things to work on
+- 🔧 **Fix bugs** - Check the [issues](https://github.com/VocaHQ/vocalinux/issues) for things to work on
 - ✨ **Add features** - Pick up a feature from the roadmap
 
 ### Good First Issues
 
-New to the project? Look for issues labeled [`good first issue`](https://github.com/jatinkrmalik/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+New to the project? Look for issues labeled [`good first issue`](https://github.com/VocaHQ/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 ## Development Setup
 
@@ -322,8 +322,8 @@ We follow [Semantic Versioning](https://semver.org/):
 
 ### Getting Help
 
-- 💬 [GitHub Discussions](https://github.com/jatinkrmalik/vocalinux/discussions) - Ask questions
-- 🐛 [GitHub Issues](https://github.com/jatinkrmalik/vocalinux/issues) - Report bugs
+- 💬 [GitHub Discussions](https://github.com/VocaHQ/vocalinux/discussions) - Ask questions
+- 🐛 [GitHub Issues](https://github.com/VocaHQ/vocalinux/issues) - Report bugs
 
 ### Stay Connected
 

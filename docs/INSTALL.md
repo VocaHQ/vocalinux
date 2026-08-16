@@ -7,10 +7,10 @@ This guide provides detailed instructions for installing Vocalinux on Linux syst
 ### One-liner Installation (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
-> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases).
+> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
 
 That's it! The installer handles everything automatically:
 - ✅ Installs whisper.cpp (~1-2 minutes, no heavy dependencies!)
@@ -24,13 +24,13 @@ That's it! The installer handles everything automatically:
 ### From Source
 
 ```bash
-git clone https://github.com/jatinkrmalik/vocalinux.git && cd vocalinux && ./install.sh
+git clone https://github.com/VocaHQ/vocalinux.git && cd vocalinux && ./install.sh
 ```
 
 ### AppImage (no install, no root)
 
 Download the `.AppImage` for your CPU (`x86_64` or `aarch64`) from
-[GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases), then:
+[GitHub Releases](https://github.com/VocaHQ/vocalinux/releases), then:
 
 ```bash
 chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
@@ -704,12 +704,12 @@ Already have Vocalinux installed? See the [Update Guide](UPDATE.md) for instruct
 
 Quick update command:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ## Getting Help
 
 - 📖 [User Guide](USER_GUIDE.md)
 - 📖 [Update Guide](UPDATE.md)
-- 🐛 [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)

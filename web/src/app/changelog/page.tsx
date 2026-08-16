@@ -461,7 +461,7 @@ export default function ChangelogPage() {
 
               <div className="mt-4 border-t border-border pt-4">
                 <a
-                  href={`https://github.com/jatinkrmalik/vocalinux/releases/tag/${release.version}`}
+                  href={`https://github.com/VocaHQ/vocalinux/releases/tag/${release.version}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"

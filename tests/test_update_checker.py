@@ -51,7 +51,7 @@ class TestChannels:
             tag_name="v0.15.0",
             version="0.15.0",
             name="v0.15.0",
-            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0",
+            html_url="https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0",
             body="",
             published_at="2026-08-02T00:00:00Z",
             prerelease=False,
@@ -65,7 +65,7 @@ class TestChannels:
             tag_name="nightly-2026-08-02",
             version="nightly-2026-08-02",
             name="Nightly Build - 0.14.2.dev20260802+27ecf88",
-            html_url="https://github.com/jatinkrmalik/vocalinux/releases/tag/nightly-2026-08-02",
+            html_url="https://github.com/VocaHQ/vocalinux/releases/tag/nightly-2026-08-02",
             body="",
             published_at="2026-08-02T00:00:00Z",
             prerelease=True,
@@ -82,6 +82,9 @@ class TestChannels:
 
 class TestTrustedUrls:
     def test_accepts_project_urls(self):
+        assert is_trusted_release_url("https://github.com/VocaHQ/vocalinux")
+        assert is_trusted_release_url("https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0")
+        # Pre-transfer URLs still redirect and must stay trusted.
         assert is_trusted_release_url("https://github.com/jatinkrmalik/vocalinux")
         assert is_trusted_release_url(
             "https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0"
@@ -89,7 +92,7 @@ class TestTrustedUrls:
 
     def test_rejects_untrusted_urls(self):
         assert not is_trusted_release_url("https://evil.example/payload")
-        assert not is_trusted_release_url("http://github.com/jatinkrmalik/vocalinux")
+        assert not is_trusted_release_url("http://github.com/VocaHQ/vocalinux")
         assert not is_trusted_release_url("https://github.com/evil/vocalinux")
         assert not is_trusted_release_url("")
 
@@ -126,7 +129,7 @@ class TestFetchLatestRelease:
         mock_response.json.return_value = {
             "tag_name": "v0.15.0",
             "name": "v0.15.0",
-            "html_url": "https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0",
+            "html_url": "https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0",
             "body": "Notes",
             "published_at": "2026-08-02T22:29:58Z",
             "prerelease": False,
@@ -170,7 +173,7 @@ class TestFetchLatestRelease:
             {
                 "tag_name": "v0.15.0",
                 "name": "v0.15.0",
-                "html_url": "https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0",
+                "html_url": "https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0",
                 "body": "Stable",
                 "published_at": "2026-08-02T22:29:58Z",
                 "prerelease": False,
@@ -179,7 +182,7 @@ class TestFetchLatestRelease:
             {
                 "tag_name": "nightly-2026-08-02",
                 "name": "nightly-2026-08-02",
-                "html_url": "https://github.com/jatinkrmalik/vocalinux/releases/tag/nightly-2026-08-02",
+                "html_url": "https://github.com/VocaHQ/vocalinux/releases/tag/nightly-2026-08-02",
                 "body": "Nightly",
                 "published_at": "2026-08-02T05:00:00Z",
                 "prerelease": True,
@@ -205,7 +208,7 @@ class TestFetchLatestRelease:
             {
                 "tag_name": f"v0.15.{i}",
                 "name": f"v0.15.{i}",
-                "html_url": f"https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.{i}",
+                "html_url": f"https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.{i}",
                 "body": "",
                 "published_at": "2026-08-03T00:00:00Z",
                 "prerelease": False,
@@ -217,9 +220,7 @@ class TestFetchLatestRelease:
             {
                 "tag_name": "nightly-2026-08-01",
                 "name": "nightly-2026-08-01",
-                "html_url": (
-                    "https://github.com/jatinkrmalik/vocalinux/releases/tag/nightly-2026-08-01"
-                ),
+                "html_url": ("https://github.com/VocaHQ/vocalinux/releases/tag/nightly-2026-08-01"),
                 "body": "Nightly",
                 "published_at": "2026-08-01T05:00:00Z",
                 "prerelease": True,
