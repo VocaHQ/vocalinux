@@ -81,6 +81,30 @@ def test_failed_auto_apply_resyncs_the_pickers_with_the_config():
     assert dialog._applying_settings is False
 
 
+def test_resync_puts_the_engine_picker_back_on_the_saved_engine():
+    """After a failed switch the combo must not keep showing the dead engine."""
+    dialog = _dialog_stub()
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": {"engine": "vosk"}}
+    dialog.engine_combo.get_active_text.return_value = "whisper.cpp"
+
+    SettingsDialog._resync_model_ui_from_config(dialog)
+
+    dialog.engine_combo.set_active_id.assert_called_once_with("Vosk")
+    dialog._populate_model_options.assert_called_once()
+    assert dialog._applying_settings is False
+
+
+def test_resync_leaves_a_matching_engine_picker_alone():
+    """No combo churn when the displayed engine already matches the config."""
+    dialog = _dialog_stub()
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": {"engine": "vosk"}}
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+
+    SettingsDialog._resync_model_ui_from_config(dialog)
+
+    dialog.engine_combo.set_active_id.assert_not_called()
+
+
 def test_changing_the_engine_applies_it():
     """Selecting an engine must reach the config and the recognizer."""
     dialog = _dialog_stub()

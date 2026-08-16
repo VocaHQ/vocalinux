@@ -4905,13 +4905,29 @@ class SettingsDialog(Gtk.Dialog):
             self._applying_settings = False
 
     def _resync_model_ui_from_config(self):
-        """Put the model pickers back on the settings that are actually saved.
+        """Put the pickers back on the settings that are actually saved.
 
-        Called when applying failed: the config still names the previous model,
-        and leaving the pickers on the rejected one also blocks a retry, since
-        re-selecting the same entry emits no "changed" signal.
+        Called when applying failed: the config still names the previous
+        engine and model, and leaving the pickers on the rejected ones also
+        blocks a retry, since re-selecting the same entry emits no "changed"
+        signal.
         """
         try:
+            saved_engine = (
+                self.config_manager.get_settings().get("speech_recognition", {}).get("engine")
+            )
+            if saved_engine:
+                display = _engine_display_name(saved_engine)
+                if self.engine_combo.get_active_text() != display:
+                    # Hold the apply-suppression flag: restoring the combo fires
+                    # _on_engine_changed(), which must repaint the pickers but
+                    # not cascade into another apply or download prompt.
+                    was_applying = self._applying_settings
+                    self._applying_settings = True
+                    try:
+                        self.engine_combo.set_active_id(display)
+                    finally:
+                        self._applying_settings = was_applying
             self._populate_model_options()
             self._update_model_info()
         except Exception as e:  # pragma: no cover - UI resync must never mask the original error
