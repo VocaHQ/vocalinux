@@ -337,7 +337,7 @@ Contributions are licensed under the [GNU Affero General Public License v3.0](LI
 (AGPL-3.0), matching the other [VocaHQ](https://github.com/VocaHQ) distribution
 projects ([VocaMac](https://github.com/VocaHQ/vocamac),
 [VocaPhone](https://github.com/VocaHQ/vocaphone),
-[VocaServer](https://github.com/VocaHQ/vocaserver)). By opening a pull request, you
+[VocaGateway](https://github.com/VocaHQ/vocagateway)). By opening a pull request, you
 agree that your contribution may be distributed under that license.
 
 ---

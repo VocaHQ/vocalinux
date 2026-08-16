@@ -497,7 +497,7 @@ This project is licensed under the **GNU Affero General Public License v3.0**
 ([AGPL-3.0](LICENSE)), aligning with the other [VocaHQ](https://github.com/VocaHQ)
 distribution projects ([VocaMac](https://github.com/VocaHQ/vocamac),
 [VocaPhone](https://github.com/VocaHQ/vocaphone),
-[VocaServer](https://github.com/VocaHQ/vocaserver)).
+[VocaGateway](https://github.com/VocaHQ/vocagateway)).
 
 You may use, study, modify, and redistribute the software under AGPL-3.0. If you
 run a modified version as a network service, AGPL also requires that you make the

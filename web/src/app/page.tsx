@@ -16,17 +16,22 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { VocalinuxLogo } from "@/components/optimized-image";
 import { ThemeScreenshotImage } from "@/components/theme-screenshot";
+import { GITHUB_REPO_URL } from "@/lib/seo";
+
+const GITHUB_REPO_PATH = GITHUB_REPO_URL.replace("https://github.com/", "");
+const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO_PATH}`;
+const GITHUB_API_REPO_URL = `https://api.github.com/repos/${GITHUB_REPO_PATH}`;
 
 // Always uses main/install.sh. The installer dynamically resolves the latest release tag via GitHub API
 const installCommands = {
-  interactiveInstallCommand: `curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive`,
+  interactiveInstallCommand: `curl -fsSL ${GITHUB_RAW_BASE}/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive`,
   interactiveInstallDisplayCommand: `curl -fsSL \\
-  https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh \\
+  ${GITHUB_RAW_BASE}/main/install.sh \\
   -o /tmp/vl.sh && \\
 bash /tmp/vl.sh --interactive`,
-  uninstallCommand: `curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/uninstall.sh -o /tmp/vul.sh && bash /tmp/vul.sh`,
+  uninstallCommand: `curl -fsSL ${GITHUB_RAW_BASE}/main/uninstall.sh -o /tmp/vul.sh && bash /tmp/vul.sh`,
   uninstallDisplayCommand: `curl -fsSL \\
-  https://raw.githubusercontent.com/VocaHQ/vocalinux/main/uninstall.sh \\
+  ${GITHUB_RAW_BASE}/main/uninstall.sh \\
   -o /tmp/vul.sh && \\
 bash /tmp/vul.sh`,
 };
@@ -40,7 +45,7 @@ const homeJsonLd = [
     applicationCategory: "UtilitiesApplication",
     operatingSystem: "Linux",
     isAccessibleForFree: true,
-    license: "https://github.com/VocaHQ/vocalinux/blob/main/LICENSE",
+    license: `${GITHUB_REPO_URL}/blob/main/LICENSE`,
     offers: {
       "@type": "Offer",
       price: "0",
@@ -55,7 +60,7 @@ const homeJsonLd = [
       url: "https://github.com/jatinkrmalik",
     },
     url: "https://vocalinux.com/",
-    downloadUrl: "https://github.com/VocaHQ/vocalinux",
+    downloadUrl: GITHUB_REPO_URL,
     screenshot: "https://vocalinux.com/og-image.png",
     featureList: [
       "100% offline speech recognition",
@@ -320,7 +325,7 @@ export default function HomePage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   useEffect(() => {
-    fetch("https://api.github.com/repos/VocaHQ/vocalinux")
+    fetch(GITHUB_API_REPO_URL)
       .then((res) => res.json())
       .then((data) => {
         if (data.stargazers_count) setStars(data.stargazers_count);
@@ -380,7 +385,7 @@ export default function HomePage() {
               ),
             )}
             <a
-              href="https://github.com/VocaHQ/vocalinux"
+              href={GITHUB_REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
@@ -433,7 +438,7 @@ export default function HomePage() {
                 ),
               )}
               <a
-                href="https://github.com/VocaHQ/vocalinux"
+                href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 rounded-md px-2 py-2.5 text-sm font-medium"
@@ -480,7 +485,7 @@ export default function HomePage() {
                 Install Vocalinux
               </a>
               <a
-                href="https://github.com/VocaHQ/vocalinux"
+                href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="btn-secondary w-full sm:w-auto"
@@ -572,7 +577,7 @@ export default function HomePage() {
               <code className="font-mono text-emerald-400">vocalinux</code>
             </span>
             <a
-              href="https://github.com/VocaHQ/vocalinux/releases"
+              href={`${GITHUB_REPO_URL}/releases`}
               className="text-zinc-100 underline-offset-4 hover:underline"
             >
               AppImage downloads
@@ -1072,7 +1077,7 @@ export default function HomePage() {
                 status: "You are here",
                 body: "System tray app with whisper.cpp, Vulkan, and full offline support on Linux.",
                 site: "#install",
-                gh: "https://github.com/VocaHQ/vocalinux",
+                gh: GITHUB_REPO_URL,
                 primary: true,
               },
               {
@@ -1139,7 +1144,7 @@ export default function HomePage() {
               Install Vocalinux
             </a>
             <a
-              href="https://github.com/VocaHQ/vocalinux"
+              href={GITHUB_REPO_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="btn-secondary"
@@ -1165,7 +1170,7 @@ export default function HomePage() {
                 Free open-source voice dictation for Linux. Offline by default.
               </p>
               <a
-                href="https://github.com/VocaHQ/vocalinux"
+                href={GITHUB_REPO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-zinc-400 transition-colors hover:text-white"
