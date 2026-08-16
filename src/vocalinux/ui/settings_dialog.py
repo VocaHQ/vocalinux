@@ -143,6 +143,9 @@ ENGINE_MODELS = {
     "remote_api": [],  # Remote API does not need local models
 }
 
+# Tallest the "Unused downloads" list may grow before it starts scrolling
+_UNUSED_DOWNLOADS_MAX_HEIGHT = 220
+
 # Engine display name mapping
 ENGINE_DISPLAY_NAMES = {
     "vosk": "Vosk",
@@ -2417,7 +2420,10 @@ class SettingsDialog(Gtk.Dialog):
         self.unused_models_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.unused_models_scroll.set_shadow_type(Gtk.ShadowType.NONE)
         self.unused_models_scroll.set_propagate_natural_height(True)
-        self.unused_models_scroll.set_max_content_height(220)
+        self.unused_models_scroll.set_max_content_height(_UNUSED_DOWNLOADS_MAX_HEIGHT)
+        # Keep the scrollbar in the layout: an overlay one stays invisible until
+        # hovered, so a list clipped by the cap looks like it has no more rows.
+        self.unused_models_scroll.set_overlay_scrolling(False)
 
         # ListBox is GtkScrollable, so wrapping it in a Box forces a Viewport
         # and lets the expander child report a real height.
@@ -4386,7 +4392,6 @@ class SettingsDialog(Gtk.Dialog):
         count = len(unused)
         leftover = "leftover model" if count == 1 else "leftover models"
         self.unused_expander.set_label(f"Unused downloads ({count} {leftover})")
-        self.unused_models_scroll.set_min_content_height(min(220, 56 * count))
 
         was_expanded = self.unused_expander.get_expanded()
         for model_id, title, size_label in unused:
@@ -4409,6 +4414,20 @@ class SettingsDialog(Gtk.Dialog):
 
         self.unused_models_group.show_all()
         self.unused_expander.set_expanded(was_expanded)
+        self._fit_unused_downloads_height()
+
+    def _fit_unused_downloads_height(self):
+        """Size the list from the rows it actually holds.
+
+        A per-row estimate cannot know how tall a row renders: with margins and
+        a Delete button the rows are taller than the estimate, so the last one
+        was cut off below the edge of the viewport while the header still
+        counted it (#683).
+        """
+        _, natural_height = self.unused_models_group.listbox.get_preferred_height()
+        self.unused_models_scroll.set_min_content_height(
+            min(_UNUSED_DOWNLOADS_MAX_HEIGHT, natural_height)
+        )
 
     def _confirm_model_delete(self, text: str, secondary: str) -> bool:
         """Ask before deleting model files from disk."""
