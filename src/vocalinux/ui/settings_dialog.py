@@ -22,7 +22,7 @@ import os
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 import gi
 
@@ -1009,6 +1009,49 @@ def _get_recommended_vosk_model() -> tuple:
             return "small", f"Limited RAM ({ram_gb}GB) - optimized for speed"
     except Exception:
         return "small", "Default recommendation"
+
+
+class ModelRecommendation(NamedTuple):
+    """The model this system should use for an engine, ready to present."""
+
+    model_id: str
+    reason: str
+    display_name: str
+    size_label: str
+
+
+def recommended_model_for_engine(
+    engine: str, language: str = "auto"
+) -> Optional[ModelRecommendation]:
+    """Return the model to download for an engine, or None if it needs none.
+
+    This is the recommendation the model picker marks with a star, exposed for
+    callers outside the dialog (the tray offers it when dictation is attempted
+    without a model).
+    """
+    if engine == "whisper_cpp":
+        recommended_model, reason = get_recommended_whispercpp_model()
+        model_id, reason = _recommended_whispercpp_variant_for_language(
+            recommended_model, reason, language
+        )
+        size_mb = WHISPERCPP_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    elif engine == "whisper":
+        model_id, reason = _get_recommended_whisper_model()
+        size_mb = WHISPER_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    elif engine == "vosk":
+        model_id, reason = _get_recommended_vosk_model()
+        size_mb = VOSK_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    else:
+        # Remote API transcribes server-side; there is nothing to download.
+        return None
+
+    size_mb = size_mb if isinstance(size_mb, int) else 0
+    return ModelRecommendation(
+        model_id=model_id,
+        reason=reason,
+        display_name=_model_display_name(model_id),
+        size_label=_format_size(size_mb),
+    )
 
 
 # GDK key-symbol names that are themselves modifiers (skipped while recording).
