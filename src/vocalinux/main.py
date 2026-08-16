@@ -397,8 +397,11 @@ def main():
         model_size = args.model
         logger.info(f"Using model={model_size} (from command line)")
     else:
-        model_size = saved_settings.get("model_size", args.model)
-        logger.info(f"Using model={model_size} (from saved config)")
+        # Resolve per engine: the generic "model_size" key always holds the
+        # model of whichever engine was saved last, so reading it directly
+        # loads the wrong model whenever the two disagree.
+        model_size = config_manager.get_model_size_for_engine(engine)
+        logger.info(f"Using model={model_size} (saved for engine {engine})")
 
     vad_sensitivity = saved_settings.get("vad_sensitivity", 3)
     silence_timeout = saved_settings.get("silence_timeout", 2.0)

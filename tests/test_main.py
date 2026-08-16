@@ -185,6 +185,7 @@ class TestMainModule(unittest.TestCase):
             "speech_recognition": {},
             "general": {"first_run": False},
         }
+        mock_config_instance.get_model_size_for_engine.return_value = "medium"
         mock_config_manager.return_value = mock_config_instance
 
         # Mock objects
@@ -916,6 +917,7 @@ class TestMainConfigPrecedence(unittest.TestCase):
             },
             "general": {"first_run": False},
         }
+        mock_config_instance.get_model_size_for_engine.return_value = "medium"
         mock_config_manager.return_value = mock_config_instance
 
         mock_speech_instance = MagicMock()
@@ -940,6 +942,63 @@ class TestMainConfigPrecedence(unittest.TestCase):
                 self.assertEqual(call_kwargs["model_size"], "medium")
                 self.assertEqual(call_kwargs["language"], "de")
                 self.assertEqual(call_kwargs["audio_device_index"], 2)
+
+    @patch("vocalinux.main.check_dependencies")
+    @patch("vocalinux.ui.action_handler.ActionHandler")
+    @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
+    @patch("vocalinux.text_injection.text_injector.TextInjector")
+    @patch("vocalinux.ui.tray_indicator.TrayIndicator")
+    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.logging_manager.initialize_logging")
+    def test_model_resolved_per_engine_not_from_generic_key(
+        self,
+        mock_init_logging,
+        mock_config_manager,
+        mock_tray,
+        mock_text,
+        mock_speech,
+        mock_action_handler,
+        mock_check_deps,
+    ):
+        """Startup must use the engine's own model, not the stale generic key.
+
+        The generic "model_size" key holds whichever engine was saved last, so
+        a config carrying another engine's model must not decide what the
+        configured engine loads.
+        """
+        mock_check_deps.return_value = True
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_settings.return_value = {
+            "speech_recognition": {
+                "engine": "whisper_cpp",
+                # Left behind by the last VOSK save.
+                "model_size": "medium",
+                "vosk_model_size": "medium",
+                "whisper_cpp_model_size": "small",
+                "language": "en-us",
+            },
+            "general": {"first_run": False},
+        }
+        mock_config_instance.get_model_size_for_engine.side_effect = lambda engine: {
+            "vosk": "medium",
+            "whisper_cpp": "small",
+        }[engine]
+        mock_config_manager.return_value = mock_config_instance
+
+        mock_speech.return_value = MagicMock()
+        mock_text.return_value = MagicMock()
+        mock_tray.return_value = MagicMock()
+        mock_action_handler.return_value = MagicMock()
+
+        with patch("sys.argv", ["vocalinux"]):
+            with patch("vocalinux.main.logger"):
+                main()
+
+                mock_config_instance.get_model_size_for_engine.assert_called_with("whisper_cpp")
+                call_kwargs = mock_speech.call_args[1]
+                self.assertEqual(call_kwargs["engine"], "whisper_cpp")
+                self.assertEqual(call_kwargs["model_size"], "small")
 
 
 class TestTextCallbackSpacing(unittest.TestCase):
