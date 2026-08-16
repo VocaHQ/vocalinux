@@ -453,9 +453,12 @@ class TestInitWhisper(unittest.TestCase):
         mock_torch.cuda.is_available.return_value = False
         with patch.dict("sys.modules", {"whisper": mock_whisper, "torch": mock_torch}):
             with patch("os.path.exists", return_value=True):
-                mgr._init_whisper()
-                self.assertTrue(mgr._model_initialized)
-                self.assertEqual(mgr.model, mock_model)
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.ensure_local_model_file"
+                ):
+                    mgr._init_whisper()
+                    self.assertTrue(mgr._model_initialized)
+                    self.assertEqual(mgr.model, mock_model)
 
 
 class TestInitWhispercpp(unittest.TestCase):
@@ -480,10 +483,13 @@ class TestInitWhispercpp(unittest.TestCase):
                     "pywhispercpp.model": mock_pywhispercpp,
                 },
             ):
-                try:
-                    mgr._init_whispercpp()
-                except Exception:
-                    pass
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.ensure_local_model_file"
+                ):
+                    try:
+                        mgr._init_whispercpp()
+                    except Exception:
+                        pass
 
     def test_cpu_fallback_filters_unsupported_whispercpp_params(self):
         mgr = _make_manager(engine="whisper_cpp")
@@ -529,11 +535,21 @@ class TestDownloadWhisperModel(unittest.TestCase):
         mock_response.headers.get.return_value = "1000"  # content-length
         mock_response.iter_content.return_value = [b"test" * 250]
         mock_requests.get.return_value = mock_response
+        mock_requests.exceptions.RequestException = Exception
         with patch.dict("sys.modules", {"requests": mock_requests}):
             with patch("builtins.open", create=True) as mock_open:
                 mock_file = MagicMock()
                 mock_open.return_value.__enter__.return_value = mock_file
-                with patch("os.rename"):
+                with (
+                    patch("os.rename"),
+                    patch(
+                        "vocalinux.speech_recognition.recognition_manager.verify_downloaded_model"
+                    ),
+                    patch(
+                        "vocalinux.speech_recognition.recognition_manager.get_pinned_digest",
+                        return_value={"sha256": "abc", "size": 1},
+                    ),
+                ):
                     mgr._download_whisper_model(cache_dir="/tmp/test")
                     # Verify file write was called
                     mock_file.write.assert_called()

@@ -21,8 +21,18 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils.model_integrity import (
+    ModelIntegrityError,
+    ensure_local_model_dir,
+    ensure_local_model_file,
+    ensure_trusted_model_url,
+    get_pinned_digest,
+    safe_extract_zip,
+    verify_downloaded_model,
+)
 from ..utils.paths import models_dir
-from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
+from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO, vosk_model_url
+from ..utils.whisper_model_info import WHISPER_MODEL_URLS, whisper_model_filename
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
@@ -1064,6 +1074,7 @@ class SpeechRecognitionManager:
                     # Update path after download
                     self.vosk_model_path = self._get_vosk_model_path()
             else:
+                ensure_local_model_dir(self.vosk_model_path)
                 # Check if this is a pre-installed model
                 if any(self.vosk_model_path.startswith(sys_dir) for sys_dir in SYSTEM_MODELS_DIRS):
                     logger.info(f"Using pre-installed VOSK model from {self.vosk_model_path}")
@@ -1107,14 +1118,26 @@ class SpeechRecognitionManager:
                 )
                 self.model_size = "base"
 
-            # Check if model is downloaded
+            # Check if model is downloaded. OpenAI's "large" checkpoint is
+            # large-v3.pt; rename a leftover large.pt so load_model finds it.
             whisper_cache_dir = os.path.join(MODELS_DIR, "whisper")
             os.makedirs(whisper_cache_dir, exist_ok=True)
-            model_file = os.path.join(whisper_cache_dir, f"{self.model_size}.pt")
+            filename = whisper_model_filename(self.model_size)
+            alias = f"{self.model_size}.pt"
             default_cache = os.path.expanduser("~/.cache/whisper")
-            default_model_file = os.path.join(default_cache, f"{self.model_size}.pt")
+            if filename != alias:
+                for cache in (whisper_cache_dir, default_cache):
+                    src = os.path.join(cache, alias)
+                    dst = os.path.join(cache, filename)
+                    if os.path.isfile(src) and not os.path.islink(src) and not os.path.exists(dst):
+                        os.rename(src, dst)
+            model_file = os.path.join(whisper_cache_dir, filename)
+            default_model_file = os.path.join(default_cache, filename)
 
             model_exists = os.path.exists(model_file) or os.path.exists(default_model_file)
+            existing = model_file if os.path.exists(model_file) else default_model_file
+            if model_exists:
+                ensure_local_model_file(existing)
 
             if not model_exists and self._defer_download:
                 logger.info(
@@ -1239,17 +1262,18 @@ class SpeechRecognitionManager:
             # Check if model is downloaded
             model_path = get_model_path(self.model_size)
 
-            if not os.path.exists(model_path):
-                if self._defer_download:
-                    logger.info(
-                        f"whisper.cpp model '{self.model_size}' not found at {model_path}. "
-                        "Will download when needed."
-                    )
-                    self._model_initialized = False
-                    return  # Don't block startup
-                else:
-                    logger.info(f"Downloading whisper.cpp '{self.model_size}' model...")
-                    self._download_whispercpp_model()
+            if os.path.exists(model_path):
+                ensure_local_model_file(model_path)
+            elif self._defer_download:
+                logger.info(
+                    f"whisper.cpp model '{self.model_size}' not found at {model_path}. "
+                    "Will download when needed."
+                )
+                self._model_initialized = False
+                return  # Don't block startup
+            else:
+                logger.info(f"Downloading whisper.cpp '{self.model_size}' model...")
+                self._download_whispercpp_model()
 
             self._load_whispercpp_model(model_path)
 
@@ -1885,12 +1909,102 @@ class SpeechRecognitionManager:
     # without a timeout when the CDN is degraded (e.g. 504 / empty body).
     _MODEL_DOWNLOAD_TIMEOUT = (15, 120)
 
+    def _report_download_status(self, status: str, fraction: float = 0.0) -> None:
+        """Push a status line to the download dialog, if one is listening."""
+        if self._download_progress_callback:
+            self._download_progress_callback(fraction, 0.0, status)
+
+    def _raise_if_download_cancelled(self) -> None:
+        """Abort the current download if the user has already hit Cancel."""
+        if self._download_cancelled:
+            raise RuntimeError("Download cancelled")
+
+    def _download_was_cancelled(self) -> bool:
+        return self._download_cancelled
+
+    def _interruptible_pause(self, seconds: float) -> None:
+        """Sleep in short slices so Cancel can abort between UI stages.
+
+        Raises RuntimeError("Download cancelled") if the user hits Cancel while
+        we are waiting for GTK to paint the previous status line.
+        """
+        deadline = time.time() + seconds
+        while True:
+            self._raise_if_download_cancelled()
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.05, remaining))
+
+    def _announce_secured_download(self, model_type: str, filename: str) -> None:
+        """Tell the UI we found (or did not find) a pinned digest before fetching.
+
+        A short pause lets GTK paint each stage; without it the lines flash past
+        on a warm cache / fast network and the lock badge never gets noticed.
+        Pauses are skipped when nobody is listening (tests / headless downloads).
+        """
+        watching = self._download_progress_callback is not None
+        self._report_download_status("Looking up pinned SHA256 digest…", 0.0)
+        if watching:
+            self._interruptible_pause(0.45)
+        if get_pinned_digest(model_type, filename):
+            self._report_download_status("Pinned digest found — starting secure download", 0.0)
+        else:
+            self._report_download_status("Connecting securely…", 0.0)
+        if watching:
+            self._interruptible_pause(0.35)
+
+    def _verify_download_with_status(self, filepath: str, model_type: str, filename: str) -> None:
+        """Hash the file and surface the verify / match stages in the dialog.
+
+        Only reports "Hash matches" when a pin existed and the digest checked
+        out. Unpinned models (non-strict mode) get an honest "skipping" status
+        so the UI never claims a verification that did not happen.
+        """
+        self._raise_if_download_cancelled()
+        watching = self._download_progress_callback is not None
+        pinned = get_pinned_digest(model_type, filename)
+        abort = self._download_was_cancelled
+
+        if pinned is None:
+            # verify_downloaded_model will warn (or raise in strict mode).
+            verify_downloaded_model(filepath, model_type, filename, should_abort=abort)
+            self._raise_if_download_cancelled()
+            self._report_download_status("No pinned digest — skipping hash check", 1.0)
+            if watching:
+                self._interruptible_pause(0.35)
+            return
+
+        self._report_download_status("Verifying SHA256 checksum…", 1.0)
+        # Give the dialog a beat to switch into the verifying animation before
+        # we burn CPU hashing; large models take long enough on their own.
+        if watching:
+            self._interruptible_pause(0.3)
+        verify_downloaded_model(filepath, model_type, filename, should_abort=abort)
+        self._raise_if_download_cancelled()
+        self._report_download_status("Hash matches — integrity verified", 1.0)
+        if watching:
+            self._interruptible_pause(0.5)
+
+    @staticmethod
+    def _reject_insecure_redirect(response) -> None:
+        """Fail the download if a redirect downgraded the transport to plain HTTP.
+
+        ``requests`` follows an https -> http redirect without complaint, which
+        would expose the model bytes to any on-path attacker.
+        """
+        final_url = str(getattr(response, "url", "") or "")
+        if final_url.lower().startswith("http://"):
+            raise ModelIntegrityError(f"Model download was redirected to insecure URL {final_url}")
+
     def _stream_model_download(self, url: str, dest_path: str) -> None:
         """Stream a model file from ``url`` to ``dest_path`` with progress.
 
         Raises RuntimeError on cancel, HTTP errors, timeouts, or empty body.
         """
         import requests
+
+        ensure_trusted_model_url(url)
 
         logger.info(f"Downloading from {url}")
         response = requests.get(
@@ -1900,6 +2014,7 @@ class SpeechRecognitionManager:
             headers={"User-Agent": f"vocalinux/{__version__}"},
         )
         response.raise_for_status()
+        self._reject_insecure_redirect(response)
 
         content_type = (response.headers.get("content-type") or "").lower()
         if "text/html" in content_type:
@@ -1989,13 +2104,27 @@ class SpeechRecognitionManager:
         logger.info(f"Downloading whisper.cpp {self.model_size} model to {model_path}")
 
         try:
+            self._announce_secured_download("whispercpp", os.path.basename(model_path))
             self._stream_model_download(url, temp_file)
+            self._verify_download_with_status(temp_file, "whispercpp", os.path.basename(model_path))
+            self._raise_if_download_cancelled()
             os.rename(temp_file, model_path)
             logger.info("whisper.cpp model downloaded successfully")
 
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Complete!")
 
+        except ModelIntegrityError:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
+        except RuntimeError:
+            # Cancel and other runtime failures must be matched before
+            # RequestException: tests mock requests, and a MagicMock exception
+            # type raises TypeError while Python is selecting a handler.
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
         # Use RequestException when available; tests mock requests and set
         # RequestException=Exception. Do not catch Timeout separately — under a
         # MagicMock that is not a real exception type (TypeError in CI).
@@ -2010,7 +2139,7 @@ class SpeechRecognitionManager:
                     "Check your network and try again."
                 ) from e
             raise RuntimeError(f"Failed to download whisper.cpp model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during whisper.cpp model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
@@ -2029,14 +2158,14 @@ class SpeechRecognitionManager:
 
         # First, check user's local models directory
         user_model_path = os.path.join(MODELS_DIR, model_name)
-        if os.path.exists(user_model_path):
+        if os.path.exists(user_model_path) and not os.path.islink(user_model_path):
             logger.debug(f"Found user model at: {user_model_path}")
             return user_model_path
 
         # Then check system-wide installation directories
         for system_dir in SYSTEM_MODELS_DIRS:
             system_model_path = os.path.join(system_dir, model_name)
-            if os.path.exists(system_model_path):
+            if os.path.exists(system_model_path) and not os.path.islink(system_model_path):
                 logger.info(f"Found pre-installed model at: {system_model_path}")
                 return system_model_path
 
@@ -2061,6 +2190,17 @@ class SpeechRecognitionManager:
         self._download_cancelled = True
         logger.info("Download cancellation requested")
 
+    @staticmethod
+    def _discard_failed_vosk_download(zip_path: str, model_path: str) -> None:
+        """Remove the archive and any half-written model directory after a failure."""
+        import shutil
+
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        if os.path.isdir(model_path):
+            logger.info(f"Removing partially extracted VOSK model at {model_path}")
+            shutil.rmtree(model_path, ignore_errors=True)
+
     def _download_vosk_model(self):
         """Download the VOSK model if it doesn't exist."""
         import zipfile
@@ -2070,15 +2210,14 @@ class SpeechRecognitionManager:
         self._download_cancelled = False
 
         model_urls = {
-            "small": f"https://alphacephei.com/vosk/models/{self.vosk_model_map['small']}.zip",
-            "medium": f"https://alphacephei.com/vosk/models/{self.vosk_model_map['medium']}.zip",
-            "large": f"https://alphacephei.com/vosk/models/{self.vosk_model_map['large']}.zip",
+            size: vosk_model_url(self.vosk_model_map[size]) for size in ("small", "medium", "large")
         }
 
         url = model_urls.get(self.model_size)
         if not url:
             raise ValueError(f"Unknown model size: {self.model_size}")
 
+        ensure_trusted_model_url(url)
         model_name = os.path.basename(url).replace(".zip", "")
 
         # Always download to user's local directory
@@ -2093,8 +2232,10 @@ class SpeechRecognitionManager:
         # Download the model
         logger.info(f"Downloading VOSK model from {url}")
         try:
+            self._announce_secured_download("vosk", os.path.basename(zip_path))
             response = requests.get(url, stream=True, timeout=self._MODEL_DOWNLOAD_TIMEOUT)
             response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
+            self._reject_insecure_redirect(response)
 
             total_size = int(response.headers.get("content-length", 0))
             downloaded_size = 0
@@ -2151,14 +2292,21 @@ class SpeechRecognitionManager:
                         # Also log progress periodically
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
+            self._verify_download_with_status(zip_path, "vosk", os.path.basename(zip_path))
+            self._raise_if_download_cancelled()
+
             # Update status for extraction phase
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Extracting model...")
 
             # Extract the model
             logger.info(f"Extracting VOSK model to {model_path}")
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(MODELS_DIR)
+            safe_extract_zip(
+                zip_path,
+                MODELS_DIR,
+                expected_root=os.path.basename(model_path.rstrip(os.sep)),
+                should_abort=self._download_was_cancelled,
+            )
 
             # Remove the zip file
             os.remove(zip_path)
@@ -2168,6 +2316,12 @@ class SpeechRecognitionManager:
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Complete!")
 
+        except ModelIntegrityError:
+            self._discard_failed_vosk_download(zip_path, model_path)
+            raise
+        except RuntimeError:
+            self._discard_failed_vosk_download(zip_path, model_path)
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download VOSK model from {url}: {e}")
             # Clean up potentially incomplete download
@@ -2180,13 +2334,9 @@ class SpeechRecognitionManager:
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             raise RuntimeError("Downloaded VOSK model file is corrupted.")
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during VOSK model download/extraction: {e}")
-            # Clean up potentially corrupted extraction
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
-            # Consider removing partially extracted model dir if needed
-            # if os.path.exists(model_path): shutil.rmtree(model_path)
+            self._discard_failed_vosk_download(zip_path, model_path)
             raise
 
     def _download_whisper_model(self, cache_dir: str):
@@ -2195,30 +2345,13 @@ class SpeechRecognitionManager:
 
         self._download_cancelled = False
 
-        # Whisper model URLs (from openai-whisper package)
-        model_urls = {
-            "tiny": "https://openaipublic.azureedge.net/main/whisper/models/"
-            "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/"
-            "tiny.pt",
-            "base": "https://openaipublic.azureedge.net/main/whisper/models/"
-            "ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/"
-            "base.pt",
-            "small": "https://openaipublic.azureedge.net/main/whisper/models/"
-            "9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/"
-            "small.pt",
-            "medium": "https://openaipublic.azureedge.net/main/whisper/models/"
-            "345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/"
-            "medium.pt",
-            "large": "https://openaipublic.azureedge.net/main/whisper/models/"
-            "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/"
-            "large-v3.pt",
-        }
-
-        url = model_urls.get(self.model_size)
+        url = WHISPER_MODEL_URLS.get(self.model_size)
         if not url:
             raise ValueError(f"Unknown Whisper model size: {self.model_size}")
 
-        model_file = os.path.join(cache_dir, f"{self.model_size}.pt")
+        ensure_trusted_model_url(url)
+        filename = whisper_model_filename(self.model_size)
+        model_file = os.path.join(cache_dir, filename)
         temp_file = model_file + ".tmp"
 
         os.makedirs(cache_dir, exist_ok=True)
@@ -2227,8 +2360,10 @@ class SpeechRecognitionManager:
         logger.info(f"Downloading from {url}")
 
         try:
-            response = requests.get(url, stream=True)
+            self._announce_secured_download("whisper", filename)
+            response = requests.get(url, stream=True, timeout=self._MODEL_DOWNLOAD_TIMEOUT)
             response.raise_for_status()
+            self._reject_insecure_redirect(response)
 
             total_size = int(response.headers.get("content-length", 0))
             downloaded_size = 0
@@ -2284,6 +2419,9 @@ class SpeechRecognitionManager:
 
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
+            self._verify_download_with_status(temp_file, "whisper", filename)
+            self._raise_if_download_cancelled()
+
             # Rename temp file to final
             os.rename(temp_file, model_file)
             logger.info("Whisper model downloaded successfully")
@@ -2291,12 +2429,20 @@ class SpeechRecognitionManager:
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Complete!")
 
+        except ModelIntegrityError:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
+        except RuntimeError:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download Whisper model from {url}: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise RuntimeError(f"Failed to download Whisper model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"An error occurred during Whisper model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)

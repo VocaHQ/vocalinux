@@ -50,6 +50,7 @@ from ..utils.vosk_model_info import (  # noqa: E402
     list_downloaded_vosk_models,
     vosk_model_dirname,
 )
+from ..utils.whisper_model_info import whisper_model_filenames  # noqa: E402
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
@@ -630,14 +631,24 @@ spinbutton {
 /* Model info card */
 .model-info-card {
     background-color: alpha(@theme_base_color, 0.8);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin: 8px 0;
+    border-radius: 10px;
+    padding: 12px 14px;
+    margin: 4px 0 8px 0;
 }
 
 .model-info-title {
-    font-weight: bold;
-    font-size: 1.0em;
+    font-weight: 600;
+    font-size: 1.05em;
+}
+
+.model-info-subtitle {
+    font-size: 0.9em;
+    color: @theme_unfocused_fg_color;
+}
+
+.model-info-meta {
+    font-size: 0.9em;
+    margin-top: 2px;
 }
 
 /* Unused downloads: one collapsed row until expanded */
@@ -647,11 +658,6 @@ spinbutton {
 
 .unused-downloads-expander list {
     background-color: transparent;
-}
-
-.model-info-subtitle {
-    font-size: 0.9em;
-    color: @theme_unfocused_fg_color;
 }
 
 /* Tip styling */
@@ -664,6 +670,29 @@ spinbutton {
 .tip-highlight {
     font-weight: bold;
     color: @theme_selected_bg_color;
+}
+
+/* Secure download badge */
+.secure-badge {
+    background-color: alpha(#26a269, 0.10);
+    border: 1px solid alpha(#26a269, 0.35);
+    border-radius: 8px;
+    padding: 8px 12px;
+}
+
+.secure-badge-label {
+    color: #26a269;
+    font-weight: 500;
+    font-size: 0.9em;
+}
+
+.secure-badge-detail {
+    font-size: 0.8em;
+    color: @theme_unfocused_fg_color;
+}
+
+.secure-stage {
+    font-size: 0.95em;
 }
 """
 
@@ -774,25 +803,29 @@ def _whisper_model_files(model_name: str) -> list[str]:
     if model_name not in WHISPER_MODEL_INFO:
         return []
 
-    filename = f"{model_name}.pt"
-    candidates = [
-        os.path.join(_get_whisper_cache_dir(), filename),
-        os.path.join(os.path.expanduser("~/.cache/whisper"), filename),
-    ]
+    candidates = []
+    for filename in whisper_model_filenames(model_name):
+        candidates.extend(
+            [
+                os.path.join(_get_whisper_cache_dir(), filename),
+                os.path.join(os.path.expanduser("~/.cache/whisper"), filename),
+            ]
+        )
     allowed_parents = {
         os.path.realpath(_get_whisper_cache_dir()),
         os.path.realpath(os.path.expanduser("~/.cache/whisper")),
     }
+    allowed_names = set(whisper_model_filenames(model_name))
 
     found: list[str] = []
     seen: set[str] = set()
     for candidate in candidates:
-        if not os.path.isfile(candidate):
+        if os.path.islink(candidate) or not os.path.isfile(candidate):
             continue
         real = os.path.realpath(candidate)
         if real in seen or os.path.dirname(real) not in allowed_parents:
             continue
-        if os.path.basename(real) != filename:
+        if os.path.basename(real) not in allowed_names:
             continue
         seen.add(real)
         found.append(real)
@@ -801,13 +834,7 @@ def _whisper_model_files(model_name: str) -> list[str]:
 
 def _is_whisper_model_downloaded(model_name: str) -> bool:
     """Check if a Whisper model is downloaded."""
-    cache_dir = _get_whisper_cache_dir()
-    model_file = os.path.join(cache_dir, f"{model_name}.pt")
-    if os.path.exists(model_file):
-        return True
-    # Also check default whisper cache
-    default_cache = os.path.expanduser("~/.cache/whisper")
-    return os.path.exists(os.path.join(default_cache, f"{model_name}.pt"))
+    return bool(_whisper_model_files(model_name))
 
 
 def _list_downloaded_whisper_models() -> list[str]:
@@ -887,13 +914,13 @@ def _is_vosk_model_downloaded(size: str, language: str) -> bool:
 
     # Check user's local models directory
     user_model_path = os.path.join(MODELS_DIR, model_name)
-    if os.path.exists(user_model_path):
+    if os.path.exists(user_model_path) and not os.path.islink(user_model_path):
         return True
 
     # Check system-wide installation directories
     for system_dir in SYSTEM_MODELS_DIRS:
         system_model_path = os.path.join(system_dir, model_name)
-        if os.path.exists(system_model_path):
+        if os.path.exists(system_model_path) and not os.path.islink(system_model_path):
             return True
 
     return False
@@ -1173,7 +1200,16 @@ class SettingsPage:
 
 
 class ModelDownloadDialog(Gtk.Dialog):
-    """Dialog showing model download progress with cancel support."""
+    """Dialog showing a secured model download with integrity verification stages.
+
+    Stages surface the supply-chain checks the downloader already runs so the
+    user can see the pin lookup, transfer, and SHA256 match happen in order.
+    """
+
+    _STAGE_VERIFYING = "verifying"
+    _STAGE_MATCHED = "matched"
+    _STAGE_DOWNLOADING = "downloading"
+    _STAGE_CONNECTING = "connecting"
 
     def __init__(
         self,
@@ -1183,114 +1219,282 @@ class ModelDownloadDialog(Gtk.Dialog):
         engine: str = "whisper",
         language: str = "en-us",
     ):
+        display_name = _model_display_name(model_name)
         super().__init__(
-            title=f"Downloading {_model_display_name(model_name)} Model",
+            title=f"Secured Download — {display_name}",
             transient_for=parent,
             flags=Gtk.DialogFlags.MODAL,
         )
-        self.set_default_size(450, 200)
+        self.set_default_size(480, 280)
         self.set_deletable(False)  # Prevent closing during download
 
         self.cancelled = False
+        self.succeeded = False
         self.engine = engine
         self.model_name = model_name
+        self._stage = self._STAGE_CONNECTING
+        self._pulse_timeout = None
+        self._integrity_verified = False
 
         engine_display = engine.upper() if engine == "vosk" else engine.capitalize()
 
         box = self.get_content_area()
-        box.set_spacing(16)
+        box.set_spacing(14)
         box.set_margin_start(24)
         box.set_margin_end(24)
-        box.set_margin_top(24)
-        box.set_margin_bottom(20)
+        box.set_margin_top(20)
+        box.set_margin_bottom(16)
 
-        # Info label
+        # Lock badge — the "this download is integrity-checked" signal
+        badge = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        badge.get_style_context().add_class("secure-badge")
+        lock_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.BUTTON)
+        badge.pack_start(lock_icon, False, False, 0)
+        badge_text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        badge_title = Gtk.Label(label="Integrity-checked download", xalign=0)
+        badge_title.get_style_context().add_class("secure-badge-label")
+        badge_detail = Gtk.Label(
+            label="Checking pinned SHA256…",
+            xalign=0,
+            wrap=True,
+        )
+        badge_detail.get_style_context().add_class("secure-badge-detail")
+        self.badge_detail = badge_detail
+        badge_text.pack_start(badge_title, False, False, 0)
+        badge_text.pack_start(badge_detail, False, False, 0)
+        badge.pack_start(badge_text, True, True, 0)
+        box.pack_start(badge, False, False, 0)
+
         self.info_label = Gtk.Label(
-            label=(
-                f"Downloading {engine_display} {_model_display_name(model_name)} model "
-                f"(~{_format_size(model_size_mb)})..."
-            ),
+            label=(f"{engine_display} {display_name} model " f"(~{_format_size(model_size_mb)})"),
             wrap=True,
             justify=Gtk.Justification.CENTER,
         )
         box.pack_start(self.info_label, False, False, 0)
 
-        # Progress bar
+        # Stage line — "Looking up pin…", "Hash matches…", etc.
+        stage_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        stage_row.set_halign(Gtk.Align.CENTER)
+        self.stage_icon = Gtk.Image.new_from_icon_name("channel-secure-symbolic", Gtk.IconSize.MENU)
+        self.stage_label = Gtk.Label(label="Preparing secured download…")
+        self.stage_label.get_style_context().add_class("secure-stage")
+        stage_row.pack_start(self.stage_icon, False, False, 0)
+        stage_row.pack_start(self.stage_label, False, False, 0)
+        box.pack_start(stage_row, False, False, 0)
+
         self.progress_bar = Gtk.ProgressBar()
         self.progress_bar.set_show_text(True)
-        self.progress_bar.set_text("Connecting...")
-        box.pack_start(self.progress_bar, False, False, 8)
+        self.progress_bar.set_text("Connecting…")
+        box.pack_start(self.progress_bar, False, False, 4)
 
-        # Status label (shows speed and ETA)
         self.status_label = Gtk.Label(label="")
-        self.status_label.set_markup("<i>Please wait...</i>")
+        self.status_label.set_markup("<i>Looking up pinned SHA256 digest…</i>")
         self.status_label.get_style_context().add_class("status-info")
+        self.status_label.set_line_wrap(True)
+        self.status_label.set_justify(Gtk.Justification.CENTER)
         box.pack_start(self.status_label, False, False, 0)
 
-        # Cancel button
         self.cancel_button = Gtk.Button(label="Cancel")
         self.cancel_button.connect("clicked", self._on_cancel_clicked)
         self.cancel_button.set_halign(Gtk.Align.CENTER)
-        self.cancel_button.set_margin_top(12)
+        self.cancel_button.set_margin_top(8)
         box.pack_start(self.cancel_button, False, False, 0)
 
         self.show_all()
 
-        # For Whisper, we can't track progress, so pulse
-        if engine == "whisper":
-            self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
-        else:
-            self._pulse_timeout = None
+        # Pulse while we wait for the first real progress event
+        self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
 
     def _pulse_progress(self):
-        """Pulse the progress bar while downloading (for Whisper)."""
+        """Pulse the progress bar during connect / verify stages."""
         if self.cancelled:
             return False
-        self.progress_bar.pulse()
-        return True  # Continue pulsing
+        if self._stage in (self._STAGE_CONNECTING, self._STAGE_VERIFYING):
+            self.progress_bar.pulse()
+            return True
+        return False
+
+    def _ensure_pulsing(self):
+        if self._pulse_timeout is None:
+            self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
+
+    def _stop_pulsing(self):
+        if self._pulse_timeout:
+            GLib.source_remove(self._pulse_timeout)
+            self._pulse_timeout = None
+
+    def _set_stage(self, stage: str, stage_text: str, icon_name: str = "channel-secure-symbolic"):
+        self._stage = stage
+        self.stage_label.set_text(stage_text)
+        self.stage_icon.set_from_icon_name(icon_name, Gtk.IconSize.MENU)
+        if stage in (self._STAGE_CONNECTING, self._STAGE_VERIFYING):
+            self._ensure_pulsing()
+        else:
+            self._stop_pulsing()
 
     def _on_cancel_clicked(self, widget):
         """Handle cancel button click."""
         self.cancelled = True
         self.cancel_button.set_sensitive(False)
         self.cancel_button.set_label("Cancelling...")
-        self.status_label.set_markup("<i>Cancelling download...</i>")
+        self.status_label.set_markup("<i>Cancelling download…</i>")
 
     def update_progress(self, fraction: float, speed_mbps: float, status_text: str):
-        """Update the progress bar with actual download progress."""
+        """Update the progress bar and stage line from a downloader status."""
         if self.cancelled:
             return
 
-        # Stop pulsing if we were pulsing
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
+        lower = (status_text or "").lower()
 
-        self.progress_bar.set_fraction(fraction)
+        if "looking up" in lower:
+            self.badge_detail.set_text("Checking pinned SHA256…")
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Checking pinned SHA256…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Securing…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "pinned digest found" in lower:
+            self.badge_detail.set_text("SHA256 pin found in Vocalinux's model registry")
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Checking pinned SHA256…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Securing…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "connecting" in lower or "starting secure download" in lower:
+            self._set_stage(
+                self._STAGE_CONNECTING,
+                "Connecting securely…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_text("Connecting…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "verifying" in lower:
+            self._set_stage(
+                self._STAGE_VERIFYING,
+                "Verifying SHA256 checksum…",
+                "channel-secure-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Verifying…")
+            self.status_label.set_markup(
+                "<i>Comparing downloaded bytes against the pinned digest…</i>"
+            )
+            return
+
+        if "skipping hash check" in lower or "no pinned digest" in lower:
+            self._integrity_verified = False
+            self.badge_detail.set_text("No pin for this file — hash was not checked")
+            self._set_stage(
+                self._STAGE_DOWNLOADING,
+                "No pinned digest — hash check skipped",
+                "dialog-information-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Unpinned")
+            self.status_label.set_markup(
+                "<span foreground='#e5a50a'><i>Model has no pinned SHA256; integrity was not verified</i></span>"
+            )
+            return
+
+        if "hash matches" in lower or "integrity verified" in lower:
+            self._integrity_verified = True
+            self.badge_detail.set_text("SHA256 matches the pinned digest")
+            self._set_stage(
+                self._STAGE_MATCHED,
+                "Hash matches — integrity verified",
+                "security-high-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Verified")
+            self.status_label.set_markup(
+                "<span foreground='#26a269'><b>SHA256 matches the pinned digest</b></span>"
+            )
+            return
+
+        if "extracting" in lower:
+            self._set_stage(
+                self._STAGE_VERIFYING,
+                "Extracting verified archive…",
+                "emblem-ok-symbolic",
+            )
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Extracting…")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        if "complete" in lower:
+            self._stop_pulsing()
+            self.progress_bar.set_fraction(1.0)
+            self.progress_bar.set_text("Complete!")
+            self.status_label.set_markup(f"<i>{status_text}</i>")
+            return
+
+        # Normal byte transfer
+        self._set_stage(
+            self._STAGE_DOWNLOADING,
+            "Downloading over HTTPS…",
+            "channel-secure-symbolic",
+        )
+        self.progress_bar.set_fraction(max(0.0, min(1.0, fraction)))
         self.progress_bar.set_text(f"{fraction * 100:.0f}%")
         self.status_label.set_markup(f"<i>{status_text}</i>")
 
     def set_complete(self, success: bool, message: str = ""):
         """Mark download as complete."""
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
-
-        # Hide cancel button
+        self._stop_pulsing()
         self.cancel_button.hide()
+        self.succeeded = bool(success) and not self.cancelled
 
         if success:
+            if self._integrity_verified:
+                self._set_stage(
+                    self._STAGE_MATCHED,
+                    "Integrity verified — model ready",
+                    "security-high-symbolic",
+                )
+                ready_markup = (
+                    "<span foreground='#26a269'>"
+                    "<b>✓ SHA256 verified · Model ready to use</b>"
+                    "</span>"
+                )
+            else:
+                self._set_stage(
+                    self._STAGE_DOWNLOADING,
+                    "Download complete",
+                    "emblem-ok-symbolic",
+                )
+                ready_markup = "<span foreground='#26a269'><b>✓ Model ready to use</b></span>"
             self.progress_bar.set_fraction(1.0)
             self.progress_bar.set_text("Complete!")
-            self.status_label.set_markup(
-                "<span foreground='#26a269'><b>✓ Model ready to use</b></span>"
-            )
+            self.status_label.set_markup(ready_markup)
         else:
+            self.stage_icon.set_from_icon_name("dialog-warning-symbolic", Gtk.IconSize.MENU)
+            self.stage_label.set_text("Download did not complete")
             self.progress_bar.set_fraction(0)
             self.progress_bar.set_text("Failed")
             if "cancelled" in message.lower():
                 self.status_label.set_markup(
                     "<span foreground='#e5a50a'>✗ Download cancelled</span>"
+                )
+            elif (
+                "sha256" in message.lower()
+                or "integrity" in message.lower()
+                or "hash" in message.lower()
+            ):
+                self.stage_label.set_text("Integrity check failed")
+                self.stage_icon.set_from_icon_name("security-medium-symbolic", Gtk.IconSize.MENU)
+                self.status_label.set_markup(
+                    f"<span foreground='#c01c28'><b>✗ {message}</b></span>"
                 )
             else:
                 self.status_label.set_markup(f"<span foreground='#c01c28'>✗ {message}</span>")
@@ -2304,7 +2508,7 @@ class SettingsDialog(Gtk.Dialog):
         self.content_box.pack_start(group, False, False, 0)
 
         # Model info card (shown below the group)
-        self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.model_info_card.get_style_context().add_class("model-info-card")
         self.model_info_card.set_margin_start(4)
         self.model_info_card.set_margin_end(4)
@@ -2317,8 +2521,13 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
+        self.model_info_meta = Gtk.Label(xalign=0, wrap=True, use_markup=True)
+        self.model_info_meta.get_style_context().add_class("model-info-meta")
+        self.model_info_card.pack_start(self.model_info_meta, False, False, 0)
+
         self.model_recommendation = Gtk.Label(xalign=0, wrap=True)
         self.model_recommendation.get_style_context().add_class("tip-label")
+        self.model_recommendation.set_no_show_all(True)
         self.model_info_card.pack_start(self.model_recommendation, False, False, 0)
 
         # Language warning (e.g. auto-detect, English-only models) lives in
@@ -2327,14 +2536,6 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.get_style_context().add_class("status-warning")
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
-
-        # Symbol legend as a muted caption inside the card
-        legend = Gtk.Label(
-            label="✓ Downloaded    ↓ Will download    ★ Recommended",
-            xalign=0,
-        )
-        legend.get_style_context().add_class("tip-label")
-        self.model_info_card.pack_start(legend, False, False, 0)
 
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
@@ -4650,6 +4851,7 @@ class SettingsDialog(Gtk.Dialog):
                 return
             model_name = model_id.lower()
 
+        extra_info = ""
         if engine == "whisper":
             if model_name not in WHISPER_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4657,7 +4859,6 @@ class SettingsDialog(Gtk.Dialog):
             info = WHISPER_MODEL_INFO[model_name]
             is_downloaded = _is_whisper_model_downloaded(model_name)
             recommended, reason = _get_recommended_whisper_model()
-            extra_info = f"Parameters: {info['params']}"
         elif engine == "whisper_cpp":
             if model_name not in WHISPERCPP_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4665,10 +4866,8 @@ class SettingsDialog(Gtk.Dialog):
             info = WHISPERCPP_MODEL_INFO[model_name]
             is_downloaded = is_whispercpp_model_downloaded(model_name)
             recommended, reason = self._get_recommended_whispercpp_model_for_language()
-            backend, backend_info = detect_compute_backend()
-            extra_info = (
-                f"Parameters: {info['params']} • Backend: {get_backend_display_name(backend)}"
-            )
+            backend, _backend_info = detect_compute_backend()
+            extra_info = get_backend_display_name(backend)
         elif engine == "vosk":
             if model_name not in VOSK_MODEL_INFO:
                 self.model_info_card.hide()
@@ -4676,7 +4875,8 @@ class SettingsDialog(Gtk.Dialog):
             info = VOSK_MODEL_INFO[model_name]
             is_downloaded = _is_vosk_model_downloaded(model_name, self.language)
             recommended, reason = _get_recommended_vosk_model()
-            extra_info = f"Size: {_format_size(info['size_mb'])}"
+            if is_downloaded:
+                extra_info = _format_size(info["size_mb"])
         else:
             self.model_info_card.hide()
             return
@@ -4684,25 +4884,30 @@ class SettingsDialog(Gtk.Dialog):
         model_display_name = _model_display_name(model_name)
         recommended_display_name = _model_display_name(recommended)
 
-        # Update title
-        self.model_info_title.set_markup(f"<b>{model_display_name}</b>: {info['desc']}")
+        self.model_info_title.set_text(model_display_name)
+        self.model_info_subtitle.set_text(info["desc"])
 
-        # Update subtitle with status
+        bits = []
         if is_downloaded:
-            status = "<span foreground='#26a269'>✓ Downloaded and ready</span>"
+            bits.append("<span foreground='#26a269'>Ready</span>")
         else:
-            status = f"<span foreground='#e5a50a'>↓ Will download ~{_format_size(info['size_mb'])}</span>"
-        self.model_info_subtitle.set_markup(f"{extra_info} • {status}")
+            bits.append(
+                f"<span foreground='#e5a50a'>Downloads {_format_size(info['size_mb'])}</span>"
+            )
+        if engine != "vosk":
+            bits.append(f"{info['params']}")
+        if extra_info:
+            bits.append(extra_info)
+        self.model_info_meta.set_markup(" · ".join(bits))
 
-        # Update recommendation
         if model_name == recommended:
-            self.model_recommendation.set_markup(
-                f"<span foreground='#26a269'>★ Recommended for your system ({reason})</span>"
-            )
+            self.model_recommendation.set_text("")
+            self.model_recommendation.hide()
         else:
             self.model_recommendation.set_markup(
-                f"Tip: <b>{recommended_display_name}</b> is recommended for your system ({reason})"
+                f"Recommended: <b>{recommended_display_name}</b> · {reason}"
             )
+            self.model_recommendation.show()
 
         self._update_model_picker_tooltips()
         self.model_info_card.show_all()
@@ -4719,6 +4924,9 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         if self._populating_models:
+            return
+
+        if self.speech_engine is None:
             return
 
         self._applying_settings = True
@@ -4765,9 +4973,10 @@ class SettingsDialog(Gtk.Dialog):
                         cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                         try:
-                            self._apply_settings_internal(settings)
+                            self._apply_settings_internal(settings, show_errors=False)
                             GLib.idle_add(download_dialog.set_complete, True, "")
                             GLib.idle_add(self._populate_model_options)
+                            GLib.idle_add(self._update_model_info)
                         finally:
                             GLib.source_remove(cancel_check_id)
                             self.speech_engine.set_download_progress_callback(None)
@@ -4792,18 +5001,20 @@ class SettingsDialog(Gtk.Dialog):
 
                 threading.Thread(target=download_and_apply, daemon=True).start()
                 download_dialog.run()
+                succeeded = download_dialog.succeeded
                 download_dialog.destroy()
-                return
+                self._populate_model_options()
+                self._update_model_info()
+                return succeeded
 
             logger.info(f"Auto-applying settings: {settings}")
-
-            self._save_selected_settings(settings)
 
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
             logger.info("Settings auto-applied successfully")
         except Exception as e:
             logger.error(f"Failed to auto-apply settings: {e}")
@@ -5013,6 +5224,10 @@ For now, the engine has been reverted to VOSK."""
 
     def apply_settings(self):
         """Apply the selected settings."""
+        if self.speech_engine is None:
+            logger.error("Cannot apply settings without a speech engine")
+            return False
+
         settings = self.get_selected_settings()
         logger.info(f"Applying settings: {settings}")
 
@@ -5055,7 +5270,7 @@ For now, the engine has been reverted to VOSK."""
                     cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                     try:
-                        self._apply_settings_internal(settings)
+                        self._apply_settings_internal(settings, show_errors=False)
                         GLib.idle_add(download_dialog.set_complete, True, "")
                     finally:
                         GLib.source_remove(cancel_check_id)
@@ -5073,29 +5288,37 @@ For now, the engine has been reverted to VOSK."""
 
             threading.Thread(target=download_and_apply, daemon=True).start()
             download_dialog.run()
+            succeeded = download_dialog.succeeded
             download_dialog.destroy()
 
             self._populate_model_options()
-            return True
+            self._update_model_info()
+            return succeeded
 
         return self._apply_settings_internal(settings)
 
-    def _apply_settings_internal(self, settings: dict) -> bool:
-        """Internal method to apply settings."""
-        try:
-            self._save_selected_settings(settings)
+    def _apply_settings_internal(self, settings: dict, *, show_errors: bool = True) -> bool:
+        """Internal method to apply settings.
 
+        When ``show_errors`` is False (the secured-download worker), failures
+        propagate so the download dialog can show them. GTK dialogs must not be
+        created from that background thread.
+        """
+        try:
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
                 time.sleep(0.5)
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True
         except Exception as e:
             logger.error(f"Failed to apply settings: {e}", exc_info=True)
+            if not show_errors:
+                raise
 
             if "whisper" in str(e).lower() and "no module named" in str(e).lower():
                 self._show_whisper_install_dialog()
