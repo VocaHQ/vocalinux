@@ -614,3 +614,223 @@ class TestTypedAccessors(unittest.TestCase):
         self.assertEqual(advanced["whispercpp_temperature"], 0.5)
         self.assertFalse(advanced["whispercpp_no_timestamps"])
         self.assertEqual(advanced["whispercpp_initial_prompt"], "Meeting notes")
+
+
+class TestSaveMergesWithFile(unittest.TestCase):
+    """Tests for save_config() preserving on-disk state it did not change.
+
+    The config file is a documented hand-edit surface (docs/USER_GUIDE.md
+    describes pinning text_injection.backend there) while the tray app is
+    usually still running, so a save must not write back the whole in-memory
+    snapshot over someone's edit.
+    """
+
+    def setUp(self):
+        """Set up test environment."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_config_dir = os.path.join(self.temp_dir.name, ".config/vocalinux")
+        _ensure_test_config_dir(self.temp_config_dir)
+        self.temp_config_file = os.path.join(self.temp_config_dir, "config.json")
+
+        self.patchers = [
+            patch("vocalinux.ui.config_manager.CONFIG_DIR", self.temp_config_dir),
+            patch("vocalinux.ui.config_manager.CONFIG_FILE", self.temp_config_file),
+            patch(
+                "vocalinux.ui.config_manager.os.makedirs",
+                side_effect=lambda path, exist_ok=True: _ensure_test_config_dir(path),
+            ),
+            patch("vocalinux.ui.config_manager.logger"),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+        _ensure_test_config_dir(self.temp_config_dir)
+
+    def tearDown(self):
+        """Clean up after tests."""
+        for patcher in self.patchers:
+            patcher.stop()
+        self.temp_dir.cleanup()
+
+    def _write_file(self, data: dict):
+        """Write config.json directly, standing in for a user hand-editing it."""
+        with open(self.temp_config_file, "w") as f:
+            json.dump(data, f, indent=4)
+
+    def _read_file(self) -> dict:
+        """Read config.json back as it now stands on disk."""
+        with open(self.temp_config_file) as f:
+            return json.load(f)
+
+    def test_save_preserves_a_key_added_to_the_file_after_load(self):
+        """An unknown key written to a known section after startup survives."""
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["text_injection"]["hand_written"] = "kept"
+        self._write_file(on_disk)
+
+        manager.set("ui", "start_minimized", True)
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["text_injection"]["hand_written"], "kept")
+
+    def test_save_preserves_a_section_added_to_the_file_after_load(self):
+        """A whole unknown section written after startup survives."""
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["not_a_known_section"] = {"key": "kept"}
+        self._write_file(on_disk)
+
+        manager.set("ui", "start_minimized", True)
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["not_a_known_section"], {"key": "kept"})
+
+    def test_save_preserves_a_nested_key_added_to_the_file_after_load(self):
+        """The merge recurses: nesting below section->key is preserved too.
+
+        DEFAULT_CONFIG only nests two deep, but load_config() merges arbitrary
+        user JSON into memory, so self.config can be deeper. A merge that only
+        walked two levels would treat the sub-dict as one value and clobber it.
+        """
+        self._write_file({"shortcuts": {"mode": "toggle", "keys": {"push_to_talk": "Alt_R"}}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["shortcuts"]["keys"]["toggle"] = "F9"
+        self._write_file(on_disk)
+
+        manager.set("ui", "start_minimized", True)
+        manager.save_config()
+
+        self.assertEqual(
+            self._read_file()["shortcuts"]["keys"],
+            {"push_to_talk": "Alt_R", "toggle": "F9"},
+        )
+
+    def test_hand_edited_backend_survives_an_unrelated_save(self):
+        """The reported case: pin the backend while running, flick another switch."""
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["text_injection"]["backend"] = "wtype"
+        self._write_file(on_disk)
+
+        manager.set("text_injection", "auto_capitalize", False)
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["text_injection"]["backend"], "wtype")
+
+    def test_hand_edited_backend_survives_a_second_edit(self):
+        """Changing an existing pin works, not only setting the first one.
+
+        Contrast with test_hand_edited_backend_survives_an_unrelated_save: there
+        the pin is absent from memory, so anything that keeps memory from
+        overwriting the file passes. Here the pin was loaded at startup, so a
+        merge that lets memory win reverts the edit.
+        """
+        self._write_file({"text_injection": {"auto_capitalize": True, "backend": "wtype"}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["text_injection"]["backend"] = "ydotool"
+        self._write_file(on_disk)
+
+        manager.set("text_injection", "auto_capitalize", False)
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["text_injection"]["backend"], "ydotool")
+
+    def test_a_changed_value_wins_over_the_file(self):
+        """A setting changed here beats a stale file, or the dialog reverts itself."""
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager = ConfigManager()
+
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager.set("text_injection", "auto_capitalize", False)
+        manager.save_config()
+
+        self.assertFalse(self._read_file()["text_injection"]["auto_capitalize"])
+
+    def test_setters_that_bypass_set_still_persist(self):
+        """set_model_size_for_engine() writes self.config directly, not via set()."""
+        self._write_file({"speech_recognition": {"whisper_cpp_model_size": "tiny"}})
+        manager = ConfigManager()
+
+        manager.set_model_size_for_engine("whisper_cpp", "small")
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["speech_recognition"]["whisper_cpp_model_size"], "small")
+
+    def test_auto_pause_apps_list_is_replaced_not_merged(self):
+        """Known limitation: a changed list replaces the file's rather than merging.
+
+        auto_pause.apps is the only list-valued setting. It is managed through
+        the UI, so memory winning is the right semantics for it, but an addition
+        hand-written to the file while the app runs is still lost.
+        """
+        self._write_file({"auto_pause": {"apps": ["firefox"]}})
+        manager = ConfigManager()
+
+        on_disk = self._read_file()
+        on_disk["auto_pause"]["apps"] = ["firefox", "zoom"]
+        self._write_file(on_disk)
+
+        manager.set("auto_pause", "apps", ["teams"])
+        manager.save_config()
+
+        self.assertEqual(self._read_file()["auto_pause"]["apps"], ["teams"])
+
+    def test_save_still_writes_when_the_file_is_corrupt(self):
+        """A corrupt file must not swallow the save; it is overwritten instead."""
+        self._write_file({"text_injection": {"auto_capitalize": True}})
+        manager = ConfigManager()
+
+        with open(self.temp_config_file, "w") as f:
+            f.write("{not json")
+
+        manager.set("text_injection", "auto_capitalize", False)
+        self.assertTrue(manager.save_config())
+        self.assertFalse(self._read_file()["text_injection"]["auto_capitalize"])
+
+    def test_migration_saving_during_load_does_not_lose_a_pin(self):
+        """A save can fire part-way through load_config(), before loading finishes.
+
+        A config file with no shortcuts section triggers the legacy-defaults
+        migration, which calls save_config() from inside load_config(). The
+        baseline it compares against therefore has to exist before loading
+        starts, not after.
+        """
+        self._write_file({"text_injection": {"backend": "wtype"}})
+
+        manager = ConfigManager()
+
+        self.assertEqual(manager.config["shortcuts"]["mode"], "toggle")
+        self.assertEqual(self._read_file()["text_injection"]["backend"], "wtype")
+
+    def test_save_without_init_overwrites(self):
+        """An instance built without __init__ has no baseline and writes what it holds."""
+        self._write_file({"text_injection": {"auto_capitalize": True, "backend": "wtype"}})
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager.config = {"text_injection": {"auto_capitalize": False}}
+
+        self.assertTrue(manager.save_config())
+        self.assertFalse(self._read_file()["text_injection"]["auto_capitalize"])
+
+    def test_a_config_file_that_is_not_an_object_falls_back_to_defaults(self):
+        """Valid JSON that is not an object is treated like a corrupt file.
+
+        Walking sections assumes a mapping, so a bare list previously raised
+        AttributeError out of load_config() and took startup with it.
+        """
+        with open(self.temp_config_file, "w") as f:
+            f.write("[1, 2, 3]")
+
+        manager = ConfigManager()
+
+        self.assertEqual(manager.config["text_injection"]["backend"], "auto")

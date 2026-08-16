@@ -193,3 +193,50 @@ vocalinux --debug
 ```
 
 Check the logs for error messages and possible solutions.
+
+### Text injection backend
+
+Vocalinux types your dictated text using one of several backends. It picks one
+automatically, and on most desktops the automatic choice is correct.
+
+Autodetection can be wrong, though, and it fails in a way that is easy to
+misread: on a compositor that does not relay IBus commits to native Wayland
+applications, IBus reports the text as delivered while nothing appears. If
+dictation works in some windows (typically XWayland ones, like a browser) but
+silently does nothing in others, that is the symptom.
+
+Pin the backend explicitly in `~/.config/vocalinux/config.json`:
+
+```json
+{
+  "text_injection": {
+    "backend": "wtype"
+  }
+}
+```
+
+| Value | Backend |
+|---|---|
+| `auto` | Autodetect (default) |
+| `ibus` | IBus input method |
+| `wtype` | wtype virtual keyboard (Wayland) |
+| `ydotool` | ydotool uinput (Wayland; needs `ydotoold`) |
+| `xdotool` | xdotool (X11). On Wayland it only turns IBus off -- the Wayland tool is still picked automatically |
+
+The setting takes effect on the next start. When it is set to anything other
+than `ibus`, Vocalinux does not take the IBus path at all.
+
+On X11 the injection tool is `xdotool` regardless of which non-`ibus` value you
+pin, so `xdotool` is the name to use there when IBus is unreliable in a
+particular application. Pinning `ibus` keeps the IBus path; pinning anything
+else turns it off.
+
+To try a backend for a single run without changing the saved setting, set
+`VOCALINUX_FORCE_BACKEND`, which overrides the config value:
+
+```bash
+VOCALINUX_FORCE_BACKEND=wtype vocalinux --debug
+```
+
+Either way, the startup log records which backend was pinned and where the
+choice came from, so `vocalinux --debug` will confirm it took effect.

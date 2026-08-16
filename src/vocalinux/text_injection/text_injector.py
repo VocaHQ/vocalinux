@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 from enum import Enum
-from typing import Optional  # noqa: F401
+from typing import Optional, Tuple  # noqa: F401
 
 from ..utils.paths import config_dir
 from .ibus_engine import (
@@ -104,6 +104,7 @@ class TextInjector:
             wayland_mode: Force Wayland compatibility mode
         """
         self._ibus_injector: Optional[IBusTextInjector] = None
+        self._backend_pin: Tuple[str, Optional[str]] = ("auto", None)
         self.environment = self._detect_environment()
         self._session_environment = self.environment
         self._ibus_ready = False
@@ -165,6 +166,11 @@ class TextInjector:
                 self._test_xdotool_fallback()
             except Exception as e:
                 logger.error(f"XWayland fallback test failed: {e}")
+
+        # Last, so it sees the final selection: _check_dependencies() returns early
+        # on two paths, and the wtype probe above can still demote a pin that was
+        # honoured up to that point.
+        self._warn_if_pin_not_honoured(*self._backend_pin)
 
     def stop(self) -> None:
         """
@@ -243,6 +249,16 @@ class TextInjector:
         "labwc",
         "weston",
     )
+
+    # Backends a user may pin explicitly, via VOCALINUX_FORCE_BACKEND or the
+    # text_injection.backend setting. Named once so the two readers and the two
+    # "expected ..." messages cannot drift apart as values are added.
+    _SELECTABLE_BACKENDS = ("ibus", "wtype", "ydotool", "xdotool")
+
+    @staticmethod
+    def _accepted_backends_help() -> str:
+        """The accepted pin values, for user-facing "expected ..." messages."""
+        return "/".join(TextInjector._SELECTABLE_BACKENDS) + "/auto"
 
     def _kde_virtual_keyboard_enabled(self) -> bool:
         """Return True when KWin VirtualKeyboard / input method is enabled.
@@ -464,6 +480,38 @@ class TextInjector:
         return False
 
     @staticmethod
+    def _forced_backend_setting() -> Optional[str]:
+        """``VOCALINUX_FORCE_BACKEND`` as three distinct states.
+
+        ``None`` when the variable is not set, ``"auto"`` when it is explicitly
+        set to auto, otherwise the backend name. The distinction matters:
+        ``auto`` is how a user asks for autodetection *this run* despite a saved
+        ``text_injection.backend`` pin, which is the one-run A/B test this
+        variable exists for. Collapsing it into "nothing was set" would let the
+        saved pin win and make the variable useless for that.
+
+        Accepts ``ibus``, ``wtype``, ``ydotool`` or ``auto``.
+        """
+        raw = os.environ.get("VOCALINUX_FORCE_BACKEND")
+        if raw is None:
+            return None
+        value = raw.strip().lower()
+        if not value:
+            return None
+        if value == "auto":
+            return "auto"
+        if value in TextInjector._SELECTABLE_BACKENDS:
+            return value
+        logger.warning(
+            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected %s)",
+            value,
+            TextInjector._accepted_backends_help(),
+        )
+        # Deliberately unset rather than "auto": a typo in a shell variable should
+        # not discard a valid saved pin, only fail to override it.
+        return None
+
+    @staticmethod
     def _forced_backend() -> str:
         """Backend pinned via ``VOCALINUX_FORCE_BACKEND``, or ``"auto"``.
 
@@ -475,24 +523,181 @@ class TextInjector:
 
         Accepts ``ibus``, ``wtype``, ``ydotool`` or ``auto``. Anything else is
         ignored with a warning, so a typo cannot silently pin a backend.
+
+        This covers the environment variable only. ``_backend_preference()``
+        combines it with the persistent ``text_injection.backend`` setting, and
+        needs unset and an explicit ``auto`` told apart -- see
+        ``_forced_backend_setting()``.
         """
-        value = os.environ.get("VOCALINUX_FORCE_BACKEND", "").strip().lower()
+        return TextInjector._forced_backend_setting() or "auto"
+
+    @staticmethod
+    def _configured_backend() -> str:
+        """Backend pinned via ``text_injection.backend`` in config.json, or ``"auto"``.
+
+        The environment variable is fine for a one-off experiment, but a user
+        whose compositor is autodetected wrongly needs the choice to survive a
+        restart without wrapping the launcher in a shell script (issue #476).
+
+        Read from disk rather than through ConfigManager to keep this package
+        independent of the UI layer, matching ``_should_copy_to_clipboard()``.
+
+        A file that cannot be used is reported at warning level, not debug. This
+        setting is hand-edited, so a stray comma is a likely way to reach it, and
+        the symptom of staying quiet is the silent IBus miss the pin was set to
+        avoid -- indistinguishable from the pin simply not working.
+
+        The two shape checks below are what keep the lookup total, so the
+        handler only has to cover reading and parsing. Locating the file is
+        deliberately outside the handler: ``config_dir()`` resolving a path is
+        not a failure this should paper over, and computing it inside the
+        ``try`` only meant the handler could not name the file it failed on.
+        """
+        import json
+
+        config_path = os.path.join(config_dir(), "config.json")
+        if not os.path.exists(config_path):
+            return "auto"
+
+        try:
+            with open(config_path, "r") as f:
+                config = json.load(f)
+        except (OSError, ValueError) as e:
+            # Corrupt or unreadable must not block startup, but must not pass
+            # unmentioned either: the user edited this file expecting an effect.
+            logger.warning(
+                "Ignoring text_injection.backend: could not read %s (%s). "
+                "Continuing with backend autodetection.",
+                config_path,
+                e,
+            )
+            return "auto"
+
+        if not isinstance(config, dict):
+            logger.warning(
+                "Ignoring text_injection.backend: %s is not a JSON object. "
+                "Continuing with backend autodetection.",
+                config_path,
+            )
+            return "auto"
+
+        section = config.get("text_injection")
+        if section is None:
+            return "auto"
+        if not isinstance(section, dict):
+            logger.warning(
+                "Ignoring text_injection.backend: the text_injection section of %s "
+                "is not a JSON object. Continuing with backend autodetection.",
+                config_path,
+            )
+            return "auto"
+
+        value = str(section.get("backend", "") or "").strip().lower()
         if not value or value == "auto":
             return "auto"
-        if value in ("ibus", "wtype", "ydotool"):
+        if value in TextInjector._SELECTABLE_BACKENDS:
             return value
         logger.warning(
-            "Ignoring unknown VOCALINUX_FORCE_BACKEND=%r (expected ibus/wtype/ydotool/auto)",
+            "Ignoring unknown text_injection.backend=%r (expected %s)",
             value,
+            TextInjector._accepted_backends_help(),
         )
         return "auto"
+
+    @staticmethod
+    def _resolve_backend_pin() -> Tuple[str, Optional[str]]:
+        """The pinned backend and where it came from, resolved once.
+
+        Returns ``(backend, source)``. ``source`` names the setting that won, or
+        is ``None`` when nothing pinned anything. Both come from a single pass so
+        callers that report the source cannot disagree with the value actually
+        used -- and so the environment is parsed once per construction, which
+        also means a malformed value is reported once rather than per caller.
+
+        ``VOCALINUX_FORCE_BACKEND`` wins so a backend can still be A/B-tested
+        for one run without editing (or permanently changing) the user's config.
+        That includes an explicit ``auto``, which asks for autodetection this run
+        and so must short-circuit here rather than fall through to the saved pin.
+        """
+        env = TextInjector._forced_backend_setting()
+        if env is not None:
+            return env, "VOCALINUX_FORCE_BACKEND"
+        configured = TextInjector._configured_backend()
+        if configured != "auto":
+            return configured, "text_injection.backend"
+        return "auto", None
+
+    @staticmethod
+    def _backend_preference() -> str:
+        """The backend to pin, from the environment or config.json."""
+        return TextInjector._resolve_backend_pin()[0]
+
+    def _resolved_backend(self) -> Optional[str]:
+        """The backend actually in effect, read back from final state.
+
+        Deliberately reads ``environment`` before ``wayland_tool``: the wtype
+        probe in ``__init__`` demotes a failed wtype to ``WAYLAND_XDOTOOL``
+        without clearing ``wayland_tool``, and ``inject_text()`` follows
+        ``environment``. Reading the tool first would report wtype while
+        injection actually goes through XWayland.
+        """
+        if self._ibus_injector is not None or self.environment in (
+            DesktopEnvironment.X11_IBUS,
+            DesktopEnvironment.WAYLAND_IBUS,
+        ):
+            return "ibus"
+        if self.environment in (
+            DesktopEnvironment.X11,
+            DesktopEnvironment.WAYLAND_XDOTOOL,
+        ):
+            return "xdotool"
+        return getattr(self, "wayland_tool", None)
+
+    def _warn_if_pin_not_honoured(self, pinned: str, source: Optional[str]) -> None:
+        """Say so when the backend in use is not the one that was pinned.
+
+        One comparison rather than a check per cause: a missing binary, a value
+        that does not apply to this session type, IBus being unavailable and the
+        wtype probe demoting to XWayland all end the same way -- something other
+        than the pinned backend is doing the typing -- and a new cause is covered
+        without adding a branch here.
+
+        This is a startup diagnostic, not a live invariant. It runs once, at the
+        end of construction. ``_try_recover_from_fallback()`` can later switch
+        the tool when ydotoold appears mid-session, so a pin that becomes
+        honoured (or stops being honoured) after startup is not reported again.
+        """
+        if not source or pinned == "auto":
+            return
+        resolved = self._resolved_backend()
+        # Unreachable today (every path either sets a backend or raises before
+        # construction finishes), but guarded so a future path cannot render
+        # "using None instead" at a user.
+        if resolved is None or resolved == pinned:
+            return
+
+        if pinned in self._SELECTABLE_BACKENDS and pinned != "ibus":
+            reason = f" ({pinned} is not installed)" if not shutil.which(pinned) else ""
+        elif pinned == "ibus" and not is_ibus_available():
+            reason = " (IBus support is not available)"
+        else:
+            reason = ""
+        logger.warning(
+            "%s=%s was not applied%s; using %s instead.", source, pinned, reason, resolved
+        )
 
     def _check_dependencies(self):
         """Check for the required tools for text injection."""
         ibus_requested = False
-        forced = self._forced_backend()
-        if forced != "auto":
-            logger.info("VOCALINUX_FORCE_BACKEND=%s: overriding backend autodetection", forced)
+        forced, pin_source = self._resolve_backend_pin()
+        self._backend_pin = (forced, pin_source)
+        if pin_source and forced != "auto":
+            # States the request, not the result. Nothing has been checked for
+            # availability yet, and an unavailable pin falls through to
+            # autodetection further down -- so a word like "overriding" here
+            # would describe an outcome this line cannot know, and would read as
+            # contradicting the "was not applied" warning when it does not hold.
+            logger.info("%s=%s: backend pin requested", pin_source, forced)
 
         # Prefer IBus on both X11 and Wayland - it sends Unicode directly,
         # bypassing keyboard layout issues entirely
@@ -545,6 +750,20 @@ class TextInjector:
                     os.environ.get("XDG_CURRENT_DESKTOP", "unknown"),
                 )
             else:
+                # force_ibus short-circuits all three guards above, so a pinned
+                # run arrives here without any of them having been evaluated.
+                # This warns for the compositor guard only: that is the case
+                # with a documented silent failure (#478, #485), where IBus
+                # reports the commit as delivered and the text never arrives.
+                # The other two guards are out of scope for this warning.
+                if force_ibus and not self._wayland_compositor_bridges_ibus():
+                    logger.warning(
+                        "Compositor '%s' does not bridge IBus to native Wayland apps, but an "
+                        "explicit ibus pin overrides that check. Dictation may silently do "
+                        "nothing in native Wayland windows; remove the pin to fall back to "
+                        "wtype/ydotool.",
+                        os.environ.get("XDG_CURRENT_DESKTOP", "unknown"),
+                    )
                 try:
                     if wayland_scoped_ibus and not ibus_active:
                         logger.info(
@@ -576,11 +795,11 @@ class TextInjector:
             # ydotool for native Wayland typing; wtype needs a Wayland socket.
             if forced == "wtype" and wtype_available:
                 self.wayland_tool = "wtype"
-                logger.info("VOCALINUX_FORCE_BACKEND=wtype: using wtype for Wayland injection")
+                logger.info("%s=wtype: using wtype for Wayland injection", pin_source)
             elif forced == "ydotool" and ydotool_available:
                 self._ensure_ydotoold()
                 self.wayland_tool = "ydotool"
-                logger.info("VOCALINUX_FORCE_BACKEND=ydotool: using ydotool for Wayland injection")
+                logger.info("%s=ydotool: using ydotool for Wayland injection", pin_source)
             elif ydotool_available and self._ensure_ydotoold():
                 self.wayland_tool = "ydotool"
                 logger.info("Using ydotool for Wayland text injection")
