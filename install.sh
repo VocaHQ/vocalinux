@@ -2,7 +2,16 @@
 # Vocalinux Installer
 # This script installs the Vocalinux application and its dependencies
 
-set -e  # Exit on error
+# -E: ERR trap propagates into functions/subshells
+# -e: exit on unhandled command failure   -u: error on unset variables
+# -o pipefail: a pipeline fails if any stage fails
+set -Eeuo pipefail
+
+# Exit codes (see --help). 1 remains the generic/unclassified failure.
+EXIT_OK=0
+EXIT_MISSING_DEPS=2   # required system tools/packages could not be installed
+EXIT_NETWORK=3        # connectivity failure or download/clone failure
+EXIT_USER_ABORT=4     # user declined a prompt
 
 # Keep the venv isolated from ~/.local site packages while still allowing
 # --system-site-packages to expose distro-provided GTK/PyGObject bindings.
@@ -27,6 +36,27 @@ print_warning() {
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# HTTP-level connectivity check. ICMP ping is blocked on many networks
+# (corporate firewalls, public Wi-Fi, CI runners), so probe the actual
+# endpoints the installer depends on. Returns 0 if any probe succeeds.
+check_connectivity() {
+    local url
+    for url in https://pypi.org/simple/ https://api.github.com/ https://huggingface.co/; do
+        if command_exists curl; then
+            if curl -fsI --connect-timeout 5 --max-time 10 -o /dev/null "$url" 2>/dev/null; then
+                return 0
+            fi
+        elif command_exists wget; then
+            if wget -q --spider --timeout=10 "$url" 2>/dev/null; then
+                return 0
+            fi
+        else
+            return 1
+        fi
+    done
+    return 1
 }
 
 is_kde_plasma_session() {
@@ -162,7 +192,7 @@ check_running_processes() {
             if [[ $REPLY =~ ^[Nn]$ ]]; then
                 print_error "Cannot proceed with installation while Vocalinux is running."
                 print_info "Please stop Vocalinux manually and run the installer again."
-                exit 1
+                exit "$EXIT_USER_ABORT"
             fi
         fi
 
@@ -212,6 +242,13 @@ GPU_NAME=""
 GPU_MEMORY=""
 HAS_VULKAN="no"
 VULKAN_DEVICE=""
+# Initialize mode/state variables that are set later by flags or prompts so
+# that every read under `set -u` is well-defined in every code path.
+INSTALL_TAG=""
+SELECTED_ENGINE=""
+WHISPERCPP_BACKEND=""
+WHISPERCPP_ALREADY_INSTALLED="false"
+REMOTE_API_URL=""
 
 # Detect if running non-interactively (e.g., via curl | bash)
 # If stdin is a pipe but /dev/tty exists, redirect stdin so user input works normally.
@@ -311,6 +348,16 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --auto                    # Auto-install with whisper.cpp"
             echo "  $0 --auto --engine=vosk      # Auto-install VOSK only"
             echo "  $0 --dev --test              # Dev mode with tests"
+            echo ""
+            echo "A full transcript of every run is saved to"
+            echo "  ~/.local/state/vocalinux/install-<timestamp>.log"
+            echo ""
+            echo "Exit codes:"
+            echo "  0  success"
+            echo "  1  generic failure"
+            echo "  2  required system dependencies could not be installed"
+            echo "  3  network / download failure"
+            echo "  4  user aborted at a prompt"
             exit 0
             ;;
         *)
@@ -325,6 +372,37 @@ done
 if [[ "$DEV_MODE" == "yes" ]]; then
     RUN_TESTS="yes"
 fi
+
+# ---------------------------------------------------------------------------
+# Global install log: everything (stdout + stderr) is teed to this file so
+# failures can be debugged after the fact. The path is printed at exit.
+# ---------------------------------------------------------------------------
+INSTALL_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vocalinux"
+if ! mkdir -p "$INSTALL_LOG_DIR" 2>/dev/null; then
+    INSTALL_LOG_DIR="${TMPDIR:-/tmp}"
+fi
+INSTALL_LOG_FILE="$INSTALL_LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$INSTALL_LOG_FILE") 2>&1
+
+# Scratch directory for downloads and temporary build files. Removed on
+# success; kept for inspection (with a notice) when the install fails.
+VOCALINUX_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vocalinux-install.XXXXXXXX")"
+
+cleanup_on_exit() {
+    local rc=$?
+    if [ "$rc" -eq "$EXIT_OK" ]; then
+        rm -rf "$VOCALINUX_TMP_DIR"
+    else
+        print_error ""
+        print_error "Installation did not complete (exit code $rc)."
+        print_error "Full install log: $INSTALL_LOG_FILE"
+        print_error "Scratch files kept for inspection: $VOCALINUX_TMP_DIR"
+    fi
+}
+trap cleanup_on_exit EXIT
+trap 'print_error "Unexpected error near line $LINENO (exit code $?); see $INSTALL_LOG_FILE"' ERR
+trap 'print_warning "Interrupted by user"; exit 130' INT
+trap 'print_warning "Terminated by signal"; exit 143' TERM
 
 # Display ASCII art banner
 cat << "EOF"
@@ -346,19 +424,25 @@ check_running_processes
 
 resolve_install_tag() {
     if [ -n "$INSTALL_TAG" ]; then
-        return
+        return 0
     fi
     if command_exists curl; then
         local latest
-        latest=$(curl -fsSL --connect-timeout 5 \
+        # (|| true: pipefail would otherwise abort when head closes the pipe
+        # early or the API is unreachable; empty means "not resolved")
+        latest=$(curl -fsSL --connect-timeout 5 --retry 2 \
             "https://api.github.com/repos/VocaHQ/vocalinux/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+            2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || true)
         if [ -n "$latest" ]; then
             INSTALL_TAG="$latest"
-            return
+            return 0
         fi
     fi
-    INSTALL_TAG="v0.10.1-beta"
+    # No hardcoded fallback tag: silently installing a stale release is worse
+    # than failing. The remote-install path below aborts with a --tag hint if
+    # INSTALL_TAG is still empty; in-repo installs do not need a tag at all.
+    print_warning "Could not determine the latest release tag (GitHub API unreachable?)."
+    return 0
 }
 
 resolve_install_tag
@@ -380,15 +464,15 @@ ensure_git_installed() {
     local DISTRO_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
+        if [[ "$ID" == "ubuntu" || "${ID_LIKE:-}" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
             DISTRO_FAMILY="ubuntu"
-        elif [[ "$ID" == "debian" || "$ID_LIKE" == *"debian"* ]]; then
+        elif [[ "$ID" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]; then
             DISTRO_FAMILY="debian"
-        elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
+        elif [[ "$ID" == "fedora" || "${ID_LIKE:-}" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
             DISTRO_FAMILY="fedora"
-        elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
+        elif [[ "$ID" == "arch" || "${ID_LIKE:-}" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
             DISTRO_FAMILY="arch"
-        elif [[ "$ID" == "opensuse" || "$ID_LIKE" == *"suse"* ]]; then
+        elif [[ "$ID" == "opensuse" || "${ID_LIKE:-}" == *"suse"* ]]; then
             DISTRO_FAMILY="suse"
         elif [[ "$ID" == "gentoo" ]]; then
             DISTRO_FAMILY="gentoo"
@@ -408,68 +492,68 @@ ensure_git_installed() {
             sudo apt update && sudo apt install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Ubuntu/Debian: sudo apt install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         fedora)
             sudo dnf install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Fedora: sudo dnf install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         arch)
             sudo pacman -S --noconfirm git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Arch: sudo pacman -S git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         suse)
             sudo zypper install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  openSUSE: sudo zypper install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         gentoo)
             sudo emerge git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Gentoo: sudo emerge git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         alpine)
             sudo apk add git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Alpine: sudo apk add git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         void)
             sudo xbps-install -Sy git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Void: sudo xbps-install -Sy git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         solus)
             sudo eopkg install git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Solus: sudo eopkg install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         mageia)
             if command -v dnf >/dev/null 2>&1; then
                 sudo dnf install -y git || {
                     print_error "Failed to install git. Please install git manually and run the installer again."
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             else
                 sudo urpmi --force git || {
                     print_error "Failed to install git. Please install git manually and run the installer again."
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             fi
             ;;
@@ -480,7 +564,7 @@ ensure_git_installed() {
             print_error "  Fedora/RHEL: sudo dnf install git"
             print_error "  Arch: sudo pacman -S git"
             print_error "  openSUSE: sudo zypper install git"
-            exit 1
+            exit "$EXIT_MISSING_DEPS"
             ;;
     esac
 
@@ -508,6 +592,11 @@ if [ "$IS_VOCALINUX_LOCAL" = true ]; then
     esac
 else
     # Running remotely (e.g., via curl | bash)
+    if [ -z "$INSTALL_TAG" ]; then
+        print_error "No release tag available: the GitHub API was unreachable and no --tag was given."
+        print_error "Re-run with an explicit release tag, e.g.: --tag=v0.15.0"
+        exit "$EXIT_NETWORK"
+    fi
     print_info "Installing Vocalinux version: ${INSTALL_TAG}"
 
     # Ensure git is installed before attempting to clone
@@ -519,13 +608,16 @@ else
     if [ -d "$INSTALL_DIR/.git" ]; then
         print_info "Updating existing clone..."
         cd "$INSTALL_DIR"
-        git fetch origin tag "$INSTALL_TAG"
-        git reset --hard "$INSTALL_TAG"
+        if ! git fetch origin tag "$INSTALL_TAG" || ! git reset --hard "$INSTALL_TAG"; then
+            print_error "Failed to update the Vocalinux clone to $INSTALL_TAG."
+            print_error "Check the install log and your network connection: $INSTALL_LOG_FILE"
+            exit "$EXIT_NETWORK"
+        fi
     else
         rm -rf "$INSTALL_DIR"
         git clone --depth 1 --branch "$INSTALL_TAG" "$REPO_URL" "$INSTALL_DIR" || {
             print_error "Failed to clone Vocalinux repository"
-            exit 1
+            exit "$EXIT_NETWORK"
         }
         cd "$INSTALL_DIR"
     fi
@@ -554,21 +646,21 @@ fi
 detect_distro() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        DISTRO_NAME="$NAME"
-        DISTRO_ID="$ID"
-        DISTRO_VERSION="$VERSION_ID"
+        DISTRO_NAME="${NAME:-unknown}"
+        DISTRO_ID="${ID:-unknown}"
+        DISTRO_VERSION="${VERSION_ID:-}"
         DISTRO_FAMILY="unknown"
 
         # Determine distribution family
-        if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
+        if [[ "$ID" == "ubuntu" || "${ID_LIKE:-}" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
             DISTRO_FAMILY="ubuntu"
-        elif [[ "$ID" == "debian" || "$ID_LIKE" == *"debian"* ]]; then
+        elif [[ "$ID" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]; then
             DISTRO_FAMILY="debian"
-        elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
+        elif [[ "$ID" == "fedora" || "${ID_LIKE:-}" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
             DISTRO_FAMILY="fedora"
-        elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
+        elif [[ "$ID" == "arch" || "${ID_LIKE:-}" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
             DISTRO_FAMILY="arch"
-        elif [[ "$ID" == "opensuse" || "$ID_LIKE" == *"suse"* ]]; then
+        elif [[ "$ID" == "opensuse" || "${ID_LIKE:-}" == *"suse"* ]]; then
             DISTRO_FAMILY="suse"
         elif [[ "$ID" == "gentoo" ]]; then
             DISTRO_FAMILY="gentoo"
@@ -609,8 +701,9 @@ detect_nvidia_gpu() {
     # Check if nvidia-smi command exists and can successfully query GPU
     if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
         # Extract GPU information for user feedback
-        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1)
-        GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -n1)
+        # (|| true: nvidia-smi may fail mid-pipeline; pipefail must not abort)
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 || true)
+        GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -n1 || true)
         HAS_NVIDIA_GPU="yes"
         return 0
     else
@@ -758,11 +851,14 @@ get_cuda_cmake_args() {
 detect_vulkan() {
     # Check for vulkaninfo command
     if command -v vulkaninfo >/dev/null 2>&1; then
-        local vulkan_output=$(vulkaninfo --summary 2>/dev/null | head -20)
+        # (|| true guards against pipefail aborts: head closes the pipe early
+        # and grep exits 1 when there is no match)
+        local vulkan_output
+        vulkan_output=$(vulkaninfo --summary 2>/dev/null | head -20 || true)
         if [ -n "$vulkan_output" ]; then
             HAS_VULKAN="yes"
             # Try to extract GPU name
-            VULKAN_DEVICE=$(echo "$vulkan_output" | grep -i "deviceName" | head -1 | cut -d'=' -f2 | xargs)
+            VULKAN_DEVICE=$(echo "$vulkan_output" | grep -i "deviceName" | head -1 | cut -d'=' -f2 | xargs || true)
             if [ -z "$VULKAN_DEVICE" ]; then
                 VULKAN_DEVICE="Vulkan-compatible GPU"
             fi
@@ -817,7 +913,7 @@ check_vulkan_gpu_compatibility() {
 
     # Get all device names from vulkaninfo
     local DEVICE_NAMES_RAW
-    DEVICE_NAMES_RAW=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}')
+    DEVICE_NAMES_RAW=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true)
 
     # Separate hardware GPUs from software renderers
     local HARDWARE_GPUS=""
@@ -1368,7 +1464,7 @@ elif [[ "$DISTRO_FAMILY" != "ubuntu" ]]; then
         read -p "Do you want to continue anyway? (y/n) " -n 1 -r
         echo
         if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
+            exit "$EXIT_USER_ABORT"
         fi
     fi
 else
@@ -1380,7 +1476,7 @@ else
             read -p "Do you want to continue anyway? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
+                exit "$EXIT_USER_ABORT"
             fi
         fi
     fi
@@ -2006,7 +2102,7 @@ install_system_dependencies() {
                 read -p "Continue anyway? (y/n) " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    exit 1
+                    exit "$EXIT_USER_ABORT"
                 fi
             else
                 print_info "Non-interactive mode: continuing (dependencies may be missing)..."
@@ -2050,7 +2146,7 @@ install_text_input_tools() {
         SESSION_TYPE="x11"
     # Check loginctl if available
     elif command_exists loginctl; then
-        SESSION_TYPE=$(loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type | cut -d= -f2)
+        SESSION_TYPE=$(loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type | cut -d= -f2 || true)
     fi
 
     print_info "Detected session type: $SESSION_TYPE"
@@ -2878,8 +2974,8 @@ install_python_package() {
 
     # Detect GI_TYPELIB_PATH early for cross-distro compatibility
     # This ensures the path is available for both verification and wrapper scripts
-    local GI_TYPELIB_DETECTED
-    GI_TYPELIB_DETECTED=$(detect_typelib_path)
+    # NOTE: global on purpose — install_desktop_entry (top level) reuses it.
+    GI_TYPELIB_DETECTED=$(detect_typelib_path || true)
     print_info "Detected GI_TYPELIB_PATH: $GI_TYPELIB_DETECTED"
 
     local WHISPERCPP_ALREADY_INSTALLED=false
@@ -3360,9 +3456,9 @@ install_whisper_model() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "Whisper model will be downloaded on first application run."
         return 1
     fi
@@ -3374,13 +3470,14 @@ install_whisper_model() {
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
             print_error "Failed to download Whisper model with wget"
             rm -f "$TEMP_FILE"
             return 1
         fi
     elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
             print_error "Failed to download Whisper model with curl"
             rm -f "$TEMP_FILE"
             return 1
@@ -3438,9 +3535,9 @@ install_vosk_models() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "VOSK models will be downloaded on first application run."
         return 1
     fi
@@ -3452,13 +3549,14 @@ install_vosk_models() {
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_ZIP" "$SMALL_MODEL_URL" 2>&1; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_ZIP" "$SMALL_MODEL_URL" 2>&1; then
             print_error "Failed to download VOSK model with wget"
             rm -f "$TEMP_ZIP"
             return 1
         fi
     elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_ZIP" "$SMALL_MODEL_URL"; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_ZIP" "$SMALL_MODEL_URL"; then
             print_error "Failed to download VOSK model with curl"
             rm -f "$TEMP_ZIP"
             return 1
@@ -3532,9 +3630,9 @@ install_whispercpp_model() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "whisper.cpp model will be downloaded on first application run."
         return 1
     fi
@@ -3546,13 +3644,14 @@ install_whispercpp_model() {
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
             print_error "Failed to download whisper.cpp model with wget"
             rm -f "$TEMP_FILE"
             return 1
         fi
     elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
             print_error "Failed to download whisper.cpp model with curl"
             rm -f "$TEMP_FILE"
             return 1
@@ -4026,7 +4125,7 @@ EOF
     echo ""
 
     # Installation details (optional, for debugging)
-    if [[ "$VERBOSE" == "yes" ]]; then
+    if [[ "${VERBOSE:-no}" == "yes" ]]; then
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "  🔍 Installation Details (Debug Mode)"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -4041,8 +4140,10 @@ EOF
 }
 
 # Verify the installation
-verify_installation
-INSTALL_ISSUES=$?
+# (guarded: verify_installation returns the number of issues found, which
+# would otherwise abort the script under set -e before the summary prints)
+INSTALL_ISSUES=0
+verify_installation || INSTALL_ISSUES=$?
 
 # Print welcome message
 print_welcome_message $INSTALL_ISSUES
