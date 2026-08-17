@@ -275,6 +275,13 @@ class TestReconfigure(unittest.TestCase):
             mgr.reconfigure(engine="vosk")
         self.assertEqual(mgr.engine, "vosk")
 
+    def test_reconfigure_language_candidates(self):
+        mgr = _make_manager()
+        mgr.state = RecognitionState.IDLE
+        with patch.object(mgr, "_init_whispercpp"):
+            mgr.reconfigure(whispercpp_language_candidates="en,es")
+        self.assertEqual(mgr.whispercpp_language_candidates, ["en", "es"])
+
 
 class TestProcessFinalBuffer(unittest.TestCase):
     def test_process_final_buffer_whispercpp(self):
@@ -306,6 +313,18 @@ class TestProcessFinalBuffer(unittest.TestCase):
 
 
 class TestTranscribeWhispercpp(unittest.TestCase):
+    def test_normalize_language_candidates(self):
+        self.assertEqual(
+            SpeechRecognitionManager._normalize_language_candidates(" en-US, es ; fr "),
+            ["en", "es", "fr"],
+        )
+        self.assertEqual(
+            SpeechRecognitionManager._normalize_language_candidates(["EN", "es", "en"]),
+            ["en", "es"],
+        )
+        self.assertEqual(SpeechRecognitionManager._normalize_language_candidates(""), [])
+        self.assertEqual(SpeechRecognitionManager._normalize_language_candidates(None), [])
+
     def test_transcribe_success(self):
         mgr = _make_manager()
         mgr.language = "en-us"
@@ -376,6 +395,80 @@ class TestTranscribeWhispercpp(unittest.TestCase):
 
         with patch.dict("sys.modules", {"numpy": mock_np}):
             result = mgr._transcribe_with_whispercpp([b"\x00\x00" * 512])
+
+        self.assertEqual(result, "bonjour")
+        mgr.model.transcribe.assert_called_once()
+        self.assertIsNone(mgr.model.transcribe.call_args.kwargs["language"])
+
+    def test_transcribe_specific_language(self):
+        mgr = _make_manager()
+        mgr.language = "es"
+        mock_segment = MagicMock()
+        mock_segment.text = "hola"
+        mgr.model = MagicMock()
+        mgr.model.transcribe.return_value = [mock_segment]
+
+        mock_np = MagicMock()
+        mock_np.frombuffer.return_value = MagicMock(__len__=lambda s: 16000)
+        mock_np.frombuffer.return_value.astype.return_value = mock_np.frombuffer.return_value
+        mock_np.int16 = "int16"
+        mock_np.float32 = "float32"
+
+        with patch.dict("sys.modules", {"numpy": mock_np}):
+            result = mgr._transcribe_with_whispercpp([b"\x00\x00" * 512])
+
+        self.assertEqual(result, "hola")
+        mgr.model.transcribe.assert_called_once()
+        self.assertEqual(mgr.model.transcribe.call_args.kwargs["language"], "es")
+
+    def test_transcribe_candidate_languages_restricts_to_english(self):
+        mgr = _make_manager(whispercpp_language_candidates="en,es")
+        mgr.language = "auto"
+        mock_segment = MagicMock()
+        mock_segment.text = "hello"
+        mgr.model = MagicMock()
+        mgr.model.auto_detect_language.return_value = (("en", 0.8), {"en": 0.7, "es": 0.3})
+        mgr.model.transcribe.return_value = [mock_segment]
+
+        mock_np = MagicMock()
+        mock_np.frombuffer.return_value = MagicMock(__len__=lambda s: 16000)
+        mock_np.frombuffer.return_value.astype.return_value = mock_np.frombuffer.return_value
+        mock_np.int16 = "int16"
+        mock_np.float32 = "float32"
+
+        with patch.dict("sys.modules", {"numpy": mock_np}):
+            result = mgr._transcribe_with_whispercpp([b"\x00\x00" * 512])
+
+        self.assertEqual(result, "hello")
+        mgr.model.auto_detect_language.assert_called_once()
+        mgr.model.transcribe.assert_called_once()
+        self.assertEqual(mgr.model.transcribe.call_args.kwargs["language"], "en")
+
+    def test_transcribe_candidate_languages_restricts_to_spanish(self):
+        mgr = _make_manager(whispercpp_language_candidates=["en", "es", "fr"])
+        mgr.language = "auto"
+        mock_segment = MagicMock()
+        mock_segment.text = "hola"
+        mgr.model = MagicMock()
+        mgr.model.auto_detect_language.return_value = (
+            ("de", 0.6),
+            {"en": 0.2, "es": 0.5, "fr": 0.1},
+        )
+        mgr.model.transcribe.return_value = [mock_segment]
+
+        mock_np = MagicMock()
+        mock_np.frombuffer.return_value = MagicMock(__len__=lambda s: 16000)
+        mock_np.frombuffer.return_value.astype.return_value = mock_np.frombuffer.return_value
+        mock_np.int16 = "int16"
+        mock_np.float32 = "float32"
+
+        with patch.dict("sys.modules", {"numpy": mock_np}):
+            result = mgr._transcribe_with_whispercpp([b"\x00\x00" * 512])
+
+        self.assertEqual(result, "hola")
+        mgr.model.auto_detect_language.assert_called_once()
+        mgr.model.transcribe.assert_called_once()
+        self.assertEqual(mgr.model.transcribe.call_args.kwargs["language"], "es")
 
 
 class TestTranscribeWhisper(unittest.TestCase):

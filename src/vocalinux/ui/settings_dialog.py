@@ -3228,6 +3228,21 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(no_speech_row)
 
+        candidates_help = (
+            "Optional comma-separated Whisper language codes for auto-detect, "
+            "such as en,es. Leave blank to consider all languages."
+        )
+        self.advanced_language_candidates_entry = Gtk.Entry()
+        self.advanced_language_candidates_entry.set_placeholder_text("en,es")
+        self.advanced_language_candidates_entry.set_tooltip_text(candidates_help)
+        language_candidates_row = PreferenceRow(
+            title="Language Candidates",
+            subtitle="Restrict auto-detect to selected language codes",
+            widget=self.advanced_language_candidates_entry,
+        )
+        language_candidates_row.set_tooltip_text(candidates_help)
+        group.add_row(language_candidates_row)
+
         # Initial Prompt -- moved to the end and made multiline
         initial_prompt_help = (
             "Optional. Add names, jargon, punctuation style, or other context to bias "
@@ -3293,6 +3308,7 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_entropy_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_logprob_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_no_speech_thold_spin.connect("value-changed", self._on_advanced_param_changed)
+        self.advanced_language_candidates_entry.connect("changed", self._on_advanced_param_changed)
 
         self.advanced_initial_prompt_buffer = self.advanced_initial_prompt_textview.get_buffer()
         self.advanced_initial_prompt_buffer.connect("changed", self._on_advanced_prompt_changed)
@@ -3822,6 +3838,9 @@ class SettingsDialog(Gtk.Dialog):
             self.advanced_no_timestamps_switch.set_active(defaults["whispercpp_no_timestamps"])
             self.advanced_no_context_switch.set_active(defaults["whispercpp_no_context"])
             self.advanced_initial_prompt_buffer.set_text(defaults["whispercpp_initial_prompt"], -1)
+            self.advanced_language_candidates_entry.set_text(
+                defaults["whispercpp_language_candidates"]
+            )
             self.advanced_temperature_spin.set_value(defaults["whispercpp_temperature"])
             self.advanced_temperature_inc_spin.set_value(defaults["whispercpp_temperature_inc"])
             self.advanced_entropy_thold_spin.set_value(defaults["whispercpp_entropy_thold"])
@@ -3946,6 +3965,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.advanced_initial_prompt_buffer.set_text(
             advanced_settings.get("whispercpp_initial_prompt", ""), -1
+        )
+        self.advanced_language_candidates_entry.set_text(
+            advanced_settings.get("whispercpp_language_candidates", "")
         )
         self.advanced_temperature_spin.set_value(
             advanced_settings.get("whispercpp_temperature", 0.0)
@@ -4864,6 +4886,7 @@ class SettingsDialog(Gtk.Dialog):
                 self.advanced_initial_prompt_buffer.get_end_iter(),
                 False,
             ),
+            "whispercpp_language_candidates": self.advanced_language_candidates_entry.get_text(),
             "whispercpp_temperature": self.advanced_temperature_spin.get_value(),
             "whispercpp_temperature_inc": self.advanced_temperature_inc_spin.get_value(),
             "whispercpp_entropy_thold": self.advanced_entropy_thold_spin.get_value(),

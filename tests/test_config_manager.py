@@ -596,6 +596,7 @@ class TestTypedAccessors(unittest.TestCase):
         self.assertTrue(advanced["whispercpp_no_timestamps"])
         self.assertTrue(advanced["whispercpp_no_context"])
         self.assertEqual(advanced["whispercpp_initial_prompt"], "")
+        self.assertEqual(advanced["whispercpp_language_candidates"], "")
         self.assertEqual(advanced["whispercpp_temperature"], 0.0)
         self.assertEqual(advanced["whispercpp_temperature_inc"], -1.0)
         self.assertEqual(advanced["whispercpp_entropy_thold"], 2.4)
@@ -607,6 +608,7 @@ class TestTypedAccessors(unittest.TestCase):
         self.config_manager.set("advanced", "whispercpp_temperature", 0.5)
         self.config_manager.set("advanced", "whispercpp_no_timestamps", False)
         self.config_manager.set("advanced", "whispercpp_initial_prompt", "Meeting notes")
+        self.config_manager.set("advanced", "whispercpp_language_candidates", "en,es")
         self.config_manager.save_config()
 
         new_manager = ConfigManager()
@@ -614,3 +616,4 @@ class TestTypedAccessors(unittest.TestCase):
         self.assertEqual(advanced["whispercpp_temperature"], 0.5)
         self.assertFalse(advanced["whispercpp_no_timestamps"])
         self.assertEqual(advanced["whispercpp_initial_prompt"], "Meeting notes")
+        self.assertEqual(advanced["whispercpp_language_candidates"], "en,es")

@@ -226,6 +226,7 @@ class TestMainModule(unittest.TestCase):
                 whispercpp_no_timestamps=True,
                 whispercpp_no_context=True,
                 whispercpp_initial_prompt="",
+                whispercpp_language_candidates="",
                 whispercpp_temperature=0.0,
                 whispercpp_temperature_inc=-1.0,
                 whispercpp_entropy_thold=2.4,
