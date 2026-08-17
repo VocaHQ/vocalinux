@@ -56,3 +56,14 @@ def test_appimage_build_smokes_gi_without_host_typelibs():
     text = BUILD_SH.read_text()
     assert "smoke_gi_imports" in text
     assert "unshare --user --mount" in text
+
+
+def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():
+    text = BUILD_SH.read_text()
+    assert "GGML_VULKAN=1" in text
+    assert "libggml-vulkan" in text
+    assert "VOCALINUX_APPIMAGE_REQUIRE_VULKAN" in text
+    assert "VOCALINUX_APPIMAGE_SKIP_VULKAN" in text
+    assert "rebuild_pywhispercpp_vulkan" in text
+    assert 'CC="${CC:-gcc}"' in text
+    assert 'CXX="${CXX:-g++}"' in text

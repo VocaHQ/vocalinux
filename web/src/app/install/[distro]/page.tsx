@@ -48,7 +48,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
       "Kubuntu and Linux Mint derivatives",
     ],
     installCommand:
-      "curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
+      "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
     setupNotes: [
       "Choose whisper.cpp for the fastest setup and cross-vendor GPU support.",
       "On lower-RAM systems, pick VOSK for lightweight realtime dictation.",
@@ -79,7 +79,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
       "Fedora KDE spin",
     ],
     installCommand:
-      "curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
+      "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
     setupNotes: [
       "If prompted for optional dependencies, accept defaults unless your desktop setup requires custom input tooling.",
       "Keep the default whisper.cpp engine for best speed-to-accuracy tradeoff.",
@@ -110,7 +110,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
       "Manjaro (X11 and Wayland sessions)",
     ],
     installCommand:
-      "curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
+      "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive",
     setupNotes: [
       "Prefer whisper.cpp for lower dependency footprint and faster cold start.",
       "On custom compositor setups, verify text injection behavior in both terminal and browser contexts.",

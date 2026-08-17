@@ -249,7 +249,7 @@ export default function PrivacyPage() {
           please reach out:
         </p>
         <a
-          href="https://github.com/jatinkrmalik/vocalinux/issues"
+          href="https://github.com/VocaHQ/vocalinux/issues"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 text-primary hover:underline"

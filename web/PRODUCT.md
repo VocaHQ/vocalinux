@@ -42,7 +42,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 
 ## Brand commitments
 
-- Name: Vocalinux (also part of the "Voca" family with VocaMac / VocaWin)
+- Name: Vocalinux (part of [VocaHQ](https://vocahq.com) with VocaMac / VocaWin)
 - Mark: microphone logo assets under `public/`
 - Emerald accent in the project green family (not purple SaaS defaults)
 - Voice: practical, specific, Linux-native; not hype-first SaaS copy

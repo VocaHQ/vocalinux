@@ -258,7 +258,7 @@ export default function OfflinePage() {
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
             Read every line of code on{" "}
             <a
-              href="https://github.com/jatinkrmalik/vocalinux"
+              href="https://github.com/VocaHQ/vocalinux"
               target="_blank"
               rel="noopener noreferrer"
               className="font-semibold hover:underline"

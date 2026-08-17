@@ -9,18 +9,20 @@
 <!-- Badge rows ordered narrowest → widest (steps out into the hero) -->
 
 <!-- Values + packaging (narrow) -->
-[![Privacy: 100% offline](https://img.shields.io/badge/privacy-100%25%20offline-success)](https://github.com/jatinkrmalik/vocalinux#features)
-[![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/jatinkrmalik/vocalinux#features)
+[![Privacy: 100% offline](https://img.shields.io/badge/privacy-100%25%20offline-success)](https://github.com/VocaHQ/vocalinux#features)
+[![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/VocaHQ/vocalinux#features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Discord](https://img.shields.io/discord/1538633755877580810?logo=discord&logoColor=white&label=Discord)](https://discord.gg/UMJduhcqn)
+[![VocaHQ](https://img.shields.io/badge/VocaHQ-vocahq.com-1a7f4e)](https://vocahq.com)
 
 <!-- Identity + quality (medium) -->
-[![GitHub release](https://img.shields.io/github/v/release/jatinkrmalik/vocalinux)](https://github.com/jatinkrmalik/vocalinux/releases)
+[![GitHub release](https://img.shields.io/github/v/release/VocaHQ/vocalinux)](https://github.com/VocaHQ/vocalinux/releases)
 [![PyPI](https://img.shields.io/pypi/v/vocalinux)](https://pypi.org/project/vocalinux/)
 [![AUR](https://img.shields.io/aur/version/vocalinux)](https://aur.archlinux.org/packages/vocalinux)
-[![Vocalinux CI](https://github.com/jatinkrmalik/vocalinux/actions/workflows/unified-pipeline.yml/badge.svg?branch=main)](https://github.com/jatinkrmalik/vocalinux/actions/workflows/unified-pipeline.yml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/jatinkrmalik/vocalinux/branch/main/graph/badge.svg)](https://codecov.io/gh/jatinkrmalik/vocalinux)
+[![Vocalinux CI](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml/badge.svg?branch=main)](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/VocaHQ/vocalinux/branch/main/graph/badge.svg)](https://codecov.io/gh/VocaHQ/vocalinux)
 [![Follow on X](https://img.shields.io/badge/Follow%20%40jatinkrmalik-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/user?screen_name=jatinkrmalik)
 
 <!-- Distros (widest; base plate above the hero) -->
@@ -66,7 +68,7 @@ No internet required. No data leaves your machine. Just speak and type.
 - KDE Plasma Wayland unbridged-IBus skip when ibus-wayland is absent (#577)
 - xdotool focus preserve; installer / uninstall / AUR reliability fixes (#564, #583, #569, #597, #579, #586)
 
-See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0).
+See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0).
 
 ---
 
@@ -153,7 +155,7 @@ Vocalinux in action. Settings gallery shots may lag the searchable sidebar UI fr
 Our new interactive installer guides you through setup with intelligent hardware detection:
 
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
 ```
 
 **Choose your engine:**
@@ -168,25 +170,25 @@ The installer will:
 - **Install neural VAD support** when ONNX Runtime is available
 - **Install in ~1-2 minutes** (vs 5-10 min with old Whisper)
 
-> **Note**: Always installs the latest release. For a specific version, check [GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases).
+> **Note**: Always installs the latest release. For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
 
 ### Installation Options
 
 **Default (whisper.cpp - recommended):**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
 ```
 Fastest installation (~1-2 min), universal GPU support via Vulkan.
 
 **Whisper (OpenAI) - if you prefer PyTorch:**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=whisper
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=whisper
 ```
 NVIDIA GPU only (~5-10 min, downloads PyTorch + CUDA).
 
 **VOSK only - for low-RAM systems:**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=vosk
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=vosk
 ```
 Lightweight option (~40MB), works on systems with 4GB RAM.
 
@@ -219,7 +221,7 @@ is in progress.
 
 ```bash
 # Clone the repository
-git clone https://github.com/jatinkrmalik/vocalinux.git
+git clone https://github.com/VocaHQ/vocalinux.git
 cd vocalinux
 
 # Run the installer (will prompt for Whisper)
@@ -233,7 +235,7 @@ The installer handles everything: system dependencies, Python environment, speec
 
 ### 🌙 Nightly Releases (Bleeding Edge)
 
-For developers and early adopters who want to test the latest features, check out our [GitHub Releases page](https://github.com/jatinkrmalik/vocalinux/releases) which includes both beta and nightly builds.
+For developers and early adopters who want to test the latest features, check out our [GitHub Releases page](https://github.com/VocaHQ/vocalinux/releases) which includes both beta and nightly builds.
 
 > **⚠️ Warning**: Nightly releases contain the absolute latest code and may be unstable. For production use, we recommend using the latest beta release.
 
@@ -362,7 +364,7 @@ Restart Vocalinux after install. The Recognition tab in Settings shows which bac
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/jatinkrmalik/vocalinux.git
+git clone https://github.com/VocaHQ/vocalinux.git
 cd vocalinux
 ./install.sh --dev
 
@@ -410,7 +412,7 @@ GitHub is the **primary** forge for issues, pull requests, CI, and releases.
 
 | Role | URL |
 |------|-----|
-| Primary | https://github.com/jatinkrmalik/vocalinux |
+| Primary | https://github.com/VocaHQ/vocalinux |
 | Read-only mirror (Codeberg) | https://codeberg.org/jatinkrmalik/vocalinux |
 
 The Codeberg copy is a read-only source backup. Open issues and PRs on GitHub only.
@@ -452,13 +454,13 @@ This script generates all three sounds using the same smooth glide algorithm. Yo
 
 ## 🌐 The Voca Ecosystem
 
-Vocalinux is part of a family of privacy-first, offline voice dictation tools. Same mission, every operating system.
+Vocalinux is part of [VocaHQ](https://vocahq.com). Same privacy-first, offline voice dictation idea, one app per operating system.
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [jatinkrmalik/vocalinux](https://github.com/jatinkrmalik/vocalinux) | ✅ Stable v0.15.0 |
-| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [jatinkrmalik/vocamac](https://github.com/jatinkrmalik/vocamac) | 🚀 Beta |
-| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [jatinkrmalik/vocawin](https://github.com/jatinkrmalik/vocawin) | 📋 Planned |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Stable v0.15.0 |
+| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta |
+| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 📋 Planned |
 
 > Each platform uses native technologies for the best possible integration, while sharing the same privacy-first philosophy and offline-only architecture.
 
@@ -470,15 +472,15 @@ We welcome contributions! Whether it's bug reports, feature requests, or code co
 
 Thanks to everyone who has contributed to Vocalinux! 🙌
 
-<a href="https://github.com/jatinkrmalik/vocalinux/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=jatinkrmalik/vocalinux" />
+<a href="https://github.com/VocaHQ/vocalinux/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=VocaHQ/vocalinux" />
 </a>
 
 ### Quick Links
 
-- 🐛 [Report a Bug](https://github.com/jatinkrmalik/vocalinux/issues/new?template=bug_report.md)
-- 💡 [Request a Feature](https://github.com/jatinkrmalik/vocalinux/issues/new?template=feature_request.md)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report a Bug](https://github.com/VocaHQ/vocalinux/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/VocaHQ/vocalinux/issues/new?template=feature_request.md)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)
 
 
 ## ⭐ Support
@@ -495,7 +497,7 @@ This project is licensed under the **GNU Affero General Public License v3.0**
 ([AGPL-3.0](LICENSE)), aligning with the other [VocaHQ](https://github.com/VocaHQ)
 distribution projects ([VocaMac](https://github.com/VocaHQ/vocamac),
 [VocaPhone](https://github.com/VocaHQ/vocaphone),
-[VocaServer](https://github.com/VocaHQ/vocaserver)).
+[VocaGateway](https://github.com/VocaHQ/vocagateway)).
 
 You may use, study, modify, and redistribute the software under AGPL-3.0. If you
 run a modified version as a network service, AGPL also requires that you make the
@@ -503,7 +505,7 @@ corresponding source available.
 
 ## Star Chart
 
-[![Star History Chart](https://api.star-history.com/chart?repos=jatinkrmalik/vocalinux&type=date&legend=top-left&sealed_token=ZWyQQLhSORoR4mKf6UXMGFSCBXRxM_yEZgc8MFCH_ysBjaFUm_OCH-bI3TD7OivczEzm-ADRIpF9xCWFOMHvBPW95eQBxzfRMpNksChz7rN_eiqL7AIMDw)](https://www.star-history.com/?type=date&repos=jatinkrmalik%2Fvocalinux)
+[![Star History Chart](https://api.star-history.com/chart?repos=VocaHQ/vocalinux&type=date&legend=top-left&sealed_token=ZWyQQLhSORoR4mKf6UXMGFSCBXRxM_yEZgc8MFCH_ysBjaFUm_OCH-bI3TD7OivczEzm-ADRIpF9xCWFOMHvBPW95eQBxzfRMpNksChz7rN_eiqL7AIMDw)](https://www.star-history.com/?type=date&repos=VocaHQ%2Fvocalinux)
 
 ---
 

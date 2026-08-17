@@ -130,7 +130,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
 7. `## Thanks` — external PR authors and issue reporters by `@handle`
 8. `## Install / Upgrade` — `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
-9. Footer compare link: `https://github.com/jatinkrmalik/vocalinux/compare/vPREV...vX.Y.Z`
+9. Footer compare link: `https://github.com/VocaHQ/vocalinux/compare/vPREV...vX.Y.Z`
 
 #### Include / exclude
 
@@ -177,7 +177,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 **Install Commands:**
 Keep install commands on `main/install.sh` (installer resolves latest release tag automatically):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 **Release Announcement (lines ~31-34):**
@@ -203,7 +203,7 @@ Add a new "What's New" section at the top:
 - Feature 2
 - Bug fix 1
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.5.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.5.0-beta).
 
 ---
 
@@ -338,7 +338,7 @@ Key changes since 0.4.1-alpha:
 - Feature 2
 - Bug fix 1
 
-Full changelog: https://github.com/jatinkrmalik/vocalinux/releases"
+Full changelog: https://github.com/VocaHQ/vocalinux/releases"
 
 # Push tag
 git push origin v0.5.0-beta
@@ -354,7 +354,7 @@ After pushing the tag, the GitHub Actions workflow will automatically:
 4. Deploy the website to vocalinux.com
 5. Mark as pre-release if version contains alpha/beta/rc
 
-Monitor at: https://github.com/jatinkrmalik/vocalinux/actions
+Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 ### Step 9: Post-Release Tasks
 

@@ -71,8 +71,8 @@
   </screenshots>
 
   <url type="homepage">https://vocalinux.com</url>
-  <url type="bugtracker">https://github.com/jatinkrmalik/vocalinux/issues</url>
-  <url type="vcs-browser">https://github.com/jatinkrmalik/vocalinux</url>
+  <url type="bugtracker">https://github.com/VocaHQ/vocalinux/issues</url>
+  <url type="vcs-browser">https://github.com/VocaHQ/vocalinux</url>
 
   <content_rating type="oars-1.1">
     <content_attribute id="violence-cartoon">none</content_attribute>

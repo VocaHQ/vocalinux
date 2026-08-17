@@ -126,6 +126,16 @@ class ComputeBackend:
     CPU = "cpu"
 
 
+# Match install.sh: these are not usable whisper.cpp GPUs for auto-select.
+_SOFTWARE_VULKAN_NAME_MARKERS = (
+    "llvmpipe",
+    "swiftshader",
+    "lavapipe",
+    "zink",
+    "virtio",
+    "venus",
+)
+
 # Real vulkaninfo --summary headers look like "GPU0:"; some older/alternate
 # tools print "GPU id = 0". Accept both so hybrid detection does not silently
 # fall through to CUDA when Vulkan is present.
@@ -143,6 +153,38 @@ def _parse_vulkaninfo_gpu_header(line: str) -> Optional[int]:
     return int(match.group(1) or match.group(2))
 
 
+def _is_software_vulkan_name(name: Optional[str]) -> bool:
+    """Return True when a Vulkan device name looks like a software renderer."""
+    if not name:
+        return False
+    lowered = name.lower()
+    return any(marker in lowered for marker in _SOFTWARE_VULKAN_NAME_MARKERS)
+
+
+def _classify_vulkan_device_type(type_val: str, name: Optional[str]) -> str:
+    """Map vulkaninfo deviceType/name to discrete, integrated, software, or other."""
+    if _is_software_vulkan_name(name) or "CPU" in type_val.upper():
+        return "software"
+    upper = type_val.upper()
+    if "DISCRETE" in upper:
+        return "discrete"
+    if "INTEGRATED" in upper:
+        return "integrated"
+    return "other"
+
+
+def _is_software_vulkan_device(device: dict) -> bool:
+    """Return True when a parsed Vulkan device should not be auto-selected."""
+    return device.get("device_type") == "software" or _is_software_vulkan_name(device.get("name"))
+
+
+def _hardware_vulkan_devices(devices: Optional[list[dict]] = None) -> list[dict]:
+    """Return Vulkan devices that are not software renderers."""
+    if devices is None:
+        devices = detect_vulkan_devices()
+    return [device for device in devices if not _is_software_vulkan_device(device)]
+
+
 def _append_vulkan_device(
     devices: list[dict],
     current_index: Optional[int],
@@ -152,13 +194,41 @@ def _append_vulkan_device(
     """Append a parsed Vulkan device when index and name are both known."""
     if current_index is None or current_name is None:
         return
+    device_type = current_type
+    if _is_software_vulkan_name(current_name):
+        device_type = "software"
     devices.append(
         {
             "index": current_index,
             "name": current_name,
-            "device_type": current_type,
+            "device_type": device_type,
         }
     )
+
+
+def _run_vulkaninfo_stdout() -> str:
+    """Return vulkaninfo output, falling back when --summary is missing or empty."""
+    commands = (["vulkaninfo", "--summary"], ["vulkaninfo"])
+    for args in commands:
+        try:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=8,
+            )
+        except FileNotFoundError:
+            return ""
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.debug(f"vulkaninfo {args} failed: {exc}")
+            continue
+
+        stdout = result.stdout or ""
+        if "deviceName" in stdout or _VULKANINFO_GPU_HEADER_RE.search(stdout):
+            return stdout
+        if result.returncode == 0 and stdout.strip():
+            return stdout
+    return ""
 
 
 @lru_cache(maxsize=1)
@@ -167,55 +237,42 @@ def detect_vulkan_devices() -> list[dict]:
 
     Returns:
         List of dicts with keys: index (int), name (str),
-        device_type (str: "discrete" or "integrated" or "other").
+        device_type (str: "discrete", "integrated", "software", or "other").
     """
     devices: list[dict] = []
-    try:
-        result = subprocess.run(
-            ["vulkaninfo", "--summary"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        if result.returncode != 0:
-            return devices
+    stdout = _run_vulkaninfo_stdout()
+    if not stdout:
+        return devices
 
-        current_index = None
-        current_name = None
-        current_type = "other"
+    current_index = None
+    current_name = None
+    current_type = "other"
 
-        for line in result.stdout.split("\n"):
-            stripped = line.strip()
-            header_index = _parse_vulkaninfo_gpu_header(stripped)
+    for line in stdout.split("\n"):
+        stripped = line.strip()
+        header_index = _parse_vulkaninfo_gpu_header(stripped)
 
-            if header_index is not None:
-                _append_vulkan_device(devices, current_index, current_name, current_type)
-                current_index = header_index
-                current_name = None
-                current_type = "other"
-                continue
+        if header_index is not None:
+            _append_vulkan_device(devices, current_index, current_name, current_type)
+            current_index = header_index
+            current_name = None
+            current_type = "other"
+            continue
 
-            if "deviceName" in stripped and "=" in stripped:
-                current_name = stripped.split("=", 1)[-1].strip()
+        if "deviceName" in stripped and "=" in stripped:
+            current_name = stripped.split("=", 1)[-1].strip()
 
-            if "deviceType" in stripped and "=" in stripped:
-                type_val = stripped.split("=", 1)[-1].strip().upper()
-                if "DISCRETE" in type_val:
-                    current_type = "discrete"
-                elif "INTEGRATED" in type_val:
-                    current_type = "integrated"
+        if "deviceType" in stripped and "=" in stripped:
+            type_val = stripped.split("=", 1)[-1].strip()
+            current_type = _classify_vulkan_device_type(type_val, current_name)
 
-        _append_vulkan_device(devices, current_index, current_name, current_type)
-
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
-        logger.debug(f"Vulkan device enumeration failed: {e}")
-
+    _append_vulkan_device(devices, current_index, current_name, current_type)
     return devices
 
 
 def _prefer_discrete_vulkan_device() -> Optional[int]:
-    """Return the index of the preferred Vulkan GPU (discrete if available)."""
-    devices = detect_vulkan_devices()
+    """Return the index of the preferred hardware Vulkan GPU (discrete if available)."""
+    devices = _hardware_vulkan_devices()
     for device in devices:
         if device["device_type"] == "discrete":
             return device["index"]
@@ -244,9 +301,10 @@ def detect_vulkan_support() -> tuple[bool, Optional[str]]:
         Tuple of (is_available, device_name)
     """
     devices = detect_vulkan_devices()
-    if devices:
+    hardware = _hardware_vulkan_devices(devices)
+    if hardware:
         preferred_idx = _prefer_discrete_vulkan_device()
-        device_name = _vulkan_device_name_by_index(devices, preferred_idx)
+        device_name = _vulkan_device_name_by_index(hardware, preferred_idx)
         logger.info(f"Vulkan support detected: {device_name}")
         return True, device_name
 

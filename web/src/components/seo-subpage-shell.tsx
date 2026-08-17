@@ -391,7 +391,7 @@ export function SeoSubpageShell({ children }: SeoSubpageShellProps) {
                 Install
               </Link>
               <a
-                href="https://github.com/jatinkrmalik/vocalinux"
+                href="https://github.com/VocaHQ/vocalinux"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1.5 rounded-full border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-100 transition-colors hover:border-zinc-500"
@@ -423,6 +423,18 @@ export function SeoSubpageShell({ children }: SeoSubpageShellProps) {
               </div>
             ))}
           </div>
+          <p className="mt-8 border-t border-zinc-800 pt-6 text-sm text-zinc-500">
+            Vocalinux is part of{" "}
+            <a
+              href="https://vocahq.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-zinc-400 transition-colors hover:text-white"
+            >
+              VocaHQ
+            </a>
+            .
+          </p>
         </div>
       </footer>
     </div>

@@ -8,9 +8,11 @@ import {
   absoluteUrl,
   DEFAULT_OG_IMAGE_ALT,
   DEFAULT_OG_IMAGE_PATH,
+  GITHUB_REPO_URL,
   SITE_NAME,
   SITE_URL,
   TWITTER_HANDLE,
+  VOCAHQ_URL,
 } from "@/lib/seo";
 
 const display = Bricolage_Grotesque({
@@ -143,11 +145,16 @@ const organizationJsonLd = {
   url: absoluteUrl("/"),
   logo: absoluteUrl("/vocalinux.png"),
   description: "Open-source, offline voice dictation software for Linux.",
-  sameAs: ["https://github.com/jatinkrmalik/vocalinux"],
+  sameAs: [GITHUB_REPO_URL, VOCAHQ_URL],
   founder: {
     "@type": "Person",
     name: "Jatin K Malik",
     url: "https://github.com/jatinkrmalik",
+  },
+  parentOrganization: {
+    "@type": "Organization",
+    name: "VocaHQ",
+    url: VOCAHQ_URL,
   },
 };
 
@@ -168,7 +175,7 @@ const webSiteJsonLd = {
     target: {
       "@type": "EntryPoint",
       urlTemplate:
-        "https://github.com/jatinkrmalik/vocalinux/issues?q={search_term_string}",
+        `${GITHUB_REPO_URL}/issues?q={search_term_string}`,
     },
     "query-input": {
       "@type": "PropertyValueSpecification",

@@ -49,7 +49,12 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc
 
       - name: Install build dependencies
         run: |
@@ -82,6 +87,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (x86_64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
           ls -la dist/*.AppImage
@@ -102,12 +109,12 @@ jobs:
 
             ### Quick Install (Recommended)
             ```bash
-            curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/${{ github.ref_name }}/install.sh | bash
+            curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/${{ github.ref_name }}/install.sh | bash
             ```
 
             ### From Source
             ```bash
-            git clone https://github.com/jatinkrmalik/vocalinux.git
+            git clone https://github.com/VocaHQ/vocalinux.git
             cd vocalinux
             ./install.sh
             ```
@@ -141,7 +148,7 @@ jobs:
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
             ---
-            See [CHANGELOG](https://github.com/jatinkrmalik/vocalinux/releases) for detailed changes.
+            See [CHANGELOG](https://github.com/VocaHQ/vocalinux/releases) for detailed changes.
 
   build-appimage-arm64:
     name: Build and Attach AppImage (aarch64)
@@ -177,7 +184,12 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc
 
       - name: Install build dependencies
         run: |
@@ -196,6 +208,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (aarch64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
           ls -la dist/*.AppImage

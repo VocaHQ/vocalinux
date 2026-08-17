@@ -97,4 +97,4 @@ pip install --upgrade -e .
 
 For security concerns: jatinkrmalik@gmail.com
 
-For general issues: https://github.com/jatinkrmalik/vocalinux/issues
+For general issues: https://github.com/VocaHQ/vocalinux/issues

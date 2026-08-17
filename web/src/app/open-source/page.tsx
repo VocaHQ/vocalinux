@@ -141,9 +141,17 @@ export default function OpenSourcePage() {
           Free & Open Source Voice Dictation
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Vocalinux is 100% open source under the AGPL-3.0 license, aligned with the other
-          VocaHQ distribution projects. No subscriptions, no vendor lock-in, no hidden costs.
-          Your voice data never leaves your machine.
+          Vocalinux is 100% open source under the AGPL-3.0 license, and part of{" "}
+          <a
+            href="https://vocahq.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary hover:underline"
+          >
+            VocaHQ
+          </a>
+          . No subscriptions, no vendor lock-in, no hidden costs. Your voice data never
+          leaves your machine.
         </p>
       </section>
 
@@ -281,7 +289,7 @@ export default function OpenSourcePage() {
               translations - join the community.
             </p>
             <a
-              href="https://github.com/jatinkrmalik/vocalinux"
+              href="https://github.com/VocaHQ/vocalinux"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted"

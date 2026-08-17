@@ -8,7 +8,7 @@ _tag=0.15.0
 pkgrel=1
 pkgdesc="Free, offline voice dictation for Linux"
 arch=('any')
-url="https://github.com/jatinkrmalik/vocalinux"
+url="https://github.com/VocaHQ/vocalinux"
 license=('AGPL-3.0-only')
 depends=(
   'python>=3.9'
@@ -49,7 +49,7 @@ optdepends=(
   'wtype: Wayland keystroke injection fallback'
 )
 conflicts=('vocalinux-git')
-source=("${pkgname}-${_tag}.tar.gz::https://github.com/jatinkrmalik/vocalinux/archive/refs/tags/v${_tag}.tar.gz")
+source=("${pkgname}-${_tag}.tar.gz::https://github.com/VocaHQ/vocalinux/archive/refs/tags/v${_tag}.tar.gz")
 # SKIP until the v${_tag} tarball exists. release.yml sets updpkgsums=true on publish.
 sha256sums=('SKIP')
 

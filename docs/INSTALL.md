@@ -7,10 +7,10 @@ This guide provides detailed instructions for installing Vocalinux on Linux syst
 ### One-liner Installation (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
-> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases).
+> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
 
 That's it! The installer handles everything automatically:
 - ✅ Installs whisper.cpp (~1-2 minutes, no heavy dependencies!)
@@ -24,13 +24,13 @@ That's it! The installer handles everything automatically:
 ### From Source
 
 ```bash
-git clone https://github.com/jatinkrmalik/vocalinux.git && cd vocalinux && ./install.sh
+git clone https://github.com/VocaHQ/vocalinux.git && cd vocalinux && ./install.sh
 ```
 
 ### AppImage (no install, no root)
 
 Download the `.AppImage` for your CPU (`x86_64` or `aarch64`) from
-[GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases), then:
+[GitHub Releases](https://github.com/VocaHQ/vocalinux/releases), then:
 
 ```bash
 chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
@@ -38,8 +38,11 @@ chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
 ```
 
 AppImage still needs host text-injection tools (`xdotool` on X11; `wtype` /
-`ydotool` / clipboard tools on Wayland), same as the PyPI path. Prefer the
-one-liner installer above when you want system deps and models set up for you.
+`ydotool` / clipboard tools on Wayland), same as the PyPI path. Current
+AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver; you
+still need working Vulkan on the machine (`vulkaninfo --summary`). Prefer the
+one-liner installer above when you want system deps, a CUDA build, and models
+set up for you.
 
 ### From PyPI
 
@@ -501,6 +504,11 @@ vulkaninfo --summary | grep -i "deviceName"
 # In Vocalinux, look for these log messages:
 # [INFO] whisper.cpp backend selection priority: Vulkan -> CUDA -> CPU
 # [INFO] whisper.cpp using Vulkan GPU backend: AMD Radeon RX 6800
+# [INFO] whisper.cpp configured with n_threads=4 (GPU backend: vulkan)
+
+# If you instead see "CPU-only; pywhispercpp lacks GPU libraries", the
+# bundled pywhispercpp was built without GPU libs (older AppImage, or a
+# CPU pip wheel). install.sh rebuilds it with Vulkan/CUDA when possible.
 ```
 
 ### Reusing Existing whisper.cpp Builds
@@ -704,12 +712,12 @@ Already have Vocalinux installed? See the [Update Guide](UPDATE.md) for instruct
 
 Quick update command:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ## Getting Help
 
 - 📖 [User Guide](USER_GUIDE.md)
 - 📖 [Update Guide](UPDATE.md)
-- 🐛 [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)

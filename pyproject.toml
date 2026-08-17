@@ -85,11 +85,11 @@ vocalinux = "vocalinux.main:main"
 vocalinux-gui = "vocalinux.main:main"
 
 [project.urls]
-Homepage = "https://github.com/jatinkrmalik/vocalinux"
-Documentation = "https://github.com/jatinkrmalik/vocalinux/tree/main/docs"
-Repository = "https://github.com/jatinkrmalik/vocalinux"
-Issues = "https://github.com/jatinkrmalik/vocalinux/issues"
-Changelog = "https://github.com/jatinkrmalik/vocalinux/releases"
+Homepage = "https://github.com/VocaHQ/vocalinux"
+Documentation = "https://github.com/VocaHQ/vocalinux/tree/main/docs"
+Repository = "https://github.com/VocaHQ/vocalinux"
+Issues = "https://github.com/VocaHQ/vocalinux/issues"
+Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 
 [tool.setuptools]
 packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
