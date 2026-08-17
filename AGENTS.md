@@ -47,20 +47,20 @@ pytest -m "not slow"
 pytest -m "not integration"
 
 # Lint (check only)
-make lint
+just lint
 # Or manually:
 flake8 src/ tests/ --select=E9,F63,F7,F82
 black --check --diff src/ tests/
 isort --check-only --diff --profile black src/ tests/
 
 # Auto-format code
-make format
+just format
 # Or manually:
 black src/ tests/
 isort --profile black src/ tests/
 
 # Type checking
-make typecheck
+just typecheck
 # Or: mypy src/
 
 # Run the application
@@ -194,7 +194,7 @@ Quick summary:
 1. Update version in `src/vocalinux/version.py`
 2. Update version references in README.md, docs/INSTALL.md, docs/UPDATE.md
 3. Update web/src/app/page.tsx and web/package.json
-4. Run `make lint` to verify code quality
+4. Run `just lint` to verify code quality
 5. Create branch `release/vX.Y.Z-PHASE`
 6. Commit with `chore(release): prepare vX.Y.Z-PHASE`
 7. Push and create PR
@@ -242,7 +242,7 @@ docs(readme): update installation instructions
 
 The startup update script keeps a Python venv (`venv/`) and `web/node_modules` in sync. Standard commands live in the sections above and in `web/AGENTS.md`; notes below are the non-obvious gotchas for this environment.
 
-- **Activate the venv first.** Python tooling (`vocalinux`, `pytest`, `make lint`, `mypy`) lives in `venv/`. Run `source venv/bin/activate` (or prefix with `./venv/bin/`) before use.
+- **Activate the venv first.** Python tooling (`vocalinux`, `pytest`, `just lint`, `mypy`) lives in `venv/`. Run `source venv/bin/activate` (or prefix with `./venv/bin/`) before use.
 - **The venv must be created with `--system-site-packages`.** GTK/`PyGObject` come from the apt package `python3-gi`; installing `PyGObject` from pip fails on Ubuntu 24.04 because the pinned version needs `girepository-2.0` (glib 2.80+), which the distro doesn't ship. The update script already creates the venv this way — don't drop that flag.
 - **`black --check` prints a Python-version warning.** `pyproject.toml` targets py314 but the VM runs Python 3.12; Black still reports "All done" and lint passes. This warning is benign.
 - **Desktop app is a GTK tray app.** An XFCE session (`xfwm4` + `xfce4-panel`) runs on `DISPLAY=:1`. Always give the app the session env: `DISPLAY=:1`, `DBUS_SESSION_BUS_ADDRESS=autolaunch:`, `XDG_RUNTIME_DIR=/run/user/1000`, `XDG_CURRENT_DESKTOP=XFCE`. Single-instance lock lives at `~/.local/share/vocalinux/instance.lock`; delete it after killing a stale instance. Kill instances by explicit PID (never `pkill -f`).

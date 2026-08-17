@@ -37,10 +37,10 @@ Use this checklist for every release:
 - [ ] Confirm install docs/website mention **AppImage** when this release ships AppImages
 
 ### Testing & Verification
-- [ ] Run `make test` - All tests pass
-- [ ] Run `make lint` - No linting errors
-- [ ] Run `make typecheck` - No type errors
-- [ ] Run `make build` - Package builds successfully
+- [ ] Run `just test` - All tests pass
+- [ ] Run `just lint` - No linting errors
+- [ ] Run `just typecheck` - No type errors
+- [ ] Run `just build` - Package builds successfully
 - [ ] Run `npm run build` in `web/` - Website builds successfully
 
 > Note: CI workflows also sync website version metadata from `src/vocalinux/version.py`, but source files should still be updated in-repo during release prep for review clarity.
@@ -262,16 +262,16 @@ Run the full verification suite:
 
 ```bash
 # Run tests
-make test
+just test
 
 # Run linting
-make lint
+just lint
 
 # Run type checking
-make typecheck
+just typecheck
 
 # Build package
-make build
+just build
 
 # Website build
 cd web && npm run build && cd ..

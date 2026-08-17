@@ -29,7 +29,7 @@ ci:
   - changed-files:
       - any-glob-to-any-file:
           - ".github/**/*"
-          - "Makefile"
+          - "justfile"
           - "scripts/**/*"
           - ".flake8"
           - ".pre-commit-config.yaml"

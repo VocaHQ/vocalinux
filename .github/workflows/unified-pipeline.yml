@@ -38,7 +38,7 @@ jobs:
               - 'tests/**'
               - 'pyproject.toml'
               - 'requirements*.txt'
-              - 'Makefile'
+              - 'justfile'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
       - name: Check if website should deploy
