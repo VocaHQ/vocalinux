@@ -201,7 +201,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             obj, "_read_clipboard", side_effect=["original clipboard", "injected text"]
         ):
             with patch.object(
-                obj, "_copy_to_clipboard", side_effect=lambda t: copy_calls.append(t) or True
+                obj, "_copy_to_clipboard", side_effect=lambda t, **kw: copy_calls.append(t) or True
             ):
                 with patch.object(
                     obj,
@@ -234,7 +234,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: call_order.append(f"copy:{t}") or True,
+                side_effect=lambda t, **kw: call_order.append(f"copy:{t}") or True,
             ):
                 with patch.object(
                     obj,
@@ -262,7 +262,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -296,7 +296,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -325,7 +325,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -384,7 +384,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -407,7 +407,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
         obj.wayland_tool = "ydotool"
         copy_calls: list[str] = []
 
-        def fake_copy(t: str) -> bool:
+        def fake_copy(t: str, **kwargs) -> bool:
             copy_calls.append(t)
             # injection copy succeeds; restore copy fails
             return t != "previous_content"
@@ -443,7 +443,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -471,7 +471,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -529,7 +529,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -559,7 +559,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
             with patch.object(
                 obj,
                 "_copy_to_clipboard",
-                side_effect=lambda t: copy_calls.append(t) or True,
+                side_effect=lambda t, **kw: copy_calls.append(t) or True,
             ):
                 with patch.object(
                     obj,
@@ -766,7 +766,7 @@ class TestOverlappingClipboardRestore(unittest.TestCase):
 
         with patch.object(obj, "_read_clipboard", side_effect=lambda: next(read_values)):
             with patch.object(
-                obj, "_copy_to_clipboard", side_effect=lambda t: copy_calls.append(t) or True
+                obj, "_copy_to_clipboard", side_effect=lambda t, **kw: copy_calls.append(t) or True
             ):
                 with patch.object(
                     obj,
