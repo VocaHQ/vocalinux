@@ -584,7 +584,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = True
         manager.state = RecognitionState.IDLE
 
-        manager.start_recognition()
+        assert manager.start_recognition() is True
 
         assert manager.state == RecognitionState.LISTENING
         assert manager.should_record is True
@@ -606,7 +606,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = False
         manager.state = RecognitionState.IDLE
 
-        manager.start_recognition()
+        assert manager.start_recognition() is False
 
         # Should stay idle if model not ready
         assert manager.state == RecognitionState.IDLE
@@ -627,7 +627,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = True
         manager.state = RecognitionState.LISTENING
 
-        manager.start_recognition()
+        assert manager.start_recognition() is False
 
         # Should still be listening (no-op)
         assert manager.state == RecognitionState.LISTENING

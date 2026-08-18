@@ -2470,11 +2470,16 @@ class SpeechRecognitionManager:
         chunk_duration_ms = (1024 / 16000) * 1000
         return int(guard_ms / chunk_duration_ms)
 
-    def start_recognition(self, mode: str = "toggle"):
-        """Start the speech recognition process."""
+    def start_recognition(self, mode: str = "toggle") -> bool:
+        """Start the speech recognition process.
+
+        Returns:
+            True if recognition actually started (state is LISTENING), False if
+            blocked (wrong state, auto-paused, or model not ready).
+        """
         if self.state != RecognitionState.IDLE:
             logger.warning(f"Cannot start recognition in current state: {self.state}")
-            return
+            return False
 
         if self._auto_paused:
             logger.warning(
@@ -2487,7 +2492,7 @@ class SpeechRecognitionManager:
                 "Close that app or remove it from Auto-Pause settings to resume.",
                 "dialog-information",
             )
-            return
+            return False
 
         # Check if model is ready (lazy-reload after idle keep-alive unload)
         if not self.model_ready:
@@ -2501,7 +2506,7 @@ class SpeechRecognitionManager:
                         "Open Settings to check your engine and try again.",
                         "dialog-warning",
                     )
-                    return
+                    return False
             else:
                 logger.warning(
                     "Cannot start recognition: model not downloaded. "
@@ -2514,7 +2519,7 @@ class SpeechRecognitionManager:
                     "to use dictation.",
                     "dialog-warning",
                 )
-                return
+                return False
 
         logger.info("Starting speech recognition")
         self._update_state(RecognitionState.LISTENING)
@@ -2537,6 +2542,7 @@ class SpeechRecognitionManager:
         self.recognition_thread = threading.Thread(target=self._perform_recognition)
         self.recognition_thread.daemon = True
         self.recognition_thread.start()
+        return True
 
     def stop_recognition(self):
         """Stop the speech recognition process."""

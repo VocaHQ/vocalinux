@@ -1774,7 +1774,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager.state = RecognitionState.LISTENING
 
         with patch("vocalinux.speech_recognition.recognition_manager.play_error_sound"):
-            manager.start_recognition()
+            assert manager.start_recognition() is False
             # Should return early without starting threads
 
     def test_start_recognition_model_not_ready(self):
@@ -1785,7 +1785,7 @@ class TestStartStopRecognition(unittest.TestCase):
 
         with patch("vocalinux.speech_recognition.recognition_manager.play_error_sound"):
             with patch("vocalinux.speech_recognition.recognition_manager._show_notification"):
-                manager.start_recognition()
+                assert manager.start_recognition() is False
                 assert manager.state == RecognitionState.IDLE  # Should not change
 
     def test_start_recognition_success(self):
@@ -1798,7 +1798,7 @@ class TestStartStopRecognition(unittest.TestCase):
         with patch("vocalinux.speech_recognition.recognition_manager.play_start_sound"):
             with patch.object(manager, "_record_audio"):
                 with patch.object(manager, "_perform_recognition"):
-                    manager.start_recognition()
+                    assert manager.start_recognition() is True
                     assert manager.state == RecognitionState.LISTENING
                     assert manager.should_record is True
 

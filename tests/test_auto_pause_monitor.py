@@ -523,7 +523,7 @@ class TestUnloadModelAndAutoPauseBlock(unittest.TestCase):
             patch("vocalinux.speech_recognition.recognition_manager.play_error_sound"),
             patch("vocalinux.speech_recognition.recognition_manager._show_notification"),
         ):
-            mgr.start_recognition()
+            self.assertFalse(mgr.start_recognition())
 
         self.assertEqual(mgr.state, RecognitionState.IDLE)
         # Should not have transitioned to listening

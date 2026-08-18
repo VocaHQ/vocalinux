@@ -21,8 +21,8 @@ class SpeechRecognitionManagerProtocol(Protocol):
 
     state: RecognitionState
 
-    def start_recognition(self, mode: str = "toggle") -> None:
-        """Start the speech recognition process."""
+    def start_recognition(self, mode: str = "toggle") -> bool:
+        """Start the speech recognition process. Returns True if listening began."""
         ...
 
     def stop_recognition(self) -> None:

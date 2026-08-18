@@ -4916,21 +4916,40 @@ class SettingsDialog(Gtk.Dialog):
                 return
             self.test_buffer.set_text("Settings applied. Starting test...")
 
+        self.connect_to_recognition_manager()
+
+        self._saved_text_callbacks = self.speech_engine.get_text_callbacks()
+        self.speech_engine.set_text_callbacks([self._test_text_callback])
+
+        if not self.speech_engine.start_recognition():
+            self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
+            del self._saved_text_callbacks
+            self.test_output_revealer.set_reveal_child(True)
+            if getattr(self.speech_engine, "is_auto_paused", False):
+                self.test_buffer.set_text(
+                    "Dictation is paused. Close the listed app or remove it from "
+                    "Auto-Pause settings."
+                )
+            elif not getattr(self.speech_engine, "model_ready", True):
+                self.test_buffer.set_text(
+                    "No speech model downloaded. Open the Speech Model page and "
+                    "download a model to use Test Dictation."
+                )
+            else:
+                self.test_buffer.set_text("Could not start recognition test.")
+            return
+
         self._test_active = True
         self.test_button.set_sensitive(False)
         self.test_button.set_label("Testing… Speak Now!")
         self.test_output_revealer.set_reveal_child(True)
         self.test_buffer.set_text("")
         self._test_result = ""
-
-        self.connect_to_recognition_manager()
         self.update_recognition_progress("Listening", info="Starting recognition test...")
 
-        self._saved_text_callbacks = self.speech_engine.get_text_callbacks()
-        self.speech_engine.set_text_callbacks([self._test_text_callback])
-
-        self.speech_engine.start_recognition()
-        threading.Thread(target=self._stop_test_after_delay, args=(3,)).start()
+        # Enough room for one utterance plus the configured silence window.
+        delay = float(selected_settings.get("silence_timeout", 2.0)) + 2.0
+        threading.Thread(target=self._stop_test_after_delay, args=(delay,)).start()
 
     def _test_text_callback(self, text: str):
         """Callback specifically for the test recognition."""
@@ -4946,7 +4965,7 @@ class SettingsDialog(Gtk.Dialog):
         self.test_textview.scroll_to_mark(mark, 0.0, True, 0.0, 1.0)
         return False
 
-    def _stop_test_after_delay(self, delay: int):
+    def _stop_test_after_delay(self, delay: float):
         """Stops the recognition test after a specified delay."""
         time.sleep(delay)
         GLib.idle_add(self._finalize_test)

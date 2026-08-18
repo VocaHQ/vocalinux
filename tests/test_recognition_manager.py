@@ -475,7 +475,7 @@ class TestSpeechRecognition(unittest.TestCase):
         manager.model = None
 
         # Should not start and should play error sound
-        manager.start_recognition()
+        self.assertFalse(manager.start_recognition())
         self.assertEqual(manager.state, RecognitionState.IDLE)
         mock_audio_feedback.play_error_sound.assert_called()
 
