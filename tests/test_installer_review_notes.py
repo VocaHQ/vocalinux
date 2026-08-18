@@ -1,6 +1,7 @@
 """Source checks for leftover installer review notes from #700 and #705."""
 
 import subprocess
+import sys
 from pathlib import Path
 
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
@@ -78,8 +79,54 @@ def test_release_tag_hint_is_not_hardcoded() -> None:
 
 def test_whispercpp_fallback_installs_vosk_extra() -> None:
     source = _installer_source()
-    assert 'pip install ".[vosk]" --log "$PIP_LOG_FILE"' in source
+    assert 'pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vosk' in source
     assert "pip install vosk --log" not in source
+    assert 'pip install ".[vosk]"' not in source
+
+
+def test_project_pip_install_skips_pygobject() -> None:
+    source = _installer_source()
+    assert "write_pip_reqs_skip_pygobject()" in source
+    assert "pip_install_project_skip_pygobject()" in source
+    assert "pip install --no-deps" in source
+    assert "--no-emit-package pygobject" in source
+    assert 'pip install . --log "$PIP_LOG_FILE"' not in source
+    assert 'pip install -e . --log "$PIP_LOG_FILE"' not in source
+    assert 'pip install ".[vad]"' not in source
+    assert 'pip install -e ".[vad]"' not in source
+    assert 'pip install -e ".[whisper,dev]"' not in source
+
+
+def _run_reqs_writer(dest: Path, *extras: str) -> None:
+    source = _installer_source()
+    start = source.index("from pathlib import Path\nimport re\nimport sys\n")
+    end = source.index("\nPY\n}", start)
+    result = subprocess.run(
+        [sys.executable, "-", str(dest), *extras],
+        check=False,
+        cwd=INSTALLER.parent,
+        input=source[start:end],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_write_pip_reqs_skip_pygobject_runtime(tmp_path) -> None:
+    dest = tmp_path / "runtime.txt"
+    _run_reqs_writer(dest)
+    reqs = dest.read_text().splitlines()
+    assert reqs
+    assert all("pygobject" not in req.lower() for req in reqs)
+    assert any(req.startswith("pyaudio") for req in reqs)
+    assert any(req.startswith("pywhispercpp") for req in reqs)
+
+
+def test_write_pip_reqs_skip_pygobject_vosk_extra(tmp_path) -> None:
+    dest = tmp_path / "vosk.txt"
+    _run_reqs_writer(dest, "vosk")
+    reqs = dest.read_text().splitlines()
+    assert reqs == ["vosk>=0.3.45"]
 
 
 def test_settings_uses_engine_flag_not_removed_with_whisper() -> None:

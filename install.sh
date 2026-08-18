@@ -2933,7 +2933,7 @@ install_whispercpp_with_gpu_support() {
         # vosk is an optional extra; make sure it is importable before
         # falling back to it
         if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
-            pip install ".[vosk]" --log "$PIP_LOG_FILE" || \
+            pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vosk || \
                 print_warning "Could not install vosk; install it manually or pick another engine in Settings."
         fi
 
@@ -2975,6 +2975,83 @@ FALLBACK_VOSK_CONFIG
     echo ""
 }
 
+# Distro python3-gi provides `gi`, but apt does not drop pip-visible
+# PyGObject dist-info. `pip install .` then tries to build pygobject from
+# sdist and dies (needs girepository-2.0). Same skip as uv export's
+# --no-emit-package pygobject: install the other deps, then the project
+# with --no-deps. Do not use requirements/*.txt hashes here (Phase 2).
+write_pip_reqs_skip_pygobject() {
+    local dest="$1"
+    shift
+    "$VENV_DIR/bin/python" - "$dest" "$@" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+dest = Path(sys.argv[1])
+extras = sys.argv[2:]
+text = Path("pyproject.toml").read_text()
+
+
+def quoted_strings(block: str):
+    return re.findall(r'"([^"]+)"', block)
+
+
+reqs = []
+if not extras:
+    match = re.search(r"^dependencies = \[(.*?)\]", text, re.M | re.S)
+    for req in quoted_strings(match.group(1) if match else ""):
+        pkg = re.split(r"[<>=!~;\[]", req, 1)[0].strip()
+        if pkg.lower() == "pygobject":
+            continue
+        reqs.append(req)
+else:
+    opt = re.search(
+        r"^\[project\.optional-dependencies\](.*?)(\n\[|\Z)", text, re.M | re.S
+    )
+    opt_text = opt.group(1) if opt else ""
+    for extra in extras:
+        match = re.search(rf"^{re.escape(extra)} = \[(.*?)\]", opt_text, re.M | re.S)
+        if match:
+            reqs.extend(quoted_strings(match.group(1)))
+
+dest.write_text("\n".join(reqs) + ("\n" if reqs else ""))
+PY
+}
+
+require_distro_gi() {
+    if ! "$VENV_DIR/bin/python" -c "import gi" 2>/dev/null; then
+        print_error "Distro PyGObject (python3-gi / python3-gobject) is not importable in the venv."
+        print_error "Install it with your package manager. Pip cannot build PyGObject here."
+        exit "$EXIT_MISSING_DEPS"
+    fi
+}
+
+pip_install_reqs_file() {
+    local pip_log="$1"
+    local reqs_file="$2"
+    if [ ! -s "$reqs_file" ]; then
+        return 0
+    fi
+    pip install -r "$reqs_file" --log "$pip_log"
+}
+
+pip_install_project_skip_pygobject() {
+    local pip_log="$1"
+    shift
+    require_distro_gi
+    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/runtime-deps.txt"
+    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/runtime-deps.txt" || return 1
+    pip install --no-deps --log "$pip_log" "$@"
+}
+
+pip_install_extras_skip_pygobject() {
+    local pip_log="$1"
+    shift
+    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/extra-deps.txt" "$@"
+    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/extra-deps.txt"
+}
+
 # Function to install Python package with error handling and verification
 install_python_package() {
     # Pip logs live in the install scratch dir so a failed run can keep them.
@@ -3012,10 +3089,8 @@ install_python_package() {
 
         print_info "Installing neural VAD support (Silero / ONNX Runtime)..."
         local VAD_INSTALL_SUCCESS=false
-        if [[ "$EDITABLE_MODE" == "yes" ]]; then
-            pip install -e ".[vad]" --log "$PIP_LOG_FILE" && VAD_INSTALL_SUCCESS=true
-        else
-            pip install ".[vad]" --log "$PIP_LOG_FILE" && VAD_INSTALL_SUCCESS=true
+        if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vad; then
+            VAD_INSTALL_SUCCESS=true
         fi
 
         if [[ "$VAD_INSTALL_SUCCESS" == "true" ]]; then
@@ -3040,7 +3115,7 @@ PY
         print_info "Installing Vocalinux in development mode..."
 
         # Install in development mode with logging
-        pip install -e . --log "$PIP_LOG_FILE" || {
+        pip_install_project_skip_pygobject "$PIP_LOG_FILE" -e . || {
             print_error "Failed to install Vocalinux in development mode."
             print_error "Check the pip log for details: $PIP_LOG_FILE"
             return 1
@@ -3054,7 +3129,7 @@ PY
 
         # Install all optional dependencies for development
         print_info "Installing all optional dependencies for development..."
-        pip install -e ".[whisper,dev]" --log "$PIP_LOG_FILE" || {
+        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" whisper dev || {
             print_warning "Failed to install some optional dependencies."
             print_warning "Some features may not work correctly."
         }
@@ -3068,7 +3143,7 @@ PY
         print_info "Installing Vocalinux..."
 
         # Install the package with logging (includes pywhispercpp by default)
-        pip install . --log "$PIP_LOG_FILE" || {
+        pip_install_project_skip_pygobject "$PIP_LOG_FILE" . || {
             print_error "Failed to install Vocalinux."
             print_error "Check the pip log for details: $PIP_LOG_FILE"
             return 1
@@ -3211,7 +3286,7 @@ FALLBACK_CONFIG
                 print_info "VOSK is fast and works well on older systems."
 
                 # vosk is an optional extra; install it alongside the base package
-                pip install ".[vosk]" --log "$PIP_LOG_FILE" || {
+                pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vosk || {
                     print_error "Failed to install the vosk engine"
                     return 1
                 }
