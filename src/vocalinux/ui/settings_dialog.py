@@ -146,6 +146,12 @@ ENGINE_MODELS = {
 # Tallest the "Unused downloads" list may grow before it starts scrolling
 _UNUSED_DOWNLOADS_MAX_HEIGHT = 220
 
+
+def _clamp_unused_downloads_height(natural_height: int) -> int:
+    """Clamp a measured list height to the height the page gives the list."""
+    return min(_UNUSED_DOWNLOADS_MAX_HEIGHT, natural_height)
+
+
 # Engine display name mapping
 ENGINE_DISPLAY_NAMES = {
     "vosk": "Vosk",
@@ -4426,7 +4432,7 @@ class SettingsDialog(Gtk.Dialog):
         """
         _, natural_height = self.unused_models_group.listbox.get_preferred_height()
         self.unused_models_scroll.set_min_content_height(
-            min(_UNUSED_DOWNLOADS_MAX_HEIGHT, natural_height)
+            _clamp_unused_downloads_height(natural_height)
         )
 
     def _confirm_model_delete(self, text: str, secondary: str) -> bool:

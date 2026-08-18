@@ -1,52 +1,61 @@
-"""Tests for sizing the "Unused downloads" list to the rows it holds."""
+"""Tests for sizing the "Unused downloads" list to the rows it holds.
 
-import importlib
-import sys
-from unittest.mock import MagicMock, Mock, patch
+The settings dialog cannot be instantiated under the mocked-GTK harness (see
+test_settings_mode_change.py), so the arithmetic lives in a module-level
+helper that is unit-tested directly, and the wiring around it is asserted
+against the source of the two methods.
+"""
 
+import inspect
+import re
 
-def _load_settings_dialog():
-    """Import settings_dialog with real base classes for its GTK subclasses."""
-    repository = sys.modules["gi.repository"]
-    bases = {name: type(name, (), {}) for name in ("Box", "ListBoxRow", "Dialog")}
-    saved = sys.modules.pop("vocalinux.ui.settings_dialog", None)
-    try:
-        with patch.object(repository, "Gtk", MagicMock(**bases)):
-            module = importlib.import_module("vocalinux.ui.settings_dialog")
-    finally:
-        sys.modules.pop("vocalinux.ui.settings_dialog", None)
-        if saved is not None:
-            sys.modules["vocalinux.ui.settings_dialog"] = saved
-    return module
+from vocalinux.ui import settings_dialog
+from vocalinux.ui.settings_dialog import (
+    _UNUSED_DOWNLOADS_MAX_HEIGHT,
+    _clamp_unused_downloads_height,
+)
 
 
-settings_dialog = _load_settings_dialog()
-SettingsDialog = settings_dialog.SettingsDialog
-MAX_HEIGHT = settings_dialog._UNUSED_DOWNLOADS_MAX_HEIGHT
-
-
-def _dialog_stub(natural_height):
-    dialog = Mock()
-    dialog.unused_models_group.listbox.get_preferred_height.return_value = (
-        natural_height,
-        natural_height,
-    )
-    return dialog
+def _method_source(name: str) -> str:
+    src = inspect.getsource(settings_dialog)
+    match = re.search(rf"\n    def {name}\(.*?(?=\n    def )", src, re.DOTALL)
+    assert match, f"could not locate method {name}"
+    return match.group(0)
 
 
 def test_list_is_as_tall_as_its_rows_render():
-    """Two rows that render 132px tall must not be squeezed into an estimate."""
-    dialog = _dialog_stub(132)
+    """Two rows that measure 116px must not be squeezed into an estimate.
 
-    SettingsDialog._fit_unused_downloads_height(dialog)
-
-    dialog.unused_models_scroll.set_min_content_height.assert_called_once_with(132)
+    56px per row was the old guess; real rows render taller than that once
+    margins and the Delete button are counted, which cut off the last row
+    while the header still counted it (#683).
+    """
+    assert _clamp_unused_downloads_height(116) == 116
 
 
 def test_long_lists_stop_growing_at_the_cap():
     """Beyond the cap the list scrolls instead of pushing the page down."""
-    dialog = _dialog_stub(MAX_HEIGHT * 3)
+    assert _clamp_unused_downloads_height(_UNUSED_DOWNLOADS_MAX_HEIGHT * 3) == (
+        _UNUSED_DOWNLOADS_MAX_HEIGHT
+    )
 
-    SettingsDialog._fit_unused_downloads_height(dialog)
 
-    dialog.unused_models_scroll.set_min_content_height.assert_called_once_with(MAX_HEIGHT)
+def test_refresh_sizes_the_list_after_building_the_rows():
+    """A measured height is worthless if the refresh never asks for one."""
+    body = _method_source("_refresh_unused_downloads")
+    assert "self._fit_unused_downloads_height()" in body
+    # The per-row estimate is what clipped the list; it must not come back.
+    assert "56 *" not in body
+
+
+def test_fit_measures_the_listbox_and_feeds_the_scroll():
+    body = _method_source("_fit_unused_downloads_height")
+    assert "self.unused_models_group.listbox.get_preferred_height()" in body
+    assert "self.unused_models_scroll.set_min_content_height(" in body
+    assert "_clamp_unused_downloads_height(natural_height)" in body
+
+
+def test_scrollbar_stays_in_the_layout():
+    """An overlay scrollbar hides until hovered, so a capped list looks whole."""
+    src = inspect.getsource(settings_dialog)
+    assert "self.unused_models_scroll.set_overlay_scrolling(False)" in src
