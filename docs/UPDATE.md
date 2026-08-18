@@ -2,6 +2,53 @@
 
 This guide explains how to update Vocalinux to the latest version.
 
+## What's New in v0.16.0
+
+0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, switches the license to AGPL-3.0, and hardens IBus, audio, clipboard, GPU/Vulkan, and AppImage packaging on top of the 0.15 series.
+
+### Highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Update checker** | Settings → About checks stable/nightly; tray shows Update Available for newer GitHub releases (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
+
+### New Features
+
+- **In-app update checker** — Settings → About with stable/nightly channels (#631)
+- **Update notifications** — Tray menu Update Available entry and About badge when a newer release exists (#645)
+- **Right Alt push-to-talk default** — New installs only; existing configs are unchanged (#648)
+- **Searchable language combobox** — Filter the long language list by name or code (#672, fixes #652)
+- **Delete unused models** — Remove leftover downloaded speech models from Settings (#671, fixes #650)
+- **Disable missing-tray warning** — Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
+
+### Bug Fixes
+
+- **IBus**: Require a restorable engine for scoped injection (#623); restore engine after `register_component` teardown (#643, fixes #558); restore XKB layout after scoped injection on X11 (#665, fixes #664)
+- **Injection**: Stop typing `test` during the wtype probe (#627, fixes #622)
+- **whisper.cpp**: Skip unsupported `context_params` on pywhispercpp 1.4 (#626, fixes #625); use CUDA device 0 when CUDA-backed (#636); honor bundled GPU libs and skip software Vulkan devices (#674)
+- **Audio**: Filter unsafe virtual capture devices (#629, fixes #624); open stereo mics at native channel count (#673, fixes #666)
+- **Tray / Settings**: Prefer Ayatana AppIndicator on KDE (#621); reuse Settings/Logs windows (#669, fixes #653); separate Close from Test Dictation (#670, fixes #651)
+- **Clipboard**: Restore after ydotool clipboard-paste (#588); text-only reads and safer overlapping restore (#646)
+- **AppImage**: Ship transitive GI typelibs for non-Debian hosts (also hotfixed onto the v0.15.0 AppImages on 2026-08-03) (#637)
+- **Installer / downloads / tests**: Gate `util-linux-extra` to Ubuntu 24.04+ (#635, fixes #526); report failed model downloads (#690); stop the suite from overwriting real `config.json` (#694)
+
+### Docs / maintenance
+
+- Website screenshot refresh for v0.15 (#630)
+- Prefer Ayatana AppIndicator in Fedora/Arch packaging hints (#638)
+- CUDA device 0 note for dual NVIDIA (#644)
+- Discord and VocaHQ README shields; VocaHQ URL migration; VocaGateway rename (#695, #696, #697)
+- Codeberg mirror tag force-push (#633)
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
+
+---
+
 ## What's New in v0.15.0
 
 0.15.0 is a **minor** release on the stable line. It redesigns settings navigation, adds AppImage packages, expands the speech-language catalog (Hungarian and many more), cleans up continuous dictation spacing/capitalization, adds power/GPU controls, and improves Wayland IBus on compositors that ship `ibus-wayland`, on top of the 0.14 packaging work (Flatpak, AUR, configurable hotkeys).
@@ -391,7 +438,7 @@ The installer will:
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.15.0
+git checkout v0.16.0
 ./install.sh
 ```
 

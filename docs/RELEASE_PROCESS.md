@@ -413,6 +413,7 @@ git push origin v0.5.1-beta
 | 0.14.1 | 2026-07-17 | Stable | Flatpak packaging, AUR package, layout-aware hotkeys, installer/text-injection fixes |
 | 0.14.2 | 2026-07-17 | Stable | IBus engine launch + FocusIn gate; settings tabs scroll to fit monitor |
 | 0.15.0 | 2026-07-28 | Stable | Searchable settings + sidebar dictation footer, AppImage, expanded languages, dictation polish, auto-pause/keepalive, Vulkan device selection, ibus-wayland, Bluetooth mic + shortcut UI fixes |
+| 0.16.0 | 2026-08-18 | Stable | Update checker + tray notify, Right Alt PTT default (new installs), searchable language list, delete unused models, AGPL-3.0, IBus/audio/clipboard/GPU/AppImage reliability |
 
 ## Questions?
 
