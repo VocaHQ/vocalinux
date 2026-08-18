@@ -107,7 +107,7 @@
   <releases>
     <release version="0.16.0" date="2026-08-18">
       <description>
-        <p>In-app update checker with tray notifications, hold Right Alt push-to-talk default for new installs, searchable language list, delete unused downloaded speech models, AGPL-3.0 relicensing, and desktop reliability fixes for IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage GI typelibs.</p>
+        <p>In-app update checker with tray notifications, hold Right Alt push-to-talk default for new installs, searchable language list, delete unused downloaded speech models, AGPL-3.0 relicensing, shared Voca family mic for app/tray/site icons, and desktop reliability fixes for IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage GI typelibs.</p>
       </description>
     </release>
     <release version="0.15.0" date="2026-07-28">

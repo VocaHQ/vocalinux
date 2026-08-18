@@ -24,6 +24,7 @@ const releases = [
       "Searchable Speech Model language combobox (PR #672, fixes #652)",
       "Delete unused downloaded speech models from Settings (PR #671, fixes #650)",
       "License migrated to AGPL-3.0 (PR #660)",
+      "App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (PR #704)",
       "Optional disable for the missing-tray warning dialog (PR #628, fixes #620)",
       "IBus/X11 reliability: restorable scoped injection, engine restore after teardown, XKB layout restore (PR #623, #643, #665)",
       "Audio: filter unsafe virtual capture devices; open stereo mics at native channel count (PR #629, #673)",
