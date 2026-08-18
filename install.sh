@@ -2137,14 +2137,15 @@ install_text_input_tools() {
     # Detect session type more robustly
     local SESSION_TYPE="unknown"
 
-    # Check XDG_SESSION_TYPE first
-    if [ -n "$XDG_SESSION_TYPE" ]; then
-        SESSION_TYPE="$XDG_SESSION_TYPE"
+    # Check XDG_SESSION_TYPE first. These are often unset without a login
+    # session even when DISPLAY is set; ${var:-} keeps set -u from aborting.
+    if [ -n "${XDG_SESSION_TYPE:-}" ]; then
+        SESSION_TYPE="${XDG_SESSION_TYPE:-}"
     # Check for Wayland-specific environment variables
-    elif [ -n "$WAYLAND_DISPLAY" ]; then
+    elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
         SESSION_TYPE="wayland"
     # Check if X server is running
-    elif [ -n "$DISPLAY" ] && command_exists xset && xset q &>/dev/null; then
+    elif [ -n "${DISPLAY:-}" ] && command_exists xset && xset q &>/dev/null; then
         SESSION_TYPE="x11"
     # Check loginctl if available
     elif command_exists loginctl; then

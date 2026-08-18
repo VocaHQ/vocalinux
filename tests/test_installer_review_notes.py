@@ -1,5 +1,6 @@
 """Source checks for leftover installer review notes from #700 and #705."""
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -133,6 +134,38 @@ def test_settings_uses_engine_flag_not_removed_with_whisper() -> None:
     text = SETTINGS.read_text(encoding="utf-8")
     assert "./install.sh --engine=whisper" in text
     assert "--with-whisper" not in text
+
+
+def test_session_type_env_reads_use_default_expansion() -> None:
+    source = _installer_source()
+    start = source.index("install_text_input_tools()")
+    end = source.index('print_info "Detected session type:', start)
+    block = source[start:end]
+    assert '[ -n "${XDG_SESSION_TYPE:-}" ]' in block
+    assert '[ -n "${WAYLAND_DISPLAY:-}" ]' in block
+    assert '[ -n "${DISPLAY:-}" ]' in block
+    assert '"$XDG_SESSION_TYPE"' not in block
+    assert '"$WAYLAND_DISPLAY"' not in block
+    assert '"$DISPLAY"' not in block
+
+    env = os.environ.copy()
+    env.pop("XDG_SESSION_TYPE", None)
+    env.pop("WAYLAND_DISPLAY", None)
+    env["DISPLAY"] = ":1"
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'set -u; [ -n "${XDG_SESSION_TYPE:-}" ] && echo xdg; '
+            '[ -n "${DISPLAY:-}" ] && echo x11',
+        ],
+        check=False,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "x11"
 
 
 def test_agents_does_not_claim_requirements_are_consumed() -> None:
