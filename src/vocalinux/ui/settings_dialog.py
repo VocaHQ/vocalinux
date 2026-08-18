@@ -4897,13 +4897,22 @@ class SettingsDialog(Gtk.Dialog):
 
         current_config = self.config_manager.get_settings().get("speech_recognition", {})
         selected_settings = self.get_selected_settings()
+        selected_engine = selected_settings.get("engine")
+        selected_model = selected_settings.get("model_size")
+        # Compare to the live engine too: UI can match the file while the
+        # in-memory manager is still on another engine/size (sidecar, pending apply).
+        live_engine = getattr(self.speech_engine, "engine", None)
+        live_model = getattr(self.speech_engine, "model_size", None)
 
         settings_differ = False
-        if current_config.get("engine") != selected_settings.get("engine") or current_config.get(
-            "model_size"
-        ) != selected_settings.get("model_size"):
+        if (
+            current_config.get("engine") != selected_engine
+            or current_config.get("model_size") != selected_model
+            or live_engine != selected_engine
+            or live_model != selected_model
+        ):
             settings_differ = True
-        elif selected_settings.get("engine") == "vosk":
+        elif selected_engine == "vosk":
             if current_config.get("vad_sensitivity") != selected_settings.get(
                 "vad_sensitivity"
             ) or current_config.get("silence_timeout") != selected_settings.get("silence_timeout"):

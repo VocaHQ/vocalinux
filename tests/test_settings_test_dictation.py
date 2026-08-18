@@ -85,6 +85,8 @@ def _dialog_for_test(*, start_return, model_ready=True, is_auto_paused=False):
 
     engine = Mock()
     engine.state = RecognitionState.IDLE
+    engine.engine = "whisper_cpp"
+    engine.model_size = "tiny"
     engine.start_recognition = Mock(return_value=start_return)
     engine.stop_recognition = Mock()
     engine.get_text_callbacks = Mock(return_value=[])
@@ -141,6 +143,30 @@ def test_test_dictation_started_arms_listen_timer():
     assert thread_cls.call_args.kwargs["args"] == (4.0,)
     assert dialog._test_active is True
     dialog.test_button.set_label.assert_called_with("Testing… Speak Now!")
+    dialog.apply_settings.assert_not_called()
+
+
+def test_test_dictation_reconfigures_when_live_engine_differs_from_ui():
+    """UI matches the file but the live manager is still on another engine."""
+    dialog = _dialog_for_test(start_return=True, model_ready=True)
+    dialog.speech_engine.engine = "vosk"
+    dialog.speech_engine.model_size = "small"
+    dialog.speech_engine.model_ready = False
+
+    def _apply_and_sync():
+        dialog.speech_engine.engine = "whisper_cpp"
+        dialog.speech_engine.model_size = "tiny"
+        dialog.speech_engine.model_ready = True
+        return True
+
+    dialog.apply_settings.side_effect = _apply_and_sync
+
+    with patch.object(settings_dialog.threading, "Thread") as thread_cls:
+        SettingsDialog._on_test_clicked(dialog, None)
+
+    dialog.apply_settings.assert_called_once()
+    thread_cls.assert_called_once()
+    assert dialog._test_active is True
 
 
 def test_check_test_result_empty_buffer_is_no_speech():
