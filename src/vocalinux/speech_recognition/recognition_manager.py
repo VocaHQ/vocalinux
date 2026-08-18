@@ -3129,6 +3129,7 @@ class SpeechRecognitionManager:
         audio_device_index: Optional[int] = None,
         audio_device_name: Optional[str] = None,
         force_download: bool = True,
+        force_reinit: bool = False,
         **kwargs,  # Allow for future expansion
     ):
         """
@@ -3143,6 +3144,9 @@ class SpeechRecognitionManager:
             audio_device_index: Audio input device index (None for default, -1 to clear).
             audio_device_name: Audio device name for stable re-resolution.
             force_download: If True, download missing models (default: True for UI-triggered reconfigures).
+            force_reinit: Re-initialize even when nothing changed. force_download
+                only takes effect during a re-init, so a caller asking for the
+                model it is already configured for needs this to fetch it.
         """
         logger.info(
             f"Reconfiguring speech engine. New settings: engine={engine}, model_size={model_size}, "
@@ -3150,7 +3154,7 @@ class SpeechRecognitionManager:
             f"audio_device={audio_device_index}, audio_device_name={audio_device_name}"
         )
 
-        restart_needed = False
+        restart_needed = force_reinit
         old_engine = self.engine
         if engine is not None and engine != self.engine:
             self.engine = engine

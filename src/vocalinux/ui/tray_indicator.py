@@ -76,6 +76,7 @@ def _idle_once(func, *args):
 
     GLib.idle_add(_call)
 
+
 # Bundled icon file names (paths under ICON_DIR).
 DEFAULT_ICON = "vocalinux-microphone-off"
 ACTIVE_ICON = "vocalinux-microphone"
@@ -572,35 +573,48 @@ class TrayIndicator:
                 lambda: self._download_recommended_model(engine, recommendation),
             )
 
-        notifications.notify(
-            "No Speech Model",
-            f"{recommendation.display_name} ({recommendation.size_label}) is recommended "
-            "for your system. Download it from this notification, or pick another one "
-            "in Settings.",
-            "dialog-warning",
-            action=action,
-        )
+        if action is not None:
+            body = (
+                f"{recommendation.display_name} ({recommendation.size_label}) is recommended "
+                "for your system. Download it from this notification, or pick another one "
+                "in Settings."
+            )
+        else:
+            # No action button on this server, so pointing at one would strand
+            # the user; send them where they can actually do something.
+            body = (
+                f"{recommendation.display_name} ({recommendation.size_label}) is recommended "
+                "for your system. Open Settings to download a speech recognition model."
+            )
+
+        notifications.notify("No Speech Model", body, "dialog-warning", action=action)
         return False
 
     def _download_recommended_model(self, engine: str, recommendation) -> None:
-        """Start downloading the offered model without blocking the main loop."""
+        """Start downloading the offered model without blocking the main loop.
+
+        Runs on the main loop: libnotify dispatches the action callback there.
+        """
         if self._model_download_active:
             return
         self._model_download_active = True
-        threading.Thread(
-            target=self._run_recommended_model_download,
-            args=(engine, recommendation),
-            daemon=True,
-            name="model-download",
-        ).start()
-
-    def _run_recommended_model_download(self, engine: str, recommendation) -> None:
-        """Download the offered model, then report how it went."""
+        # libnotify and GObject are not thread-safe, so the notification is
+        # created here and only its handle travels to the worker, which routes
+        # every later update back through _idle_once.
         progress = notifications.notify(
             "Downloading speech model",
             f"{recommendation.display_name} ({recommendation.size_label}) — starting...",
             "folder-download",
         )
+        threading.Thread(
+            target=self._run_recommended_model_download,
+            args=(engine, recommendation, progress),
+            daemon=True,
+            name="model-download",
+        ).start()
+
+    def _run_recommended_model_download(self, engine: str, recommendation, progress) -> None:
+        """Download the offered model, then report how it went."""
         last_notified = 0.0
 
         def on_progress(fraction, speed_mbps, status):
@@ -623,7 +637,17 @@ class TrayIndicator:
                 engine=engine,
                 model_size=recommendation.model_id,
                 force_download=True,
+                # reconfigure() only re-initializes when engine, model or
+                # language change, and force_download is read during that
+                # re-init. The recommendation is often what is already
+                # configured (first run is whisper_cpp + tiny, and tiny is what
+                # a CPU-only machine is recommended), so without this the call
+                # is a no-op that downloads nothing.
+                force_reinit=True,
             )
+            if not self.speech_engine.model_ready:
+                raise RuntimeError("the engine did not load the model after downloading it")
+
             # Persist only now: the model is on disk and the engine loaded it.
             self.config_manager.set_model_size_for_engine(engine, recommendation.model_id)
             self.config_manager.save_config()
