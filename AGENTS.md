@@ -12,9 +12,9 @@ Vocalinux is a voice dictation system for Linux. It uses:
 
 ### Key Dependencies
 - `pywhispercpp` - Python bindings for whisper.cpp (default engine)
-- `vosk` - Lightweight speech recognition
+- `vosk` - Lightweight speech recognition (optional, `[vosk]` extra)
 - `pyaudio` - Audio capture
-- `PyGObject` - GTK integration
+- `PyGObject` - GTK integration (distro `python3-gi` only — never pip; see Dependency Management)
 - `psutil` - Process utilities (required by pywhispercpp)
 
 ## Build & Test Commands
@@ -26,6 +26,10 @@ Vocalinux is a voice dictation system for Linux. It uses:
 ./install.sh --dev
 # Or manually:
 pip install -e ".[dev]"
+
+# Dependency lock files (see "Dependency Management" below)
+just lock          # regenerate uv.lock + requirements/*.txt after changing deps
+just lock-check    # fail if uv.lock is stale relative to pyproject.toml
 
 # Run all tests
 pytest
@@ -84,6 +88,31 @@ npm run build    # Production build
 npm run lint     # ESLint
 npm run test     # Jest tests
 ```
+
+## Dependency Management (uv + lockfiles)
+
+All dependency versions are pinned. The source of truth is `uv.lock`; the
+`requirements/*.txt` files are generated hash-pinned exports consumed by `install.sh`,
+the AppImage build, and CI. **Never edit `requirements/*.txt` by hand** — change
+`pyproject.toml` (or `requirements/whisper.in` for the whisper engine), run `just lock`,
+and commit the result together with the manifest change. uv itself is version-pinned
+via `[tool.uv]` in `pyproject.toml`.
+
+- **PyGObject always comes from the distro** (`python3-gi` through a
+  `--system-site-packages` venv). It cannot be pip-installed on Ubuntu 24.04, and
+  uv-managed interpreters do not see the distro gi — create venvs with
+  `uv venv --system-site-packages --python /usr/bin/python3`, and exclude the package
+  in uv sync/export (`--no-install-package pygobject` / `--no-emit-package pygobject`).
+- **vosk** is the optional `[vosk]` extra. It is wheel-only on PyPI (no sdist), so it
+  can never be part of a source-buildable lock. `install.sh --engine=vosk` installs it.
+- **Whisper engine (CPU torch)**: `requirements/whisper.txt` is compiled from
+  `requirements/whisper.in`, where `torch`/`torchaudio` are pinned together to `+cpu`
+  local versions — PyPI's CUDA-bundled wheels win resolution over the CPU index
+  regardless of index order, and torchaudio lags torch on the CPU index. Bump the pair
+  together.
+- **pywhispercpp**: pinned in `install.sh` via `PYWHISPERCPP_VERSION` — keep it in sync
+  with `uv.lock` when bumping.
+- Background, phase checklists, and open work: `docs/PACKAGING_PLAN.md`, epic #701.
 
 ## Code Style Guidelines
 
@@ -243,6 +272,7 @@ docs(readme): update installation instructions
 The startup update script keeps a Python venv (`venv/`) and `web/node_modules` in sync. Standard commands live in the sections above and in `web/AGENTS.md`; notes below are the non-obvious gotchas for this environment.
 
 - **Activate the venv first.** Python tooling (`vocalinux`, `pytest`, `just lint`, `mypy`) lives in `venv/`. Run `source venv/bin/activate` (or prefix with `./venv/bin/`) before use.
+- **The startup venv sync can strip dev extras.** If `pytest`/`black` suddenly vanish from `venv/`, the update script recreated a minimal venv — restore with `uv pip install -e ".[dev,vad]" --python ./venv/bin/python`. `uv` itself lives at `~/.local/bin/uv` (not always on `PATH` in non-interactive shells).
 - **The venv must be created with `--system-site-packages`.** GTK/`PyGObject` come from the apt package `python3-gi`; installing `PyGObject` from pip fails on Ubuntu 24.04 because the pinned version needs `girepository-2.0` (glib 2.80+), which the distro doesn't ship. The update script already creates the venv this way — don't drop that flag.
 - **`black --check` prints a Python-version warning.** `pyproject.toml` targets py314 but the VM runs Python 3.12; Black still reports "All done" and lint passes. This warning is benign.
 - **Desktop app is a GTK tray app.** An XFCE session (`xfwm4` + `xfce4-panel`) runs on `DISPLAY=:1`. Always give the app the session env: `DISPLAY=:1`, `DBUS_SESSION_BUS_ADDRESS=autolaunch:`, `XDG_RUNTIME_DIR=/run/user/1000`, `XDG_CURRENT_DESKTOP=XFCE`. Single-instance lock lives at `~/.local/share/vocalinux/instance.lock`; delete it after killing a stale instance. Kill instances by explicit PID (never `pkill -f`).
