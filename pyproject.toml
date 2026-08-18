@@ -89,6 +89,11 @@ Repository = "https://github.com/VocaHQ/vocalinux"
 Issues = "https://github.com/VocaHQ/vocalinux/issues"
 Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 
+[tool.uv]
+# Lock/exports are generated with uv; keep the minor pinned so lockfile
+# upgrades are deliberate (see `just lock`).
+required-version = ">=0.11,<0.12"
+
 [tool.setuptools]
 packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
 package-dir = {"" = "src"}

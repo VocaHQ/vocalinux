@@ -230,13 +230,13 @@ DEV_MODE="no"
 VENV_DIR="venv"
 SKIP_MODELS="no"
 SKIP_SYSTEM_DEPS="no"
-WITH_WHISPER="no"
-WHISPER_CPU="no"
-NO_WHISPER_EXPLICIT="no"
 NON_INTERACTIVE="no"
 INTERACTIVE_MODE="yes"  # Default to interactive mode
 AUTO_MODE="no"
 REBUILD_WHISPERCPP="ask"
+# Pinned pywhispercpp release (sdist, built from source). Keep in sync with
+# uv.lock and the requirements/ exports.
+PYWHISPERCPP_VERSION="1.5.0"
 HAS_NVIDIA_GPU="unknown"
 GPU_NAME=""
 GPU_MEMORY=""
@@ -2715,7 +2715,7 @@ install_cpu_pywhispercpp() {
     PYWHISPERCPP_CMAKE_ARGS=$(get_pywhispercpp_cmake_args)
 
     CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
-        pip install --verbose --force-reinstall --no-cache-dir pywhispercpp --log "$PIP_LOG_FILE"
+        pip install --verbose --force-reinstall --no-cache-dir "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE"
 }
 
 is_pywhispercpp_installed() {
@@ -2825,7 +2825,7 @@ install_whispercpp_with_gpu_support() {
             print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
             if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
                 GGML_VULKAN=1 \
-                pip install --verbose --force-reinstall --no-cache-dir git+https://github.com/absadiki/pywhispercpp --log "$PIP_LOG_FILE" 2>&1; then
+                pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
                 if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                     GPU_INSTALL_SUCCESS=true
                 else
@@ -2851,7 +2851,7 @@ install_whispercpp_with_gpu_support() {
                     print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
                     if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS $CUDA_CMAKE_ARGS" \
                         GGML_CUDA=1 \
-                        pip install --verbose --force-reinstall --no-cache-dir git+https://github.com/absadiki/pywhispercpp --log "$PIP_LOG_FILE" 2>&1; then
+                        pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
                         if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                             GPU_INSTALL_SUCCESS=true
                         else

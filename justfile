@@ -53,6 +53,23 @@ build:
     python -m build
     @echo "Built packages in dist/"
 
+# Regenerate uv.lock and the hash-pinned requirements/* exports.
+# Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
+# when you want newer CPU builds (torchaudio on the CPU index lags torch).
+lock:
+    uv lock
+    uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
+    uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt
+    uv export --extra dev --no-emit-project --no-emit-package pygobject -o requirements/dev.txt
+    uv pip compile requirements/whisper.in --generate-hashes --emit-index-url \
+        --index-url https://pypi.org/simple \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        --python-platform x86_64-unknown-linux-gnu -o requirements/whisper.txt
+
+# Fail if uv.lock is stale relative to pyproject.toml
+lock-check:
+    uv lock --check
+
 # Remove build artifacts
 clean:
     @echo "Cleaning build artifacts..."
