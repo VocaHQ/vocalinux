@@ -224,8 +224,8 @@ curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | 
 
 ### Important: Install System Packages First
 
-Before running `pip install vocalinux` or `pipx install vocalinux`, you **must**
-install the required system packages:
+Before running `pip install vocalinux`, `pip install "vocalinux[vosk]"`, or
+`pipx install vocalinux`, you **must** install the required system packages:
 
 #### Ubuntu/Debian
 ```bash
@@ -278,6 +278,7 @@ sudo zypper install "${PYVER}-gobject" "${PYVER}-gobject-cairo" gtk3 \
 3. **Install Vocalinux from PyPI**:
    ```bash
    pip install vocalinux
+   # vosk engine: pip install "vocalinux[vosk]"
    ```
 
 4. **Run Vocalinux**:
@@ -307,6 +308,7 @@ sudo zypper install "${PYVER}-gobject" "${PYVER}-gobject-cairo" gtk3 \
 3. **Install Vocalinux**:
    ```bash
    pipx install vocalinux
+   # vosk engine: pipx install "vocalinux[vosk]"
    ```
 
 4. **Run Vocalinux**:

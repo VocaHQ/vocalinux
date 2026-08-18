@@ -37,6 +37,7 @@ Use this checklist for every release:
 - [ ] Confirm install docs/website mention **AppImage** when this release ships AppImages
 
 ### Testing & Verification
+Install `just` from https://just.systems or the distro package `just`.
 - [ ] Run `just test` - All tests pass
 - [ ] Run `just lint` - No linting errors
 - [ ] Run `just typecheck` - No type errors
@@ -258,7 +259,8 @@ Also align `web/package-lock.json` top-level `version` fields with `web/package.
 
 ### Step 5: Verify Everything Works
 
-Run the full verification suite:
+Run the full verification suite. Install `just` from
+https://just.systems or the distro package `just`.
 
 ```bash
 # Run tests

@@ -5005,7 +5005,7 @@ class SettingsDialog(Gtk.Dialog):
 Installation Options:
 
 1. Using the installation script:
-   ./install.sh --with-whisper
+   ./install.sh --engine=whisper
 
 2. Manual installation in virtual environment:
    source venv/bin/activate

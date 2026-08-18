@@ -216,7 +216,7 @@ check_running_processes() {
         if [ -n "$FINAL_PIDS" ]; then
             print_error "Could not terminate all Vocalinux processes: $FINAL_PIDS"
             print_error "Please manually kill these processes and run the installer again."
-            exit 1
+            exit "$EXIT_USER_ABORT"
         else
             print_success "All Vocalinux processes stopped"
         fi
@@ -349,7 +349,7 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --auto --engine=vosk      # Auto-install VOSK only"
             echo "  $0 --dev --test              # Dev mode with tests"
             echo ""
-            echo "A full transcript of every run is saved to"
+            echo "During installation a full transcript is saved to"
             echo "  ~/.local/state/vocalinux/install-<timestamp>.log"
             echo ""
             echo "Exit codes:"
@@ -384,9 +384,11 @@ fi
 INSTALL_LOG_FILE="$INSTALL_LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
 exec > >(tee -a "$INSTALL_LOG_FILE") 2>&1
 
-# Scratch directory for downloads and temporary build files. Removed on
-# success; kept for inspection (with a notice) when the install fails.
+# Scratch directory for pip logs, model downloads, and other temps.
+# Removed on success; kept for inspection (with a notice) when the install fails.
+# Exporting TMPDIR routes pip/wget/curl scratch files into this directory.
 VOCALINUX_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vocalinux-install.XXXXXXXX")"
+export TMPDIR="$VOCALINUX_TMP_DIR"
 
 cleanup_on_exit() {
     local rc=$?
@@ -594,7 +596,7 @@ else
     # Running remotely (e.g., via curl | bash)
     if [ -z "$INSTALL_TAG" ]; then
         print_error "No release tag available: the GitHub API was unreachable and no --tag was given."
-        print_error "Re-run with an explicit release tag, e.g.: --tag=v0.15.0"
+        print_error "Re-run with an explicit release tag, e.g.: --tag=<release>"
         exit "$EXIT_NETWORK"
     fi
     print_info "Installing Vocalinux version: ${INSTALL_TAG}"
@@ -1766,7 +1768,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
-                sudo apt update || { print_error "Failed to update package lists"; exit 1; }
+                sudo apt update || { print_error "Failed to update package lists"; exit "$EXIT_NETWORK"; }
 
                 # Handle appindicator package for Ubuntu (old package deprecated in newer releases)
                 if echo "$MISSING_PACKAGES" | grep -q "gir1.2-appindicator3-0.1"; then
@@ -1776,16 +1778,16 @@ install_system_dependencies() {
                         print_info "gir1.2-appindicator3-0.1 not available, trying gir1.2-ayatanaappindicator3-0.1..."
                         if ! DEBIAN_FRONTEND=noninteractive sudo apt install -y gir1.2-ayatanaappindicator3-0.1; then
                             print_error "Failed to install appindicator package (tried both gir1.2-appindicator3-0.1 and gir1.2-ayatanaappindicator3-0.1)"
-                            exit 1
+                            exit "$EXIT_MISSING_DEPS"
                         fi
                         print_info "Successfully installed gir1.2-ayatanaappindicator3-0.1 (modern replacement)"
                     fi
 
                     if [ -n "$FILTERED_PACKAGES" ]; then
-                        DEBIAN_FRONTEND=noninteractive sudo apt install -y $FILTERED_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                        DEBIAN_FRONTEND=noninteractive sudo apt install -y $FILTERED_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
                     fi
                 else
-                    DEBIAN_FRONTEND=noninteractive sudo apt install -y $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                    DEBIAN_FRONTEND=noninteractive sudo apt install -y $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
                 fi
             else
                 print_info "All required packages are already installed."
@@ -1802,7 +1804,7 @@ install_system_dependencies() {
                 UPDATE_CMD="sudo yum check-update"
             else
                 print_error "No supported package manager found (dnf/yum)"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Check for missing packages
@@ -1815,19 +1817,19 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 $UPDATE_CMD || true  # dnf check-update returns 100 if updates available
-                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
 
-            install_preferred_appindicator "$INSTALL_CMD" "libayatana-appindicator-gtk3" "libappindicator-gtk3" dnf_package_installed || exit 1
+            install_preferred_appindicator "$INSTALL_CMD" "libayatana-appindicator-gtk3" "libappindicator-gtk3" dnf_package_installed || exit "$EXIT_MISSING_DEPS"
             ;;
 
         arch)
             # For Arch-based systems
             if ! command_exists pacman; then
                 print_error "Pacman package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Check for missing packages
@@ -1840,19 +1842,19 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 sudo pacman -Sy
-                sudo pacman -S --noconfirm $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo pacman -S --noconfirm $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
 
-            install_preferred_appindicator "sudo pacman -S --noconfirm" "libayatana-appindicator" "libappindicator-gtk3" pacman_package_installed || exit 1
+            install_preferred_appindicator "sudo pacman -S --noconfirm" "libayatana-appindicator" "libappindicator-gtk3" pacman_package_installed || exit "$EXIT_MISSING_DEPS"
             ;;
 
         suse)
             # For openSUSE
             if ! command_exists zypper; then
                 print_error "Zypper package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             sudo zypper refresh || true
@@ -1872,7 +1874,7 @@ install_system_dependencies() {
                 print_info "Installing missing packages: ${MISSING_ZYPPER_PACKAGES[*]}"
                 sudo zypper install -y "${MISSING_ZYPPER_PACKAGES[@]}" || {
                     print_error "Failed to install openSUSE base dependencies"
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             else
                 print_info "All base openSUSE packages are already installed."
@@ -1896,22 +1898,22 @@ install_system_dependencies() {
 
             if ! suse_install_first_available "Python pip" "${PY_PIP_CANDIDATES[@]}"; then
                 print_error "Failed to install Python pip package (tried: ${PY_PIP_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "PyGObject bindings" "${PY_GOBJECT_CANDIDATES[@]}"; then
                 print_error "Failed to install PyGObject package (tried: ${PY_GOBJECT_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "PyGObject Cairo bindings" "${PY_GOBJECT_CAIRO_CANDIDATES[@]}"; then
                 print_error "Failed to install PyGObject Cairo package (tried: ${PY_GOBJECT_CAIRO_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "Python development headers" "${PY_DEVEL_CANDIDATES[@]}"; then
                 print_error "Failed to install Python development headers (tried: ${PY_DEVEL_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "Python virtualenv/venv" "${PY_VIRTUALENV_CANDIDATES[@]}" "${PY_VENV_CANDIDATES[@]}"; then
@@ -1922,7 +1924,7 @@ install_system_dependencies() {
             if ! suse_install_appindicator_runtime; then
                 print_error "Failed to install a working AppIndicator/Ayatana GI runtime on openSUSE."
                 print_error "Try manually: sudo zypper install typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if [[ "${SELECTED_ENGINE:-whisper_cpp}" == "whisper_cpp" && "${WHISPERCPP_BACKEND:-}" != "cpu" ]]; then
@@ -1943,7 +1945,7 @@ install_system_dependencies() {
             # For Gentoo Linux
             if ! command_exists emerge; then
                 print_error "Emerge package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Gentoo detected. Installing dependencies..."
@@ -1961,9 +1963,9 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
                 # Update Portage tree first
-                sudo emerge --sync || { print_error "Failed to sync Portage tree"; exit 1; }
+                sudo emerge --sync || { print_error "Failed to sync Portage tree"; exit "$EXIT_NETWORK"; }
                 # Install missing packages
-                sudo emerge $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo emerge $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1973,7 +1975,7 @@ install_system_dependencies() {
             # For Alpine Linux
             if ! command_exists apk; then
                 print_error "Apk package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Alpine Linux detected."
@@ -1989,8 +1991,8 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo apk update || { print_error "Failed to update package indexes"; exit 1; }
-                sudo apk add $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo apk update || { print_error "Failed to update package indexes"; exit "$EXIT_NETWORK"; }
+                sudo apk add $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -2000,7 +2002,7 @@ install_system_dependencies() {
             # For Void Linux
             if ! command_exists xbps; then
                 print_error "Xbps package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Void Linux detected."
@@ -2015,7 +2017,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo xbps-install -Sy $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo xbps-install -Sy $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -2025,7 +2027,7 @@ install_system_dependencies() {
             # For Solus
             if ! command_exists eopkg; then
                 print_error "Eopkg package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Solus detected."
@@ -2040,7 +2042,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo eopkg install $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo eopkg install $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -2056,7 +2058,7 @@ install_system_dependencies() {
                 UPDATE_CMD="sudo urpmi.update -a"
             else
                 print_error "No supported package manager found (dnf/urpmi)"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Use similar packages to Fedora/RHEL
@@ -2070,7 +2072,7 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 $UPDATE_CMD 2>/dev/null || true
-                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -2442,7 +2444,7 @@ setup_virtual_environment() {
         if [[ "$NON_INTERACTIVE" == "yes" ]]; then
             # In non-interactive mode, reuse existing venv
             print_info "Non-interactive mode: using existing virtual environment."
-            source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+            source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
             return 0
         else
             read -p "Do you want to recreate it? (y/n) " -n 1 -r
@@ -2452,7 +2454,7 @@ setup_virtual_environment() {
                 rm -rf "$VENV_DIR"
             else
                 print_info "Using existing virtual environment."
-                source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+                source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
                 return 0
             fi
         fi
@@ -2465,16 +2467,16 @@ setup_virtual_environment() {
         print_warning "python3 -m venv failed, trying python3 -m virtualenv..."
         python3 -m virtualenv --system-site-packages "$VENV_DIR" || {
             print_error "Failed to create virtual environment. Please check your Python installation."
-            exit 1
+            exit "$EXIT_MISSING_DEPS"
         }
     }
 
     # Activate virtual environment
-    source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+    source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
 
     # Update pip and setuptools
     print_info "Updating pip, setuptools, and wheel..."
-    pip install --upgrade pip setuptools wheel || { print_error "Failed to update pip, setuptools, and wheel"; exit 1; }
+    pip install --upgrade pip setuptools wheel || { print_error "Failed to update pip, setuptools, and wheel"; exit "$EXIT_NETWORK"; }
 
     print_info "Virtual environment activated successfully."
 }
@@ -2931,7 +2933,7 @@ install_whispercpp_with_gpu_support() {
         # vosk is an optional extra; make sure it is importable before
         # falling back to it
         if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
-            pip install vosk --log "$PIP_LOG_FILE" || \
+            pip install ".[vosk]" --log "$PIP_LOG_FILE" || \
                 print_warning "Could not install vosk; install it manually or pick another engine in Settings."
         fi
 
@@ -2975,8 +2977,9 @@ FALLBACK_VOSK_CONFIG
 
 # Function to install Python package with error handling and verification
 install_python_package() {
-    # Create a temporary directory for pip logs
-    local PIP_LOG_DIR=$(mktemp -d)
+    # Pip logs live in the install scratch dir so a failed run can keep them.
+    local PIP_LOG_DIR="$VOCALINUX_TMP_DIR/pip"
+    mkdir -p "$PIP_LOG_DIR"
     local PIP_LOG_FILE="$PIP_LOG_DIR/pip_log.txt"
 
     # Detect GI_TYPELIB_PATH early for cross-distro compatibility
@@ -3325,8 +3328,8 @@ REMOTE_CONFIG
     # Verify installation
     if verify_package_installed; then
         print_success "Vocalinux package installed successfully!"
-        # Clean up log file if installation was successful
-        rm -rf "$PIP_LOG_DIR"
+        # Pip logs stay under VOCALINUX_TMP_DIR; the EXIT trap removes that
+        # directory on success and keeps it when a later step fails.
 
         # GI_TYPELIB_PATH was already detected at the start of install_python_package
 
@@ -3441,7 +3444,7 @@ WRAPPER_EOF
 # Install Python package
 if ! install_python_package; then
     print_error "Failed to install Vocalinux package. Installation cannot continue."
-    exit 1
+    exit "$EXIT_NETWORK"
 fi
 
 # Function to download and install Whisper tiny model
@@ -3479,7 +3482,7 @@ install_whisper_model() {
     print_info "Downloading Whisper tiny model..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_FILE="$TINY_MODEL_PATH.tmp"
+    local TEMP_FILE="$VOCALINUX_TMP_DIR/tiny.pt"
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then
@@ -3558,7 +3561,7 @@ install_vosk_models() {
     print_info "Downloading small VOSK model (approximately 40MB)..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_ZIP="$MODELS_DIR/$(basename $SMALL_MODEL_URL)"
+    local TEMP_ZIP="$VOCALINUX_TMP_DIR/$(basename $SMALL_MODEL_URL)"
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then
@@ -3653,7 +3656,7 @@ install_whispercpp_model() {
     print_info "Downloading whisper.cpp tiny model..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_FILE="$TINY_MODEL_PATH.tmp"
+    local TEMP_FILE="$VOCALINUX_TMP_DIR/ggml-tiny.bin"
 
     # Download the model
     if command -v wget >/dev/null 2>&1; then

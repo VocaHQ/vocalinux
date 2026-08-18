@@ -64,6 +64,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -79,6 +80,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -99,6 +101,7 @@ python -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -118,6 +121,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -431,7 +435,8 @@ pip install ".[vad]"
 pip install -e ".[dev,vad]"
 ```
 
-For PyPI instead of a local checkout, use `pip install vocalinux` after installing
+For PyPI instead of a local checkout, use `pip install vocalinux` (or
+`pip install "vocalinux[vosk]"` for the vosk engine) after installing
 the same system packages and creating the virtual environment with
 `--system-site-packages`.
 

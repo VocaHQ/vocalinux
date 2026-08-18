@@ -27,6 +27,7 @@ Vocalinux is a voice dictation system for Linux. It uses:
 # Or manually:
 pip install -e ".[dev]"
 
+# just: https://just.systems or the distro package `just`
 # Dependency lock files (see "Dependency Management" below)
 just lock          # regenerate uv.lock + requirements/*.txt after changing deps
 just lock-check    # fail if uv.lock is stale relative to pyproject.toml
@@ -91,12 +92,14 @@ npm run test     # Jest tests
 
 ## Dependency Management (uv + lockfiles)
 
-All dependency versions are pinned. The source of truth is `uv.lock`; the
-`requirements/*.txt` files are generated hash-pinned exports consumed by `install.sh`,
-the AppImage build, and CI. **Never edit `requirements/*.txt` by hand** — change
-`pyproject.toml` (or `requirements/whisper.in` for the whisper engine), run `just lock`,
-and commit the result together with the manifest change. uv itself is version-pinned
-via `[tool.uv]` in `pyproject.toml`.
+The source of truth is `uv.lock`. `just lock` regenerates it and the
+`requirements/*.txt` hash-pinned exports. Those exports exist for later
+packaging work (`install.sh`, AppImage, CI; phases 2, 3, and 5 of #701)
+and are unused until those phases land. Do not edit `requirements/*.txt`
+by hand. Change `pyproject.toml` (or `requirements/whisper.in` for the
+whisper engine), run `just lock`, and commit the lock plus the exports
+with the manifest change. uv itself is version-pinned via `[tool.uv]`
+in `pyproject.toml`.
 
 - **PyGObject always comes from the distro** (`python3-gi` through a
   `--system-site-packages` venv). It cannot be pip-installed on Ubuntu 24.04, and
