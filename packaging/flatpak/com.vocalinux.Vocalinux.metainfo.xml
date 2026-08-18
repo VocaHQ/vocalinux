@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.16.0" date="2026-08-18">
+      <description>
+        <p>In-app update checker with tray notifications, hold Right Alt push-to-talk default for new installs, searchable language list, delete unused downloaded speech models, AGPL-3.0 relicensing, and desktop reliability fixes for IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage GI typelibs.</p>
+      </description>
+    </release>
     <release version="0.15.0" date="2026-07-28">
       <description>
         <p>Searchable sidebar settings with dictation controls in the sidebar footer, AppImage packages for x86_64 and aarch64, expanded speech-language catalog (including Hungarian), sentence capitalization and trailing spaces for continuous dictation, auto-pause and idle model unload, Vulkan discrete-GPU selection, ibus-wayland support on previously unbridged compositors, Bluetooth mic capture crash fix, custom-shortcut Record/Set restore, and desktop reliability fixes.</p>

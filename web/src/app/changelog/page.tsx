@@ -15,6 +15,22 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.16.0",
+    date: "2026-08-18",
+    type: "stable",
+    highlights: [
+      "In-app update checker (stable/nightly) plus tray Update Available when GitHub has a newer release (PR #631, #645)",
+      "New installs default to hold Right Alt push-to-talk; existing configs keep their shortcut (PR #648)",
+      "Searchable Speech Model language combobox (PR #672, fixes #652)",
+      "Delete unused downloaded speech models from Settings (PR #671, fixes #650)",
+      "License migrated to AGPL-3.0 (PR #660)",
+      "Optional disable for the missing-tray warning dialog (PR #628, fixes #620)",
+      "IBus/X11 reliability: restorable scoped injection, engine restore after teardown, XKB layout restore (PR #623, #643, #665)",
+      "Audio: filter unsafe virtual capture devices; open stereo mics at native channel count (PR #629, #673)",
+      "Clipboard restore after ydotool paste; GPU/AppImage packaging fixes including GI typelibs already hotfixed onto v0.15.0 AppImages (PR #588, #646, #674, #637)",
+    ],
+  },
+  {
     version: "v0.15.0",
     date: "2026-07-28",
     type: "stable",

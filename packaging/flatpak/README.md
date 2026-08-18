@@ -78,7 +78,7 @@ pipx run flatpak-pip-generator \
    sources:
      - type: git
        url: https://github.com/VocaHQ/vocalinux.git
-       tag: v0.15.0
+       tag: v0.16.0
        commit: <release-commit-sha>
    ```
 

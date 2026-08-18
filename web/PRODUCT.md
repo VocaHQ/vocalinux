@@ -30,9 +30,12 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Speech languages: large selectable catalog (~33 + Auto-detect) shared by Settings/CLI; VOSK only lists languages with official Alphacephei models; remaining Whisper languages available via Auto-detect
 - Display servers: X11 and Wayland
 - Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
+- Searchable language combobox; delete unused downloaded speech models from Settings
 - Optional voice commands (English-only); Silero neural VAD with amplitude fallback
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
+- In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available
+- Optional disable of the missing-tray warning dialog
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
 - Packaging: install.sh, AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented)

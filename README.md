@@ -40,35 +40,31 @@ It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any*
 
 No internet required. No data leaves your machine. Just speak and type.
 
-## 📚 What's New in v0.15.0
+## 📚 What's New in v0.16.0
 
-> **0.15.0** adds searchable sidebar settings, AppImage packages, a much larger speech-language catalog (including Hungarian), cleaner continuous dictation (capitalization + trailing spaces), power-saving model unload, smarter Vulkan GPU selection, and Wayland IBus improvements on top of the 0.14 packaging line.
+> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, switches the project license to AGPL-3.0, and hardens IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage packaging.
 
 ### Highlights
 
 | Feature | Description |
 |---------|-------------|
-| **Searchable settings** | Sidebar navigation with search replaces the seven-tab notebook (#601) |
-| **AppImage** | Self-contained x86_64 and aarch64 builds on GitHub Releases (#573, #602) |
-| **More languages** | ~33 selectable speech languages (plus Auto-detect), including Hungarian; VOSK only lists languages with official models (#616, fixes #565) |
-| **Dictation polish** | Auto-capitalize after sentence punctuation; trailing space so the next utterance does not glue on (#554, #608) |
-| **Auto-pause + keep-alive** | Pause/unload while configured apps run; unload after idle timeout (#592) |
-| **Vulkan GPU selection** | Prefer discrete GPUs automatically; pick a device in Advanced settings (#590) |
-| **ibus-wayland** | Use IBus on “unbridged” compositors when `ibus-wayland` is running (#614) |
+| **Update checker** | Settings → About checks stable/nightly channels; tray shows Update Available when GitHub has a newer release (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
 
 ### Also in this release
 
-- Settings: dictation status / mic level / Test Dictation / Close live in the sidebar footer (#618)
-- Settings: Custom Shortcut Record/Set controls show again (#619)
-- Languages: English (India) maps to Whisper code `en` (#617)
-- CLI `--version` (#563)
-- Bluetooth mic probing no longer corrupts the heap / crashes on SCO capture devices (#599)
-- IBus engine teardown when parent destroy fails (#613)
-- Settings info notices flattened to match the rest of the dialog (#615)
-- KDE Plasma Wayland unbridged-IBus skip when ibus-wayland is absent (#577)
-- xdotool focus preserve; installer / uninstall / AUR reliability fixes (#564, #583, #569, #597, #579, #586)
+- IBus: safer scoped injection, engine restore after teardown, XKB layout restore on X11 (#623, #643, #665)
+- Audio: filter unsafe virtual capture devices; open stereo mics at native channel count (#629, #673)
+- Clipboard: restore after ydotool paste; text-only reads and safer overlapping restore (#588, #646)
+- GPU / AppImage: honor bundled GPU libs and skip software Vulkan; ship transitive GI typelibs (AppImage fix already hotfixed onto the v0.15.0 AppImages) (#674, #637)
+- Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE (#670, #669, #621)
+- Installer / downloads / tests: gate `util-linux-extra` to Ubuntu 24.04+; report failed model downloads; stop tests from overwriting real `config.json` (#635, #690, #694)
 
-See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0).
+See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
 
 ---
 
@@ -88,7 +84,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 
 ## 📸 Screenshots
 
-Vocalinux in action. Settings gallery shots may lag the searchable sidebar UI from v0.15.0 — full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
+Vocalinux in action. Settings gallery shots may lag the newest UI — full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
 
 ### Product
 
@@ -459,7 +455,7 @@ Vocalinux is part of [VocaHQ](https://vocahq.com). Same privacy-first, offline v
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Stable v0.15.0 |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Stable v0.16.0 |
 | 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta |
 | 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 📋 Planned |
 
