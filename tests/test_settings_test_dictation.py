@@ -12,7 +12,13 @@ def _load_settings_dialog():
 
     conftest swaps gi for a MagicMock, which leaves every ``class X(Gtk.Y)`` as
     a mock. Handing the three bases a real class keeps the methods intact.
+
+    Restore both sys.modules and the vocalinux.ui.settings_dialog attribute.
+    Python 3.9/3.10 mock follows the package attribute, so leaving a private
+    copy there makes later tests patch a different module than they imported.
     """
+    import vocalinux.ui as ui_pkg
+
     repository = sys.modules["gi.repository"]
     bases = {name: type(name, (), {}) for name in ("Box", "ListBoxRow", "Dialog")}
     saved = sys.modules.pop("vocalinux.ui.settings_dialog", None)
@@ -23,6 +29,9 @@ def _load_settings_dialog():
         sys.modules.pop("vocalinux.ui.settings_dialog", None)
         if saved is not None:
             sys.modules["vocalinux.ui.settings_dialog"] = saved
+            ui_pkg.settings_dialog = saved
+        else:
+            ui_pkg.__dict__.pop("settings_dialog", None)
     return module
 
 

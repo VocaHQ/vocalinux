@@ -14,7 +14,12 @@ def _load_settings_dialog():
     the module as a mock and makes its methods unreachable. Handing the three
     bases the module subclasses a real class keeps the classes intact, while
     the rest of GTK stays mocked.
+
+    Restore both sys.modules and the vocalinux.ui.settings_dialog attribute so
+    3.9/3.10 mock and later imports see the same module object.
     """
+    import vocalinux.ui as ui_pkg
+
     repository = sys.modules["gi.repository"]
     bases = {name: type(name, (), {}) for name in ("Box", "ListBoxRow", "Dialog")}
     saved = sys.modules.pop("vocalinux.ui.settings_dialog", None)
@@ -25,6 +30,9 @@ def _load_settings_dialog():
         sys.modules.pop("vocalinux.ui.settings_dialog", None)
         if saved is not None:
             sys.modules["vocalinux.ui.settings_dialog"] = saved
+            ui_pkg.settings_dialog = saved
+        else:
+            ui_pkg.__dict__.pop("settings_dialog", None)
     return module
 
 
