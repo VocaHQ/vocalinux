@@ -4,7 +4,7 @@ This guide explains how to update Vocalinux to the latest version.
 
 ## What's New in v0.16.0
 
-0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, switches the license to AGPL-3.0, and hardens IBus, audio, clipboard, GPU/Vulkan, and AppImage packaging on top of the 0.15 series.
+0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, switches the license to AGPL-3.0, and hardens IBus, audio, clipboard, GPU/Vulkan, and AppImage packaging on top of the 0.15 series. The app icon, tray states, and site favicons now use the shared Voca family mic.
 
 ### Highlights
 
@@ -16,6 +16,7 @@ This guide explains how to update Vocalinux to the latest version.
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
 | **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
 
 ### New Features
 
@@ -25,6 +26,7 @@ This guide explains how to update Vocalinux to the latest version.
 - **Searchable language combobox** — Filter the long language list by name or code (#672, fixes #652)
 - **Delete unused models** — Remove leftover downloaded speech models from Settings (#671, fixes #650)
 - **Disable missing-tray warning** — Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
+- **Family mic icons**: App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (#704)
 
 ### Bug Fixes
 

@@ -42,7 +42,7 @@ No internet required. No data leaves your machine. Just speak and type.
 
 ## 📚 What's New in v0.16.0
 
-> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, switches the project license to AGPL-3.0, and hardens IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage packaging.
+> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, switches the project license to AGPL-3.0, and hardens IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage packaging. The app icon, tray states, and site favicons now use the shared Voca family mic.
 
 ### Highlights
 
@@ -54,6 +54,7 @@ No internet required. No data leaves your machine. Just speak and type.
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
 | **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
 
 ### Also in this release
 
@@ -84,7 +85,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 
 ## 📸 Screenshots
 
-Vocalinux in action. Settings gallery shots may lag the newest UI — full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
+Vocalinux in action. Settings gallery shots may lag the newest UI. Full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
 
 ### Product
 
