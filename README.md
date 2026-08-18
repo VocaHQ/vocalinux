@@ -224,11 +224,12 @@ is in progress.
 git clone https://github.com/VocaHQ/vocalinux.git
 cd vocalinux
 
-# Run the installer (will prompt for Whisper)
+# Run the interactive installer (engine picker + GPU detection)
 ./install.sh
 
-# Or with Whisper support
-./install.sh --with-whisper
+# Or pick the engine up front
+./install.sh --engine=whisper_cpp   # whisper.cpp (default, GPU-accelerated)
+./install.sh --engine=vosk          # lightweight VOSK
 ```
 
 The installer handles everything: system dependencies, Python environment, speech models, and desktop integration.

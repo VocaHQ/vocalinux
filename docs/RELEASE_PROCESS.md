@@ -349,10 +349,12 @@ git push origin v0.5.0-beta
 After pushing the tag, the GitHub Actions workflow will automatically:
 
 1. Build the Python package (wheel and sdist)
-2. Create a GitHub Release with auto-generated notes
-3. Publish to PyPI
-4. Deploy the website to vocalinux.com
-5. Mark as pre-release if version contains alpha/beta/rc
+2. Build and attach AppImages for x86_64 and aarch64
+3. Create a GitHub Release with auto-generated notes
+4. Publish to PyPI
+5. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
+6. Deploy the website to vocalinux.com
+7. Mark as pre-release if version contains alpha/beta/rc
 
 Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
