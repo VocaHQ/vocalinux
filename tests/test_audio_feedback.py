@@ -419,7 +419,7 @@ class TestAudioFeedback(unittest.TestCase):
         import vocalinux.ui.audio_feedback as audio_feedback
 
         with patch(
-            "vocalinux.ui.config_manager.ConfigManager",
+            "vocalinux.ui.config_manager.get_shared_config_manager",
             side_effect=Exception("No config"),
         ):
             result = audio_feedback._is_sound_effects_enabled()

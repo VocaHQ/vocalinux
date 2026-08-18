@@ -125,7 +125,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.main.check_dependencies")
     @patch("vocalinux.main.parse_arguments")
     @patch("vocalinux.main.sys.exit")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_main_exits_on_init_error(
         self, mock_init_logging, mock_config, mock_exit, mock_parse, mock_check_deps
@@ -162,7 +162,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
     @patch("vocalinux.main.logging")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_main_initializes_components(
         self,
@@ -258,7 +258,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_registered_callbacks_keep_spacing_across_processing_to_listening(
         self,
@@ -372,7 +372,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_vosk_auto_capitalize_applies_to_injected_text(
         self,
@@ -401,7 +401,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_vosk_auto_capitalize_can_be_disabled(
         self,
@@ -430,7 +430,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_whisper_skips_auto_capitalize(
         self,
@@ -461,7 +461,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
     @patch("vocalinux.main.logging")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_main_with_debug_enabled(
         self,
@@ -524,7 +524,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
     @patch("vocalinux.ui.first_run_dialog.show_first_run_dialog")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_main_first_run_later_keeps_prompt_enabled(
         self,
@@ -580,7 +580,7 @@ class TestMainModule(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
     @patch("vocalinux.ui.first_run_dialog.show_first_run_dialog")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_main_start_minimized_skips_first_run_prompt(
         self,
@@ -823,7 +823,7 @@ class TestMainConfigPrecedence(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_cli_args_override_config(
         self,
@@ -888,7 +888,7 @@ class TestMainConfigPrecedence(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
-    @patch("vocalinux.ui.config_manager.ConfigManager")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_config_used_when_no_cli_args(
         self,
@@ -1092,7 +1092,9 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
 
         stack = ExitStack()
         stack.enter_context(patch("vocalinux.main.check_dependencies", return_value=True))
-        mock_config_cls = stack.enter_context(patch("vocalinux.ui.config_manager.ConfigManager"))
+        mock_config_cls = stack.enter_context(
+            patch("vocalinux.ui.config_manager.get_shared_config_manager")
+        )
         mock_config = MagicMock()
         mock_config.get_settings.return_value = {
             "speech_recognition": {},
@@ -1136,9 +1138,15 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         mock_args.wayland = False
         mock_args.start_minimized = False
         mock_parse.return_value = mock_args
-        main()
+        try:
+            main()
+            text_cb = mock_speech.register_text_callback.call_args.args[0]
+        except BaseException:
+            # The caller only closes the stack once it gets one back, so a
+            # failure here would leak these patches into every later test.
+            stack.close()
+            raise
 
-        text_cb = mock_speech.register_text_callback.call_args.args[0]
         return stack, text_cb, mock_text
 
     def test_whitespace_only_is_skipped_through_main(self):
