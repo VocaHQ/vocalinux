@@ -1,7 +1,12 @@
 # Vocalinux justfile
 # Convenient commands for development
-# Run `just` to list all recipes. Python tooling (pytest, black, mypy) lives in
-# venv/ — run `source venv/bin/activate` first.
+# Run `just` to list all recipes. Python tooling runs through `uv run` against
+# .venv/ — run `just deps` after cloning (requires uv).
+
+# Extras installed by `just deps` and requested by every recipe below.
+# `uv run` syncs the environment exactly, so tooling recipes must ask for the
+# same extras or the dev tools would be uninstalled.
+DEV_EXTRAS := "--extra dev --extra vad"
 
 # List available recipes
 default:
@@ -15,42 +20,50 @@ install:
 install-dev:
     ./install.sh --dev
 
+# Install development dependencies into .venv/ (dev + vad extras)
+deps:
+    uv sync --extra dev --extra vad
+
+# Install every optional extra — whisper/vosk engines and docs (CUDA torch, multi-GB)
+deps-all:
+    uv sync --all-extras
+
 # Run test suite
 test:
     @echo "Running tests..."
-    pytest -v
+    uv run {{DEV_EXTRAS}} pytest -v
 
 # Run tests with coverage
 test-cov:
     @echo "Running tests with coverage..."
-    pytest --cov=src --cov-report=html --cov-report=term
+    uv run {{DEV_EXTRAS}} pytest --cov=src --cov-report=html --cov-report=term
     @echo "Coverage report generated in htmlcov/"
 
 # Run linters (flake8, black, isort)
 lint:
     @echo "Running flake8..."
-    flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+    uv run {{DEV_EXTRAS}} flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
     @echo "Checking black formatting..."
-    black --check --diff src/ tests/
+    uv run {{DEV_EXTRAS}} black --check --diff src/ tests/
     @echo "Checking isort..."
-    isort --check-only --diff --profile black src/ tests/
+    uv run {{DEV_EXTRAS}} isort --check-only --diff --profile black src/ tests/
 
 # Auto-format code (black + isort)
 format:
     @echo "Formatting with black..."
-    black src/ tests/
+    uv run {{DEV_EXTRAS}} black src/ tests/
     @echo "Sorting imports with isort..."
-    isort --profile black src/ tests/
+    uv run {{DEV_EXTRAS}} isort --profile black src/ tests/
 
 # Run type checking (mypy)
 typecheck:
     @echo "Running mypy..."
-    mypy src/
+    uv run {{DEV_EXTRAS}} mypy src/
 
 # Build distribution packages
 build:
     @echo "Building distribution packages..."
-    python -m build
+    uv build
     @echo "Built packages in dist/"
 
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
@@ -96,16 +109,16 @@ run-debug:
 
 # Run from source
 run-source:
-    python -m vocalinux.main
+    uv run {{DEV_EXTRAS}} python -m vocalinux.main
 
 # Run from source with debug logging
 run-source-debug:
-    python -m vocalinux.main --debug
+    uv run {{DEV_EXTRAS}} python -m vocalinux.main --debug
 
 # Run pre-commit hooks on all files
 pre-commit:
-    pre-commit run --all-files
+    uv run {{DEV_EXTRAS}} pre-commit run --all-files
 
 # Print the current version
 version:
-    @python -c "from src.vocalinux.version import __version__; print(__version__)"
+    @uv run --no-sync python -c "from src.vocalinux.version import __version__; print(__version__)"

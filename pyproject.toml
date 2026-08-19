@@ -92,7 +92,7 @@ Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 [tool.uv]
 # Lock/exports are generated with uv; keep the minor pinned so lockfile
 # upgrades are deliberate (see `just lock`).
-required-version = ">=0.11,<0.12"
+required-version = ">=0.12,<0.13"
 
 [tool.setuptools]
 packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
@@ -166,7 +166,8 @@ exclude_lines = [
 show_missing = true
 
 [tool.mypy]
-python_version = "3.9"
+# mypy >=1.19 cannot target 3.9, and numpy 2.x stubs require a 3.12 target
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
