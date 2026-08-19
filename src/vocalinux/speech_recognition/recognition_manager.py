@@ -875,7 +875,9 @@ def _get_system_model_paths() -> list:
 
             # Arch Linux doesn't use /usr/local
             if "arch" in os_release:
-                paths.remove("/usr/local/share/vocalinux/models")
+                local_share_path = "/usr/local/share/vocalinux/models"
+                if local_share_path in paths:
+                    paths.remove(local_share_path)
 
     except (IOError, OSError, FileNotFoundError):
         pass  # File doesn't exist on all systems

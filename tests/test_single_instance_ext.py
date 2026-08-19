@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import vocalinux.single_instance as single_instance_module
+from vocalinux.utils.paths import data_dir
 
 
 class TestAcquireLock(unittest.TestCase):
@@ -181,11 +182,11 @@ class TestGetLockFileFd(unittest.TestCase):
 class TestLockFileConstants(unittest.TestCase):
     """Tests for lock file constants."""
 
-    def test_lock_file_path_is_in_home_directory(self):
-        """Test that lock file is in ~/.local/share/vocalinux/."""
-        self.assertIn(".local", str(single_instance_module.LOCK_FILE_PATH))
-        self.assertIn("share", str(single_instance_module.LOCK_FILE_PATH))
-        self.assertIn("vocalinux", str(single_instance_module.LOCK_FILE_PATH))
+    def test_lock_file_path_is_in_data_home(self):
+        """Test that lock file lives under $XDG_DATA_HOME/vocalinux/."""
+        expected_dir = Path(data_dir())
+        self.assertEqual(single_instance_module.LOCK_FILE_DIR, expected_dir)
+        self.assertEqual(single_instance_module.LOCK_FILE_PATH, expected_dir / "instance.lock")
 
     def test_lock_file_path_is_path_object(self):
         """Test that lock file path is a Path object."""
