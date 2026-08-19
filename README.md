@@ -54,13 +54,13 @@ No internet required. No data leaves your machine. Just speak and type.
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
 | **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
-| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca (#707) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
 | **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
 ### Also in this release
 
 - IBus: safer scoped injection, engine restore after teardown, XKB layout restore on X11 (#623, #643, #665)
-- Audio: filter unsafe virtual capture devices; open stereo mics at native channel count (#629, #673)
+- Audio: filter unsafe virtual capture devices; open stereo mics at native channel count; catalog tones are the family preview WAVs, not the synthesized #707 files (#629, #673, #708)
 - Clipboard: restore after ydotool paste; text-only reads and safer overlapping restore (#588, #646)
 - GPU / AppImage: honor bundled GPU libs and skip software Vulkan; ship transitive GI typelibs (AppImage fix already hotfixed onto the v0.15.0 AppImages) (#674, #637)
 - Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE; optional missing-tray warning toggle (#670, #669, #621, #628)
