@@ -155,6 +155,32 @@ class TestGetSystemModelPaths(unittest.TestCase):
                 paths = _get_system_model_paths()
                 self.assertIsInstance(paths, list)
 
+    def test_arch_paths(self):
+        # Arch drops /usr/local/share, but must not crash when a custom
+        # XDG_DATA_DIRS never added that path in the first place.
+        mock_os_release = 'NAME="Arch Linux"\nID=arch\n'
+        with patch.dict(os.environ, {"XDG_DATA_DIRS": "/usr/local/share:/usr/share"}):
+            with patch("builtins.open", create=True) as mock_open:
+                mock_open.return_value.__enter__ = lambda s: s
+                mock_open.return_value.__exit__ = MagicMock(return_value=False)
+                mock_open.return_value.read.return_value = mock_os_release
+                paths = _get_system_model_paths()
+                self.assertIsInstance(paths, list)
+                self.assertNotIn("/usr/local/share/vocalinux/models", paths)
+                self.assertIn("/usr/share/vocalinux/models", paths)
+
+    def test_arch_paths_custom_xdg_dirs(self):
+        # Regression test: custom XDG_DATA_DIRS + Arch os-release used to
+        # raise ValueError from paths.remove() on the missing default path.
+        mock_os_release = 'NAME="Arch Linux"\nID=arch\n'
+        with patch.dict(os.environ, {"XDG_DATA_DIRS": "/custom/share"}):
+            with patch("builtins.open", create=True) as mock_open:
+                mock_open.return_value.__enter__ = lambda s: s
+                mock_open.return_value.__exit__ = MagicMock(return_value=False)
+                mock_open.return_value.read.return_value = mock_os_release
+                paths = _get_system_model_paths()
+                self.assertTrue(any("/custom/share" in p for p in paths))
+
     def test_os_release_not_found(self):
         with patch.dict(os.environ, {"XDG_DATA_DIRS": "/usr/share"}):
             with patch("builtins.open", side_effect=FileNotFoundError()):
