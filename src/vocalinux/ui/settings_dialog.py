@@ -69,7 +69,11 @@ from ..utils.whispercpp_model_info import (
     list_downloaded_models as list_downloaded_whispercpp_models,
 )
 from ..version import __copyright__, __description__, __url__, __version__  # noqa: E402
-from .config_manager import DEFAULT_CONFIG  # noqa: E402
+from .config_manager import (  # noqa: E402
+    DEFAULT_CONFIG,
+    DEFAULT_SOUND_EFFECT_TONE,
+    SOUND_EFFECT_TONES,
+)
 from .keyboard_backends import (  # noqa: E402
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
@@ -1755,7 +1759,12 @@ class SettingsDialog(Gtk.Dialog):
         self.audio_tab.pack_start(group, False, False, 0)
 
         # Sound Effects section
-        sound_group = PreferencesGroup(title="Sound Effects")
+        sound_group = PreferencesGroup(
+            title="Sound Effects",
+            description=(
+                "The switch mutes every cue, including errors. Off only skips start and stop."
+            ),
+        )
         self.sound_effects_switch = Gtk.Switch()
         self.sound_effects_switch.set_tooltip_text(
             "Play sounds when recording starts, stops, or encounters errors"
@@ -1764,10 +1773,38 @@ class SettingsDialog(Gtk.Dialog):
             title="Enable Sound Effects",
             subtitle="Play audio feedback for recording events",
             widget=self.sound_effects_switch,
+            keywords=("tone", "chime", "cue", "feedback"),
         )
         sound_group.add_row(sound_row)
+
+        self.sound_tone_combo = Gtk.ComboBoxText()
+        self.sound_tone_combo.set_size_request(_CONTROL_WIDTH, -1)
+        self.sound_tone_combo.set_tooltip_text("Start and stop sound used while dictating")
+        _prevent_scroll_on_hover(self.sound_tone_combo)
+        for tone_id, label in SOUND_EFFECT_TONES:
+            self.sound_tone_combo.append(tone_id, label)
+        tone_row = PreferenceRow(
+            title="Dictation Tone",
+            subtitle="Start and stop cues. Off is silent for those two.",
+            widget=self.sound_tone_combo,
+            keywords=("tone", "chime", "voca", "lift", "preview"),
+        )
+        sound_group.add_row(tone_row)
+
+        self.preview_tone_btn = Gtk.Button(label="Preview")
+        self.preview_tone_btn.set_tooltip_text("Play the start cue, then the stop cue")
+        self.preview_tone_row = PreferenceRow(
+            title="Preview Tone",
+            subtitle="Play the start cue, then the stop cue",
+            widget=self.preview_tone_btn,
+            keywords=("tone", "preview", "listen"),
+        )
+        sound_group.add_row(self.preview_tone_row)
+
         self.audio_tab.pack_start(sound_group, False, False, 0)
         self.sound_effects_switch.connect("state-set", self._on_sound_effects_toggled)
+        self.sound_tone_combo.connect("changed", self._on_sound_tone_changed)
+        self.preview_tone_btn.connect("clicked", self._on_preview_tone_clicked)
 
         # Populate devices
         self._populate_audio_devices()
@@ -2241,6 +2278,30 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
         return False
+
+    def _update_tone_preview_subtitle(self, tone_id: str) -> None:
+        if tone_id == "off":
+            self.preview_tone_row.set_subtitle("Off has no start or stop cue")
+            self.preview_tone_btn.set_tooltip_text("Off has no start or stop cue")
+        else:
+            self.preview_tone_row.set_subtitle("Play the start cue, then the stop cue")
+            self.preview_tone_btn.set_tooltip_text("Play the start cue, then the stop cue")
+
+    def _on_sound_tone_changed(self, combo):
+        tone_id = combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
+        self._update_tone_preview_subtitle(tone_id)
+        if self._initializing or self._applying_settings:
+            return
+        logger.info("Dictation tone selected: %s", tone_id)
+        self.config_manager.set_sound_effects_tone(tone_id)
+        self.config_manager.save_settings()
+
+    def _on_preview_tone_clicked(self, _widget):
+        from .audio_feedback import preview_tone
+
+        tone_id = self.sound_tone_combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
+        self._update_tone_preview_subtitle(tone_id)
+        preview_tone(tone_id)
 
     def _build_engine_section(self):
         """Build the Speech Engine section."""
@@ -3864,6 +3925,10 @@ class SettingsDialog(Gtk.Dialog):
         self.auto_capitalize_switch.set_active(auto_capitalize)
         self.append_trailing_space_switch.set_active(append_trailing_space)
         self.sound_effects_switch.set_active(self.config_manager.is_sound_effects_enabled())
+        tone_id = self.config_manager.get_sound_effects_tone()
+        if not self.sound_tone_combo.set_active_id(tone_id):
+            self.sound_tone_combo.set_active_id(DEFAULT_SOUND_EFFECT_TONE)
+        self._update_tone_preview_subtitle(self.sound_tone_combo.get_active_id() or tone_id)
 
         auto_pause_settings = self.config_manager.get_settings().get("auto_pause", {})
         auto_pause_enabled = bool(auto_pause_settings.get("enabled", False))

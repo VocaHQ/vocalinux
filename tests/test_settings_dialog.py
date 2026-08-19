@@ -797,6 +797,27 @@ class TestLanguageComboSearch(unittest.TestCase):
         self.assertIn("def _commit_or_restore_language_entry", source_code)
         self.assertIn("Type to search, or pick from the list", source_code)
 
+    def test_dictation_tone_picker_in_source(self):
+        import os
+
+        source_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "vocalinux",
+            "ui",
+            "settings_dialog.py",
+        )
+        with open(source_path, "r") as f:
+            source_code = f.read()
+
+        self.assertIn("SOUND_EFFECT_TONES", source_code)
+        self.assertIn('title="Dictation Tone"', source_code)
+        self.assertIn("def _on_preview_tone_clicked", source_code)
+        self.assertIn("preview_tone(tone_id)", source_code)
+        self.assertNotIn("fifth", source_code)
+        self.assertNotIn("01-linux-glide", source_code)
+
 
 class TestSettingsSearch(unittest.TestCase):
     """Test cases for the settings search feature."""

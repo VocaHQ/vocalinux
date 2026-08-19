@@ -485,6 +485,15 @@ class TestConfigManager(unittest.TestCase):
         config_manager = ConfigManager()
         self.assertTrue(config_manager.is_sound_effects_enabled())
 
+    def test_sound_effects_tone_defaults_to_voca(self):
+        """New installs and missing tone keys resolve to voca."""
+        from vocalinux.ui.config_manager import DEFAULT_SOUND_EFFECT_TONE
+
+        config_manager = ConfigManager()
+        self.assertEqual(DEFAULT_SOUND_EFFECT_TONE, "voca")
+        self.assertEqual(config_manager.get_sound_effects_tone(), "voca")
+        self.assertEqual(config_manager.config["sound_effects"]["tone"], "voca")
+
     def test_missing_tray_warning_enabled_by_default(self):
         """Test that the missing tray support warning is enabled by default."""
         config_manager = ConfigManager()
