@@ -59,3 +59,14 @@ def test_scrollbar_stays_in_the_layout():
     """An overlay scrollbar hides until hovered, so a capped list looks whole."""
     src = inspect.getsource(settings_dialog)
     assert "self.unused_models_scroll.set_overlay_scrolling(False)" in src
+
+
+def test_expanding_the_list_remeasures_it():
+    """The refresh measures while collapsed and possibly unmapped; expanding
+    must remeasure so a short first measurement can never leave rows clipped."""
+    src = inspect.getsource(settings_dialog)
+    assert re.search(
+        r"self\.unused_expander\.connect\(\s*\"notify::expanded\","
+        r"\s*lambda \*_args: self\._fit_unused_downloads_height\(\)",
+        src,
+    )

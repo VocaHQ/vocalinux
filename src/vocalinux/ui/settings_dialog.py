@@ -2438,6 +2438,12 @@ class SettingsDialog(Gtk.Dialog):
         list_holder.pack_start(self.unused_models_group.listbox, False, False, 0)
         self.unused_models_scroll.add(list_holder)
         self.unused_expander.add(self.unused_models_scroll)
+        # Backstop: the refresh measures while the expander is collapsed and
+        # the dialog may not be mapped yet. Remeasure when the user expands,
+        # so a short first measurement can never leave the list clipped.
+        self.unused_expander.connect(
+            "notify::expanded", lambda *_args: self._fit_unused_downloads_height()
+        )
         self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
         self.content_box.pack_start(self.unused_models_group, False, False, 0)
 
