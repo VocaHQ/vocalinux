@@ -5,7 +5,9 @@ Writes 16-bit PCM mono files at 44.1 kHz into resources/sounds/:
 
 - start_recording.wav / stop_recording.wav / error.wav: the original Linux
   pair. Kept on disk; not used as the implicit default anymore.
-- {id}_start.wav / {id}_stop.wav for each family tone except Off.
+
+Family catalog pairs ({id}_start.wav / {id}_stop.wav) are downloaded preview
+bytes. This script never synthesizes or overwrites them.
 
 Usage:
     python scripts/generate_sounds.py
@@ -15,7 +17,6 @@ from __future__ import annotations
 
 import math
 import os
-import shutil
 import struct
 import wave
 
@@ -207,59 +208,30 @@ def main() -> None:
         lambda: generate_glide_tone(error_path, E4, C4, duration=0.7, amplitude=0.14),
     )
 
-    # lift: Linux-family F4→A4 sine glide (own files; does not replace the originals)
-    generate_glide_tone(os.path.join(sounds_dir, "lift_start.wav"), F4, A4, 0.48, 0.16)
-    generate_glide_tone(os.path.join(sounds_dir, "lift_stop.wav"), A4, F4, 0.48, 0.16)
+    # Family catalog pairs are downloaded preview bytes. Never synthesize or
+    # overwrite them.
+    family_ids = (
+        "lift",
+        "flick",
+        "ember",
+        "step",
+        "voca",
+        "soft",
+        "chirp",
+        "scale",
+        "drop",
+        "glass",
+    )
+    family_names = {f"{tone_id}_{kind}.wav" for tone_id in family_ids for kind in ("start", "stop")}
+    for name in sorted(family_names):
+        path = os.path.join(sounds_dir, name)
+        if os.path.exists(path):
+            print(f"Keeping downloaded catalog: {path}")
+        else:
+            print(f"Missing catalog WAV (not synthesizing): {path}")
 
-    # flick: same interval, shorter
-    generate_glide_tone(os.path.join(sounds_dir, "flick_start.wav"), F4, A4, 0.18, 0.15)
-    generate_glide_tone(os.path.join(sounds_dir, "flick_stop.wav"), A4, F4, 0.18, 0.15)
-
-    # ember: low warm G3→C4
-    generate_glide_tone(os.path.join(sounds_dir, "ember_start.wav"), G3, C4, 0.55, 0.15)
-    generate_glide_tone(os.path.join(sounds_dir, "ember_stop.wav"), C4, G3, 0.55, 0.15)
-
-    # step: two soft C/E ticks
-    generate_ticks(os.path.join(sounds_dir, "step_start.wav"), (C4, E4), 0.07, 0.05, 0.11)
-    generate_ticks(os.path.join(sounds_dir, "step_stop.wav"), (E4, C4), 0.07, 0.05, 0.11)
-
-    # voca: open fifth swell (id is voca, not fifth)
-    generate_fifth_swell(os.path.join(sounds_dir, "voca_start.wav"), C4, G4, 0.44, 0.14, True)
-    generate_fifth_swell(os.path.join(sounds_dir, "voca_stop.wav"), C4, G4, 0.40, 0.13, False)
-
-    # soft: very short muted ticks
-    generate_ticks(os.path.join(sounds_dir, "soft_start.wav"), (C5,), 0.05, 0.0, 0.07, decay=22.0)
-    generate_ticks(os.path.join(sounds_dir, "soft_stop.wav"), (A4,), 0.055, 0.0, 0.07, decay=22.0)
-
-    # chirp: light high chirp
-    generate_glide_tone(os.path.join(sounds_dir, "chirp_start.wav"), A5, C6, 0.09, 0.10)
-    generate_glide_tone(os.path.join(sounds_dir, "chirp_stop.wav"), C6, A5, 0.10, 0.10)
-
-    # scale: pentatonic A4→C5
-    generate_scale(os.path.join(sounds_dir, "scale_start.wav"), (A4, C5), 0.09, 0.025, 0.12)
-    generate_scale(os.path.join(sounds_dir, "scale_stop.wav"), (C5, A4), 0.09, 0.025, 0.12)
-
-    # drop: low start, deeper stop
-    generate_glide_tone(os.path.join(sounds_dir, "drop_start.wav"), D3, F3, 0.40, 0.16)
-    generate_glide_tone(os.path.join(sounds_dir, "drop_stop.wav"), C3, G2, 0.48, 0.16)
-
-    # glass: thin glass ping
-    generate_ping(os.path.join(sounds_dir, "glass_start.wav"), E7, 0.30, 0.10)
-    generate_ping(os.path.join(sounds_dir, "glass_stop.wav"), C7, 0.34, 0.09)
-
-    # Package data lives in src/vocalinux/resources and is what ResourceManager
-    # prefers when running from a checkout. Keep both trees in sync.
-    packaged_dir = os.path.join(repo_root, "src", "vocalinux", "resources", "sounds")
-    os.makedirs(packaged_dir, exist_ok=True)
-    for name in os.listdir(sounds_dir):
-        if not name.endswith(".wav"):
-            continue
-        if name in {"start_recording.wav", "stop_recording.wav", "error.wav"}:
-            continue
-        shutil.copy2(os.path.join(sounds_dir, name), os.path.join(packaged_dir, name))
-        print(f"Copied: {os.path.join(packaged_dir, name)}")
-
-    print("\nCatalog pairs written. Original start/stop/error files were left in place.")
+    print("\nOriginal start/stop/error files were left in place.")
+    print("Family catalog WAVs were not written.")
 
 
 if __name__ == "__main__":
