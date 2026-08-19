@@ -4,7 +4,7 @@ This guide explains how to update Vocalinux to the latest version.
 
 ## What's New in v0.16.0
 
-0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, switches the license to AGPL-3.0, and hardens IBus, audio, clipboard, GPU/Vulkan, and AppImage packaging on top of the 0.15 series. The app icon, tray states, and site favicons now use the shared Voca family mic.
+0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
 
 ### Highlights
 
@@ -15,18 +15,20 @@ This guide explains how to update Vocalinux to the latest version.
 | **Searchable languages** | Type to filter the Speech Model language list (#672) |
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
-| **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
 | **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca (#707) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
 ### New Features
 
-- **In-app update checker** — Settings → About with stable/nightly channels (#631)
-- **Update notifications** — Tray menu Update Available entry and About badge when a newer release exists (#645)
-- **Right Alt push-to-talk default** — New installs only; existing configs are unchanged (#648)
-- **Searchable language combobox** — Filter the long language list by name or code (#672, fixes #652)
-- **Delete unused models** — Remove leftover downloaded speech models from Settings (#671, fixes #650)
-- **Disable missing-tray warning** — Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
+- **In-app update checker**: Settings → About with stable/nightly channels (#631)
+- **Update notifications**: Tray menu Update Available entry and About badge when a newer release exists (#645)
+- **Right Alt push-to-talk default**: New installs only; existing configs are unchanged (#648)
+- **Searchable language combobox**: Filter the long language list by name or code (#672, fixes #652)
+- **Delete unused models**: Remove leftover downloaded speech models from Settings (#671, fixes #650)
+- **Disable missing-tray warning**: Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
 - **Family mic icons**: App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (#704)
+- **Family dictation tone picker**: Settings → Audio dropdown (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) plus Preview. New installs and unknown saved names default to Voca. A saved catalog id, including Off, is left alone. Enable remains the master mute; Off skips start/stop only (#707)
 
 ### Bug Fixes
 
@@ -35,8 +37,10 @@ This guide explains how to update Vocalinux to the latest version.
 - **whisper.cpp**: Skip unsupported `context_params` on pywhispercpp 1.4 (#626, fixes #625); use CUDA device 0 when CUDA-backed (#636); honor bundled GPU libs and skip software Vulkan devices (#674)
 - **Audio**: Filter unsafe virtual capture devices (#629, fixes #624); open stereo mics at native channel count (#673, fixes #666)
 - **Tray / Settings**: Prefer Ayatana AppIndicator on KDE (#621); reuse Settings/Logs windows (#669, fixes #653); separate Close from Test Dictation (#670, fixes #651)
+- **Settings**: Test Dictation no longer reports no speech when recognition never started (missing model / auto-pause / live engine out of sync) (#702)
 - **Clipboard**: Restore after ydotool clipboard-paste (#588); text-only reads and safer overlapping restore (#646)
 - **AppImage**: Ship transitive GI typelibs for non-Debian hosts (also hotfixed onto the v0.15.0 AppImages on 2026-08-03) (#637)
+- **Installer**: Distro python3-gi is required; pip no longer builds PyGObject from sdist. Unset `XDG_SESSION_TYPE` / `XDG_CURRENT_DESKTOP` no longer crash under `set -u` (#706)
 - **Installer / downloads / tests**: Gate `util-linux-extra` to Ubuntu 24.04+ (#635, fixes #526); report failed model downloads (#690); stop the suite from overwriting real `config.json` (#694)
 
 ### Docs / maintenance
@@ -46,6 +50,7 @@ This guide explains how to update Vocalinux to the latest version.
 - CUDA device 0 note for dual NVIDIA (#644)
 - Discord and VocaHQ README shields; VocaHQ URL migration; VocaGateway rename (#695, #696, #697)
 - Codeberg mirror tag force-push (#633)
+- Installer hardening, Justfile in place of Makefile, and uv lockfiles with pinned build inputs. Epic #701 remains open (#700, #705 by @sesav)
 
 See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
 
