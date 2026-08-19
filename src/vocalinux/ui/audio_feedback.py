@@ -68,9 +68,9 @@ def _is_sound_effects_enabled() -> bool:
 
 def _resolved_tone() -> str:
     try:
-        from .config_manager import ConfigManager
+        from .config_manager import get_shared_config_manager
 
-        return ConfigManager().get_sound_effects_tone()
+        return get_shared_config_manager().get_sound_effects_tone()
     except Exception:
         return DEFAULT_SOUND_EFFECT_TONE
 
