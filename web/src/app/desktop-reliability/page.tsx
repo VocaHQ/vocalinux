@@ -57,7 +57,7 @@ const releaseMap = [
   {
     version: "v0.16.0",
     highlights:
-      "Update checker with tray notifications, Right Alt PTT default for new installs, searchable language list, unused model deletion, IBus/XKB restore fixes, safer audio capture, clipboard restore, and AppImage/GPU packaging hardening.",
+      "Update checker with tray notifications, Right Alt PTT default for new installs, searchable language list, unused model deletion, Test Dictation missing-model message, IBus/XKB restore fixes, safer audio capture, clipboard restore, installer python3-gi requirement, and AppImage/GPU packaging hardening.",
   },
   {
     version: "v0.15.0",

@@ -42,7 +42,7 @@ No internet required. No data leaves your machine. Just speak and type.
 
 ## 📚 What's New in v0.16.0
 
-> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, switches the project license to AGPL-3.0, and hardens IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage packaging. The app icon, tray states, and site favicons now use the shared Voca family mic.
+> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The project license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
 
 ### Highlights
 
@@ -53,8 +53,9 @@ No internet required. No data leaves your machine. Just speak and type.
 | **Searchable languages** | Type to filter the Speech Model language list (#672) |
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
-| **Tray warning toggle** | Option to silence the missing-tray warning dialog (#628) |
 | **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca (#707) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
 ### Also in this release
 
@@ -62,7 +63,8 @@ No internet required. No data leaves your machine. Just speak and type.
 - Audio: filter unsafe virtual capture devices; open stereo mics at native channel count (#629, #673)
 - Clipboard: restore after ydotool paste; text-only reads and safer overlapping restore (#588, #646)
 - GPU / AppImage: honor bundled GPU libs and skip software Vulkan; ship transitive GI typelibs (AppImage fix already hotfixed onto the v0.15.0 AppImages) (#674, #637)
-- Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE (#670, #669, #621)
+- Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE; optional missing-tray warning toggle (#670, #669, #621, #628)
+- Test Dictation: no longer reports no speech when recognition never started (#702)
 - Installer / downloads / tests: gate `util-linux-extra` to Ubuntu 24.04+; report failed model downloads; stop tests from overwriting real `config.json` (#635, #690, #694)
 
 See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
