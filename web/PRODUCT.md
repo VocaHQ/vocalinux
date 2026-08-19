@@ -36,7 +36,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
 - In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available
 - Optional disable of the missing-tray warning dialog
-- Settings → Audio family tone picker (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) with Preview; new installs default to Voca
+- Settings → Audio family tone picker (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) with Preview; new installs default to Voca; catalog files are the family preview WAVs
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
 - Packaging: install.sh (distro python3-gi required; no pip sdist of PyGObject), AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented); uv.lock pins Python deps; Justfile replaces Makefile

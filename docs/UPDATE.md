@@ -16,7 +16,7 @@ This guide explains how to update Vocalinux to the latest version.
 | **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
 | **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
 | **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
-| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca (#707) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
 | **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
 ### New Features
@@ -35,7 +35,7 @@ This guide explains how to update Vocalinux to the latest version.
 - **IBus**: Require a restorable engine for scoped injection (#623); restore engine after `register_component` teardown (#643, fixes #558); restore XKB layout after scoped injection on X11 (#665, fixes #664)
 - **Injection**: Stop typing `test` during the wtype probe (#627, fixes #622)
 - **whisper.cpp**: Skip unsupported `context_params` on pywhispercpp 1.4 (#626, fixes #625); use CUDA device 0 when CUDA-backed (#636); honor bundled GPU libs and skip software Vulkan devices (#674)
-- **Audio**: Filter unsafe virtual capture devices (#629, fixes #624); open stereo mics at native channel count (#673, fixes #666)
+- **Audio**: Filter unsafe virtual capture devices (#629, fixes #624); open stereo mics at native channel count (#673, fixes #666); catalog tones are the family preview WAVs, not the synthesized #707 files. `generate_sounds.py` does not clobber catalog ids (#708)
 - **Tray / Settings**: Prefer Ayatana AppIndicator on KDE (#621); reuse Settings/Logs windows (#669, fixes #653); separate Close from Test Dictation (#670, fixes #651)
 - **Settings**: Test Dictation no longer reports no speech when recognition never started (missing model / auto-pause / live engine out of sync) (#702)
 - **Clipboard**: Restore after ydotool clipboard-paste (#588); text-only reads and safer overlapping restore (#646)

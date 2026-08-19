@@ -22,7 +22,7 @@ const releases = [
       "In-app update checker (stable/nightly) plus tray Update Available when GitHub has a newer release (PR #631, #645)",
       "New installs default to hold Right Alt push-to-talk; existing configs keep their shortcut (PR #648)",
       "Searchable language list and delete unused downloaded speech models (PR #672, #671)",
-      "Family dictation tone picker in Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca (PR #707)",
+      "Family dictation tone picker in Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog tones are the family preview WAVs, not synthesized files (PR #707, #708)",
       "License migrated to AGPL-3.0 (PR #660)",
       "App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (PR #704)",
       "Installer hardened with Justfile and uv lockfiles; distro python3-gi required (no pip sdist of PyGObject). Epic #701 remains open (PR #700, #705, #706)",
