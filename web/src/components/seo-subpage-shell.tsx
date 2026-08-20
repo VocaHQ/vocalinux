@@ -94,7 +94,7 @@ const navCategories = [
   {
     label: "Privacy & Ethics",
     items: [
-      { href: "/offline/", label: "100% Offline", icon: Shield },
+      { href: "/offline/", label: "Offline", icon: Shield },
       { href: "/open-source/", label: "Open Source", icon: Code2 },
       { href: "/privacy/", label: "Privacy Policy", icon: Shield },
     ],
@@ -262,7 +262,7 @@ export function SeoSubpageShell({ children }: SeoSubpageShellProps) {
           icon: BookOpen,
         },
         { href: "/alternatives/", label: "Alternatives", icon: BookOpen },
-        { href: "/offline/", label: "100% Offline", icon: Shield },
+        { href: "/offline/", label: "Offline", icon: Shield },
         { href: "/open-source/", label: "Open Source", icon: Code2 },
       ],
     },

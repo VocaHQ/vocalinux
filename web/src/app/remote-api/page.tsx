@@ -214,8 +214,8 @@ export default function RemoteApiPage() {
             </li>
             <li className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-              Remote API is not the same as fully offline mode because audio is
-              sent to the server you configure.
+              Remote API is not on-device. Audio goes to the server you
+              configure.
             </li>
           </ul>
         </div>

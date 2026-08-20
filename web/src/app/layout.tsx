@@ -98,7 +98,7 @@ export const metadata: Metadata = {
     siteName: SITE_NAME,
     title: "Vocalinux: Offline Voice Dictation for Linux",
     description:
-      "Voice dictation for Linux that runs fully offline. Install in minutes and dictate in any app on Ubuntu, Fedora, Arch, X11, or Wayland.",
+      "Voice dictation for Linux with local engines or an optional Remote API. Install in minutes and dictate in any app on Ubuntu, Fedora, Arch, X11, or Wayland.",
     images: [
       {
         url: DEFAULT_OG_IMAGE_PATH,
@@ -112,7 +112,7 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Vocalinux: Offline Voice Dictation for Linux",
     description:
-      "Speech-to-text for Linux with whisper.cpp and VOSK. 100% offline, privacy-first, and open-source.",
+      "Speech-to-text for Linux with whisper.cpp and VOSK. Local engines by default, optional Remote API, open source.",
     images: [DEFAULT_OG_IMAGE_PATH],
     creator: TWITTER_HANDLE,
     site: TWITTER_HANDLE,

@@ -24,7 +24,7 @@ const comparisonRows = [
   },
   {
     feature: "Offline voice dictation",
-    vocalinux: "100% offline with multiple engine options",
+    vocalinux: "Local engines, plus an optional Remote API",
     nerdDictation: "Offline dictation, single CLI-centered flow",
     winner: "Vocalinux",
     icon: Command,

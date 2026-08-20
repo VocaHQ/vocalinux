@@ -44,7 +44,7 @@ const alternatives = [
 
 const comparisonTable = [
   { feature: "Linux Support", vocalinux: true, dragon: false, otter: false, google: true },
-  { feature: "100% Offline", vocalinux: true, dragon: false, otter: false, google: false },
+  { feature: "Local engines", vocalinux: true, dragon: false, otter: false, google: false },
   { feature: "Open Source", vocalinux: true, dragon: false, otter: false, google: false },
   { feature: "Free Forever", vocalinux: true, dragon: false, otter: false, google: true },
   { feature: "Desktop Integration", vocalinux: true, dragon: true, otter: false, google: false },
@@ -119,7 +119,7 @@ export default function AlternativesPage() {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div className="flex items-center gap-3">
             <Lock className="h-5 w-5 text-primary" />
-            <span className="font-medium">100% Offline</span>
+            <span className="font-medium">Local engines</span>
           </div>
           <div className="flex items-center gap-3">
             <Shield className="h-5 w-5 text-primary" />
@@ -278,8 +278,12 @@ export default function AlternativesPage() {
       <section className="mt-12 rounded-[12px] border border-border bg-muted p-8">
         <h2 className="mb-4 font-display text-2xl font-semibold">The Bottom Line</h2>
         <p className="mb-6 text-muted-foreground">
-          If you're on Linux and need voice dictation, Vocalinux is the only option that offers
-          offline processing, privacy, and full desktop integration at no cost.
+          If you are on Linux and need voice dictation, Vocalinux is a strong option: local
+          engines, no usage telemetry, and desktop integration, at no cost. See the{" "}
+          <Link href="/vs-nerd-dictation/" className="font-semibold hover:underline">
+            nerd-dictation comparison
+          </Link>{" "}
+          for another free offline Linux tool.
         </p>
         <div className="flex flex-wrap gap-4">
           <Link

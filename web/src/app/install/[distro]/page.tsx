@@ -35,7 +35,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
     description:
       "Step-by-step Ubuntu voice dictation setup for offline speech-to-text with whisper.cpp and VOSK. Works on Ubuntu 22.04+, GNOME, KDE, X11, and Wayland.",
     intro:
-      "This Ubuntu guide is tuned for practical desktop use: terminals, browsers, IDEs, office suites, and chat apps. Vocalinux runs locally so your voice data never leaves your machine.",
+      "This Ubuntu guide is tuned for practical desktop use: terminals, browsers, IDEs, office suites, and chat apps. Local engines keep audio on your machine. Remote API is optional.",
     prerequisites: [
        "Ubuntu 22.04+ (or Ubuntu-based distro)",
        "Python 3.9+",

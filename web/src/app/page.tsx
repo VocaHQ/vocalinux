@@ -63,7 +63,7 @@ const homeJsonLd = [
     downloadUrl: GITHUB_REPO_URL,
     screenshot: "https://vocalinux.com/og-image.png",
     featureList: [
-      "100% offline speech recognition",
+      "Local speech recognition with whisper.cpp, Whisper, and VOSK",
       "Remote API speech recognition for compatible self-hosted transcription servers",
       "Silero neural voice activity detection with amplitude fallback",
       "Works with X11 and Wayland",
@@ -97,10 +97,10 @@ const homeJsonLd = [
     mainEntity: [
       {
         "@type": "Question",
-        name: "Is Vocalinux really 100% offline?",
+        name: "Does Vocalinux work offline?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Yes for local engines. All local speech recognition runs on your Linux machine. Vocalinux also offers an optional Remote API engine for user-configured servers.",
+          text: "Local engines process speech on your Linux machine. Remote API is optional and only talks to servers you configure.",
         },
       },
       {
@@ -923,12 +923,12 @@ export default function HomePage() {
             {(
               [
                 {
-                  question: "Is Vocalinux really 100% offline?",
+                  question: "Does Vocalinux work offline?",
                   answer: (
                     <>
-                      Yes for local engines: whisper.cpp, Whisper, and VOSK
-                      process speech on your machine. Remote API is optional and
-                      only talks to servers you configure.{" "}
+                      Local engines (whisper.cpp, Whisper, and VOSK) process
+                      speech on your machine. Remote API is optional and only
+                      talks to servers you configure.{" "}
                       <Link href="/offline/" className="font-medium text-primary hover:underline">
                         Offline details
                       </Link>
@@ -1075,15 +1075,15 @@ export default function HomePage() {
               {
                 name: "VocaLinux",
                 status: "You are here",
-                body: "System tray app with whisper.cpp, Vulkan, and full offline support on Linux.",
+                body: "System tray app with whisper.cpp, Vulkan, and local engines on Linux.",
                 site: "#install",
                 gh: GITHUB_REPO_URL,
                 primary: true,
               },
               {
                 name: "VocaWin",
-                status: "Planned",
-                body: "Windows tray app with an offline-first design. Still in planning.",
+                status: "Developer alpha",
+                body: "Unsigned NSIS (~12 MB) and MSI (~34 MB). Latest prerelease is v0.1.0-alpha.1. Windows SmartScreen may warn about an unknown publisher.",
                 site: "https://vocawin.com",
                 gh: "https://github.com/VocaHQ/vocawin",
                 primary: false,

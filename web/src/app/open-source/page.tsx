@@ -54,7 +54,7 @@ const benefits = [
 const vsProprietary = [
   { feature: "Cost", vocalinux: "Free forever", proprietary: "$10-500/month or $500+ license" },
   { feature: "Source Code", vocalinux: "Fully open", proprietary: "Closed, proprietary" },
-  { feature: "Data Privacy", vocalinux: "100% offline", proprietary: "Often cloud-based" },
+  { feature: "Data Privacy", vocalinux: "Local engines by default", proprietary: "Often cloud-based" },
   { feature: "Linux Support", vocalinux: "Native", proprietary: "Limited or none" },
   { feature: "Customization", vocalinux: "Unlimited", proprietary: "Limited to vendor options" },
   { feature: "Vendor Dependency", vocalinux: "None", proprietary: "High" },
@@ -257,12 +257,12 @@ export default function OpenSourcePage() {
           <div>
             <h2 className="mb-3 text-xl font-semibold">Privacy by Design</h2>
             <p className="mb-4 text-muted-foreground">
-              Because Vocalinux is open source and runs entirely offline, you can verify that your
-              voice data never leaves your computer. No telemetry, no analytics, no cloud
-              processing.
+              Because Vocalinux is open source, you can verify what local engines do on your
+              machine. The installed app has no usage telemetry. Remote API is optional and only
+              talks to a server you configure.
             </p>
             <div className="flex flex-wrap gap-2">
-              {["No account required", "No internet needed", "No data collection", "Full transparency"].map(
+              {["No account required", "Local engines need no network after download", "No usage telemetry", "Full transparency"].map(
                 (item) => (
                   <span
                     key={item}

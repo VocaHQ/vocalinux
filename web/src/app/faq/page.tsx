@@ -40,8 +40,8 @@ const faqCategories = [
     iconColor: "text-primary",
     questions: [
       {
-        q: "Is Vocalinux really 100% offline?",
-        a: "Yes for local engines. whisper.cpp, Whisper, and VOSK run on your Linux machine. Vocalinux also offers an optional Remote API engine for servers you configure yourself.",
+        q: "Does Vocalinux work offline?",
+        a: "Local engines (whisper.cpp, Whisper, and VOSK) run on your Linux machine. Remote API is optional and only talks to a server you configure.",
       },
       {
         q: "Does Vocalinux send any data to external servers?",

@@ -1,7 +1,7 @@
 {
     "name": "Vocalinux",
     "short_name": "Vocalinux",
-    "description": "Voice dictation for Linux, finally done right. 100% offline and privacy-focused.",
+    "description": "Voice dictation for Linux with local engines and an optional Remote API.",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#ffffff",

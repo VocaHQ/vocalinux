@@ -48,7 +48,7 @@
   <g font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="17">
     <g transform="translate(80, 270)">
       <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
-      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">100% Offline</tspan><tspan fill="#71717a" font-weight="400" dx="6">nothing leaves your machine</tspan></text>
+      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">Local engines</tspan><tspan fill="#71717a" font-weight="400" dx="6">default path stays on the machine</tspan></text>
     </g>
     <g transform="translate(80, 302)">
       <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
@@ -100,7 +100,7 @@
   <!-- Total cards height: 4*118 + 3*20 = 532. Canvas usable = 630 - 8 (accent lines) = 622 -->
   <!-- Top offset: (622 - 532) / 2 + 4 = 49 -->
 
-  <!-- Card 1: 100% Local Processing -->
+  <!-- Card 1: Local Processing -->
   <g transform="translate(620, 49)">
     <rect width="510" height="118" rx="16" fill="white" stroke="#e4e4e7" stroke-width="1.2"/>
     <!-- Icon - vertically centered: (118-50)/2 = 34 -->
@@ -112,9 +112,9 @@
       </g>
     </g>
     <!-- Text block - vertically centered: icon center at 34+25=59, text block ~40px tall, starts at 59-20+6=45 -->
-    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">100% Local Processing</text>
-    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">No cloud, no subscriptions, no data</text>
-    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">leaves your machine</text>
+    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">Local Processing</text>
+    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Local engines keep audio on the</text>
+    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">machine. Remote API is optional.</text>
     <!-- Badge - vertically centered alongside title -->
     <rect x="418" y="37" width="72" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
     <text x="454" y="55" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">PRIVATE</text>

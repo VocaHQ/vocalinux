@@ -5,9 +5,9 @@ import { SeoSubpageShell } from "@/components/seo-subpage-shell";
 import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Privacy Policy - 100% Offline Voice Dictation",
+  title: "Privacy Policy - Local Voice Dictation",
   description:
-    "Vocalinux is 100% offline. Your voice data never leaves your computer. Learn about our privacy-first approach to Linux voice dictation.",
+    "Local engines keep audio on your computer. Remote API is optional and only talks to a server you configure.",
   path: "/privacy",
   keywords: [
     "vocalinux privacy",
@@ -21,9 +21,9 @@ export default function PrivacyPage() {
   const articleJsonLd = {
     "@context": "https://schema.org",
     "@type": "Article",
-    headline: "Vocalinux Privacy Policy - 100% Offline Voice Dictation",
+    headline: "Vocalinux Privacy Policy",
     description:
-      "Complete privacy policy for Vocalinux, the offline voice dictation software for Linux.",
+      "How Vocalinux handles voice data: local engines on your machine, optional Remote API to a server you configure.",
     dateModified: "2026-02-19",
     author: {
       "@type": "Person",
@@ -57,8 +57,8 @@ export default function PrivacyPage() {
           Your Voice Stays on Your Computer
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Vocalinux is built from the ground up for privacy. All speech recognition happens locally,
-          with zero cloud processing. Your voice data never leaves your machine.
+          Vocalinux is built for privacy. Local engines process speech on your machine. Remote API
+          is optional and only talks to a server you set.
         </p>
       </section>
 
@@ -68,10 +68,10 @@ export default function PrivacyPage() {
           <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3 dark:bg-primary/10">
             <Lock className="h-6 w-6 text-primary dark:text-[color:var(--terminal-fg)]" />
           </div>
-          <h3 className="mb-2 text-xl font-semibold">100% Offline</h3>
+          <h3 className="mb-2 text-xl font-semibold">Local engines</h3>
           <p className="text-sm text-muted-foreground">
-            No internet connection required after installation. All processing happens on your
-            device, period.
+            Local engines do not need the internet after the model is downloaded. Processing stays
+            on your device unless you turn on Remote API.
           </p>
         </article>
 
@@ -81,8 +81,8 @@ export default function PrivacyPage() {
           </div>
           <h3 className="mb-2 text-xl font-semibold">No Cloud Processing</h3>
           <p className="text-sm text-muted-foreground">
-            Unlike Dragon, Otter, or Google Dictation, we don't send your voice to any servers.
-            Everything stays local.
+            Local engines do not send your voice to our servers. Remote API sends audio only to the
+            URL you configure.
           </p>
         </article>
 
@@ -161,8 +161,8 @@ export default function PrivacyPage() {
               </li>
             </ol>
             <p className="mt-4 rounded-lg bg-muted p-4 text-sm dark:bg-muted">
-              <strong>Note:</strong> No audio is ever written to disk or transmitted over the
-              network.
+              <strong>Note:</strong> Local engines do not write audio to disk or send it over the
+              network. Remote API sends audio to the server you configure.
             </p>
           </div>
         </article>
@@ -213,12 +213,16 @@ export default function PrivacyPage() {
             <tbody className="text-sm text-muted-foreground">
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Data leaves device</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">Never</td>
+                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">
+                  Only with Remote API
+                </td>
                 <td className="py-3 text-primary">Always</td>
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Internet required</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">No</td>
+                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">
+                  Only for Remote API or a model download
+                </td>
                 <td className="py-3 text-primary">Yes</td>
               </tr>
               <tr className="border-b border-border">
