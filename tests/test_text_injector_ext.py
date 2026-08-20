@@ -686,23 +686,164 @@ class TestShortcutWithXdotool(unittest.TestCase):
             self.assertFalse(result)
 
 
+def _make_shortcut_injector(tool, legacy=False):
+    """Injector wired for _inject_shortcut_with_wayland_tool.
+
+    ``_make_injector`` sets neither ``wayland_tool`` nor the dialect cache, and
+    an unpinned dialect would run the real ``key --help`` probe.
+    """
+    from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+    obj = _make_injector(DesktopEnvironment.WAYLAND)
+    obj.wayland_tool = tool
+    obj._ydotool_legacy_named_keys = legacy
+    # _ensure_ydotoold spawns a real Popen, which patch("subprocess.run") misses.
+    obj._ensure_ydotoold = MagicMock(return_value=True)
+    obj._wait_for_modifiers_released = MagicMock()
+    return obj
+
+
 class TestShortcutWithWaylandTool(unittest.TestCase):
-    def test_wtype_not_supported(self):
-        from vocalinux.text_injection.text_injector import DesktopEnvironment
-
-        obj = _make_injector(DesktopEnvironment.WAYLAND)
-        obj.wayland_tool = "wtype"
-        result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
-        self.assertFalse(result)  # wtype doesn't support shortcuts
-
-    def test_ydotool_success(self):
-        from vocalinux.text_injection.text_injector import DesktopEnvironment
-
-        obj = _make_injector(DesktopEnvironment.WAYLAND)
-        obj.wayland_tool = "ydotool"
-        with patch("subprocess.run"):
+    def test_wtype_chords_modifiers(self):
+        obj = _make_shortcut_injector("wtype")
+        with patch("subprocess.run") as mock_run:
             result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
             self.assertTrue(result)
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl"],
+            )
+
+    def test_ydotool_success(self):
+        obj = _make_shortcut_injector("ydotool", legacy=False)
+        with patch("subprocess.run") as mock_run:
+            result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
+            self.assertTrue(result)
+            # Raw keycodes, not the literal string "ctrl+a": ctrl=29, a=30.
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["ydotool", "key", "29:1", "30:1", "30:0", "29:0"],
+            )
+
+    def test_ydotool_legacy_uses_named_chord(self):
+        """0.1.x takes named sequences; raw 1.x codes would type digits there."""
+        obj = _make_shortcut_injector("ydotool", legacy=True)
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("ctrl+a"))
+            self.assertEqual(mock_run.call_args[0][0], ["ydotool", "key", "ctrl+a"])
+
+    def test_ydotool_legacy_multi_step_is_one_call(self):
+        """0.1.x takes any number of sequences, one per step, in a single call."""
+        obj = _make_shortcut_injector("ydotool", legacy=True)
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("Home+shift+End"))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["ydotool", "key", "home", "shift+end"],
+            )
+            self.assertEqual(mock_run.call_count, 1)
+
+    def test_ydotool_legacy_rejects_name_with_no_0_1_x_spelling(self):
+        """0.1.x maps an unknown name to its first letter, so never send one."""
+        obj = _make_shortcut_injector("ydotool", legacy=True)
+        with patch("subprocess.run") as mock_run:
+            self.assertFalse(obj._inject_shortcut_with_wayland_tool("altgr+a"))
+            mock_run.assert_not_called()
+
+    def test_sequential_steps_not_treated_as_one_chord(self):
+        """ "Home+shift+End" is press Home, then Shift+End -- two steps."""
+        obj = _make_shortcut_injector("wtype")
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("Home+shift+End"))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["wtype", "-k", "Home", "-M", "shift", "-k", "End", "-m", "shift"],
+            )
+
+    def test_unknown_ydotool_keycode_fails_loudly(self):
+        obj = _make_shortcut_injector("ydotool", legacy=False)
+        with patch("subprocess.run") as mock_run:
+            self.assertFalse(obj._inject_shortcut_with_wayland_tool("ctrl+F13"))
+            mock_run.assert_not_called()
+
+    def test_waits_for_modifiers_before_injecting(self):
+        """A held PTT modifier would otherwise rewrite the chord."""
+        obj = _make_shortcut_injector("wtype")
+        with patch("subprocess.run"):
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("ctrl+a"))
+        obj._wait_for_modifiers_released.assert_called_once()
+
+    def test_ydotool_ensures_daemon_but_continues_when_not_ready(self):
+        """0.1.x often has no daemon at all, so a warning must not abort."""
+        obj = _make_shortcut_injector("ydotool", legacy=False)
+        obj._ensure_ydotoold = MagicMock(return_value=False)
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("ctrl+a"))
+        obj._ensure_ydotoold.assert_called_once()
+        self.assertTrue(mock_run.called)
+
+    def test_timeout_returns_false(self):
+        obj = _make_shortcut_injector("wtype")
+        with patch("subprocess.run", side_effect=subprocess.TimeoutExpired("wtype", 3)):
+            self.assertFalse(obj._inject_shortcut_with_wayland_tool("ctrl+a"))
+
+    def test_runs_with_host_env_and_a_timeout(self):
+        obj = _make_shortcut_injector("wtype")
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("ctrl+a"))
+        kwargs = mock_run.call_args[1]
+        self.assertIn("env", kwargs)
+        self.assertGreaterEqual(kwargs["timeout"], 3)
+
+
+class TestYdotoolLegacyToken(unittest.TestCase):
+    def test_matches_mains_own_paste_constants(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(TextInjector._ydotool_legacy_token(["ctrl"], "v"), "ctrl+v")
+        self.assertEqual(TextInjector._ydotool_legacy_token(["ctrl", "shift"], "v"), "ctrl+shift+v")
+
+    def test_super_is_not_canonicalised_to_wtypes_logo(self):
+        """0.1.x has SUPER but no LOGO, and would type "l" for the latter."""
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(TextInjector._ydotool_legacy_token(["win"], "x"), "super+x")
+
+    def test_names_absent_from_0_1_x_are_rejected(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        for name in ("altgr", "escape", "space", "return"):
+            self.assertIsNone(TextInjector._ydotool_legacy_token([], name), name)
+
+
+class TestParseShortcut(unittest.TestCase):
+    def test_single_chord(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(
+            TextInjector._parse_shortcut("ctrl+shift+Right"),
+            [(["ctrl", "shift"], "Right")],
+        )
+
+    def test_multi_step(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(
+            TextInjector._parse_shortcut("Home+shift+End"),
+            [([], "Home"), (["shift"], "End")],
+        )
+
+    def test_trailing_modifier_rejected(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        with self.assertRaises(ValueError):
+            TextInjector._parse_shortcut("ctrl+shift")
+
+    def test_empty_rejected(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        with self.assertRaises(ValueError):
+            TextInjector._parse_shortcut("")
 
 
 class TestCopyToClipboard(unittest.TestCase):

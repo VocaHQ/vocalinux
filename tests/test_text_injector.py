@@ -405,7 +405,7 @@ class TestTextInjector(unittest.TestCase):
         self.assertTrue(result)
 
     def test_inject_keyboard_shortcut_wayland_wtype(self):
-        """Test keyboard shortcut injection with wtype (not supported)."""
+        """wtype chords a shortcut with -M/-k/-m rather than refusing it."""
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
             self.mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
 
@@ -417,9 +417,14 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "wtype"
             injector.environment = DesktopEnvironment.WAYLAND
+            injector._wait_for_modifiers_released = MagicMock()
 
             result = injector._inject_shortcut_with_wayland_tool("ctrl+z")
-            self.assertFalse(result)  # wtype doesn't support shortcuts
+            self.assertTrue(result)
+            self.assertEqual(
+                self.mock_subprocess.call_args[0][0],
+                ["wtype", "-M", "ctrl", "-k", "z", "-m", "ctrl"],
+            )
 
     def test_inject_keyboard_shortcut_wayland_ydotool(self):
         """Test keyboard shortcut injection with ydotool."""
@@ -431,6 +436,12 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "ydotool"
             injector.environment = DesktopEnvironment.WAYLAND
+            # Pin the dialect: unpinned, the probe reads a mocked `key --help`
+            # and falls through to its legacy default, so this would silently
+            # stop covering the 1.x keycode form.
+            injector._ydotool_legacy_named_keys = False
+            injector._ensure_ydotoold = MagicMock(return_value=True)
+            injector._wait_for_modifiers_released = MagicMock()
 
             mock_process = MagicMock()
             mock_process.returncode = 0
@@ -438,6 +449,11 @@ class TestTextInjector(unittest.TestCase):
 
             result = injector._inject_shortcut_with_wayland_tool("ctrl+z")
             self.assertTrue(result)
+            # ctrl=29, z=44 -- press in order, release in reverse.
+            self.assertEqual(
+                self.mock_subprocess.call_args[0][0],
+                ["ydotool", "key", "29:1", "44:1", "44:0", "29:0"],
+            )
 
     def test_inject_keyboard_shortcut_failure(self):
         """Test keyboard shortcut injection failure handling."""
