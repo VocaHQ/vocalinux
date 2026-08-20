@@ -708,6 +708,63 @@ class TestShortcutWithWaylandTool(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestPressBackspace(unittest.TestCase):
+    def test_zero_is_noop(self):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj.press_backspace(0))
+            mock_run.assert_not_called()
+
+    def test_wtype_repeats_key_events(self):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        obj.wayland_tool = "wtype"
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj.press_backspace(3))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["wtype", "-k", "BackSpace", "-k", "BackSpace", "-k", "BackSpace"],
+            )
+
+    def test_ydotool_uses_keycode_14(self):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        obj.wayland_tool = "ydotool"
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj.press_backspace(2))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["ydotool", "key", "14:1", "14:0", "14:1", "14:0"],
+            )
+
+    def test_x11_uses_xdotool_repeat(self):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.X11)
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj.press_backspace(5))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["xdotool", "key", "--clearmodifiers", "--repeat", "5", "BackSpace"],
+            )
+
+    def test_wayland_ibus_falls_back_to_virtual_keyboard(self):
+        """IBus cannot send key events, so deletion must use wtype/ydotool."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND_IBUS)
+        obj.wayland_tool = None
+        with patch("subprocess.run") as mock_run:
+            which = lambda c: "/usr/bin/wtype" if c == "wtype" else None  # noqa: E731
+            with patch("shutil.which", side_effect=which):
+                self.assertTrue(obj.press_backspace(1))
+            self.assertEqual(mock_run.call_args[0][0], ["wtype", "-k", "BackSpace"])
+
+
 class TestCopyToClipboard(unittest.TestCase):
     def test_copy_success(self):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
