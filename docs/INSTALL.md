@@ -412,9 +412,14 @@ is unavailable on your snapshot, try `${PYVER}-venv`.
 
 ### 2. Create Virtual Environment
 
+Use the **system** Python: PyGObject (`gi`) comes from your distro package and is
+compiled for that interpreter only, so a venv created from pyenv/conda/uv Python
+cannot import it even with `--system-site-packages`. Deactivate any active
+virtualenv first.
+
 ```bash
 cd vocalinux
-python3 -m venv venv --system-site-packages
+/usr/bin/python3 -m venv venv --system-site-packages
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 ```
@@ -588,12 +593,31 @@ sudo apt install gir1.2-appindicator3-0.1  # For older Debian/Ubuntu
 # OR
 sudo apt install gir1.2-ayatanaappindicator3-0.1  # For Debian 11+ or newer Ubuntu
 
-# Recreate venv with system packages
+# Recreate venv with system packages, from the system Python
+deactivate 2>/dev/null || true
 rm -rf venv
-python3 -m venv venv --system-site-packages
+/usr/bin/python3 -m venv venv --system-site-packages
 source venv/bin/activate
 pip install -e .
 ```
+
+**Symptom:** the installer stops with "Distro PyGObject (python3-gi /
+python3-gobject) is not importable in the venv"
+
+The distro package is installed, but `venv/` was built by a different Python than
+the one it targets (a pyenv/conda/uv interpreter, or a virtualenv that was active
+when you started the installer). Current versions of `install.sh` detect and fix
+this on their own — ignoring an activated virtualenv and rebuilding a mismatched
+`venv/`. Otherwise:
+
+```bash
+deactivate 2>/dev/null || true
+rm -rf venv
+./install.sh
+```
+
+On systems shipping several system interpreters, point the installer at the one
+your distro built `gi` for: `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh`.
 
 ### Text Injection Not Working
 

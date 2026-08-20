@@ -2,6 +2,15 @@
 # Convenient commands for development
 # Run `just` to list all recipes. Python tooling runs through `uv run` against
 # .venv/ — run `just deps` after cloning (requires uv).
+#
+# Two environments, deliberately separate:
+#   .venv/  dev tooling, built by uv from .python-version (3.13).
+#   venv/   what `just install` creates, always from the system Python — on
+#           distros where PyGObject cannot be pip-built (Ubuntu 24.04, Debian)
+#           the distro package is importable only from that interpreter.
+#           install.sh ignores an activated .venv and rebuilds
+#           venv/ if another interpreter created it, so `just install` is safe to
+#           run from any shell. Override with SYSTEM_PYTHON=/usr/bin/python3.12.
 
 # Extras installed by `just deps` and requested by every recipe below.
 # `uv run` syncs the environment exactly, so tooling recipes must ask for the
