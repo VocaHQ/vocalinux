@@ -708,6 +708,74 @@ class TestShortcutWithWaylandTool(unittest.TestCase):
             self.assertTrue(result)
 
 
+class TestInjectKeyboardShortcutRouting(unittest.TestCase):
+    """IBus cannot synthesise key combinations, so shortcuts must be routed
+    to a tool that can."""
+
+    @staticmethod
+    def _env(name):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        return getattr(DesktopEnvironment, name)
+
+    @staticmethod
+    def _stub_backends(obj):
+        obj._inject_shortcut_with_xdotool = MagicMock(return_value=True)
+        obj._inject_shortcut_with_wayland_tool = MagicMock(return_value=True)
+
+    def test_x11_ibus_routes_to_xdotool(self):
+        obj = _make_injector(self._env("X11_IBUS"))
+        self._stub_backends(obj)
+
+        self.assertTrue(obj._inject_keyboard_shortcut("ctrl+z"))
+        obj._inject_shortcut_with_xdotool.assert_called_once_with("ctrl+z")
+        obj._inject_shortcut_with_wayland_tool.assert_not_called()
+
+    def test_wayland_ibus_prefers_wtype(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        self._stub_backends(obj)
+        which = lambda c: "/usr/bin/wtype" if c == "wtype" else None  # noqa: E731
+
+        with patch("shutil.which", side_effect=which):
+            self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        self.assertEqual(obj.wayland_tool, "wtype")
+        obj._inject_shortcut_with_wayland_tool.assert_called_once_with("ctrl+a")
+        obj._inject_shortcut_with_xdotool.assert_not_called()
+
+    def test_wayland_ibus_falls_back_to_ydotool(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        self._stub_backends(obj)
+        which = lambda c: "/usr/bin/ydotool" if c == "ydotool" else None  # noqa: E731
+
+        with patch("shutil.which", side_effect=which):
+            self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        self.assertEqual(obj.wayland_tool, "ydotool")
+        obj._inject_shortcut_with_wayland_tool.assert_called_once_with("ctrl+a")
+
+    def test_wayland_ibus_without_any_tool_fails_without_injecting(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        self._stub_backends(obj)
+
+        with patch("shutil.which", return_value=None):
+            self.assertFalse(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        obj._inject_shortcut_with_wayland_tool.assert_not_called()
+        obj._inject_shortcut_with_xdotool.assert_not_called()
+
+    def test_wayland_ibus_keeps_an_already_chosen_tool(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        obj.wayland_tool = "ydotool"
+        self._stub_backends(obj)
+
+        with patch("shutil.which", return_value="/usr/bin/wtype") as which:
+            self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        which.assert_not_called()
+        self.assertEqual(obj.wayland_tool, "ydotool")
+
+
 class TestCopyToClipboard(unittest.TestCase):
     def test_copy_success(self):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
