@@ -483,6 +483,39 @@ class TextInjector:
         )
         return "auto"
 
+    def _resolve_wayland_key_tool(self) -> Optional[str]:
+        """Pick (or reuse) the Wayland virtual-keyboard tool for key events.
+
+        Mirrors the preference ``_check_dependencies`` already applies: prefer
+        ydotool via uinput once its daemon is (or can be made) ready, and only
+        fall back to wtype. Callers that resolve a tool after startup -- IBus
+        shortcut routing, BackSpace key events -- use this instead of picking
+        their own order.
+
+        Returns:
+            The tool name, or None if neither is installed.
+        """
+        if getattr(self, "wayland_tool", None):
+            return self.wayland_tool
+
+        ydotool_available = shutil.which("ydotool") is not None
+        wtype_available = shutil.which("wtype") is not None
+
+        # _ensure_ydotoold can block for ~2s, so it stays outside the lock.
+        if ydotool_available and self._ensure_ydotoold():
+            tool = "ydotool"
+        elif ydotool_available and not wtype_available:
+            tool = "ydotool"
+        elif wtype_available:
+            tool = "wtype"
+        else:
+            return None
+
+        with self._state_lock:
+            self.wayland_tool = tool
+        logger.info(f"Using {tool} for Wayland key events")
+        return tool
+
     def _check_dependencies(self):
         """Check for the required tools for text injection."""
         ibus_requested = False
@@ -1685,10 +1718,19 @@ class TextInjector:
             if (
                 self.environment == DesktopEnvironment.X11
                 or self.environment == DesktopEnvironment.WAYLAND_XDOTOOL
+                # IBus commits text; it cannot synthesise key combinations. Send
+                # the shortcut through XIM's underlying X server instead.
+                or self.environment == DesktopEnvironment.X11_IBUS
             ):
                 return self._inject_shortcut_with_xdotool(shortcut)
-            else:
-                return self._inject_shortcut_with_wayland_tool(shortcut)
+            if self.environment == DesktopEnvironment.WAYLAND_IBUS:
+                # Same on Wayland: fall through to a virtual-keyboard tool. Without
+                # this, self.wayland_tool may be unset -> AttributeError -> the
+                # except below swallows it and every shortcut silently returns False.
+                if self._resolve_wayland_key_tool() is None:
+                    logger.error("No virtual-keyboard tool available for shortcuts")
+                    return False
+            return self._inject_shortcut_with_wayland_tool(shortcut)
         except Exception as e:
             logger.error(f"Failed to inject keyboard shortcut '{shortcut}': {e}")
             return False

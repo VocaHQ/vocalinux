@@ -842,6 +842,95 @@ class TestParseShortcut(unittest.TestCase):
             TextInjector._parse_shortcut("")
 
 
+class TestInjectKeyboardShortcutRouting(unittest.TestCase):
+    """IBus cannot synthesise key combinations, so shortcuts must be routed
+    to a tool that can."""
+
+    @staticmethod
+    def _env(name):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        return getattr(DesktopEnvironment, name)
+
+    @staticmethod
+    def _stub_backends(obj):
+        """Stub both backends -- only for tests asserting *which* one is chosen.
+
+        The two tests that assert IBus shortcuts actually reach a tool call the
+        real Wayland helper instead, so a regression there cannot pass CI.
+        """
+        obj._inject_shortcut_with_xdotool = MagicMock(return_value=True)
+        obj._inject_shortcut_with_wayland_tool = MagicMock(return_value=True)
+
+    def test_x11_ibus_routes_to_xdotool(self):
+        obj = _make_injector(self._env("X11_IBUS"))
+        self._stub_backends(obj)
+
+        self.assertTrue(obj._inject_keyboard_shortcut("ctrl+z"))
+        obj._inject_shortcut_with_xdotool.assert_called_once_with("ctrl+z")
+        obj._inject_shortcut_with_wayland_tool.assert_not_called()
+
+    def test_wayland_ibus_prefers_ydotool(self):
+        """Reaches the real Wayland helper: a stub would pass while it's broken."""
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        obj._inject_shortcut_with_xdotool = MagicMock(return_value=True)
+        obj._ydotool_legacy_named_keys = False
+        obj._ensure_ydotoold = MagicMock(return_value=True)
+        obj._wait_for_modifiers_released = MagicMock()
+
+        with patch("shutil.which", return_value="/usr/bin/x") as which:
+            with patch("subprocess.run") as mock_run:
+                self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        # _check_dependencies prefers the uinput helper once its daemon is ready.
+        self.assertTrue(which.called)
+        self.assertEqual(obj.wayland_tool, "ydotool")
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["ydotool", "key", "29:1", "30:1", "30:0", "29:0"],
+        )
+        obj._inject_shortcut_with_xdotool.assert_not_called()
+
+    def test_wayland_ibus_falls_back_to_wtype(self):
+        """Reaches the real Wayland helper and asserts the argv it emits."""
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        obj._inject_shortcut_with_xdotool = MagicMock(return_value=True)
+        obj._wait_for_modifiers_released = MagicMock()
+        which = lambda c: "/usr/bin/wtype" if c == "wtype" else None  # noqa: E731
+
+        with patch("shutil.which", side_effect=which):
+            with patch("subprocess.run") as mock_run:
+                self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        self.assertEqual(obj.wayland_tool, "wtype")
+        self.assertEqual(
+            mock_run.call_args[0][0],
+            ["wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl"],
+        )
+        obj._inject_shortcut_with_xdotool.assert_not_called()
+
+    def test_wayland_ibus_without_any_tool_fails_without_injecting(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        self._stub_backends(obj)
+
+        with patch("shutil.which", return_value=None):
+            self.assertFalse(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        obj._inject_shortcut_with_wayland_tool.assert_not_called()
+        obj._inject_shortcut_with_xdotool.assert_not_called()
+
+    def test_wayland_ibus_keeps_an_already_chosen_tool(self):
+        obj = _make_injector(self._env("WAYLAND_IBUS"))
+        obj.wayland_tool = "ydotool"
+        self._stub_backends(obj)
+
+        with patch("shutil.which", return_value="/usr/bin/wtype") as which:
+            self.assertTrue(obj._inject_keyboard_shortcut("ctrl+a"))
+
+        which.assert_not_called()
+        self.assertEqual(obj.wayland_tool, "ydotool")
+
+
 class TestCopyToClipboard(unittest.TestCase):
     def test_copy_success(self):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
