@@ -2536,9 +2536,6 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "black" },
-    { name = "flake8" },
-    { name = "isort" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -2563,12 +2560,16 @@ whisper = [
     { name = "torchaudio" },
 ]
 
+[package.dev-dependencies]
+lint = [
+    { name = "black" },
+    { name = "flake8" },
+    { name = "isort" },
+]
+
 [package.metadata]
 requires-dist = [
-    { name = "black", marker = "extra == 'dev'", specifier = ">=23.0.0" },
     { name = "evdev", marker = "sys_platform == 'linux'", specifier = ">=1.6.0,<2" },
-    { name = "flake8", marker = "extra == 'dev'", specifier = ">=6.0.0" },
-    { name = "isort", marker = "extra == 'dev'", specifier = ">=5.12.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.22.0,<3" },
     { name = "onnxruntime", marker = "extra == 'vad'", specifier = ">=1.16.0" },
@@ -2591,6 +2592,13 @@ requires-dist = [
     { name = "vosk", marker = "extra == 'vosk'", specifier = ">=0.3.45" },
 ]
 provides-extras = ["vosk", "whisper", "vad", "dev", "docs"]
+
+[package.metadata.requires-dev]
+lint = [
+    { name = "black", specifier = ">=23.0.0" },
+    { name = "flake8", specifier = ">=6.0.0" },
+    { name = "isort", specifier = ">=5.12.0" },
+]
 
 [[package]]
 name = "vosk"

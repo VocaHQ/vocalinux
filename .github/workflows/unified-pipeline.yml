@@ -75,19 +75,21 @@ jobs:
         with:
           enable-cache: true
 
-      # --locked fails if uv.lock drifts from pyproject.toml, so linting and
-      # tests run the exact tool versions `just lint` uses locally.
+      # --only-group lint installs the linters without the project itself, so
+      # this job needs no portaudio/girepository headers to build pyaudio and
+      # PyGObject. --locked fails if uv.lock drifts from pyproject.toml, so the
+      # tool versions are the ones `just lint` uses locally.
       - name: Lint with flake8 (critical errors)
         run: |
-          uv run --locked --extra dev flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          uv run --locked --only-group lint flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Check formatting with black
         run: |
-          uv run --locked --extra dev black --check --diff src/ tests/
+          uv run --locked --only-group lint black --check --diff src/ tests/
 
       - name: Check import sorting with isort
         run: |
-          uv run --locked --extra dev isort --check-only --diff --profile black src/ tests/
+          uv run --locked --only-group lint isort --check-only --diff --profile black src/ tests/
 
   python-test:
     name: 🧪 Test Python ${{ matrix.python-version }}

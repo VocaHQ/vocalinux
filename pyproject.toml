@@ -63,15 +63,22 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-timeout>=2.1.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
     "pre-commit>=3.0.0",
     "mypy>=1.0.0",
 ]
 docs = [
     "sphinx>=6.0.0",
     "sphinx-rtd-theme>=1.2.0",
+]
+
+# Formatters and linters, deliberately outside the `dev` extra: `uv sync
+# --only-group lint` installs them without the project, so the lint job needs
+# no portaudio/girepository headers to build pyaudio and PyGObject.
+[dependency-groups]
+lint = [
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
 ]
 
 [project.scripts]

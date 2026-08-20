@@ -313,4 +313,11 @@ Site-only work: `web/AGENTS.md` (commands, layout map). Product claims: `web/PRO
 - Default dictation shortcut: hold Right Alt (push-to-talk). Existing `~/.config/vocalinux/config.json` wins
 - Headless speech smoke: `pywhispercpp.model.Model` + `CommandProcessor` (first run may download the tiny model)
 
+- **Activate the venv first.** Python tooling (`vocalinux`, `pytest`, `just lint`, `mypy`) lives in `venv/`. Run `source venv/bin/activate` (or prefix with `./venv/bin/`) before use.
+- **The startup venv sync can strip dev extras.** If `pytest`/`black` suddenly vanish from `venv/`, the update script recreated a minimal venv — restore with `uv pip install -e ".[dev,vad]" --python ./venv/bin/python` (linters live in the `lint` dependency group: `uv sync --group lint`). `uv` itself lives at `~/.local/bin/uv` (not always on `PATH` in non-interactive shells).
+- **The venv must be created with `--system-site-packages`.** GTK/`PyGObject` come from the apt package `python3-gi`; installing `PyGObject` from pip fails on Ubuntu 24.04 because the pinned version needs `girepository-2.0` (glib 2.80+), which the distro doesn't ship. The update script already creates the venv this way — don't drop that flag.
+- **`black --check` prints a Python-version warning.** `pyproject.toml` targets py314 but the VM runs Python 3.12; Black still reports "All done" and lint passes. This warning is benign.
+- **Desktop app is a GTK tray app.** An XFCE session (`xfwm4` + `xfce4-panel`) runs on `DISPLAY=:1`. Always give the app the session env: `DISPLAY=:1`, `DBUS_SESSION_BUS_ADDRESS=autolaunch:`, `XDG_RUNTIME_DIR=/run/user/1000`, `XDG_CURRENT_DESKTOP=XFCE`. Single-instance lock lives at `~/.local/share/vocalinux/instance.lock`; delete it after killing a stale instance. Kill instances by explicit PID (never `pkill -f`).
+- **Pre-installed agent skills (not committed to the repo).** The `humanizer` and `ponytail` skills live in this VM at `~/.cursor/skills/<name>/SKILL.md` (user-level, baked into the environment snapshot), so Cursor auto-discovers them for every session on this repo without adding them to git.
+
 Update this file when commands, layout, or agent rules change.
