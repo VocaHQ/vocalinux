@@ -6,6 +6,23 @@ Voice dictation for Linux: GTK 3 tray app (Python) plus a Next.js marketing site
 
 Never create a branch, commit, or open a pull request in the primary checkout. Always use a linked git worktree so the main working tree stays on `main` and stays clean. Do not `git switch` / `git checkout` a feature branch in the primary directory, and do not leave it dirty.
 
+Vocalinux is a voice dictation system for Linux. It uses:
+- **Python 3.11+** for the main application
+- **GTK 3** (via PyGObject) for the desktop UI and system tray
+- **whisper.cpp** (default), **OpenAI Whisper**, and **Vosk** for speech recognition
+- **Next.js/TypeScript** for the website (in `web/`)
+
+### Key Dependencies
+- `pywhispercpp` - Python bindings for whisper.cpp (default engine)
+- `vosk` - Lightweight speech recognition (optional, `[vosk]` extra)
+- `pyaudio` - Audio capture
+- `PyGObject` - GTK integration (distro `python3-gi` only — never pip; see Dependency Management)
+- `psutil` - Process utilities (required by pywhispercpp)
+
+## Build & Test Commands
+
+### Python
+
 ```bash
 git fetch origin
 git worktree add /tmp/vocalinux-<task> -b <type>/<short-name> origin/main

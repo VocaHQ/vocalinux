@@ -14,7 +14,7 @@ authors = [
 maintainers = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 keywords = [
     "voice", "dictation", "speech", "recognition",
     "linux", "accessibility", "voice-typing", "speech-to-text"
@@ -26,8 +26,6 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -108,7 +106,7 @@ version = {attr = "vocalinux.version.__version__"}
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
+target-version = ['py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -166,9 +164,17 @@ exclude_lines = [
 show_missing = true
 
 [tool.mypy]
-# mypy >=1.19 cannot target 3.9, and numpy 2.x stubs require a 3.12 target
-python_version = "3.12"
+# Target the supported floor so typechecking covers what requires-python promises.
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["venv", "build", "dist", "node_modules"]
+
+# numpy 2.x ships stubs written in 3.12 syntax, which a 3.11 target cannot parse.
+# We only pass arrays through, so skipping the stubs costs little compared to
+# type-checking against the Python version we actually promise to support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

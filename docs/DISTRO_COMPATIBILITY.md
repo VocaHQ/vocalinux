@@ -174,7 +174,7 @@ native dependencies; it does **not** mean beta or unstable packages. If
 ### Gentoo
 ```bash
 sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator \
-  media-libs/portaudio dev-lang/python:3.9
+  media-libs/portaudio dev-lang/python:3.11
 ```
 
 **Note:** Gentoo compiles packages from source, which will take longer.

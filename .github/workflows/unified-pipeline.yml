@@ -102,7 +102,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.13']
+        # Every version requires-python promises; keep in sync with the
+        # classifiers in pyproject.toml (tests/test_python_version_policy.py).
+        python-version: ['3.11', '3.12', '3.13', '3.14']
 
     steps:
       - uses: actions/checkout@v5
@@ -163,7 +165,7 @@ jobs:
           path: junit-${{ matrix.python-version }}.xml
 
       - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.10'
+        if: matrix.python-version == '3.13'
         uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -189,7 +191,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install system dependencies
