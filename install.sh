@@ -38,6 +38,36 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# The installer must build its venv from the *system* Python: distro PyGObject
+# (python3-gi / python3-gobject) is compiled for that interpreter only. When the
+# script starts inside an activated virtualenv — a shell left in uv's .venv
+# after `just deps`, for instance — a bare `python3` resolves to that venv's
+# interpreter instead, and a venv created from it cannot import gi even with
+# --system-site-packages. Undo the activation for the installer's own process
+# before anything looks up an interpreter.
+deactivate_inherited_virtualenv() {
+    local venv_bin cleaned entry
+
+    [ -z "${VIRTUAL_ENV:-}" ] && return 0
+
+    print_warning "Running inside an activated virtualenv ($VIRTUAL_ENV)."
+    print_info "Ignoring it so the installation uses the system Python."
+
+    venv_bin="${VIRTUAL_ENV%/}/bin"
+    cleaned=""
+    while IFS= read -r entry; do
+        [ "$entry" = "$venv_bin" ] && continue
+        cleaned="${cleaned:+$cleaned:}$entry"
+    done < <(printf '%s\n' "${PATH//:/$'\n'}")
+
+    PATH="$cleaned"
+    export PATH
+    unset VIRTUAL_ENV
+    unset PYTHONHOME
+}
+
+deactivate_inherited_virtualenv
+
 # HTTP-level connectivity check. ICMP ping is blocked on many networks
 # (corporate firewalls, public Wi-Fi, CI runners), so probe the actual
 # endpoints the installer depends on. Returns 0 if any probe succeeds.
@@ -2093,7 +2123,7 @@ install_system_dependencies() {
             print_info "   ./install.sh --skip-system-deps"
             print_info ""
             print_info "4. Or install from source in a virtual environment:"
-            print_info "   python3 -m venv venv"
+            print_info "   /usr/bin/python3 -m venv --system-site-packages venv"
             print_info "   source venv/bin/activate"
             print_info "   pip install -e .[whisper,vad]"
             print_info ""
@@ -2411,33 +2441,114 @@ mkdir -p "$DATA_DIR/models"
 mkdir -p "$DESKTOP_DIR"
 mkdir -p "$ICON_DIR"
 
+# Interpreter the venv is built from. Resolved by select_python_interpreter();
+# nothing below may fall back to a bare `python3` for venv creation.
+PYTHON_CMD="python3"
+
+# The distro interpreter its GTK/PyGObject packages are built for. Overridable
+# (SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh) for systems that ship several.
+SYSTEM_PYTHON="${SYSTEM_PYTHON:-/usr/bin/python3}"
+
+python_version_of() {
+    "$1" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null
+}
+
+python_version_at_least() {
+    local version
+    version=$(python_version_of "$1") || return 1
+    [ -n "$version" ] || return 1
+    [[ $(printf '%s\n%s\n' "$version" "$2" | sort -V | head -n1) == "$2" ]]
+}
+
+python_has_gi() {
+    "$1" -c "import gi" >/dev/null 2>&1
+}
+
+# Pick the interpreter to build the venv from. Distro PyGObject is compiled for
+# exactly one Python, so prefer a candidate that can already import gi:
+# $SYSTEM_PYTHON is probed explicitly because PATH may expose a different
+# interpreter (pyenv, uv, /usr/local) that the distro packages were never built
+# for. Falls back to the newest-enough candidate when none of them has gi yet —
+# require_distro_gi() reports that case with a proper message later on.
+select_python_interpreter() {
+    local min_version="$1"
+    local candidates=() candidate seen="" first="" ok_version=""
+
+    if command_exists python3; then
+        candidates+=("$(command -v python3)")
+    fi
+    if [ -x "$SYSTEM_PYTHON" ]; then
+        candidates+=("$SYSTEM_PYTHON")
+    fi
+
+    for candidate in ${candidates[@]+"${candidates[@]}"}; do
+        case ":$seen:" in
+            *":$candidate:"*) continue ;;
+        esac
+        seen="${seen:+$seen:}$candidate"
+
+        [ -n "$first" ] || first="$candidate"
+        python_version_at_least "$candidate" "$min_version" || continue
+        [ -n "$ok_version" ] || ok_version="$candidate"
+
+        if python_has_gi "$candidate"; then
+            PYTHON_CMD="$candidate"
+            return 0
+        fi
+    done
+
+    PYTHON_CMD="${ok_version:-$first}"
+    [ -n "$PYTHON_CMD" ]
+}
+
 # Check Python version
 check_python_version() {
     local MIN_VERSION="3.9"
-    local PYTHON_CMD="python3"
 
-    # Check if python3 command exists
-    if ! command_exists python3; then
+    if ! select_python_interpreter "$MIN_VERSION"; then
         print_error "Python 3 is not installed or not in PATH"
         return 1
     fi
 
-    # Get Python version
-    local PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    print_info "Detected Python version: $PY_VERSION"
+    local PY_VERSION
+    PY_VERSION=$(python_version_of "$PYTHON_CMD" || true)
+    print_info "Detected Python version: ${PY_VERSION:-unknown} ($PYTHON_CMD)"
 
-    # Compare versions
-    if [[ $(echo -e "$PY_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$PY_VERSION" == "$MIN_VERSION" ]]; then
+    if python_version_at_least "$PYTHON_CMD" "$MIN_VERSION"; then
         return 0
-    else
-        print_error "This application requires Python $MIN_VERSION or newer. Detected: $PY_VERSION"
-        return 1
     fi
+
+    print_error "This application requires Python $MIN_VERSION or newer. Detected: ${PY_VERSION:-unknown}"
+    return 1
+}
+
+# An existing venv built by a different interpreter than the selected one is the
+# classic cause of "distro PyGObject is not importable": PyGObject lives in the
+# system Python's site-packages and --system-site-packages only exposes it to a
+# venv of the *same* version. Such a venv otherwise survives every re-run,
+# because the installer reuses whatever it finds.
+venv_matches_selected_python() {
+    local venv_python="$VENV_DIR/bin/python"
+    local venv_version selected_version
+
+    [ -x "$venv_python" ] || return 1
+
+    venv_version=$(python_version_of "$venv_python") || return 1
+    selected_version=$(python_version_of "$PYTHON_CMD") || return 1
+    [ -n "$venv_version" ] && [ "$venv_version" = "$selected_version" ]
 }
 
 # Set up virtual environment with error handling
 setup_virtual_environment() {
     print_info "Setting up Python virtual environment in $VENV_DIR..."
+
+    # Discard a venv left behind by another interpreter before the reuse logic
+    # below can adopt it.
+    if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ] && ! venv_matches_selected_python; then
+        print_warning "Existing virtual environment in $VENV_DIR was built by a different Python than $PYTHON_CMD."
+        print_warning "Recreating it — distro PyGObject would stay invisible inside it otherwise."
+        rm -rf "$VENV_DIR"
+    fi
 
     # Check if virtual environment already exists
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
@@ -2464,9 +2575,9 @@ setup_virtual_environment() {
     # Create virtual environment
     # Use --system-site-packages to access pre-compiled system packages like PyGObject
     # This avoids build failures with Python 3.13+ where PyGObject may not build from source
-    python3 -m venv --system-site-packages "$VENV_DIR" || {
-        print_warning "python3 -m venv failed, trying python3 -m virtualenv..."
-        python3 -m virtualenv --system-site-packages "$VENV_DIR" || {
+    "$PYTHON_CMD" -m venv --system-site-packages "$VENV_DIR" || {
+        print_warning "$PYTHON_CMD -m venv failed, trying $PYTHON_CMD -m virtualenv..."
+        "$PYTHON_CMD" -m virtualenv --system-site-packages "$VENV_DIR" || {
             print_error "Failed to create virtual environment. Please check your Python installation."
             exit "$EXIT_MISSING_DEPS"
         }
@@ -3023,6 +3134,7 @@ PY
 require_distro_gi() {
     if ! "$VENV_DIR/bin/python" -c "import gi" 2>/dev/null; then
         print_error "Distro PyGObject (python3-gi / python3-gobject) is not importable in the venv."
+        print_error "The venv was built from $PYTHON_CMD (Python $(python_version_of "$PYTHON_CMD" || echo unknown))."
         print_error "Install it with your package manager. Pip cannot build PyGObject here."
         exit "$EXIT_MISSING_DEPS"
     fi

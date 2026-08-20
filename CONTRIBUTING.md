@@ -53,6 +53,12 @@ This will:
 4. Install all dev dependencies (pytest, black, isort, flake8)
 5. Run the test suite automatically
 
+> **Note:** `install.sh` always builds `venv/` from the system Python
+> (`/usr/bin/python3`, or `$SYSTEM_PYTHON`), because distro PyGObject is only
+> importable from that interpreter. It ignores an activated virtualenv, so you can
+> run it from a shell that still has uv's `.venv` active. See
+> [The two environments](#the-two-environments).
+
 ### Option 2: Manual Setup
 
 1. **Fork and clone:**
@@ -86,25 +92,40 @@ This will:
    sudo apt install -y gir1.2-ayatanaappindicator3-0.1
    ```
 
-3. **Set up Python environment:**
+3. **Set up the Python environment:**
    ```bash
-   python3 -m venv venv --system-site-packages
-   source venv/bin/activate
-   pip install --upgrade pip setuptools wheel
-   pip install -e ".[dev]"
+   # Requires uv (https://docs.astral.sh/uv/); creates .venv/ with dev + vad extras
+   just deps
    ```
 
 4. **Run the application:**
    ```bash
-   source venv/bin/activate
-   vocalinux --debug
+   just run-source-debug
    ```
 
 5. **(Optional) Install pre-commit hooks:**
    ```bash
-   pre-commit install
+   uv run --extra dev --extra vad pre-commit install
    ```
    > **Note:** Pre-commit hooks are optional. The CI pipeline runs the same checks, so you can skip this if you prefer faster local commits.
+
+### The two environments
+
+The repository uses two virtual environments on purpose — don't merge them:
+
+| Directory | Created by | Python | Used for |
+|-----------|-----------|--------|----------|
+| `.venv/`  | `just deps` (uv) | pinned in `.python-version` | dev tooling: pytest, black, mypy, `just` recipes |
+| `venv/`   | `./install.sh` | the system Python | running the installed app, which needs distro PyGObject |
+
+`gi` (PyGObject) is the reason. `uv sync` builds it from source into `.venv/`,
+which works wherever glib 2.80+ and the `girepository` headers are present (Arch,
+Fedora, recent CI runners) but fails on Ubuntu 24.04 and Debian — there the distro
+package is the only option, and it is importable only from the system interpreter.
+`install.sh` therefore never reuses `.venv/`: it builds `venv/` from the system
+Python with `--system-site-packages`, and rebuilds it if another interpreter
+created it. Set `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh` on systems that
+ship several system interpreters.
 
 ## Making Changes
 
@@ -136,12 +157,11 @@ We use automated tools to ensure consistent code style:
 - **flake8** - Linting
 
 ```bash
-# Format your code
-black src/ tests/
-isort src/ tests/
+# Format your code (black + isort)
+just format
 
-# Check for issues
-flake8 src/ tests/
+# Check for issues (flake8 + black + isort, as CI runs them)
+just lint
 ```
 
 Pre-commit hooks will run these automatically before each commit.
@@ -187,20 +207,14 @@ vocalinux/
 ### Running Tests
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Run all tests
-pytest
+just test
 
 # Run with coverage
-pytest --cov=src --cov-report=html
+just test-cov
 
 # Run specific test file
-pytest tests/test_command_processor.py
-
-# Run with verbose output
-pytest -v
+uv run --extra dev --extra vad pytest tests/test_command_processor.py
 ```
 
 ### Writing Tests
@@ -257,7 +271,7 @@ The test server supports both API formats:
 ### Before Submitting
 
 - [ ] Code follows the style guidelines
-- [ ] Tests pass locally (`pytest`)
+- [ ] Tests pass locally (`just test`)
 - [ ] Pre-commit hooks pass
 - [ ] Documentation is updated (if needed)
 - [ ] Commit messages are clear and descriptive

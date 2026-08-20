@@ -101,6 +101,116 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 Optional extras: `vosk`, `whisper`, `vad`, `dev`.
 
 ## Layout
+The source of truth is `uv.lock`. `just lock` regenerates it and the
+`requirements/*.txt` hash-pinned exports. Those exports exist for later
+packaging work (`install.sh`, AppImage, CI; phases 2, 3, and 5 of #701)
+and are unused until those phases land. Do not edit `requirements/*.txt`
+by hand. Change `pyproject.toml` (or `requirements/whisper.in` for the
+whisper engine), run `just lock`, and commit the lock plus the exports
+with the manifest change. uv itself is version-pinned via `[tool.uv]`
+in `pyproject.toml`.
+
+- **PyGObject always comes from the distro** (`python3-gi` through a
+  `--system-site-packages` venv). It cannot be pip-installed on Ubuntu 24.04, and
+  uv-managed interpreters do not see the distro gi — create venvs with
+  `uv venv --system-site-packages --python /usr/bin/python3`, and exclude the package
+  in uv sync/export (`--no-install-package pygobject` / `--no-emit-package pygobject`).
+- **`install.sh` always builds `venv/` from the system Python** — `$SYSTEM_PYTHON`
+  (default `/usr/bin/python3`), preferring whichever candidate can already `import gi`.
+  It drops an activated virtualenv from `PATH` first (a shell left in `.venv` after
+  `just deps` otherwise makes it build a 3.13 venv that cannot see the distro gi) and
+  recreates `venv/` when another interpreter created it. Do not simplify those calls
+  back to a bare `python3`.
+- **vosk** is the optional `[vosk]` extra. It is wheel-only on PyPI (no sdist), so it
+  can never be part of a source-buildable lock. `install.sh --engine=vosk` installs it.
+- **Whisper engine (CPU torch)**: `requirements/whisper.txt` is compiled from
+  `requirements/whisper.in`, where `torch`/`torchaudio` are pinned together to `+cpu`
+  local versions — PyPI's CUDA-bundled wheels win resolution over the CPU index
+  regardless of index order, and torchaudio lags torch on the CPU index. Bump the pair
+  together.
+- **pywhispercpp**: pinned in `install.sh` via `PYWHISPERCPP_VERSION` — keep it in sync
+  with `uv.lock` when bumping.
+- Background, phase checklists, and open work: `docs/PACKAGING_PLAN.md`, epic #701.
+
+## Code Style Guidelines
+
+### Formatting
+
+- **Line length**: 100 characters
+- **Formatter**: Black
+- **Import sorter**: isort (black-compatible profile)
+- **Linter**: flake8
+
+### Import Order
+
+Use isort with black profile. Imports should be grouped:
+1. Standard library (`import os`, `from typing import ...`)
+2. Third-party packages (`import gi`, `from vosk import Model`)
+3. Local imports (`from vocalinux.common_types import ...`)
+
+### Type Hints
+
+Use type hints for all function signatures. Use `Protocol` for interfaces (see `common_types.py`).
+
+### Naming Conventions
+
+- **Classes**: `PascalCase` (e.g., `CommandProcessor`, `ConfigManager`)
+- **Functions/methods**: `snake_case` (e.g., `process_text`, `load_config`)
+- **Constants**: `UPPER_SNAKE_CASE` (e.g., `CONFIG_DIR`, `DEFAULT_CONFIG`)
+- **Private methods**: `_leading_underscore` (e.g., `_compile_patterns`)
+- **Module-level logger**: `logger = logging.getLogger(__name__)`
+
+### Docstrings
+
+Use triple-quoted docstrings for modules, classes, and public functions:
+
+```python
+"""Configuration manager for Vocalinux."""
+
+class ConfigManager:
+    """Manager for user configuration settings."""
+
+    def load_config(self):
+        """Load configuration from the config file."""
+```
+
+### Error Handling
+
+Use specific exception types, log errors with context:
+
+```python
+try:
+    with open(CONFIG_FILE, "r") as f:
+        user_config = json.load(f)
+except json.JSONDecodeError as e:
+    logger.error(f"Invalid JSON in config file: {e}")
+```
+
+### Logging
+
+Each module should have its own logger:
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+```
+
+## Testing Guidelines
+
+- Place tests in `tests/` directory
+- Name test files as `test_*.py`, functions as `test_*`
+- Use `unittest.TestCase` or plain pytest functions
+- Use `pytest-mock` for mocking (via `mocker` fixture)
+
+### Test Markers
+
+```python
+@pytest.mark.slow          # Long-running tests
+@pytest.mark.integration   # Integration tests
+@pytest.mark.audio         # Requires audio hardware
+```
+
+## Project Structure
 
 ```
 src/vocalinux/
