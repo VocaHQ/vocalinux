@@ -3050,6 +3050,15 @@ install_whispercpp_with_gpu_support() {
                 print_warning "Could not install vosk; install it manually or pick another engine in Settings."
         fi
 
+        # Writing engine=vosk when the import still fails only moves the failure
+        # to startup, where it surfaces as ModuleNotFoundError: No module named
+        # 'vosk' and the app never comes up.
+        if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
+            print_warning "vosk is still not importable; leaving the engine configuration untouched."
+            SELECTED_ENGINE=""
+            return 0
+        fi
+
         local FALLBACK_VOSK_CONFIG="$CONFIG_DIR/config.json"
         if [ ! -f "$FALLBACK_VOSK_CONFIG" ]; then
             mkdir -p "$CONFIG_DIR"
@@ -4086,6 +4095,39 @@ else
     print_info "Skipping VOSK model installation (--skip-models specified)"
     print_info "Models will be downloaded automatically on first application run"
 fi
+
+# config.json survives reinstalls — every writer above guards on "file does not
+# exist" — so an engine picked by an earlier attempt can outlive the venv that
+# supported it. vosk is the only engine shipped as an optional extra, so it is
+# the one that goes missing; say so here instead of letting the app die at
+# startup with ModuleNotFoundError.
+verify_configured_engine() {
+    local CONFIG_FILE="$CONFIG_DIR/config.json"
+    [ -f "$CONFIG_FILE" ] || return 0
+
+    local CONFIGURED_ENGINE
+    CONFIGURED_ENGINE=$("$VENV_DIR/bin/python" - "$CONFIG_FILE" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("speech_recognition", {}).get("engine", ""))
+except Exception:
+    pass
+PY
+)
+
+    [ "$CONFIGURED_ENGINE" = "vosk" ] || return 0
+    "$VENV_DIR/bin/python" -c "import vosk" >/dev/null 2>&1 && return 0
+
+    print_warning "$CONFIG_FILE selects the VOSK engine, but vosk is not importable in $VENV_DIR."
+    print_warning "Vocalinux would fail to start. Fix it with either:"
+    print_warning "  $VENV_DIR/bin/pip install vosk"
+    print_warning "  or edit $CONFIG_FILE and set speech_recognition.engine to \"whisper_cpp\""
+}
+
+verify_configured_engine
 
 # Update icon cache
 update_icon_cache
