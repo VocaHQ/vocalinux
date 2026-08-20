@@ -292,17 +292,34 @@ _ABOUT_INK = "#14231C"
 _ABOUT_ICON_TEXT_PX = 16
 
 _VOCAHQ_FAMILY_LINKS = (
-    (VOCAHQ_SITE_URL, "vocahq.com", "Family site"),
-    (VOCALINUX_SITE_URL, "vocalinux.com", "Linux, Available now"),
-    (VOCAMAC_SITE_URL, "vocamac.com", "macOS, Beta"),
-    (VOCAPHONE_SITE_URL, "vocaphone.vocahq.com", "Android beta / iOS source build"),
-    (VOCAGATEWAY_SITE_URL, "vocagateway.vocahq.com", "Optional self-hosted compute"),
+    (VOCAHQ_SITE_URL, "vocahq.com", "Family site", "Open vocahq.com"),
+    (VOCALINUX_SITE_URL, "vocalinux.com", "Linux, Available now", "Open vocalinux.com"),
+    (VOCAMAC_SITE_URL, "vocamac.com", "macOS, Beta", "Open vocamac.com"),
+    (
+        VOCAPHONE_SITE_URL,
+        "vocaphone.vocahq.com",
+        "Android beta / iOS source build",
+        "Open vocaphone.vocahq.com",
+    ),
+    (
+        VOCAGATEWAY_SITE_URL,
+        "vocagateway.vocahq.com",
+        "Optional self-hosted compute",
+        "Open vocagateway.vocahq.com",
+    ),
 )
 
 
 def _can_open_url(url: str) -> bool:
     """Return True for GitHub project URLs or the About page allowlist."""
     return bool(url) and (url in _ABOUT_OPEN_URLS or is_trusted_release_url(url))
+
+
+def _set_accessible_name(widget: Gtk.Widget, name: str) -> None:
+    """Set the ATK name so identical visible labels stay distinguishable."""
+    accessible = widget.get_accessible()
+    if accessible is not None:
+        accessible.set_name(name)
 
 
 MODEL_SIZE_TOOLTIP = (
@@ -3438,10 +3455,16 @@ class SettingsDialog(Gtk.Dialog):
         icon_name: Optional[str] = None,
         width: int = 100,
     ) -> Gtk.Button:
-        """Button that opens a trusted About URL. Label is the accessible name."""
+        """Button that opens a trusted About URL.
+
+        Unique labels (Report a bug or idea, Discord, X, Email) are the
+        accessible name. Shared "Open" labels use the tooltip instead.
+        """
         button = Gtk.Button(label=label)
         button.set_size_request(width, -1)
         button.set_tooltip_text(tooltip)
+        if label == "Open":
+            _set_accessible_name(button, tooltip)
         if icon_name:
             image = self._about_mark_image(icon_name)
             if image is not None:
@@ -3490,7 +3513,7 @@ class SettingsDialog(Gtk.Dialog):
 
         website_btn = self._about_open_button(
             VOCALINUX_SITE_URL,
-            "Open vocalinux.com",
+            "Open vocalinux.com website",
         )
         website_row = PreferenceRow(
             title="Website",
@@ -3554,6 +3577,10 @@ class SettingsDialog(Gtk.Dialog):
         self.open_release_btn.set_tooltip_text(
             "Open the release page in your browser for download links and install steps"
         )
+        _set_accessible_name(
+            self.open_release_btn,
+            "Open the latest release page",
+        )
         self.open_release_btn.connect("clicked", self._on_open_release_clicked)
         self.latest_release_row = PreferenceRow(
             title="Latest Release",
@@ -3592,12 +3619,12 @@ class SettingsDialog(Gtk.Dialog):
             ),
             keywords=("vocahq", "vocamac", "vocawin", "vocaphone", "vocagateway", "family"),
         )
-        for url, title, subtitle in _VOCAHQ_FAMILY_LINKS:
+        for url, title, subtitle, open_name in _VOCAHQ_FAMILY_LINKS:
             family_group.add_row(
                 PreferenceRow(
                     title=title,
                     subtitle=subtitle,
-                    widget=self._about_open_button(url, f"Open {title}"),
+                    widget=self._about_open_button(url, open_name),
                     keywords=(title, subtitle.lower()),
                 )
             )

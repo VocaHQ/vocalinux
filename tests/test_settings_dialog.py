@@ -1066,6 +1066,26 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn('"Discord"', self.about)
         self.assertIn('"X"', self.about)
         self.assertIn('"Email"', self.about)
+        self.assertIn("https://github.com/VocaHQ/vocalinux/issues", self.about)
+        self.assertIn("https://discord.gg/UMJduhcqn", self.source)
+        self.assertIn("https://x.com/vocahq", self.source)
+        self.assertIn("mailto:hello@vocahq.com", self.source)
+
+    def test_open_buttons_have_unique_accessible_names(self):
+        helper = self.source.split("def _about_open_button")[1].split("\n    def ")[0]
+        self.assertIn("_set_accessible_name(button, tooltip)", helper)
+        self.assertIn('if label == "Open"', helper)
+        for name in (
+            "Open vocalinux.com website",
+            "Open vocahq.com",
+            "Open vocalinux.com",
+            "Open vocamac.com",
+            "Open vocaphone.vocahq.com",
+            "Open vocagateway.vocahq.com",
+            "Open the latest release page",
+        ):
+            self.assertIn(name, self.source)
+        self.assertIn("_set_accessible_name", self.about)
 
     def test_website_is_product_site_not_only_github(self):
         self.assertIn("VOCALINUX_SITE_URL", self.about)
@@ -1104,8 +1124,16 @@ class TestAboutPage(unittest.TestCase):
         self.assertFalse(_can_open_url(""))
 
     def test_talk_marks_are_official_currentcolor_svgs(self):
+        import hashlib
         from pathlib import Path
 
+        # VocaHQ/.github 61c8eee brand/vocahq/social/{discord,x,github,mail}.svg
+        expected_sha256 = {
+            "discord": "195092f3091352d662ceb1e9580877b03a943da0e1ec94a19f6aabac7dbf6dd7",
+            "x": "0897f679c620010f09771464d39341d91f5a30a1370e126338b9a03bef47df34",
+            "github": "1c1dd44a826db8b7d589cc48e9e8af2f395e960632c3ad978df8a00b2a56fc36",
+            "mail": "32fd07b258990f4cba26476fb4f7b4649b9d5e0317000a8a183fa3fe29609972",
+        }
         icons = (
             Path(__file__).resolve().parents[1]
             / "src"
@@ -1121,9 +1149,21 @@ class TestAboutPage(unittest.TestCase):
             ("github", "GitHub"),
             ("mail", "Email"),
         ):
-            packaged = (icons / f"{name}.svg").read_text(encoding="utf-8")
-            shipped = (root_icons / f"{name}.svg").read_text(encoding="utf-8")
+            packaged_path = icons / f"{name}.svg"
+            shipped_path = root_icons / f"{name}.svg"
+            packaged = packaged_path.read_text(encoding="utf-8")
+            shipped = shipped_path.read_text(encoding="utf-8")
             self.assertEqual(packaged, shipped)
+            self.assertEqual(
+                hashlib.sha256(packaged_path.read_bytes()).hexdigest(),
+                expected_sha256[name],
+                name,
+            )
+            self.assertEqual(
+                hashlib.sha256(shipped_path.read_bytes()).hexdigest(),
+                expected_sha256[name],
+                name,
+            )
             self.assertIn('viewBox="0 0 24 24"', packaged)
             self.assertIn('fill="currentColor"', packaged)
             self.assertIn(f"<title>{title}</title>", packaged)
