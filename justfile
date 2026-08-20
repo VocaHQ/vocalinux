@@ -12,10 +12,12 @@
 #           venv/ if another interpreter created it, so `just install` is safe to
 #           run from any shell. Override with SYSTEM_PYTHON=/usr/bin/python3.12.
 
-# Extras installed by `just deps` and requested by every recipe below.
+# Extras and groups installed by `just deps` and requested by every recipe below.
 # `uv run` syncs the environment exactly, so tooling recipes must ask for the
-# same extras or the dev tools would be uninstalled.
-DEV_EXTRAS := "--extra dev --extra vad"
+# same set or the dev tools would be uninstalled. CI lints with
+# `--only-group lint` instead: that skips the project, whose pyaudio/PyGObject
+# need system headers a lint runner has no reason to install.
+DEV_EXTRAS := "--extra dev --extra vad --group lint"
 
 # List available recipes
 default:
@@ -31,7 +33,7 @@ install-dev:
 
 # Install development dependencies into .venv/ (dev + vad extras)
 deps:
-    uv sync --extra dev --extra vad
+    uv sync --extra dev --extra vad --group lint
 
 # Install every optional extra — whisper/vosk engines and docs (CUDA torch, multi-GB)
 deps-all:
