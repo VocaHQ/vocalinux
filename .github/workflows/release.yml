@@ -11,7 +11,8 @@ permissions:
   id-token: write  # Required for PyPI trusted publishing
 
 env:
-  PYTHON_VERSION: '3.10'
+  # Build against the supported floor (requires-python in pyproject.toml).
+  PYTHON_VERSION: '3.11'
 
 jobs:
   build-and-release:

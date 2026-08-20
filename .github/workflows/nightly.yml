@@ -26,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install system dependencies
@@ -213,7 +213,7 @@ jobs:
           | **Version** | ${{ steps.version.outputs.version }} |
           | **Base Version** | ${{ steps.version.outputs.base_version }} |
           | **Build Date** | ${{ steps.version.outputs.date }} |
-          | **Python** | 3.9+ |
+          | **Python** | 3.11+ |
           | **OS** | Linux (X11 & Wayland) |
 
           ---
@@ -284,7 +284,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install system dependencies
