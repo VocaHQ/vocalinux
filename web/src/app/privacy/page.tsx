@@ -54,7 +54,7 @@ export default function PrivacyPage() {
           Privacy First
         </p>
         <h1 className="mb-5 font-display text-4xl font-semibold tracking-tight sm:text-5xl">
-          Your Voice Stays on Your Computer
+          How Vocalinux handles your voice
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
           Vocalinux is built for privacy. Local engines process speech on your machine. Remote API

@@ -150,8 +150,8 @@ export default function OpenSourcePage() {
           >
             VocaHQ
           </a>
-          . No subscriptions, no vendor lock-in, no hidden costs. Your voice data never
-          leaves your machine.
+          . No subscriptions, no vendor lock-in, no hidden costs. Local engines keep
+          audio on the machine. Remote API is optional.
         </p>
       </section>
 
