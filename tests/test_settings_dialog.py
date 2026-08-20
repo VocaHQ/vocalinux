@@ -1020,5 +1020,117 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn('"escape"', body)
 
 
+class TestAboutPage(unittest.TestCase):
+    """About page: this app, VocaHQ family, talk-to-us. Updater stays."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = TestSettingsSearch._settings_source()
+        cls.about = cls.source.split("def _build_about_section")[1].split("\n    def ")[0]
+
+    def test_three_groups_keep_updater(self):
+        self.assertIn('title="Vocalinux"', self.about)
+        self.assertIn('title="Part of VocaHQ"', self.about)
+        self.assertIn('title="Talk to us"', self.about)
+        self.assertIn('title="Updates"', self.about)
+        self.assertIn("What's New", self.about)
+        self.assertIn("_on_check_updates_clicked", self.about)
+        self.assertIn("self.update_channel_combo", self.about)
+
+    def test_product_status_and_honest_network_copy(self):
+        self.assertIn("Available now on Linux (X11 and Wayland)", self.about)
+        self.assertIn("After a model is downloaded", self.about)
+        self.assertIn("unsigned developer alpha", self.about)
+        self.assertIn("Android beta / iOS source build", self.about)
+        self.assertIn("optional", self.about.lower())
+        self.assertIn("self-hosted compute", self.about)
+        self.assertNotIn("SmartScreen", self.about)
+        self.assertNotIn("100% offline", self.about)
+        self.assertNotIn("fully offline", self.about)
+        self.assertNotIn("Coming soon", self.about)
+
+    def test_family_and_talk_urls(self):
+        for url in (
+            "https://vocalinux.com",
+            "https://vocahq.com",
+            "https://vocamac.com",
+            "https://vocaphone.vocahq.com",
+            "https://vocagateway.vocahq.com",
+            "https://github.com/VocaHQ/vocalinux/issues",
+            "https://discord.gg/UMJduhcqn",
+            "https://x.com/vocahq",
+            "mailto:hello@vocahq.com",
+        ):
+            self.assertIn(url, self.source)
+        self.assertIn('label="Report a bug or idea"', self.about)
+        self.assertIn('"Discord"', self.about)
+        self.assertIn('"X"', self.about)
+        self.assertIn('"Email"', self.about)
+
+    def test_website_is_product_site_not_only_github(self):
+        self.assertIn("VOCALINUX_SITE_URL", self.about)
+        self.assertIn("Product site at vocalinux.com", self.about)
+        self.assertNotIn("Open the Vocalinux GitHub page", self.about)
+
+    def test_can_open_about_urls(self):
+        from vocalinux.ui.settings_dialog import (
+            GITHUB_ISSUES_URL,
+            VOCAGATEWAY_SITE_URL,
+            VOCAHQ_DISCORD_URL,
+            VOCAHQ_MAILTO_URL,
+            VOCAHQ_SITE_URL,
+            VOCAHQ_X_URL,
+            VOCALINUX_SITE_URL,
+            VOCAMAC_SITE_URL,
+            VOCAPHONE_SITE_URL,
+            _can_open_url,
+        )
+
+        for url in (
+            VOCALINUX_SITE_URL,
+            VOCAHQ_SITE_URL,
+            VOCAMAC_SITE_URL,
+            VOCAPHONE_SITE_URL,
+            VOCAGATEWAY_SITE_URL,
+            GITHUB_ISSUES_URL,
+            VOCAHQ_DISCORD_URL,
+            VOCAHQ_X_URL,
+            VOCAHQ_MAILTO_URL,
+            "https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0",
+        ):
+            self.assertTrue(_can_open_url(url), url)
+        self.assertFalse(_can_open_url("https://evil.example/payload"))
+        self.assertFalse(_can_open_url("mailto:evil@example.com"))
+        self.assertFalse(_can_open_url(""))
+
+    def test_talk_marks_are_official_currentcolor_svgs(self):
+        from pathlib import Path
+
+        icons = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "vocalinux"
+            / "resources"
+            / "icons"
+            / "scalable"
+        )
+        root_icons = Path(__file__).resolve().parents[1] / "resources" / "icons" / "scalable"
+        for name, title in (
+            ("discord", "Discord"),
+            ("x", "X"),
+            ("github", "GitHub"),
+            ("mail", "Email"),
+        ):
+            packaged = (icons / f"{name}.svg").read_text(encoding="utf-8")
+            shipped = (root_icons / f"{name}.svg").read_text(encoding="utf-8")
+            self.assertEqual(packaged, shipped)
+            self.assertIn('viewBox="0 0 24 24"', packaged)
+            self.assertIn('fill="currentColor"', packaged)
+            self.assertIn(f"<title>{title}</title>", packaged)
+            self.assertNotIn("#5865F2", packaged)
+        self.assertNotIn("web-browser-symbolic", self.about)
+        self.assertNotIn("mail-send-symbolic", self.about)
+
+
 if __name__ == "__main__":
     unittest.main()
