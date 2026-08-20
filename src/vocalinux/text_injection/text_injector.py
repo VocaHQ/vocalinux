@@ -1661,22 +1661,131 @@ class TextInjector:
         Returns:
             True if successful, False otherwise
         """
-        if self.wayland_tool == "wtype":
-            # wtype doesn't support key combinations directly, so we can't implement this easily
-            logger.warning("Keyboard shortcuts not supported with wtype")
+        try:
+            steps = self._parse_shortcut(shortcut)
+        except ValueError as e:
+            logger.error(f"Cannot parse shortcut '{shortcut}': {e}")
             return False
+
+        if self.wayland_tool == "wtype":
+            # wtype does support combinations: -M presses a modifier, -k types a
+            # key, -m releases it. Modifiers must be released explicitly -- wtype
+            # only auto-releases them when the process exits.
+            cmd = ["wtype"]
+            for modifiers, key in steps:
+                for mod in modifiers:
+                    cmd += ["-M", self._WTYPE_MODIFIERS[mod]]
+                cmd += ["-k", key]
+                for mod in reversed(modifiers):
+                    cmd += ["-m", self._WTYPE_MODIFIERS[mod]]
         elif self.wayland_tool == "ydotool":
-            try:
-                cmd = ["ydotool", "key", shortcut]
-                subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
-                logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
-                return True
-            except subprocess.CalledProcessError as e:
-                logger.error(f"ydotool shortcut error: {e.stderr}")
-                return False
+            # ydotool takes RAW KEYCODES only ("29:1 44:1 44:0 29:0"), never
+            # "ctrl+z" -- it documents non-interpretable values as "only cause a
+            # delay", so the old string form was a silent no-op.
+            seq = []
+            for modifiers, key in steps:
+                codes = []
+                for name in modifiers + [key]:
+                    code = self._KEYCODES.get(name.lower())
+                    if code is None:
+                        logger.error(f"No keycode for '{name}' in shortcut '{shortcut}'")
+                        return False
+                    codes.append(code)
+                seq += [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
+            cmd = ["ydotool", "key"] + seq
         else:
             logger.warning(f"Keyboard shortcuts not supported with {self.wayland_tool}")
             return False
+
+        try:
+            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
+            logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"{self.wayland_tool} shortcut error: {e.stderr}")
+            return False
+
+    # Modifier aliases -> wtype's names ("shift", "capslock", "ctrl", "logo",
+    # "win", "alt", "altgr" per wtype(1)).
+    _WTYPE_MODIFIERS = {
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "shift": "shift",
+        "alt": "alt",
+        "altgr": "altgr",
+        "super": "logo",
+        "meta": "logo",
+        "win": "logo",
+        "logo": "logo",
+    }
+
+    # Raw evdev keycodes from linux/input-event-codes.h, for ydotool. Covers the
+    # modifiers plus every key referenced by ActionHandler._SHORTCUT_ACTIONS.
+    _KEYCODES = {
+        "ctrl": 29,
+        "control": 29,
+        "shift": 42,
+        "alt": 56,
+        "altgr": 100,
+        "super": 125,
+        "meta": 125,
+        "win": 125,
+        "logo": 125,
+        "a": 30,
+        "c": 46,
+        "v": 47,
+        "x": 45,
+        "y": 21,
+        "z": 44,
+        "home": 102,
+        "end": 107,
+        "left": 105,
+        "right": 106,
+        "up": 103,
+        "down": 108,
+        "backspace": 14,
+        "delete": 111,
+        "return": 28,
+        "enter": 28,
+        "tab": 15,
+        "escape": 1,
+        "space": 57,
+    }
+
+    @classmethod
+    def _parse_shortcut(cls, shortcut: str):
+        """Parse a shortcut string into a list of ``(modifiers, key)`` steps.
+
+        Tokens are classified by name rather than position, because the mappings
+        in ``ActionHandler._SHORTCUT_ACTIONS`` are not all "modifiers first" --
+        ``select_line`` is ``"Home+shift+End"``, which means *press Home, then
+        Shift+End*, i.e. two sequential steps rather than one chord. Each
+        non-modifier token closes a step, consuming the modifiers seen since the
+        previous one.
+
+        Returns:
+            e.g. "ctrl+shift+Right" -> [(["ctrl", "shift"], "Right")]
+                 "Home+shift+End"   -> [([], "Home"), (["shift"], "End")]
+
+        Raises:
+            ValueError: if the shortcut has no key, or ends with a dangling modifier.
+        """
+        steps = []
+        pending = []
+        for token in shortcut.split("+"):
+            token = token.strip()
+            if not token:
+                continue
+            if token.lower() in cls._WTYPE_MODIFIERS:
+                pending.append(token.lower())
+            else:
+                steps.append((pending, token))
+                pending = []
+        if pending:
+            raise ValueError(f"trailing modifier(s) with no key: {'+'.join(pending)}")
+        if not steps:
+            raise ValueError("no key found")
+        return steps
 
     def _log_current_window_info(self):
         """Log information about the current window/application for debugging."""
