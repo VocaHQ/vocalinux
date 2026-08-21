@@ -46,6 +46,20 @@ def _make_manager(engine="whisper_cpp", **kw):
                 return mgr
 
 
+@pytest.fixture
+def skip_checksum():
+    """Accept the synthetic payloads these tests stream.
+
+    Downloads are verified against the digests pinned in model_checksums.txt, so
+    a few hundred bytes of ``b"x"`` are correctly rejected. These tests cover
+    download *mechanics* (progress, content-length, URL shaping); integrity
+    itself is covered by tests/test_model_checksums.py. Yielding the mock lets
+    each test still assert that verification was reached.
+    """
+    with patch("vocalinux.speech_recognition.recognition_manager.verify_model_file") as mock_verify:
+        yield mock_verify
+
+
 @pytest.fixture(autouse=True)
 def cleanup_sys_modules():
     """Cleanup sys.modules after each test - full snapshot/restore."""
@@ -66,7 +80,7 @@ def cleanup_sys_modules():
 class TestDownloadWhispercppModel:
     """Test _download_whispercpp_model() with runtime import mocking."""
 
-    def test_download_whispercpp_success_basic(self, tmp_path):
+    def test_download_whispercpp_success_basic(self, tmp_path, skip_checksum):
         """Test successful whisper.cpp model download."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -87,8 +101,10 @@ class TestDownloadWhispercppModel:
 
         assert os.path.exists(model_file)
         assert os.path.getsize(model_file) == 1000
+        # The model is only installed after it is verified.
+        skip_checksum.assert_called_once()
 
-    def test_download_whispercpp_progress_callback(self, tmp_path):
+    def test_download_whispercpp_progress_callback(self, tmp_path, skip_checksum):
         """Test progress callback is invoked during download."""
         manager = _make_manager(engine="whisper_cpp")
         progress_calls = []
@@ -120,7 +136,7 @@ class TestDownloadWhispercppModel:
         assert len(call_args[0]) > 0 or "url" in call_args[1]
         assert len(progress_calls) >= 1
 
-    def test_download_whispercpp_no_content_length(self, tmp_path):
+    def test_download_whispercpp_no_content_length(self, tmp_path, skip_checksum):
         """Test download when content-length header is missing."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -159,7 +175,7 @@ class TestDownloadWhispercppModel:
                 with pytest.raises(RuntimeError, match="Failed to download"):
                     manager._download_whispercpp_model()
 
-    def test_download_whispercpp_appends_download_true(self, tmp_path):
+    def test_download_whispercpp_appends_download_true(self, tmp_path, skip_checksum):
         """Hugging Face URLs get ?download=true for reliable binary responses."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -288,7 +304,7 @@ class TestDownloadWhispercppModel:
 class TestDownloadVoskModel:
     """Test _download_vosk_model() with runtime import mocking."""
 
-    def test_download_vosk_progress_callback(self, tmp_path):
+    def test_download_vosk_progress_callback(self, tmp_path, skip_checksum):
         """Test progress callback during Vosk download."""
         manager = _make_manager(engine="vosk")
         progress_calls = []

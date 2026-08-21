@@ -94,6 +94,11 @@ lock:
 lock-check:
     uv lock --check
 
+# Refresh the pinned model digests from upstream metadata (no models downloaded).
+# Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
+model-checksums:
+    uv run python scripts/generate-model-checksums.py
+
 # Remove build artifacts
 clean:
     @echo "Cleaning build artifacts..."

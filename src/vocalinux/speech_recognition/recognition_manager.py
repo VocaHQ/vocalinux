@@ -21,6 +21,7 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils.model_checksums import ChecksumError, verify_model_file, verify_openai_model
 from ..utils.paths import models_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
@@ -2031,6 +2032,10 @@ class SpeechRecognitionManager:
 
         try:
             self._stream_model_download(url, temp_file)
+            # Verify before the rename: whisper.cpp loads ggml files through
+            # ctypes, so an unverified file must never reach its final path
+            # where is_model_downloaded() would treat it as good.
+            verify_model_file(temp_file, os.path.basename(model_path))
             os.rename(temp_file, model_path)
             logger.info("whisper.cpp model downloaded successfully")
 
@@ -2051,7 +2056,7 @@ class SpeechRecognitionManager:
                     "Check your network and try again."
                 ) from e
             raise RuntimeError(f"Failed to download whisper.cpp model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
             logger.error(f"An error occurred during whisper.cpp model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
@@ -2192,6 +2197,12 @@ class SpeechRecognitionManager:
                         # Also log progress periodically
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
+            # Verify before extracting: a zip that fails its pinned digest must
+            # not get as far as writing files into MODELS_DIR.
+            if self._download_progress_callback:
+                self._download_progress_callback(1.0, 0, "Verifying model...")
+            verify_model_file(zip_path)
+
             # Update status for extraction phase
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Extracting model...")
@@ -2221,7 +2232,7 @@ class SpeechRecognitionManager:
             if os.path.exists(zip_path):
                 os.remove(zip_path)
             raise RuntimeError("Downloaded VOSK model file is corrupted.")
-        except (OSError, RuntimeError, ValueError) as e:
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
             logger.error(f"An error occurred during VOSK model download/extraction: {e}")
             # Clean up potentially corrupted extraction
             if os.path.exists(zip_path):
@@ -2325,6 +2336,13 @@ class SpeechRecognitionManager:
 
                         logger.info(f"Download progress: {progress * 100:.1f}% - {status}")
 
+            # OpenAI publishes each checkpoint under a path segment that is its
+            # sha256, so the expected digest arrives with the URL and needs no
+            # manifest entry. Verify before the rename, as with the other engines.
+            if self._download_progress_callback:
+                self._download_progress_callback(1.0, 0, "Verifying model...")
+            verify_openai_model(temp_file, url, description=f"{self.model_size}.pt")
+
             # Rename temp file to final
             os.rename(temp_file, model_file)
             logger.info("Whisper model downloaded successfully")
@@ -2337,7 +2355,7 @@ class SpeechRecognitionManager:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise RuntimeError(f"Failed to download Whisper model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
             logger.error(f"An error occurred during Whisper model download: {e}")
             if os.path.exists(temp_file):
                 os.remove(temp_file)
