@@ -31,6 +31,12 @@ git worktree add /tmp/vocalinux-<task> -b <type>/<short-name> origin/main
 
 git worktree remove /tmp/vocalinux-<task>
 git worktree prune
+
+# just: https://just.systems or the distro package `just`
+# Dependency lock files (see "Dependency Management" below)
+just lock          # regenerate uv.lock + requirements/*.txt after changing deps
+just lock-check    # fail if uv.lock is stale relative to pyproject.toml
+just model-checksums  # refresh the pinned model digests after adding a model
 ```
 
 Rules:
@@ -147,6 +153,21 @@ in `pyproject.toml`.
   together.
 - **pywhispercpp**: pinned in `install.sh` via `PYWHISPERCPP_VERSION` — keep it in sync
   with `uv.lock` when bumping.
+- **Speech models are verified against pinned digests.**
+  `src/vocalinux/utils/model_checksums.txt` holds one entry per downloadable model
+  (whisper.cpp: sha256 from the pinned Hugging Face commit; VOSK: the md5 Alphacephei
+  publishes). Both `install.sh` and the runtime downloaders check every file against it
+  *before* moving it into place, and **fail closed** — a model with no pinned digest is
+  refused, not warned about. OpenAI Whisper `.pt` files need no entry: their URLs carry
+  the sha256 as a path segment.
+  Do not edit the manifest by hand. Add the model to `vosk_model_info.py` or
+  `whispercpp_model_info.py`, then run `just model-checksums`, which reads the names
+  back out of those modules and fetches the digests from upstream metadata (no models
+  are downloaded). `tests/test_model_checksums.py` fails if the manifest falls behind,
+  which is what makes failing closed safe.
+  The whisper.cpp Hugging Face revision is pinned in the manifest header and used to
+  build download URLs — never point them back at `main`, or upstream replacing a file
+  turns every install into a checksum failure.
 - Background, phase checklists, and open work: `docs/PACKAGING_PLAN.md`, epic #701.
 
 ## Code Style Guidelines

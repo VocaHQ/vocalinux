@@ -95,13 +95,22 @@ class TestDownloadFunctions(unittest.TestCase):
                             manager = self._create_manager(engine="whisper")
                             manager._download_progress_callback = progress_cb
 
-                            # This should call the download function
-                            manager._download_whisper_model("/fake/cache")
+                            # The payload is synthetic, so its sha256 cannot
+                            # match the one in the URL; integrity itself is
+                            # covered by tests/test_model_checksums.py.
+                            with patch(
+                                "vocalinux.speech_recognition.recognition_manager."
+                                "verify_openai_model"
+                            ) as mock_verify:
+                                # This should call the download function
+                                manager._download_whisper_model("/fake/cache")
 
                             # Verify file was written
                             mock_file.assert_called()
                             # Verify progress callback was called
                             assert len(progress_calls) > 0, "Progress callback not called"
+                            # The model is only installed after it is verified.
+                            mock_verify.assert_called_once()
 
     def test_download_whisper_model_cancelled(self):
         """Test Whisper download cancellation."""

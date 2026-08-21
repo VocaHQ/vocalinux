@@ -534,9 +534,17 @@ class TestDownloadWhisperModel(unittest.TestCase):
                 mock_file = MagicMock()
                 mock_open.return_value.__enter__.return_value = mock_file
                 with patch("os.rename"):
-                    mgr._download_whisper_model(cache_dir="/tmp/test")
+                    # The payload is synthetic, so its sha256 cannot match the
+                    # one in the URL; integrity itself is covered by
+                    # tests/test_model_checksums.py.
+                    with patch(
+                        "vocalinux.speech_recognition.recognition_manager." "verify_openai_model"
+                    ) as mock_verify:
+                        mgr._download_whisper_model(cache_dir="/tmp/test")
                     # Verify file write was called
                     mock_file.write.assert_called()
+                    # The model is only installed after it is verified.
+                    mock_verify.assert_called_once()
 
 
 class TestBufferManagement(unittest.TestCase):

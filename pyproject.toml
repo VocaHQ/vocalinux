@@ -110,6 +110,7 @@ version = {attr = "vocalinux.version.__version__"}
 "*" = ["*.svg", "*.wav", "*.onnx"]
 "vocalinux" = ["resources/**/*"]
 "vocalinux.speech_recognition" = ["data/*.onnx", "data/LICENSE"]
+"vocalinux.utils" = ["model_checksums.txt"]
 
 [tool.black]
 line-length = 100
