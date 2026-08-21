@@ -14,7 +14,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Discord](https://img.shields.io/discord/1538633755877580810?logo=discord&logoColor=white&label=Discord)](https://discord.gg/UMJduhcqn)
+[![Discord](https://img.shields.io/discord/1538633755877580810?logo=discord&logoColor=white&label=Discord)](https://discord.gg/t6muquAJbm)
 [![VocaHQ](https://img.shields.io/badge/VocaHQ-vocahq.com-1a7f4e)](https://vocahq.com)
 
 <!-- Identity + quality (medium) -->
@@ -23,7 +23,7 @@
 [![AUR](https://img.shields.io/aur/version/vocalinux)](https://aur.archlinux.org/packages/vocalinux)
 [![Vocalinux CI](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml/badge.svg?branch=main)](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/VocaHQ/vocalinux/branch/main/graph/badge.svg)](https://codecov.io/gh/VocaHQ/vocalinux)
-[![Follow on X](https://img.shields.io/badge/Follow%20%40jatinkrmalik-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/user?screen_name=jatinkrmalik)
+[![Follow on X](https://img.shields.io/badge/Follow%20%40vocahq-000000?style=flat&logo=x&logoColor=white)](https://x.com/vocahq)
 
 <!-- Distros (widest; base plate above the hero) -->
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04+-E95420?logo=ubuntu&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)

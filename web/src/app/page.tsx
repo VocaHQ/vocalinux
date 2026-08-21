@@ -1222,6 +1222,7 @@ export default function HomePage() {
                   links: [
                     { href: "/faq/", label: "FAQ" },
                     { href: "/troubleshooting/", label: "Troubleshooting" },
+                    { href: "https://discord.gg/t6muquAJbm", label: "Discord" },
                     { href: "/alternatives/", label: "Alternatives" },
                     { href: "/privacy/", label: "Privacy" },
                   ],
@@ -1235,9 +1236,13 @@ export default function HomePage() {
                 <ul className="space-y-2.5 text-sm">
                   {col.links.map((link) => (
                     <li key={link.href + link.label}>
-                      {link.href.startsWith("#") ? (
+                      {link.href.startsWith("#") ||
+                      link.href.startsWith("http") ? (
                         <a
                           href={link.href}
+                          {...(link.href.startsWith("http")
+                            ? { target: "_blank", rel: "noopener noreferrer" }
+                            : {})}
                           className="text-zinc-400 transition-colors hover:text-white"
                         >
                           {link.label}

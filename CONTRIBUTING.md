@@ -322,6 +322,7 @@ We follow [Semantic Versioning](https://semver.org/):
 
 ### Getting Help
 
+- 💬 [Discord](https://discord.gg/t6muquAJbm) — fastest place to talk with maintainers and other contributors
 - 💬 [GitHub Discussions](https://github.com/VocaHQ/vocalinux/discussions) - Ask questions
 - 🐛 [GitHub Issues](https://github.com/VocaHQ/vocalinux/issues) - Report bugs
 
@@ -329,7 +330,7 @@ We follow [Semantic Versioning](https://semver.org/):
 
 - ⭐ Star the repository to show support
 - 👀 Watch for updates
-- 🐦 Follow [@jatinkrmalik](https://twitter.com/jatinkrmalik) on Twitter
+- 🐦 Follow [@vocahq](https://x.com/vocahq) on X
 
 ## License
 
