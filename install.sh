@@ -2594,9 +2594,13 @@ setup_virtual_environment() {
     print_info "Virtual environment activated successfully."
 }
 
-# Check Python version
+# Check Python version. Not advisory: distro PyGObject is built for the system
+# interpreter, so a venv below the floor cannot import gi, and the install would
+# fail later somewhere less obvious.
 if ! check_python_version; then
-    print_warning "Continuing with unsupported Python version. Some features may not work correctly."
+    print_error "Point SYSTEM_PYTHON at a newer interpreter if one is installed:"
+    print_error "  SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh"
+    exit "$EXIT_MISSING_DEPS"
 fi
 
 # Set up virtual environment
