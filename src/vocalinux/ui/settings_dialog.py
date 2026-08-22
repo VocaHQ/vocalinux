@@ -3850,6 +3850,7 @@ class SettingsDialog(Gtk.Dialog):
         """Persist deferred text edits before the settings dialog closes."""
         if response_id in (Gtk.ResponseType.CLOSE, Gtk.ResponseType.DELETE_EVENT):
             self._flush_advanced_prompt_if_dirty()
+            self._resync_engine_ui_if_unapplied()
 
     def _on_advanced_prompt_changed(self, buffer):
         """Track prompt edits without applying settings on every keystroke."""
@@ -4476,7 +4477,14 @@ class SettingsDialog(Gtk.Dialog):
 
         engine = _engine_from_display(engine_text)
 
-        current_lang = self.language_combo.get_active_id()
+        # A programmatic change — the resync after a failed apply — must repaint
+        # for the engine now shown, but must not rewrite the language the user
+        # picked, and must not cascade into another apply. Every other control on
+        # this page checks these flags itself rather than leaning on
+        # _auto_apply_settings to do it.
+        programmatic = self._initializing or self._applying_settings
+
+        current_lang = None if self._applying_settings else self.language_combo.get_active_id()
         if current_lang:
             if engine == "vosk" and (
                 current_lang == "auto" or not SUPPORTED_LANGUAGES.get(current_lang, {}).get("vosk")
@@ -4490,6 +4498,19 @@ class SettingsDialog(Gtk.Dialog):
         self._update_engine_specific_ui()
         self._update_model_info()
         self._update_voice_commands_for_engine()
+
+        if programmatic:
+            return
+
+        # Every other control on this page applies as soon as it changes. Without
+        # this the new engine is only displayed: the config and the running
+        # recognizer stay on the previous one until some other control is touched,
+        # and closing the dialog drops the change silently.
+        if engine == "remote_api" and not self.remote_api_url_entry.get_text().strip():
+            # Applying now would only fail validation; _on_remote_api_settings_changed
+            # applies once the server URL is filled in.
+            return
+        self._auto_apply_settings()
 
     def _update_voice_commands_for_engine(self):
         """Update voice commands switch based on current engine."""
@@ -4845,15 +4866,31 @@ class SettingsDialog(Gtk.Dialog):
                         cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                         try:
-                            self._apply_settings_internal(settings, raise_errors=True)
-                            GLib.idle_add(download_dialog.set_complete, True, "")
-                            GLib.idle_add(self._populate_model_options)
+                            applied = self._apply_settings_internal(settings, raise_errors=True)
+                            if applied:
+                                GLib.idle_add(download_dialog.set_complete, True, "")
+                                GLib.idle_add(self._populate_model_options)
+                            else:
+                                # raise_errors makes failures raise today, but a
+                                # False return must not be read as success: it
+                                # means nothing was saved and the pickers still
+                                # show settings the engine never took.
+                                GLib.idle_add(self._resync_model_ui_from_config)
+                                GLib.idle_add(
+                                    download_dialog.set_complete,
+                                    False,
+                                    "Could not apply the new settings",
+                                )
                         finally:
                             GLib.source_remove(cancel_check_id)
                             self.speech_engine.set_download_progress_callback(None)
 
                     except Exception as e:
                         error_msg = str(e)
+                        # The settings were never saved, so the previously working
+                        # model is still the configured one; put the pickers back on
+                        # it so the UI matches the config and a retry is possible.
+                        GLib.idle_add(self._resync_model_ui_from_config)
                         if "cancelled" in error_msg.lower():
                             GLib.idle_add(
                                 download_dialog.set_complete,
@@ -4873,22 +4910,74 @@ class SettingsDialog(Gtk.Dialog):
                 threading.Thread(target=download_and_apply, daemon=True).start()
                 download_dialog.run()
                 download_dialog.destroy()
+                # Whatever ended the modal — cancel, failure, or a path not
+                # covered above — the pickers must not outlive the config.
+                self._resync_engine_ui_if_unapplied()
                 return
 
             logger.info(f"Auto-applying settings: {settings}")
-
-            self._save_selected_settings(settings)
 
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
 
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
             logger.info("Settings auto-applied successfully")
         except Exception as e:
             logger.error(f"Failed to auto-apply settings: {e}")
+            self._resync_model_ui_from_config()
         finally:
             self._applying_settings = False
+
+    def _resync_model_ui_from_config(self):
+        """Put the pickers back on the settings that are actually saved.
+
+        Called when applying failed: the config still names the previous
+        engine and model, and leaving the pickers on the rejected ones also
+        blocks a retry, since re-selecting the same entry emits no "changed"
+        signal.
+        """
+        try:
+            saved_engine = (
+                self.config_manager.get_settings().get("speech_recognition", {}).get("engine")
+            )
+            if saved_engine:
+                display = _engine_display_name(saved_engine)
+                if self.engine_combo.get_active_text() != display:
+                    # Hold the apply-suppression flag: restoring the combo fires
+                    # _on_engine_changed(), which must repaint the pickers but
+                    # not cascade into another apply or download prompt.
+                    was_applying = self._applying_settings
+                    self._applying_settings = True
+                    try:
+                        self.engine_combo.set_active_id(display)
+                    finally:
+                        self._applying_settings = was_applying
+            self._populate_model_options()
+            self._update_model_info()
+        except Exception as e:  # pragma: no cover - UI resync must never mask the original error
+            logger.debug(f"Could not resync model pickers: {e}")
+
+    def _resync_engine_ui_if_unapplied(self):
+        """Resync when the engine on screen is not the engine that got saved.
+
+        Covers every way an apply can end without writing the config: a
+        cancelled download, a failure, and Remote API left without a server
+        URL, where applying is deliberately deferred. Leaving the combo on
+        the unapplied engine misreports what dictation will actually use.
+        """
+        try:
+            saved_engine = (
+                self.config_manager.get_settings().get("speech_recognition", {}).get("engine")
+            )
+            if not saved_engine:
+                return
+            if self._get_selected_engine() == saved_engine:
+                return
+            self._resync_model_ui_from_config()
+        except Exception as e:  # pragma: no cover - a resync must never mask the real error
+            logger.debug(f"Could not check the engine picker against the config: {e}")
 
     def _save_selected_settings(self, settings: dict):
         """Persist selected settings to their appropriate config sections."""
@@ -5163,14 +5252,25 @@ For now, the engine has been reverted to VOSK."""
                     cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                     try:
-                        self._apply_settings_internal(settings, raise_errors=True)
-                        GLib.idle_add(download_dialog.set_complete, True, "")
+                        applied = self._apply_settings_internal(settings, raise_errors=True)
+                        if applied:
+                            GLib.idle_add(download_dialog.set_complete, True, "")
+                        else:
+                            GLib.idle_add(self._resync_model_ui_from_config)
+                            GLib.idle_add(
+                                download_dialog.set_complete,
+                                False,
+                                "Could not apply the new settings",
+                            )
                     finally:
                         GLib.source_remove(cancel_check_id)
                         self.speech_engine.set_download_progress_callback(None)
 
                 except Exception as e:
                     error_msg = str(e)
+                    # Nothing was saved, so the config still names the previous
+                    # engine and model; put the pickers back on them.
+                    GLib.idle_add(self._resync_model_ui_from_config)
                     if "cancelled" in error_msg.lower():
                         GLib.idle_add(download_dialog.set_complete, False, "Download cancelled")
                     elif engine == "whisper" and "no module named" in error_msg.lower():
@@ -5184,6 +5284,7 @@ For now, the engine has been reverted to VOSK."""
             download_dialog.destroy()
 
             self._populate_model_options()
+            self._resync_engine_ui_if_unapplied()
             return True
 
         return self._apply_settings_internal(settings)
@@ -5199,14 +5300,16 @@ For now, the engine has been reverted to VOSK."""
                 off the main loop is not safe anyway.
         """
         try:
-            self._save_selected_settings(settings)
-
             was_running = self.speech_engine.state != RecognitionState.IDLE
             if was_running:
                 self.speech_engine.stop_recognition()
                 time.sleep(0.5)
 
+            # Persist only once the engine really runs these settings: this call
+            # downloads missing models, and a config saved up front would keep
+            # pointing at a model that never made it to disk.
             self.speech_engine.reconfigure(**settings)
+            self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True

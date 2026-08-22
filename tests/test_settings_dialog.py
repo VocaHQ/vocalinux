@@ -58,16 +58,7 @@ def apply_settings_internal(dialog, settings: dict) -> bool:
     This is a test helper that mirrors the real implementation behavior.
     """
     try:
-        # 1. Update Config Manager
-        sr_settings = {k: v for k, v in settings.items() if not k.startswith("whispercpp_")}
-        advanced_settings = {k: v for k, v in settings.items() if k.startswith("whispercpp_")}
-
-        dialog.config_manager.update_speech_recognition_settings(sr_settings)
-        for key, value in advanced_settings.items():
-            dialog.config_manager.set("advanced", key, value)
-        dialog.config_manager.save_settings()
-
-        # 2. Reconfigure Speech Engine
+        # 1. Reconfigure Speech Engine
         # Stop engine before reconfiguring if it's running
         was_running = dialog.speech_engine.state != RecognitionState.IDLE
         if was_running:
@@ -76,6 +67,15 @@ def apply_settings_internal(dialog, settings: dict) -> bool:
             time.sleep(0.01)  # Shortened for tests
 
         dialog.speech_engine.reconfigure(**settings)
+
+        # 2. Update Config Manager, only once the engine accepted the settings
+        sr_settings = {k: v for k, v in settings.items() if not k.startswith("whispercpp_")}
+        advanced_settings = {k: v for k, v in settings.items() if k.startswith("whispercpp_")}
+
+        dialog.config_manager.update_speech_recognition_settings(sr_settings)
+        for key, value in advanced_settings.items():
+            dialog.config_manager.set("advanced", key, value)
+        dialog.config_manager.save_settings()
         return True
     except Exception:
         return False
@@ -188,7 +188,7 @@ class TestSettingsDialog(unittest.TestCase):
         mock_speech_engine.reconfigure.assert_called_once()
 
     def test_apply_settings_failure_reconfigure(self):
-        """Test apply_settings handles errors during engine reconfiguration."""
+        """A failed reconfigure must leave the saved settings untouched."""
         # Set up the reconfigure method to raise an exception
         mock_speech_engine.reconfigure.side_effect = Exception("Model load failed")
 
@@ -198,10 +198,11 @@ class TestSettingsDialog(unittest.TestCase):
         # Verify the result
         self.assertFalse(result)
 
-        # Verify mocks were called
-        mock_config_manager.update_speech_recognition_settings.assert_called_once()
-        mock_config_manager.save_settings.assert_called_once()
+        # The engine was asked, and refused: the config must still describe the
+        # settings that are actually running, not the ones that failed.
         mock_speech_engine.reconfigure.assert_called_once()
+        mock_config_manager.update_speech_recognition_settings.assert_not_called()
+        mock_config_manager.save_settings.assert_not_called()
 
 
 class TestSettingsDialogCSS(unittest.TestCase):
