@@ -13,10 +13,11 @@
 #           run from any shell. Override with SYSTEM_PYTHON=/usr/bin/python3.12.
 
 # Extras and groups installed by `just deps` and requested by every recipe below.
-# `uv run` syncs the environment exactly, so tooling recipes must ask for the
-# same set or the dev tools would be uninstalled. CI lints with
-# `--only-group lint` instead: that skips the project, whose pyaudio/PyGObject
-# need system headers a lint runner has no reason to install.
+# `uv sync` prunes whatever the flags do not name — omitting `--group lint` really
+# does uninstall the linters — and `uv run` has pruned in past versions, so every
+# recipe asks for the same set rather than depending on which uv is installed.
+# CI lints with `--only-group lint` instead: that skips the project, whose
+# pyaudio/PyGObject need system headers a lint runner has no reason to install.
 DEV_EXTRAS := "--extra dev --extra vad --group lint"
 
 # List available recipes
@@ -33,11 +34,11 @@ install-dev:
 
 # Install development dependencies into .venv/ (dev + vad extras)
 deps:
-    uv sync --extra dev --extra vad --group lint
+    uv sync {{DEV_EXTRAS}}
 
 # Install every optional extra — whisper/vosk engines and docs (CUDA torch, multi-GB)
 deps-all:
-    uv sync --all-extras
+    uv sync --all-extras --group lint
 
 # Run test suite
 test:
@@ -97,7 +98,7 @@ lock-check:
 # Refresh the pinned model digests from upstream metadata (no models downloaded).
 # Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
 model-checksums:
-    uv run python scripts/generate-model-checksums.py
+    uv run {{DEV_EXTRAS}} python scripts/generate-model-checksums.py
 
 # Remove build artifacts
 clean:
