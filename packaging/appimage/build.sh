@@ -28,6 +28,15 @@ WHEEL="$1"
 VERSION="$2"
 OUTDIR="${3:-dist}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Same pywhispercpp release install.sh pins. Read from there rather than repeated
+# here: unpinned, this build picks up whatever PyPI published today, which is how
+# a 1.5.1 released mid-PR broke the Vulkan rebuild.
+PYWHISPERCPP_VERSION="$(sed -n 's/^PYWHISPERCPP_VERSION="\([^"]*\)"/\1/p' "$REPO_ROOT/install.sh" | head -n1)"
+if [ -z "$PYWHISPERCPP_VERSION" ]; then
+    echo "Could not read PYWHISPERCPP_VERSION from install.sh" >&2
+    exit 1
+fi
 ARCH="$(uname -m)"
 PYTHON="${PYTHON:-python3}"
 
@@ -240,7 +249,7 @@ rebuild_pywhispercpp_vulkan() {
       CMAKE_ARGS='-DCMAKE_INSTALL_RPATH=$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON' \
       "$PYTHON" -m pip install --verbose --no-cache-dir --force-reinstall \
         --no-binary pywhispercpp --ignore-installed --prefix "$APPDIR/usr" \
-        --log "$pip_log" pywhispercpp; then
+        --log "$pip_log" "pywhispercpp==$PYWHISPERCPP_VERSION"; then
     echo "pywhispercpp Vulkan rebuild failed. Last 80 log lines:" >&2
     tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
     if [ "$require_vulkan" = "1" ]; then

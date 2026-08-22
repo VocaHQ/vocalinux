@@ -1,5 +1,6 @@
 """Regression guards for AppImage packaging."""
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -67,3 +68,19 @@ def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():
     assert "rebuild_pywhispercpp_vulkan" in text
     assert 'CC="${CC:-gcc}"' in text
     assert 'CXX="${CXX:-g++}"' in text
+
+
+def test_appimage_pins_pywhispercpp_to_the_installer_version():
+    """An unpinned source build takes whatever PyPI published that day.
+
+    pywhispercpp 1.5.1 landed mid-review and failed to compile with Vulkan on
+    the runner, breaking both AppImage jobs while nothing in the repo changed.
+    """
+    build = BUILD_SH.read_text(encoding="utf-8")
+    assert "pywhispercpp==$PYWHISPERCPP_VERSION" in build
+    assert 'PYWHISPERCPP_VERSION="$(sed' in build, "the pin must come from install.sh"
+
+    installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    assert re.search(
+        r'^PYWHISPERCPP_VERSION="\d+\.\d+\.\d+"', installer, re.M
+    ), "install.sh no longer declares the version build.sh reads"
