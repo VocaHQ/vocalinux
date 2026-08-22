@@ -77,7 +77,9 @@ def test_appimage_pins_pywhispercpp_to_the_installer_version():
     the runner, breaking both AppImage jobs while nothing in the repo changed.
     """
     build = BUILD_SH.read_text(encoding="utf-8")
-    assert "pywhispercpp==$PYWHISPERCPP_VERSION" in build
+    # Both installs: the bundle install resolves the wheel's dependency range and
+    # the Vulkan rebuild replaces it. Pinning one mixes two versions' libggml.
+    assert build.count("pywhispercpp==$PYWHISPERCPP_VERSION") == 2
     assert 'PYWHISPERCPP_VERSION="$(sed' in build, "the pin must come from install.sh"
 
     installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
