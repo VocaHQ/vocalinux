@@ -212,6 +212,17 @@ const editorWords = [
   "working",
 ];
 
+const ribbonItems = [
+  "Ubuntu",
+  "Fedora",
+  "Debian",
+  "Arch",
+  "X11",
+  "Wayland",
+  "on-device",
+  "open source",
+];
+
 export default function HomePage() {
   const {
     interactiveInstallCommand,
@@ -339,23 +350,22 @@ export default function HomePage() {
 
       <section className="ribbon" aria-label="Supported Linux environments">
         <div className="ribbon-track">
-          {[0, 1].flatMap((copy) =>
-            [
-              "Ubuntu",
-              "Fedora",
-              "Debian",
-              "Arch",
-              "X11",
-              "Wayland",
-              "on-device",
-              "open source",
-            ].map((item) => (
-              <React.Fragment key={`${copy}-${item}`}>
-                <span>{item}</span>
-                <b>·</b>
-              </React.Fragment>
-            )),
-          )}
+          {[0, 1].map((copy) => (
+            <div
+              className="ribbon-group"
+              key={copy}
+              aria-hidden={copy === 1 ? true : undefined}
+            >
+              {Array.from({ length: 6 }, (_, repeat) =>
+                ribbonItems.map((item) => (
+                  <React.Fragment key={`${copy}-${repeat}-${item}`}>
+                    <span>{item}</span>
+                    <b aria-hidden="true">·</b>
+                  </React.Fragment>
+                )),
+              )}
+            </div>
+          ))}
         </div>
       </section>
 

@@ -814,18 +814,22 @@
 
   .ribbon-track {
     display: flex;
-    align-items: center;
-    justify-content: space-around;
-    gap: 1.35rem;
     width: max-content;
-    min-width: 100%;
     padding: 0.9rem 0;
     font-family: var(--font-mono);
     font-size: 0.68rem;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     white-space: nowrap;
-    animation: ribbon-move 28s linear infinite;
+    animation: ribbon-move 32s linear infinite;
+  }
+
+  .ribbon-group {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 1.35rem;
+    padding-inline-end: 1.35rem;
   }
 
   .ribbon-track b {
@@ -1600,8 +1604,12 @@ nextjs-portal {
 
   .ribbon-track {
     animation: none;
-    width: auto;
-    justify-content: center;
     flex-wrap: wrap;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .ribbon-group[aria-hidden="true"] {
+    display: none;
   }
 }
