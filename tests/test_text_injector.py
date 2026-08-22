@@ -398,7 +398,7 @@ class TestTextInjector(unittest.TestCase):
         self.assertTrue(result)
 
     def test_inject_keyboard_shortcut_wayland_wtype(self):
-        """Test keyboard shortcut injection with wtype (not supported)."""
+        """wtype chords a shortcut with -M/-k/-m rather than refusing it."""
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
             self.mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
 
@@ -412,7 +412,11 @@ class TestTextInjector(unittest.TestCase):
             injector.environment = DesktopEnvironment.WAYLAND
 
             result = injector._inject_shortcut_with_wayland_tool("ctrl+z")
-            self.assertFalse(result)  # wtype doesn't support shortcuts
+            self.assertTrue(result)
+            self.assertEqual(
+                self.mock_subprocess.call_args[0][0],
+                ["wtype", "-M", "ctrl", "-k", "z", "-m", "ctrl"],
+            )
 
     def test_inject_keyboard_shortcut_wayland_ydotool(self):
         """Test keyboard shortcut injection with ydotool."""

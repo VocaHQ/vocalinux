@@ -690,22 +690,84 @@ class TestShortcutWithXdotool(unittest.TestCase):
 
 
 class TestShortcutWithWaylandTool(unittest.TestCase):
-    def test_wtype_not_supported(self):
+    def test_wtype_chords_modifiers(self):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.WAYLAND)
         obj.wayland_tool = "wtype"
-        result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
-        self.assertFalse(result)  # wtype doesn't support shortcuts
+        with patch("subprocess.run") as mock_run:
+            result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
+            self.assertTrue(result)
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["wtype", "-M", "ctrl", "-k", "a", "-m", "ctrl"],
+            )
 
     def test_ydotool_success(self):
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.WAYLAND)
         obj.wayland_tool = "ydotool"
-        with patch("subprocess.run"):
+        with patch("subprocess.run") as mock_run:
             result = obj._inject_shortcut_with_wayland_tool("ctrl+a")
             self.assertTrue(result)
+            # Raw keycodes, not the literal string "ctrl+a": ctrl=29, a=30.
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["ydotool", "key", "29:1", "30:1", "30:0", "29:0"],
+            )
+
+    def test_sequential_steps_not_treated_as_one_chord(self):
+        """ "Home+shift+End" is press Home, then Shift+End -- two steps."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        obj.wayland_tool = "wtype"
+        with patch("subprocess.run") as mock_run:
+            self.assertTrue(obj._inject_shortcut_with_wayland_tool("Home+shift+End"))
+            self.assertEqual(
+                mock_run.call_args[0][0],
+                ["wtype", "-k", "Home", "-M", "shift", "-k", "End", "-m", "shift"],
+            )
+
+    def test_unknown_ydotool_keycode_fails_loudly(self):
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.WAYLAND)
+        obj.wayland_tool = "ydotool"
+        with patch("subprocess.run") as mock_run:
+            self.assertFalse(obj._inject_shortcut_with_wayland_tool("ctrl+F13"))
+            mock_run.assert_not_called()
+
+
+class TestParseShortcut(unittest.TestCase):
+    def test_single_chord(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(
+            TextInjector._parse_shortcut("ctrl+shift+Right"),
+            [(["ctrl", "shift"], "Right")],
+        )
+
+    def test_multi_step(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(
+            TextInjector._parse_shortcut("Home+shift+End"),
+            [([], "Home"), (["shift"], "End")],
+        )
+
+    def test_trailing_modifier_rejected(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        with self.assertRaises(ValueError):
+            TextInjector._parse_shortcut("ctrl+shift")
+
+    def test_empty_rejected(self):
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        with self.assertRaises(ValueError):
+            TextInjector._parse_shortcut("")
 
 
 class TestCopyToClipboard(unittest.TestCase):
