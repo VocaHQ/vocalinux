@@ -716,7 +716,7 @@ detect_distro() {
 
 # Check minimum required version for Ubuntu-based systems
 check_ubuntu_version() {
-    local MIN_VERSION="18.04"
+    local MIN_VERSION="24.04"
     if [[ "$DISTRO_FAMILY" == "ubuntu" ]]; then
         if [[ $(echo -e "$DISTRO_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$DISTRO_VERSION" == "$MIN_VERSION" ]]; then
             return 0

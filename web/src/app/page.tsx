@@ -815,7 +815,7 @@ export default function HomePage() {
                   question: "Which Linux distributions are supported?",
                   answer: (
                     <>
-                      Ubuntu 22.04+, Debian 11+, Fedora 39+, Arch, openSUSE
+                      Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch, openSUSE
                       Tumbleweed, and most modern desktops on X11 or Wayland.{" "}
                       <Link href="/install/">Install guides</Link>.
                     </>

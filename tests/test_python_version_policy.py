@@ -14,6 +14,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 INSTALL_SH = REPO_ROOT / "install.sh"
 PIPELINE = REPO_ROOT / ".github" / "workflows" / "unified-pipeline.yml"
+PKGBUILD = REPO_ROOT / "packaging" / "aur" / "vocalinux" / "PKGBUILD"
+
+# Everything user-facing that states the floor. Docs and the website drifted to
+# "3.9+" for a full release cycle after the floor moved, so they are checked here
+# rather than left to review.
+DOC_AND_SITE_FILES = [
+    REPO_ROOT / "docs" / "INSTALL.md",
+    REPO_ROOT / "docs" / "DISTRO_COMPATIBILITY.md",
+    REPO_ROOT / "README.md",
+    REPO_ROOT / "web" / "src" / "app" / "page.tsx",
+    REPO_ROOT / "web" / "src" / "app" / "faq" / "page.tsx",
+    REPO_ROOT / "web" / "src" / "app" / "troubleshooting" / "page.tsx",
+    REPO_ROOT / "web" / "src" / "app" / "install" / "page.tsx",
+    REPO_ROOT / "web" / "src" / "app" / "install" / "[distro]" / "page.tsx",
+]
 
 
 def _version_tuple(version: str) -> tuple:
@@ -77,3 +92,31 @@ def test_ci_matrix_covers_every_supported_version():
 
 def test_running_interpreter_is_supported():
     assert sys.version_info[:2] >= _version_tuple(_requires_python_floor())
+
+
+def _pkgbuild_python_floor() -> str:
+    match = re.search(r"'python>=(\d+\.\d+)'", PKGBUILD.read_text(encoding="utf-8"))
+    assert match, "python>= dependency not found in the AUR PKGBUILD"
+    return match.group(1)
+
+
+def test_aur_package_matches_requires_python():
+    assert _pkgbuild_python_floor() == _requires_python_floor()
+
+
+def test_docs_and_site_do_not_advertise_an_older_floor():
+    """No user-facing file may promise a Python older than the real floor."""
+    floor = _version_tuple(_requires_python_floor())
+    offenders = []
+
+    for path in DOC_AND_SITE_FILES:
+        assert path.exists(), f"{path} moved; update DOC_AND_SITE_FILES"
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            for claimed in re.findall(r"Python (\d+\.\d+)\+", line):
+                if _version_tuple(claimed) < floor:
+                    rel = path.relative_to(REPO_ROOT)
+                    offenders.append(f"{rel}:{number} claims Python {claimed}+")
+
+    assert not offenders, "user-facing files promise an unsupported Python:\n" + "\n".join(
+        offenders
+    )

@@ -48,8 +48,8 @@ These distributions are tested and known to work well with Vocalinux:
 
 | Distribution | Version | Status | Notes |
 |--------------|---------|--------|-------|
-| Ubuntu | 22.04+ | ✅ Full Support | Primary target, most thoroughly tested |
-| Debian | 11+, Testing | ✅ Full Support | Well tested, use Ayatana AppIndicator on Debian 11+ |
+| Ubuntu | 24.04+ | ✅ Full Support | 22.04 ships Python 3.10, below the 3.11 floor |
+| Debian | 12+, Testing | ✅ Full Support | Primary target; use Ayatana AppIndicator |
 | Fedora | 39+ | ✅ Good Support | Uses lib64 paths, fully supported |
 | Arch Linux | Rolling | ✅ Good Support | Community tested, rolling release compatible |
 | openSUSE | Tumbleweed | ✅ Good Support | Good support with zypper package manager |
@@ -88,7 +88,7 @@ sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 \
   portaudio19-dev python3-dev python3-venv pkg-config
 ```
 
-**Note for Debian 11+:** Use `gir1.2-ayatanaappindicator3-0.1` instead of `gir1.2-appindicator3-0.1`
+**Note for Debian 12+:** Use `gir1.2-ayatanaappindicator3-0.1` instead of `gir1.2-appindicator3-0.1`
 
 ### Debian-specific notes
 

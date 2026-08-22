@@ -17,7 +17,7 @@ const distroGuides = [
     name: "Ubuntu",
     href: "/install/ubuntu/",
     description:
-      "Install offline voice dictation on Ubuntu 22.04+ with GNOME, KDE, X11, or Wayland.",
+      "Install offline voice dictation on Ubuntu 24.04+ with GNOME, KDE, X11, or Wayland.",
     icon: Laptop,
   },
   {
