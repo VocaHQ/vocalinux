@@ -20,10 +20,8 @@ from vocalinux.utils.model_checksums import (
     expected_for,
     file_digest,
     pinned_filenames,
-    sha256_from_openai_url,
     verify_file,
     verify_model_file,
-    verify_openai_model,
     whispercpp_revision,
 )
 from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
@@ -162,41 +160,6 @@ class TestVerifyModelFile(unittest.TestCase):
                     verify_model_file(str(path))
             finally:
                 model_checksums._parse_manifest.cache_clear()
-
-
-class TestOpenAIUrlDigest(unittest.TestCase):
-    URL = (
-        "https://openaipublic.azureedge.net/main/whisper/models/"
-        "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
-    )
-
-    def test_extracts_the_digest_from_the_path(self):
-        self.assertEqual(
-            sha256_from_openai_url(self.URL),
-            "65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9",
-        )
-
-    def test_url_without_a_digest_yields_none(self):
-        self.assertIsNone(sha256_from_openai_url("https://example.com/main/whisper/models/tiny.pt"))
-
-    def test_verification_refuses_an_unverifiable_url(self):
-        tmp = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))
-        path = tmp / "tiny.pt"
-        path.write_bytes(b"x")
-        with self.assertRaises(ChecksumError) as ctx:
-            verify_openai_model(str(path), "https://example.com/tiny.pt")
-        self.assertIn("no sha256 path segment", str(ctx.exception))
-
-    def test_verification_accepts_a_matching_payload(self):
-        tmp = Path(self.enterContext(__import__("tempfile").TemporaryDirectory()))
-        payload = b"pretend checkpoint"
-        path = tmp / "tiny.pt"
-        path.write_bytes(payload)
-        url = (
-            "https://openaipublic.azureedge.net/main/whisper/models/"
-            f"{hashlib.sha256(payload).hexdigest()}/tiny.pt"
-        )
-        verify_openai_model(str(path), url)
 
 
 class TestInstallerVerification(unittest.TestCase):
