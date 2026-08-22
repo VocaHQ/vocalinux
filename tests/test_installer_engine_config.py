@@ -27,19 +27,30 @@ def _run(script: str) -> subprocess.CompletedProcess:
     )
 
 
-def _venv_python(venv_dir: Path, vosk_importable: bool) -> Path:
-    """A stub venv interpreter: real python3, with `import vosk` forced."""
+def _venv_python(venv_dir: Path, importable: "set[str] | None" = None) -> Path:
+    """A stub venv interpreter: real python3, with chosen imports forced.
+
+    ``importable`` names the engine modules that succeed; every other engine
+    module fails. Anything else (the json probes) runs on the real interpreter.
+    """
+    modules = {"vosk", "whisper", "pywhispercpp.model"}
+    ok = importable if importable is not None else set()
     python = venv_dir / "bin" / "python"
     python.parent.mkdir(parents=True, exist_ok=True)
-    python.write_text(
-        "#!/bin/bash\n"
-        'if [[ "$*" == *"import vosk"* ]]; then\n'
-        f"    exit {0 if vosk_importable else 1}\n"
-        "fi\n"
-        'exec python3 "$@"\n'
+
+    branches = "".join(
+        'if [[ "$*" == *"import {module}"* ]]; then\n'
+        "    exit {code}\n"
+        "fi\n".format(module=module, code=0 if module in ok else 1)
+        for module in sorted(modules, key=len, reverse=True)
     )
+    python.write_text("#!/bin/bash\n" + branches + 'exec python3 "$@"\n')
     python.chmod(0o755)
     return python
+
+
+def _engine_of(config_file: Path) -> str:
+    return json.loads(config_file.read_text())["speech_recognition"]["engine"]
 
 
 def _config(config_dir: Path, engine: str) -> Path:
@@ -53,61 +64,93 @@ def _check(config_dir: Path, venv_dir: Path) -> subprocess.CompletedProcess:
     script = f"""
 CONFIG_DIR="{config_dir}"
 VENV_DIR="{venv_dir}"
-source <(sed -n '/^verify_configured_engine() {{$/,/^}}$/p' "{INSTALL_SH}")
+for fn in engine_import_module engine_pip_name venv_can_import set_configured_engine verify_configured_engine; do
+    source <(sed -n "/^$fn() {{$/,/^}}$/p" "{INSTALL_SH}")
+done
 verify_configured_engine
 echo "EXIT=$?"
 """
     return _run(script)
 
 
-def test_warns_when_configured_vosk_is_missing(tmp_path):
-    _config(tmp_path / "config", "vosk")
-    _venv_python(tmp_path / "venv", vosk_importable=False)
+def test_repairs_a_config_naming_an_uninstallable_engine(tmp_path):
+    """Don't leave a config the app cannot start with."""
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable={"pywhispercpp.model"})
+    config = _config(tmp_path / "config", "vosk")
 
-    result = _check(tmp_path / "config", tmp_path / "venv")
+    result = _check(tmp_path / "config", venv)
 
-    assert "not importable" in result.stdout
-    assert "pip install vosk" in result.stdout
-    assert "whisper_cpp" in result.stdout
-    assert "EXIT=0" in result.stdout  # a warning, not a failed install
-
-
-def test_silent_when_vosk_is_installed(tmp_path):
-    _config(tmp_path / "config", "vosk")
-    _venv_python(tmp_path / "venv", vosk_importable=True)
-
-    result = _check(tmp_path / "config", tmp_path / "venv")
-
-    assert "WARNING" not in result.stdout
     assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "whisper_cpp"
+    assert "Switched" in result.stdout
 
 
-def test_silent_for_other_engines(tmp_path):
-    _config(tmp_path / "config", "whisper_cpp")
-    _venv_python(tmp_path / "venv", vosk_importable=False)
+def test_repairs_a_leftover_whisper_engine_too(tmp_path):
+    """The check was vosk-only; whisper is an optional extra as well."""
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable={"pywhispercpp.model"})
+    config = _config(tmp_path / "config", "whisper")
 
-    result = _check(tmp_path / "config", tmp_path / "venv")
+    result = _check(tmp_path / "config", venv)
 
+    assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "whisper_cpp"
+
+
+def test_fails_when_no_engine_works(tmp_path):
+    """Nothing to fall back to: the install must not report success."""
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable=set())
+    config = _config(tmp_path / "config", "vosk")
+
+    result = _check(tmp_path / "config", venv)
+
+    assert "EXIT=1" in result.stdout
+    assert "cannot start" in result.stdout
+    # The config is left alone so the user can see what it asked for.
+    assert _engine_of(config) == "vosk"
+
+
+def test_leaves_a_working_engine_alone(tmp_path):
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable={"vosk"})
+    config = _config(tmp_path / "config", "vosk")
+
+    result = _check(tmp_path / "config", venv)
+
+    assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "vosk"
     assert "WARNING" not in result.stdout
+
+
+def test_ignores_engines_that_need_no_extra(tmp_path):
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable=set())
+    config = _config(tmp_path / "config", "remote_api")
+
+    result = _check(tmp_path / "config", venv)
+
+    assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "remote_api"
 
 
 def test_silent_without_a_config_file(tmp_path):
-    (tmp_path / "config").mkdir()
-    _venv_python(tmp_path / "venv", vosk_importable=False)
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable=set())
 
-    result = _check(tmp_path / "config", tmp_path / "venv")
+    result = _check(tmp_path / "config", venv)
 
-    assert "WARNING" not in result.stdout
     assert "EXIT=0" in result.stdout
 
 
-def test_unreadable_config_is_not_treated_as_vosk(tmp_path):
+def test_unreadable_config_is_not_treated_as_an_engine(tmp_path):
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable=set())
     config_dir = tmp_path / "config"
-    config_dir.mkdir()
+    config_dir.mkdir(parents=True)
     (config_dir / "config.json").write_text("{not json")
-    _venv_python(tmp_path / "venv", vosk_importable=False)
 
-    result = _check(config_dir, tmp_path / "venv")
+    result = _check(config_dir, venv)
 
-    assert "WARNING" not in result.stdout
     assert "EXIT=0" in result.stdout
