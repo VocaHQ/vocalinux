@@ -14,9 +14,14 @@ built without downloading a single model:
   blob (``lfs.oid``) plus the commit the listing was taken at. That commit is
   pinned too -- the download URLs use it instead of ``main``, so upstream
   retagging a file cannot turn every user's install into a checksum failure.
-* VOSK publishes ``model-list.json`` with an md5 per model. md5 is not a
-  choice we would make, but it is what Alphacephei signs its artifacts with,
-  and a hash pinned here still detects a model swapped on their server.
+* VOSK is different: ``model-list.json`` carries an md5 per model, but that is a
+  metadata field from the same host we are pinning against, so copying it pins
+  nothing an attacker could not change alongside the file. Those models are
+  downloaded once here and pinned by the sha256 of the bytes we actually
+  received; the published md5 is checked against them on the way through, so a
+  listing that disagrees with its own file is caught at generation time.
+  Downloading is incremental -- a model already pinned by sha256 is not fetched
+  again, so only new models cost bandwidth. Pass --refresh to redo all of them.
 
 The model names come from the package itself, so a model added to
 vosk_model_info.py or whispercpp_model_info.py is picked up on the next run and
@@ -27,7 +32,10 @@ Usage:  just model-checksums   (or: python scripts/generate-model-checksums.py)
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import json
+import re
 import sys
 import urllib.request
 from pathlib import Path
@@ -57,6 +65,46 @@ def _fetch_json(url: str):
     request = urllib.request.Request(url, headers={"User-Agent": "vocalinux-checksum-generator"})
     with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
         return json.load(response)
+
+
+def _existing_sha256_entries() -> dict:
+    """sha256 entries already in the manifest, so a rerun re-downloads nothing."""
+    if not MANIFEST.exists():
+        return {}
+
+    entries = {}
+    for line in MANIFEST.read_text(encoding="utf-8").splitlines():
+        if line.startswith("#") or not line.strip():
+            continue
+        fields = line.split()
+        if len(fields) == 4 and fields[1] == "sha256":
+            entries[fields[0]] = Entry(fields[0], "sha256", fields[2], int(fields[3]))
+    return entries
+
+
+def _download_and_hash(url: str, expected_md5: str) -> tuple[str, int]:
+    """Stream ``url``, returning the sha256 of the bytes and their length.
+
+    The published md5 is verified on the way through: it is not what we pin, but
+    a mismatch means the listing and the file disagree, which is worth stopping
+    for rather than pinning either one.
+    """
+    sha256, md5, size = hashlib.sha256(), hashlib.md5(), 0
+    request = urllib.request.Request(url, headers={"User-Agent": "vocalinux-checksum-generator"})
+    with urllib.request.urlopen(request, timeout=TIMEOUT) as response:  # noqa: S310
+        for chunk in iter(lambda: response.read(1024 * 1024), b""):
+            sha256.update(chunk)
+            md5.update(chunk)
+            size += len(chunk)
+
+    if expected_md5 and md5.hexdigest() != expected_md5:
+        raise SystemExit(
+            f"{url}\n"
+            f"  published md5: {expected_md5}\n"
+            f"  actual md5:    {md5.hexdigest()}\n"
+            "The listing does not describe the file it points at. Refusing to pin either."
+        )
+    return sha256.hexdigest(), size
 
 
 def _model_names() -> tuple[list[str], list[str]]:
@@ -102,26 +150,36 @@ def _whispercpp_entries(wanted: Iterable[str]) -> tuple[list[Entry], str]:
     return entries, revision
 
 
-def _vosk_entries(wanted: Iterable[str]) -> list[Entry]:
+def _vosk_entries(wanted: Iterable[str], refresh: bool) -> list[Entry]:
     payload = _fetch_json(VOSK_MODEL_LIST)
-    by_name = {
-        item["name"]: (item["md5"], int(item.get("size", 0))) for item in payload if item.get("md5")
-    }
+    by_name = {item["name"]: item for item in payload}
+    existing = {} if refresh else _existing_sha256_entries()
 
-    entries, missing = [], []
-    for name in wanted:
-        if name not in by_name:
-            missing.append(name)
-            continue
-        digest, size = by_name[name]
-        entries.append(Entry(f"{name}.zip", "md5", digest, size))
-
+    missing = [name for name in wanted if name not in by_name]
     if missing:
         raise SystemExit(
-            f"{VOSK_MODEL_LIST} publishes no md5 for: {', '.join(missing)}.\n"
+            f"{VOSK_MODEL_LIST} does not list: {', '.join(missing)}.\n"
             "Either the model was withdrawn upstream or vosk_model_info.py names "
             "a model Alphacephei never shipped."
         )
+
+    todo = [name for name in wanted if f"{name}.zip" not in existing]
+    if todo:
+        total = sum(int(by_name[name].get("size", 0)) for name in todo)
+        print(f"  downloading {len(todo)} VOSK model(s), {total / 1e9:.1f} GB, to hash the bytes")
+
+    entries = []
+    for name in wanted:
+        filename = f"{name}.zip"
+        if filename in existing:
+            entries.append(existing[filename])
+            continue
+
+        item = by_name[name]
+        print(f"    {name} ({int(item.get('size', 0)) / 1e6:.0f} MB)...", flush=True)
+        digest, size = _download_and_hash(item["url"], item.get("md5", ""))
+        entries.append(Entry(filename, "sha256", digest, size))
+
     return entries
 
 
@@ -143,6 +201,9 @@ def _render(entries: list[Entry], revision: str) -> str:
         "#",
         "# OpenAI Whisper (.pt) models are absent on purpose: their download URLs embed",
         "# the sha256 as a path segment, so the expected digest travels with the URL.",
+        "#",
+        "# VOSK digests are the sha256 of bytes this script downloaded, not the md5",
+        "# Alphacephei publishes; that md5 is only checked against them at that point.",
         "",
     ]
     for entry in entries:
@@ -153,14 +214,22 @@ def _render(entries: list[Entry], revision: str) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-download every VOSK model instead of reusing pinned sha256 entries",
+    )
+    args = parser.parse_args()
+
     whispercpp_files, vosk_names = _model_names()
     print(f"Resolving {len(whispercpp_files)} whisper.cpp and {len(vosk_names)} VOSK models...")
 
     whispercpp_entries, revision = _whispercpp_entries(whispercpp_files)
     print(f"  whisper.cpp: {len(whispercpp_entries)} sha256 digests at {HF_REPO}@{revision[:12]}")
 
-    vosk_entries = _vosk_entries(vosk_names)
-    print(f"  VOSK: {len(vosk_entries)} md5 digests")
+    vosk_entries = _vosk_entries(vosk_names, args.refresh)
+    print(f"  VOSK: {len(vosk_entries)} sha256 digests")
 
     MANIFEST.write_text(_render(whispercpp_entries + vosk_entries, revision), encoding="utf-8")
     print(f"Wrote {MANIFEST.relative_to(REPO_ROOT)}")
