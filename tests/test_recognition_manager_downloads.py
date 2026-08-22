@@ -7,11 +7,10 @@ Key focus areas:
 - IBus engine utility functions
 """
 
+import base64
 import os
 import sys
 import time
-import zipfile as REAL_ZIPFILE  # Capture real zipfile before any test mocks it
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -44,6 +43,28 @@ def _make_manager(engine="whisper_cpp", **kw):
                         "large": "vosk-model-en-us-0.22-lgraph",
                     }
                 return mgr
+
+
+# A real zip, embedded rather than built here: by the time this module is
+# imported, other test modules have already replaced zipfile/BytesIO in
+# sys.modules with mocks, so building one here yields empty bytes.
+VOSK_ZIP_BYTES = base64.b64decode(
+    "UEsDBBQAAAAIAGpxFl0m8NsAFgAAAIgTAAAkAAAAbW9kZWwtZW4tdXMtMC4yMi1sZ3JhcGgvYW0vbW9kZWwucGts"
+    "7cExAQAAAMKg2otvCj+gAAAAAIC3AVBLAQIUAxQAAAAIAGpxFl0m8NsAFgAAAIgTAAAkAAAAAAAAAAAAAACAAQAA"
+    "AABtb2RlbC1lbi11cy0wLjIyLWxncmFwaC9hbS9tb2RlbC5wa2xQSwUGAAAAAAEAAQBSAAAAWAAAAAAA"
+)
+
+
+def _fake_clock(step=0.2):
+    """Monotonic stand-in for time.time().
+
+    A fixed side_effect list runs out unpredictably: time.time is patched
+    globally, so logging consumes ticks too.
+    """
+    from itertools import count
+
+    counter = count()
+    return lambda: next(counter) * step
 
 
 @pytest.fixture
@@ -127,7 +148,7 @@ class TestDownloadWhispercppModel:
                 "vocalinux.speech_recognition.recognition_manager.get_model_path",
                 return_value=model_file,
             ):
-                with patch("time.time", side_effect=[0, 0.2, 0.4, 0.6]):
+                with patch("time.time", side_effect=_fake_clock()):
                     manager._download_whispercpp_model()
 
         mock_requests.get.assert_called_once()
@@ -301,6 +322,64 @@ class TestDownloadWhispercppModel:
         assert any("m " in s or "ETA" in s for s in progress_calls)
 
 
+class TestDownloadWhisperModel:
+    """OpenAI Whisper downloads run through the shared streaming helper.
+
+    Vocalinux fetches the checkpoint only to give the UI progress and a working
+    cancel; whisper.load_model() is what verifies it. Both were briefly lost when
+    the downloader was removed altogether, so they are pinned here.
+    """
+
+    @staticmethod
+    def _fake_stream(url, dest_path):
+        with open(dest_path, "wb") as handle:
+            handle.write(b"checkpoint")
+
+    def test_writes_the_name_whisper_expects(self, tmp_path):
+        manager = _make_manager(engine="whisper")
+        manager.model_size = "large"
+
+        with patch.object(manager, "_stream_model_download", side_effect=self._fake_stream):
+            manager._download_whisper_model(str(tmp_path))
+
+        # large is stored as large-v3.pt; "large.pt" here would mean load_model
+        # downloads the 2.9GB checkpoint a second time.
+        assert (tmp_path / "large-v3.pt").exists()
+        assert not (tmp_path / "large.pt").exists()
+
+    def test_reports_progress(self, tmp_path):
+        manager = _make_manager(engine="whisper")
+        progress_calls = []
+        manager._download_progress_callback = lambda f, s, st: progress_calls.append(st)
+
+        with patch.object(manager, "_stream_model_download", side_effect=self._fake_stream):
+            manager._download_whisper_model(str(tmp_path))
+
+        assert progress_calls, "the download dialog would sit at zero"
+
+    def test_cancel_propagates_and_cleans_up(self, tmp_path):
+        """Cancel raised by the stream helper must reach the caller."""
+        manager = _make_manager(engine="whisper")
+
+        def cancel(url, dest_path):
+            with open(dest_path, "wb") as handle:
+                handle.write(b"partial")
+            raise RuntimeError("Download cancelled")
+
+        # A leaked requests mock from another module makes
+        # `except requests.exceptions.RequestException` a TypeError, so pin a
+        # real exception class here as the other download tests do.
+        mock_requests = MagicMock()
+        mock_requests.exceptions.RequestException = Exception
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with patch.object(manager, "_stream_model_download", side_effect=cancel):
+                with pytest.raises(RuntimeError, match="cancelled"):
+                    manager._download_whisper_model(str(tmp_path))
+
+        assert not list(tmp_path.glob("*"))
+
+
 class TestDownloadVoskModel:
     """Test _download_vosk_model() with runtime import mocking."""
 
@@ -314,10 +393,7 @@ class TestDownloadVoskModel:
 
         manager._download_progress_callback = track_progress
 
-        zip_data = BytesIO()
-        with REAL_ZIPFILE.ZipFile(zip_data, "w") as zf:
-            zf.writestr("model-en-us-0.22-lgraph/am/model.pkl", "x" * 5000)
-        zip_bytes = zip_data.getvalue()
+        zip_bytes = VOSK_ZIP_BYTES
 
         mock_requests = MagicMock()
         mock_response = MagicMock()
@@ -330,7 +406,7 @@ class TestDownloadVoskModel:
             with patch(
                 "vocalinux.speech_recognition.recognition_manager.MODELS_DIR", str(tmp_path)
             ):
-                with patch("time.time", side_effect=[0, 0.2, 0.4, 0.6]):
+                with patch("time.time", side_effect=_fake_clock()):
                     manager._download_vosk_model()
 
         mock_requests.get.assert_called_once()

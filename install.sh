@@ -3753,6 +3753,36 @@ verify_openai_model_checksum() {
     verify_digest "$file" "sha256" "$expected" "$label"
 }
 
+# Download $1 to $2, preferring wget and falling back to curl. $3 labels the
+# model in error messages. Leaves no partial file behind on failure.
+download_model_file() {
+    local url="$1" dest="$2" label="$3"
+
+    if command_exists wget; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$dest" "$url" 2>&1; then
+            print_error "Failed to download $label with wget"
+            rm -f "$dest"
+            return 1
+        fi
+    elif command_exists curl; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+            print_error "Failed to download $label with curl"
+            rm -f "$dest"
+            return 1
+        fi
+    else
+        print_error "Neither wget nor curl is available to download $label"
+        return 1
+    fi
+
+    if [ ! -s "$dest" ]; then
+        print_error "Downloaded $label is empty or missing"
+        rm -f "$dest"
+        return 1
+    fi
+}
+
 # Print the digest pinned for manifest entry $1, or nothing when unpinned.
 pinned_digest_for() {
     [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
@@ -3808,26 +3838,7 @@ install_whisper_model() {
 
     local TEMP_FILE="$VOCALINUX_TMP_DIR/tiny.pt"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download Whisper model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download Whisper model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    fi
-
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
-        rm -f "$TEMP_FILE"
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "Whisper model"; then
         return 1
     fi
 
@@ -3908,26 +3919,7 @@ install_vosk_models() {
 
     local TEMP_ZIP="$VOCALINUX_TMP_DIR/$(basename $SMALL_MODEL_URL)"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_ZIP" "$SMALL_MODEL_URL" 2>&1; then
-            print_error "Failed to download VOSK model with wget"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_ZIP" "$SMALL_MODEL_URL"; then
-            print_error "Failed to download VOSK model with curl"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    fi
-
-    # Verify download
-    if [ ! -f "$TEMP_ZIP" ] || [ ! -s "$TEMP_ZIP" ]; then
-        print_error "Downloaded model file is empty or missing"
-        rm -f "$TEMP_ZIP"
+    if ! download_model_file "$SMALL_MODEL_URL" "$TEMP_ZIP" "VOSK model"; then
         return 1
     fi
 
@@ -4030,26 +4022,7 @@ install_whispercpp_model() {
 
     local TEMP_FILE="$VOCALINUX_TMP_DIR/ggml-tiny.bin"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download whisper.cpp model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download whisper.cpp model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    fi
-
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
-        rm -f "$TEMP_FILE"
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "whisper.cpp model"; then
         return 1
     fi
 

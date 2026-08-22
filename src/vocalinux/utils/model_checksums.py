@@ -12,9 +12,10 @@ Two sources of truth, no network lookup in either case:
   whisper.cpp (sha256, from the pinned Hugging Face revision) and VOSK (md5, the
   only hash Alphacephei publishes). Regenerate it with
   ``scripts/generate-model-checksums.py``.
-* OpenAI Whisper ``.pt`` URLs carry their own sha256 as a path segment, so
-  :func:`sha256_from_openai_url` reads the expected digest off the URL and no
-  manifest entry is needed.
+OpenAI Whisper ``.pt`` checkpoints are absent from both: ``openai-whisper``
+downloads and verifies those itself, against the sha256 it reads out of the URL
+path, so Vocalinux neither fetches nor hashes them. ``install.sh`` does preinstall
+the tiny checkpoint, and verifies it there with its own bash implementation.
 
 Verification fails closed: a file with no pinned digest is an error, not a
 warning. ``tests/test_model_checksums.py`` asserts the manifest covers every
@@ -37,10 +38,6 @@ _MANIFEST_NAME = "model_checksums.txt"
 
 # Hash of a 2GB model read in one go would sit in RAM; stream it instead.
 _CHUNK_SIZE = 1024 * 1024
-
-# OpenAI publishes each Whisper checkpoint under a path segment that *is* its
-# sha256, e.g. .../models/65147644...c22b9/tiny.pt
-_OPENAI_URL_DIGEST = re.compile(r"/([0-9a-f]{64})/[^/]+\.pt(?:\?|$)")
 
 _REVISION_HEADER = re.compile(r"^#\s*whispercpp-revision:\s*([0-9a-f]{7,40})\s*$")
 
@@ -199,20 +196,3 @@ def verify_model_file(path: str, filename: Optional[str] = None) -> None:
             f"{_MANIFEST_NAME} with scripts/generate-model-checksums.py."
         )
     verify_file(path, expected, description=key)
-
-
-def sha256_from_openai_url(url: str) -> Optional[str]:
-    """Extract the sha256 OpenAI embeds in a Whisper checkpoint URL."""
-    match = _OPENAI_URL_DIGEST.search(url)
-    return match.group(1) if match else None
-
-
-def verify_openai_model(path: str, url: str, *, description: str = "") -> None:
-    """Verify an OpenAI Whisper checkpoint against the digest in its own URL."""
-    digest = sha256_from_openai_url(url)
-    if digest is None:
-        raise ChecksumError(
-            f"{url} carries no sha256 path segment, so the download cannot be "
-            "verified. Refusing to install an unverified model."
-        )
-    verify_file(path, Expected("sha256", digest, 0), description=description or url)

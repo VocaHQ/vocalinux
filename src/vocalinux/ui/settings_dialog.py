@@ -50,6 +50,7 @@ from ..utils.vosk_model_info import (  # noqa: E402
     list_downloaded_vosk_models,
     vosk_model_dirname,
 )
+from ..utils.whisper_model_info import whisper_model_file  # noqa: E402
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
@@ -841,7 +842,7 @@ def _whisper_model_files(model_name: str) -> list[str]:
     if model_name not in WHISPER_MODEL_INFO:
         return []
 
-    filename = f"{model_name}.pt"
+    filename = whisper_model_file(model_name)
     candidates = [
         os.path.join(_get_whisper_cache_dir(), filename),
         os.path.join(os.path.expanduser("~/.cache/whisper"), filename),
@@ -867,14 +868,16 @@ def _whisper_model_files(model_name: str) -> list[str]:
 
 
 def _is_whisper_model_downloaded(model_name: str) -> bool:
-    """Check if a Whisper model is downloaded."""
-    cache_dir = _get_whisper_cache_dir()
-    model_file = os.path.join(cache_dir, f"{model_name}.pt")
-    if os.path.exists(model_file):
-        return True
-    # Also check default whisper cache
-    default_cache = os.path.expanduser("~/.cache/whisper")
-    return os.path.exists(os.path.join(default_cache, f"{model_name}.pt"))
+    """Check if a Whisper model is downloaded.
+
+    Only the directory the engine passes to ``whisper.load_model`` as
+    ``download_root`` counts. A copy in the default ~/.cache/whisper is not used
+    by the engine, so reporting it as downloaded would promise the user a model
+    that selecting it then spends up to 2.9GB fetching. ``_whisper_model_files``
+    still finds those stray copies, so deleting can clean them up.
+    """
+    model_file = os.path.join(_get_whisper_cache_dir(), whisper_model_file(model_name))
+    return os.path.exists(model_file)
 
 
 def _list_downloaded_whisper_models() -> list[str]:
