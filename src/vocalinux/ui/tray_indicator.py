@@ -8,6 +8,8 @@ recognition process and displaying its status.
 import logging
 import os
 import signal
+import threading
+import time
 from typing import Callable, Optional
 
 import gi
@@ -40,10 +42,11 @@ from ..suspend_handler import SuspendHandler
 from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
+from . import notifications
 from .config_manager import ConfigManager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
-from .settings_dialog import SettingsDialog
+from .settings_dialog import SettingsDialog, recommended_model_for_engine
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,25 @@ APP_ID = FLATPAK_ID or "vocalinux"
 # Initialize resource manager
 _resource_manager = ResourceManager()
 ICON_DIR = _resource_manager.icons_dir
+
+# How often a running model download refreshes its notification.
+_DOWNLOAD_NOTIFY_INTERVAL_SECONDS = 5.0
+
+
+def _idle_once(func, *args):
+    """Schedule func on the GTK main loop for exactly one run.
+
+    GLib.idle_add repeats a callback for as long as it returns a truthy value,
+    and the notification helpers return handles and success flags, so they must
+    not be handed to idle_add directly.
+    """
+
+    def _call():
+        func(*args)
+        return False
+
+    GLib.idle_add(_call)
+
 
 # Bundled icon file names (paths under ICON_DIR).
 DEFAULT_ICON = "vocalinux-microphone-off"
@@ -139,6 +161,11 @@ class TrayIndicator:
 
         # Register for speech recognition state changes
         self.speech_engine.register_state_callback(self._on_recognition_state_changed)
+
+        # Offer the download instead of only telling the user a model is missing
+        self._model_download_active = False
+        if hasattr(self.speech_engine, "set_model_missing_handler"):
+            self.speech_engine.set_model_missing_handler(self._offer_recommended_model)
 
         # Initialize the icon files and validate resources
         self._init_icons()
@@ -507,6 +534,147 @@ class TrayIndicator:
 
         # Update the UI in the GTK main thread
         GLib.idle_add(self._update_ui, state)
+
+    def _offer_recommended_model(self, engine: str) -> bool:
+        """Offer the recommended model when dictation finds none installed.
+
+        Args:
+            engine: The engine that has no model on disk.
+
+        Returns:
+            True when the user was told what to do, False to let the caller
+            fall back to its own notification.
+        """
+        if self._model_download_active:
+            return True
+
+        language = self.config_manager.get_str("speech_recognition", "language", "auto")
+        try:
+            recommendation = recommended_model_for_engine(engine, language)
+        except Exception as e:
+            logger.error(f"Could not work out a recommended model for {engine}: {e}")
+            return False
+
+        if recommendation is None:
+            # Remote API transcribes server-side; there is nothing to download.
+            return False
+
+        # Dictation can be triggered from the shortcut thread, so hand the
+        # notification to the main loop that owns the UI.
+        GLib.idle_add(self._show_model_offer, engine, recommendation)
+        return True
+
+    def _show_model_offer(self, engine: str, recommendation) -> bool:
+        """Show the offer notification. Runs on the main loop."""
+        action = None
+        if notifications.supports_actions():
+            action = (
+                f"Download {recommendation.display_name} ({recommendation.size_label})",
+                lambda: self._download_recommended_model(engine, recommendation),
+            )
+
+        if action is not None:
+            body = (
+                f"{recommendation.display_name} ({recommendation.size_label}) is recommended "
+                "for your system. Download it from this notification, or pick another one "
+                "in Settings."
+            )
+        else:
+            # No action button on this server, so pointing at one would strand
+            # the user; send them where they can actually do something.
+            body = (
+                f"{recommendation.display_name} ({recommendation.size_label}) is recommended "
+                "for your system. Open Settings to download a speech recognition model."
+            )
+
+        notifications.notify("No Speech Model", body, "dialog-warning", action=action)
+        return False
+
+    def _download_recommended_model(self, engine: str, recommendation) -> None:
+        """Start downloading the offered model without blocking the main loop.
+
+        Runs on the main loop: libnotify dispatches the action callback there.
+        """
+        if self._model_download_active:
+            return
+        self._model_download_active = True
+        # libnotify and GObject are not thread-safe, so the notification is
+        # created here and only its handle travels to the worker, which routes
+        # every later update back through _idle_once.
+        progress = notifications.notify(
+            "Downloading speech model",
+            f"{recommendation.display_name} ({recommendation.size_label}) — starting...",
+            "folder-download",
+        )
+        threading.Thread(
+            target=self._run_recommended_model_download,
+            args=(engine, recommendation, progress),
+            daemon=True,
+            name="model-download",
+        ).start()
+
+    def _run_recommended_model_download(self, engine: str, recommendation, progress) -> None:
+        """Download the offered model, then report how it went."""
+        last_notified = 0.0
+
+        def on_progress(fraction, speed_mbps, status):
+            nonlocal last_notified
+            now = time.monotonic()
+            if now - last_notified < _DOWNLOAD_NOTIFY_INTERVAL_SECONDS:
+                return
+            last_notified = now
+            _idle_once(
+                notifications.update,
+                progress,
+                "Downloading speech model",
+                f"{recommendation.display_name}: {status}",
+                "folder-download",
+            )
+
+        try:
+            self.speech_engine.set_download_progress_callback(on_progress)
+            self.speech_engine.reconfigure(
+                engine=engine,
+                model_size=recommendation.model_id,
+                force_download=True,
+                # reconfigure() only re-initializes when engine, model or
+                # language change, and force_download is read during that
+                # re-init. The recommendation is often what is already
+                # configured (first run is whisper_cpp + tiny, and tiny is what
+                # a CPU-only machine is recommended), so without this the call
+                # is a no-op that downloads nothing.
+                force_reinit=True,
+            )
+            if not self.speech_engine.model_ready:
+                raise RuntimeError("the engine did not load the model after downloading it")
+
+            # Persist only now: the model is on disk and the engine loaded it.
+            self.config_manager.set_model_size_for_engine(engine, recommendation.model_id)
+            self.config_manager.save_config()
+
+            shortcut = self.config_manager.get_str(
+                "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
+            )
+            _idle_once(notifications.close, progress)
+            _idle_once(
+                notifications.notify,
+                "Speech model ready",
+                f"{recommendation.display_name} is installed. Press {shortcut} to dictate.",
+                "emblem-ok",
+            )
+        except Exception as e:
+            logger.error(f"Could not download {recommendation.model_id}: {e}", exc_info=True)
+            _idle_once(notifications.close, progress)
+            _idle_once(
+                notifications.notify,
+                "Model download failed",
+                f"{recommendation.display_name} was not installed: {e}. "
+                "Check your connection and try again from Settings.",
+                "dialog-error",
+            )
+        finally:
+            self.speech_engine.set_download_progress_callback(None)
+            self._model_download_active = False
 
     def _update_ui(self, state: RecognitionState):
         """

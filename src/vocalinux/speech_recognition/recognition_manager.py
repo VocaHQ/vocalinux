@@ -961,6 +961,8 @@ class SpeechRecognitionManager:
 
         # Download progress tracking
         self._download_progress_callback: Optional[Callable[[float, float, str], None]] = None
+        # Set by the UI layer to offer the download when a model is missing
+        self._model_missing_handler: Optional[Callable[[str], bool]] = None
         self._download_cancelled = False
         self._defer_download = defer_download
         self._model_initialized = False
@@ -2095,6 +2097,30 @@ class SpeechRecognitionManager:
         """
         self._download_progress_callback = callback
 
+    def set_model_missing_handler(self, handler: Optional[Callable[[str], bool]]):
+        """
+        Set a handler for dictation attempted without a model on disk.
+
+        The UI layer registers one to offer the download directly; without a
+        handler, or when it declines, a plain notification is shown instead.
+
+        Args:
+            handler: Function(engine) -> True if it took care of the situation,
+                     or None to clear
+        """
+        self._model_missing_handler = handler
+
+    def _notify_model_missing(self) -> bool:
+        """Let the registered handler take over the missing model, if it can."""
+        handler = self._model_missing_handler
+        if handler is None:
+            return False
+        try:
+            return bool(handler(self.engine))
+        except Exception as e:
+            logger.error(f"Model-missing handler failed: {e}", exc_info=True)
+            return False
+
     def cancel_download(self):
         """Request cancellation of the current download."""
         self._download_cancelled = True
@@ -2513,12 +2539,13 @@ class SpeechRecognitionManager:
                     "Please download via Settings."
                 )
                 play_error_sound()
-                _show_notification(
-                    "No Speech Model",
-                    "Please open Settings and download a speech recognition model "
-                    "to use dictation.",
-                    "dialog-warning",
-                )
+                if not self._notify_model_missing():
+                    _show_notification(
+                        "No Speech Model",
+                        "Please open Settings and download a speech recognition model "
+                        "to use dictation.",
+                        "dialog-warning",
+                    )
                 return False
 
         logger.info("Starting speech recognition")
@@ -3102,6 +3129,7 @@ class SpeechRecognitionManager:
         audio_device_index: Optional[int] = None,
         audio_device_name: Optional[str] = None,
         force_download: bool = True,
+        force_reinit: bool = False,
         **kwargs,  # Allow for future expansion
     ):
         """
@@ -3116,6 +3144,9 @@ class SpeechRecognitionManager:
             audio_device_index: Audio input device index (None for default, -1 to clear).
             audio_device_name: Audio device name for stable re-resolution.
             force_download: If True, download missing models (default: True for UI-triggered reconfigures).
+            force_reinit: Re-initialize even when nothing changed. force_download
+                only takes effect during a re-init, so a caller asking for the
+                model it is already configured for needs this to fetch it.
         """
         logger.info(
             f"Reconfiguring speech engine. New settings: engine={engine}, model_size={model_size}, "
@@ -3123,7 +3154,7 @@ class SpeechRecognitionManager:
             f"audio_device={audio_device_index}, audio_device_name={audio_device_name}"
         )
 
-        restart_needed = False
+        restart_needed = force_reinit
         old_engine = self.engine
         if engine is not None and engine != self.engine:
             self.engine = engine
