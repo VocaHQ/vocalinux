@@ -14,6 +14,7 @@ const SETTINGS_SIZE = { width: 2128, height: 1698 } as const;
 const productShots: Screenshot[] = [
   {
     src: "/screenshots/00-transcription.png",
+    srcDark: "/screenshots/dark/00-transcription.png",
     alt: "Vocalinux dictating into a text editor with the tray menu open",
     title: "Dictation in action",
     description:
@@ -23,6 +24,7 @@ const productShots: Screenshot[] = [
   },
   {
     src: "/screenshots/02-system-tray.png",
+    srcDark: "/screenshots/dark/02-system-tray.png",
     alt: "Vocalinux system tray menu with voice typing controls",
     title: "System tray",
     description: "Tray menu for start/stop, settings, logs, and about.",
@@ -31,6 +33,7 @@ const productShots: Screenshot[] = [
   },
   {
     src: "/screenshots/03-log-viewer.png",
+    srcDark: "/screenshots/dark/03-log-viewer.png",
     alt: "Vocalinux log viewer dialog",
     title: "Log viewer",
     description: "Inspect runtime logs when diagnosing dictation issues.",
@@ -41,6 +44,7 @@ const productShots: Screenshot[] = [
 const settingsShots: Screenshot[] = [
   {
     src: "/screenshots/settings-speech-engine.png",
+    srcDark: "/screenshots/dark/settings-speech-engine.png",
     alt: "Vocalinux Speech Model settings with sidebar navigation",
     title: "Speech Model",
     description:
@@ -49,6 +53,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/settings-recognition.png",
+    srcDark: "/screenshots/dark/settings-recognition.png",
     alt: "Vocalinux Dictation settings page",
     title: "Dictation",
     description: "Shortcuts, listening controls, and dictation output options.",
@@ -56,6 +61,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/settings-audio.png",
+    srcDark: "/screenshots/dark/settings-audio.png",
     alt: "Vocalinux Audio settings page",
     title: "Audio",
     description: "Input device, feedback sounds, and capture options.",
@@ -63,6 +69,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/settings-performance.png",
+    srcDark: "/screenshots/dark/settings-performance.png",
     alt: "Vocalinux Performance settings page",
     title: "Performance",
     description: "Auto-pause, model keep-alive, and GPU device selection.",
@@ -70,6 +77,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/settings-general.png",
+    srcDark: "/screenshots/dark/settings-general.png",
     alt: "Vocalinux Application settings page",
     title: "Application",
     description: "Autostart, start minimized, and everyday defaults.",
@@ -77,6 +85,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/settings-advanced.png",
+    srcDark: "/screenshots/dark/settings-advanced.png",
     alt: "Vocalinux Advanced settings with whisper.cpp decoding controls",
     title: "Advanced",
     description: "Power-user decoding controls and Remote Server options.",
@@ -84,6 +93,7 @@ const settingsShots: Screenshot[] = [
   },
   {
     src: "/screenshots/05-about-view.png",
+    srcDark: "/screenshots/dark/05-about-view.png",
     alt: "Vocalinux About settings page with update checker",
     title: "About",
     description:
@@ -95,7 +105,7 @@ const settingsShots: Screenshot[] = [
 export const metadata: Metadata = buildPageMetadata({
   title: "Vocalinux Screenshots | Linux Voice Dictation UI",
   description:
-    "See Vocalinux in action: system tray, log viewer, and settings pages for speech model, dictation, audio, performance, application, advanced options, and about/updates.",
+    "See Vocalinux in action: system tray, log viewer, and settings pages for speech model, dictation, audio, performance, application, advanced options, and about/updates. Flip between light and dark app shots.",
   path: "/screenshots",
   keywords: [
     "Vocalinux screenshots",
@@ -147,8 +157,8 @@ export default function ScreenshotsPage() {
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
           A look at offline voice dictation on Linux: tray controls, debugging
-          tools, and the searchable sidebar settings UI from v0.15. Click any
-          image to expand it and browse the gallery.
+          tools, and the searchable sidebar settings UI from v0.15. Flip light
+          and dark app shots. Click any image to expand it.
         </p>
       </section>
 

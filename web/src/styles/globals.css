@@ -1465,6 +1465,108 @@
     box-shadow: var(--shadow-paper);
   }
 
+  .shot-theme-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: 0 0 2.2rem;
+    padding: 0.95rem 1.1rem;
+    border: 1px solid var(--ink);
+    border-radius: var(--radius-sm);
+    background: var(--paper-bright);
+    box-shadow: 0.28rem 0.28rem 0 var(--paper-deep);
+  }
+
+  .shot-theme-kicker {
+    margin: 0;
+    color: var(--brand-dark);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .shot-theme-copy {
+    margin: 0.25rem 0 0;
+    color: var(--muted-copy);
+    font-size: 0.92rem;
+  }
+
+  .shot-switch {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-width: 11rem;
+    padding: 0.2rem;
+    border: 1px solid var(--ink);
+    border-radius: 999px;
+    background: var(--paper-deep);
+  }
+
+  .shot-switch:has(:focus-visible) {
+    outline: 3px solid var(--sun);
+    outline-offset: 3px;
+  }
+
+  .shot-switch-knob {
+    position: absolute;
+    top: 0.2rem;
+    bottom: 0.2rem;
+    left: 0.2rem;
+    width: calc(50% - 0.2rem);
+    border-radius: 999px;
+    background: var(--brand);
+    transition: left 220ms var(--ease);
+  }
+
+  .shot-switch[data-mode="dark"] .shot-switch-knob {
+    left: calc(50%);
+  }
+
+  .shot-switch button {
+    position: relative;
+    z-index: 1;
+    min-height: 2.5rem;
+    padding: 0 0.8rem;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted-copy);
+    font-family: var(--font-body);
+    font-size: 0.84rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .shot-switch button:focus-visible {
+    outline: none;
+  }
+
+  .shot-switch button[aria-pressed="true"] {
+    color: var(--paper-bright);
+  }
+
+  .shot-pair {
+    display: grid;
+    width: 100%;
+  }
+
+  .shot-pair img {
+    grid-area: 1 / 1;
+    opacity: 0;
+    transition: opacity 280ms var(--ease);
+  }
+
+  .shot-pair img.is-on {
+    opacity: 1;
+  }
+
+  .shot-pair img:not(.is-on) {
+    pointer-events: none;
+  }
+
   .gallery-card figcaption {
     padding: 1rem 1.1rem 1.15rem;
     border-top: 1px solid var(--line);

@@ -64,6 +64,7 @@ describe("Screenshots page and assets", () => {
       const darkPath = path.join(darkScreenshotsDir, file);
       expect(fs.existsSync(darkPath)).toBe(true);
       expect(fs.statSync(darkPath).size).toBeGreaterThan(1000);
+      expect(pageSource).toContain(`/screenshots/dark/${file}`);
     }
     expect(fs.existsSync(path.join(publicScreenshotsDir, "settings-shortcuts.png"))).toBe(
       false,

@@ -42,7 +42,10 @@ Vocalinux.com is a Voca product site. It should feel related to VocaHQ, VocaMac,
 The Linux-specific job is to show local desktop dictation with distribution and display-server truth. Pair a GTK-style window (not macOS traffic lights) with a terminal. Explain the user outcome before the install command.
 
 Child pages share the same shell, tokens, and paper canvas. Paper is the only
-marketing theme. There is no site-wide dark mode.
+marketing theme. There is no site-wide dark mode. The screenshots gallery is
+the exception: a page-local Light/Dark flip shows the captured GTK shots in
+both appearances, defaulting to `prefers-color-scheme` until the visitor
+overrides it for that tab.
 
 ## Colors
 
@@ -133,6 +136,11 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 - Sticky paper bar, mark + name, 3–5 text links, one Get Vocalinux action
 - Real mobile disclosure with `aria-expanded`
 - Resource-rich footer, not a second mega-menu in the header
+
+### Screenshot gallery
+- Paper chrome stays paper; do not put `html.dark` on this page
+- Light/Dark is a sliding switch over stacked light and dark PNG pairs
+- Default from the browser color scheme; `sessionStorage` holds a tab override
 
 ## Do's and don'ts
 

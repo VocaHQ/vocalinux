@@ -9,8 +9,10 @@ import {
   Settings,
   X,
 } from "lucide-react";
+
 export type Screenshot = {
   src: string;
+  srcDark?: string;
   alt: string;
   title: string;
   description: string;
@@ -18,16 +20,88 @@ export type Screenshot = {
   height: number;
 };
 
+type ShotTheme = "light" | "dark";
+
+const THEME_STORAGE_KEY = "vocalinux-shot-appearance";
+
+export function darkScreenshotPath(src: string): string {
+  if (src.includes("/dark/")) return src;
+  return src.replace("/screenshots/", "/screenshots/dark/");
+}
+
+function shotDarkSrc(shot: Screenshot): string {
+  return shot.srcDark ?? darkScreenshotPath(shot.src);
+}
+
+function systemShotTheme(): ShotTheme {
+  if (typeof window === "undefined") return "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
+}
+
+function readStoredTheme(): ShotTheme | null {
+  try {
+    const stored = sessionStorage.getItem(THEME_STORAGE_KEY);
+    if (stored === "light" || stored === "dark") return stored;
+  } catch {
+    /* private mode */
+  }
+  return null;
+}
+
 type ScreenshotGalleryProps = {
   productShots: Screenshot[];
   settingsShots: Screenshot[];
 };
 
+function ShotPair({
+  shot,
+  theme,
+  className,
+  loading = "lazy",
+}: {
+  shot: Screenshot;
+  theme: ShotTheme;
+  className?: string;
+  loading?: "lazy" | "eager";
+}) {
+  const darkSrc = shotDarkSrc(shot);
+  return (
+    <div className="shot-pair">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={shot.src}
+        alt={theme === "light" ? shot.alt : ""}
+        width={shot.width}
+        height={shot.height}
+        className={`${className ?? ""} ${theme === "light" ? "is-on" : ""}`.trim()}
+        loading={loading}
+        decoding="async"
+        aria-hidden={theme !== "light"}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={darkSrc}
+        alt={theme === "dark" ? shot.alt : ""}
+        width={shot.width}
+        height={shot.height}
+        className={`${className ?? ""} ${theme === "dark" ? "is-on" : ""}`.trim()}
+        loading={loading}
+        decoding="async"
+        aria-hidden={theme !== "dark"}
+      />
+    </div>
+  );
+}
+
 function ScreenshotCard({
   shot,
+  theme,
   onOpen,
 }: {
   shot: Screenshot;
+  theme: ShotTheme;
   onOpen: () => void;
 }) {
   return (
@@ -38,13 +112,10 @@ function ScreenshotCard({
         className="group relative flex min-h-0 w-full flex-1 cursor-zoom-in items-center justify-center bg-muted p-3 text-left"
         aria-label={`View larger: ${shot.title}`}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={shot.src}
-          alt={shot.alt}
-          width={shot.width}
-          height={shot.height}
-          className="mx-auto h-auto max-h-64 w-full rounded-lg object-contain transition-transform duration-200 group-hover:scale-[1.02]"
+        <ShotPair
+          shot={shot}
+          theme={theme}
+          className="mx-auto h-auto max-h-64 w-full rounded-lg object-contain"
         />
         <span className="pointer-events-none absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-[color:var(--dark-ink)] px-2.5 py-1 text-xs font-medium text-[color:var(--paper-bright)] opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
           <Expand className="h-3.5 w-3.5" />
@@ -62,6 +133,7 @@ function ScreenshotCard({
 function Lightbox({
   shots,
   index,
+  theme,
   onClose,
   onPrev,
   onNext,
@@ -69,6 +141,7 @@ function Lightbox({
 }: {
   shots: Screenshot[];
   index: number;
+  theme: ShotTheme;
   onClose: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -151,14 +224,11 @@ function Lightbox({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="relative flex max-h-[min(80vh,900px)] w-full items-center justify-center">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={shot.src}
-            alt={shot.alt}
-            width={shot.width}
-            height={shot.height}
-            className="max-h-[min(80vh,900px)] w-auto max-w-full rounded-lg object-contain shadow-2xl"
+          <ShotPair
+            shot={shot}
+            theme={theme}
             loading="eager"
+            className="max-h-[min(80vh,900px)] w-auto max-w-full rounded-lg object-contain shadow-2xl"
           />
         </div>
         <div className="max-w-2xl px-2 text-center text-white">
@@ -177,13 +247,84 @@ function Lightbox({
   );
 }
 
+function AppearanceSwitch({
+  theme,
+  onChange,
+}: {
+  theme: ShotTheme;
+  onChange: (theme: ShotTheme) => void;
+}) {
+  return (
+    <div className="shot-theme-bar">
+      <div>
+        <p className="shot-theme-kicker">App appearance</p>
+        <p className="shot-theme-copy">
+          Flip the captured GTK theme. Starts from your system setting.
+        </p>
+      </div>
+      <div
+        className="shot-switch"
+        data-mode={theme}
+        role="group"
+        aria-label="App appearance"
+      >
+        <span className="shot-switch-knob" aria-hidden="true" />
+        <button
+          type="button"
+          aria-pressed={theme === "light"}
+          onClick={() => onChange("light")}
+        >
+          Light
+        </button>
+        <button
+          type="button"
+          aria-pressed={theme === "dark"}
+          onClick={() => onChange("dark")}
+        >
+          Dark
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function ScreenshotGallery({
   productShots,
   settingsShots,
 }: ScreenshotGalleryProps) {
   const allShots = [...productShots, ...settingsShots];
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [theme, setTheme] = useState<ShotTheme>("light");
+  const [userOverride, setUserOverride] = useState(false);
   const titleId = useId();
+
+  useEffect(() => {
+    const stored = readStoredTheme();
+    if (stored) {
+      setTheme(stored);
+      setUserOverride(true);
+      return;
+    }
+    setTheme(systemShotTheme());
+  }, []);
+
+  useEffect(() => {
+    if (userOverride) return undefined;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => setTheme(media.matches ? "dark" : "light");
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [userOverride]);
+
+  const chooseTheme = useCallback((next: ShotTheme) => {
+    setTheme(next);
+    setUserOverride(true);
+    try {
+      sessionStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      /* private mode */
+    }
+  }, []);
 
   const openAt = useCallback((index: number) => {
     setActiveIndex(index);
@@ -213,6 +354,8 @@ export function ScreenshotGallery({
 
   return (
     <>
+      <AppearanceSwitch theme={theme} onChange={chooseTheme} />
+
       <section className="mb-14">
         <div className="mb-6 flex items-center gap-2">
           <ImageIcon className="h-5 w-5 text-primary" />
@@ -223,6 +366,7 @@ export function ScreenshotGallery({
             <ScreenshotCard
               key={shot.src}
               shot={shot}
+              theme={theme}
               onOpen={() => openAt(index)}
             />
           ))}
@@ -236,14 +380,14 @@ export function ScreenshotGallery({
         </div>
         <p className="mb-6 max-w-3xl text-muted-foreground">
           Every sidebar settings page, from speech model selection through
-          advanced whisper.cpp tuning. Click any shot to expand it — images
-          follow the site light/dark theme.
+          advanced whisper.cpp tuning. Click any shot to expand it.
         </p>
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {settingsShots.map((shot, index) => (
             <ScreenshotCard
               key={shot.src}
               shot={shot}
+              theme={theme}
               onOpen={() => openAt(productShots.length + index)}
             />
           ))}
@@ -254,6 +398,7 @@ export function ScreenshotGallery({
         <Lightbox
           shots={allShots}
           index={activeIndex}
+          theme={theme}
           onClose={close}
           onPrev={showPrev}
           onNext={showNext}
