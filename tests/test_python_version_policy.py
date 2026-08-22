@@ -120,3 +120,18 @@ def test_docs_and_site_do_not_advertise_an_older_floor():
     assert not offenders, "user-facing files promise an unsupported Python:\n" + "\n".join(
         offenders
     )
+
+
+def test_installer_aborts_on_an_unsupported_python():
+    """The floor has to stop the install, not just warn.
+
+    It used to print "Continuing with unsupported Python version" and build the
+    venv anyway, which made the floor real only in pyproject.toml.
+    """
+    source = INSTALL_SH.read_text(encoding="utf-8")
+    match = re.search(r"if ! check_python_version; then\n(.*?)\nfi", source, re.DOTALL)
+    assert match, "the check_python_version call site moved"
+
+    body = match.group(1)
+    assert "exit " in body, f"unsupported Python does not abort the install:\n{body}"
+    assert "Continuing with unsupported" not in body
