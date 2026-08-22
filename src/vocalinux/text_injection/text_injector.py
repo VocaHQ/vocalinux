@@ -1678,6 +1678,74 @@ class TextInjector:
             logger.warning(f"Keyboard shortcuts not supported with {self.wayland_tool}")
             return False
 
+    def press_backspace(self, count: int) -> bool:
+        """Send ``count`` real BackSpace key events.
+
+        Deleting text cannot be done by injecting U+0008 characters: ydotool has
+        no keymap entry for it (so it types nothing) and IBus ``commit_text()``
+        commits it as a literal control character. Only actual key events delete.
+
+        Args:
+            count: Number of backspaces to send.
+
+        Returns:
+            True if the presses were delivered, False otherwise.
+        """
+        if count <= 0:
+            return True
+
+        logger.debug(f"Sending {count} backspace key event(s)")
+
+        if (
+            self.environment == DesktopEnvironment.X11
+            or self.environment == DesktopEnvironment.WAYLAND_XDOTOOL
+            or self.environment == DesktopEnvironment.X11_IBUS
+        ):
+            env = os.environ.copy()
+            if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
+                env["GDK_BACKEND"] = "x11"
+                env["QT_QPA_PLATFORM"] = "xcb"
+                if not env.get("DISPLAY"):
+                    env["DISPLAY"] = ":0"
+            try:
+                subprocess.run(
+                    ["xdotool", "key", "--clearmodifiers", "--repeat", str(count), "BackSpace"],
+                    env=env,
+                    check=True,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                return True
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                logger.error(f"xdotool backspace error: {e}")
+                return False
+
+        # Wayland (including WAYLAND_IBUS -- IBus cannot send key events).
+        tool = getattr(self, "wayland_tool", None)
+        if not tool:
+            tool = (
+                "wtype"
+                if shutil.which("wtype")
+                else ("ydotool" if shutil.which("ydotool") else None)
+            )
+        if not tool:
+            logger.error("No virtual-keyboard tool available to send backspaces")
+            return False
+
+        if tool == "wtype":
+            cmd = ["wtype"]
+            for _ in range(count):
+                cmd += ["-k", "BackSpace"]
+        else:
+            cmd = ["ydotool", "key"] + ["14:1", "14:0"] * count
+
+        try:
+            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            logger.error(f"{tool} backspace error: {e}")
+            return False
+
     def _log_current_window_info(self):
         """Log information about the current window/application for debugging."""
         try:

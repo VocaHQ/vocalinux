@@ -98,9 +98,10 @@ class ActionHandler:
             logger.debug("No text to delete")
             return True
 
-        # Send backspace keys for each character in the last injected text
-        backspaces = "\b" * len(self.last_injected_text)
-        success = self.text_injector.inject_text(backspaces)
+        # Send real BackSpace key events, one per character. Injecting U+0008 as
+        # text does nothing: ydotool has no keymap entry for it and IBus commits
+        # it as a literal control character.
+        success = self.text_injector.press_backspace(len(self.last_injected_text))
 
         if success:
             logger.debug(f"Deleted {len(self.last_injected_text)} characters")
