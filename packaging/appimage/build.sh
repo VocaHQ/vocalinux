@@ -109,8 +109,12 @@ rm -rf "$APPDIR/usr/lib/python${PY_VER}/site-packages"
 echo "== Installing Vocalinux + runtime deps into the bundle =="
 # --ignore-installed: pip otherwise treats the builder env's packages as
 # satisfying deps and skips copying vosk/pywhispercpp/etc. into AppDir.
+# pywhispercpp is named explicitly so this resolves to the pinned release rather
+# than the newest inside the wheel's >=1.5.0,<2 range: the Vulkan rebuild below
+# installs the pinned one, and two versions' libggml*.so in one AppDir leave
+# linuxdeploy chasing a dependency that is not there.
 "$PYTHON" -m pip install --no-cache-dir --ignore-installed --prefix "$APPDIR/usr" \
-  "$WHEEL" PyGObject pycairo onnxruntime
+  "$WHEEL" "pywhispercpp==$PYWHISPERCPP_VERSION" PyGObject pycairo onnxruntime
 
 echo "== Adding desktop entry + icon =="
 install -Dm644 "$REPO_ROOT/vocalinux.desktop" "$APPDIR/usr/share/applications/vocalinux.desktop"
