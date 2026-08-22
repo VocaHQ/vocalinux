@@ -29,9 +29,10 @@ def _should_append_trailing_space() -> bool:
     """Return whether completed transcriptions should get a trailing space.
 
     Reads config.json from disk on each call so Settings toggles take effect
-    immediately. TrayIndicator and main() each construct their own
-    ConfigManager, so an in-memory read from main's instance would miss
-    Settings writes (same pattern as TextInjector._should_copy_to_clipboard).
+    immediately. Historically TrayIndicator and main() each constructed their
+    own ConfigManager, so an in-memory read would miss Settings writes; the
+    instance is shared now, but the disk read stays as the conservative path
+    (same pattern as TextInjector._should_copy_to_clipboard).
     """
     try:
         import json
@@ -325,7 +326,7 @@ def main():
     from .text_injection import text_injector
     from .ui import tray_indicator
     from .ui.action_handler import ActionHandler
-    from .ui.config_manager import ConfigManager
+    from .ui.config_manager import get_shared_config_manager
     from .ui.logging_manager import initialize_logging
 
     # Initialize logging manager early
@@ -342,7 +343,7 @@ def main():
     except Exception as e:
         logger.debug(f"Could not start IBus daemon: {e}")
 
-    config_manager = ConfigManager()
+    config_manager = get_shared_config_manager()
     saved_settings = config_manager.get_settings().get("speech_recognition", {})
     audio_settings = config_manager.get_settings().get("audio", {})
 
@@ -498,8 +499,7 @@ def main():
 
                 text_to_inject = capitalize_sentences(text_to_inject)
 
-            # Read from disk so the Settings toggle applies without restart
-            # (main and tray each own a ConfigManager instance).
+            # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
 
             if append_trailing_space:

@@ -102,6 +102,30 @@ def _suppress_desktop_notifications(request):
 
 
 @pytest.fixture(autouse=True)
+def _reset_shared_config_manager():
+    """Drop the process-wide ConfigManager between tests.
+
+    In production one shared instance is the point (separate instances
+    overwrite each other's saves with stale caches). In tests it would be
+    created under whichever mocks the first caller had active and then leak
+    that mock into every later test, so each test starts without one.
+    """
+    try:
+        from vocalinux.ui import config_manager as _cm
+
+        _cm._shared_instance = None
+    except Exception:
+        pass
+    yield
+    try:
+        from vocalinux.ui import config_manager as _cm
+
+        _cm._shared_instance = None
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _clear_hardware_detection_cache():
     """Clear lru_cache on hardware-detection helpers between tests.
 

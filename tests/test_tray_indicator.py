@@ -130,7 +130,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.mock_makedirs = self.patcher_makedirs.start()
 
         # Patch ConfigManager constructor
-        self.patcher_config_manager = patch("vocalinux.ui.tray_indicator.ConfigManager")
+        self.patcher_config_manager = patch("vocalinux.ui.tray_indicator.get_shared_config_manager")
         self.mock_config_manager_class = self.patcher_config_manager.start()
         self.mock_config_manager_class.return_value = self.mock_config_manager
 

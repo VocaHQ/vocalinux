@@ -8,6 +8,7 @@ import copy
 import json
 import logging
 import os
+import threading
 from typing import Any, Optional
 
 from ..utils.paths import config_dir
@@ -473,3 +474,27 @@ class ConfigManager:
                 self._update_dict_recursive(target[key], value)
             else:
                 target[key] = value
+
+
+# The one instance the application should share. Every ConfigManager caches the
+# whole config in memory and save_config() writes that whole cache back, so two
+# live instances silently revert each other's saves — the second save wins with
+# whatever stale values it still holds. Tests may still construct ConfigManager
+# directly; application code goes through this accessor.
+_shared_instance: Optional[ConfigManager] = None
+_shared_instance_lock = threading.Lock()
+
+
+def get_shared_config_manager() -> ConfigManager:
+    """Return the process-wide ConfigManager, creating it on first use.
+
+    Creation is locked: __init__ does makedirs() plus a full load_config(),
+    so two threads racing the first call would otherwise each build their own
+    instance and reintroduce the very overwrite this accessor prevents.
+    """
+    global _shared_instance
+    if _shared_instance is None:
+        with _shared_instance_lock:
+            if _shared_instance is None:
+                _shared_instance = ConfigManager()
+    return _shared_instance

@@ -59,18 +59,18 @@ ERROR_SOUND = _resource_manager.get_sound_path("error")
 
 def _is_sound_effects_enabled() -> bool:
     try:
-        from .config_manager import ConfigManager
+        from .config_manager import get_shared_config_manager
 
-        return ConfigManager().is_sound_effects_enabled()
+        return get_shared_config_manager().is_sound_effects_enabled()
     except Exception:
         return True
 
 
 def _resolved_tone() -> str:
     try:
-        from .config_manager import ConfigManager
+        from .config_manager import get_shared_config_manager
 
-        return ConfigManager().get_sound_effects_tone()
+        return get_shared_config_manager().get_sound_effects_tone()
     except Exception:
         return DEFAULT_SOUND_EFFECT_TONE
 
