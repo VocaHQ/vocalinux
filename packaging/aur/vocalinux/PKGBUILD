@@ -11,7 +11,7 @@ arch=('any')
 url="https://github.com/VocaHQ/vocalinux"
 license=('AGPL-3.0-only')
 depends=(
-  'python>=3.9'
+  'python>=3.11'
   'python-gobject'
   'gtk3'
   'libayatana-appindicator'

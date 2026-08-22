@@ -33,18 +33,18 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
     name: "Ubuntu",
     title: "Install Voice Dictation on Ubuntu",
     description:
-      "Step-by-step Ubuntu voice dictation setup for offline speech-to-text with whisper.cpp and VOSK. Works on Ubuntu 22.04+, GNOME, KDE, X11, and Wayland.",
+      "Step-by-step Ubuntu voice dictation setup for offline speech-to-text with whisper.cpp and VOSK. Works on Ubuntu 24.04+, GNOME, KDE, X11, and Wayland.",
     intro:
       "This Ubuntu guide is tuned for practical desktop use: terminals, browsers, IDEs, office suites, and chat apps. Local engines keep audio on your machine. Remote API is optional.",
     prerequisites: [
-       "Ubuntu 22.04+ (or Ubuntu-based distro)",
-       "Python 3.9+",
+       "Ubuntu 24.04+ (or Ubuntu-based distro)",
+       "Python 3.11+",
       "Working microphone",
       "curl installed (sudo apt update && sudo apt install -y curl)",
     ],
     testedOn: [
       "Ubuntu 24.04 LTS (GNOME, Wayland)",
-      "Ubuntu 22.04 LTS (GNOME, X11)",
+      "Ubuntu 24.04 LTS (GNOME, X11)",
       "Kubuntu and Linux Mint derivatives",
     ],
     installCommand:
@@ -69,7 +69,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
       "Fedora is an excellent match for Vocalinux thanks to current Python stacks and up-to-date system libraries. This guide focuses on reliable setup and minimal friction.",
     prerequisites: [
        "Fedora Workstation 39+ (or Fedora-based distro)",
-       "Python 3.9+",
+       "Python 3.11+",
       "Working microphone",
       "curl installed (sudo dnf install -y curl)",
     ],
@@ -100,7 +100,7 @@ const distroConfig: Record<DistroSlug, DistroConfig> = {
       "Arch users usually care about control and performance. This guide keeps setup lean while preserving compatibility across rolling-release desktop environments.",
     prerequisites: [
        "Arch Linux / Manjaro / EndeavourOS",
-       "Python 3.9+",
+       "Python 3.11+",
       "Working microphone",
       "curl installed (sudo pacman -Sy --needed curl)",
     ],

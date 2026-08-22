@@ -519,26 +519,6 @@ class TestDownloadVoskModel(unittest.TestCase):
     pass
 
 
-class TestDownloadWhisperModel(unittest.TestCase):
-    def test_download_whisper_model(self):
-        mgr = _make_manager(engine="whisper")
-        mgr._download_cancelled = False
-        # Mock the download by preventing actual network calls
-        mock_requests = MagicMock()
-        mock_response = MagicMock()
-        mock_response.headers.get.return_value = "1000"  # content-length
-        mock_response.iter_content.return_value = [b"test" * 250]
-        mock_requests.get.return_value = mock_response
-        with patch.dict("sys.modules", {"requests": mock_requests}):
-            with patch("builtins.open", create=True) as mock_open:
-                mock_file = MagicMock()
-                mock_open.return_value.__enter__.return_value = mock_file
-                with patch("os.rename"):
-                    mgr._download_whisper_model(cache_dir="/tmp/test")
-                    # Verify file write was called
-                    mock_file.write.assert_called()
-
-
 class TestBufferManagement(unittest.TestCase):
     def test_set_buffer_limit(self):
         mgr = _make_manager()

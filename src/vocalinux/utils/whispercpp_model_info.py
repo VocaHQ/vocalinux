@@ -12,19 +12,33 @@ import subprocess
 from functools import lru_cache
 from typing import Optional
 
+from .model_checksums import whispercpp_revision
 from .paths import is_within_directory, models_dir
 
 logger = logging.getLogger(__name__)
 
 # Whisper.cpp model information
-# Models are downloaded from Hugging Face (ggml format)
-_WHISPERCPP_REPO_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
+# Models are downloaded from Hugging Face (ggml format).
+#
+# The revision is pinned rather than tracking `main`: model_checksums.txt holds a
+# sha256 per file, and a file replaced upstream would turn every download into a
+# checksum failure. Both the pin and the digests are refreshed together by
+# scripts/generate-model-checksums.py.
+_WHISPERCPP_REPO = "https://huggingface.co/ggerganov/whisper.cpp/resolve"
+
+
+def whispercpp_model_file(model_name: str) -> str:
+    """Return the ggml file name upstream publishes for ``model_name``.
+
+    "large" is an alias the UI offers; upstream only ships the versioned file.
+    """
+    file_model_name = "large-v3" if model_name == "large" else model_name
+    return f"ggml-{file_model_name}.bin"
 
 
 def _model_url(model_name: str) -> str:
     """Build the Hugging Face URL for a ggml whisper.cpp model."""
-    file_model_name = "large-v3" if model_name == "large" else model_name
-    return f"{_WHISPERCPP_REPO_URL}/ggml-{file_model_name}.bin"
+    return f"{_WHISPERCPP_REPO}/{whispercpp_revision()}/{whispercpp_model_file(model_name)}"
 
 
 _WHISPERCPP_MODEL_SPECS = [

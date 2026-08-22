@@ -28,14 +28,19 @@ Rules:
 
 | Piece | Current |
 |---|---|
-| Python | `>=3.9` (`requires-python` in `pyproject.toml`; CI: 3.9, 3.10, 3.11, 3.13) |
+| Python | `>=3.11` (`requires-python` in `pyproject.toml`; CI: 3.11–3.14). Floor, classifiers, CI matrix and `install.sh` must agree — `tests/test_python_version_policy.py` |
 | GTK | GTK 3 via distro `python3-gi` (PyGObject). Never pip-install it |
-| uv | `>=0.11,<0.12` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth |
+| uv | `>=0.12,<0.13` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth; CI runs `uv sync --locked` / `uv run --locked`, which fails on drift |
 | just | https://just.systems or distro package `just` |
-| Format / lint / types | Black + isort (line length 100), flake8 (`E9,F63,F7,F82` only), mypy `src/` |
+| Format / lint / types | Black + isort (line length 100), flake8 (`E9,F63,F7,F82` only), mypy `src/` (targets 3.11). The three linters live in the `lint` dependency group, not the `dev` extra, so CI can install them without building the project |
 | Website | Next.js / TypeScript in `web/` — see `web/AGENTS.md` |
 
-Activate the venv before Python tooling: `source venv/bin/activate` (or prefix `./venv/bin/`).
+Two virtualenvs, on purpose:
+
+- **`.venv/`** — uv's, for dev tooling. Every `just` recipe runs through `uv run`, so no activation is needed.
+- **`venv/`** — what `install.sh` builds for the app itself, from the *system* Python so distro `gi` is importable.
+
+Never run `install.sh` from an activated `.venv`: it drops an inherited `VIRTUAL_ENV` from `PATH` and picks `$SYSTEM_PYTHON` (default `/usr/bin/python3`) precisely because a venv built from uv's interpreter cannot see distro PyGObject.
 
 ## Setup
 
@@ -68,8 +73,10 @@ just format        # black + isort
 just typecheck     # mypy src/
 just test          # pytest -v
 just test-cov      # pytest --cov=src --cov-report=html
+just deps          # sync .venv with dev+vad extras and the lint group
 just lock          # regenerate uv.lock + requirements/*.txt
 just lock-check    # fail if uv.lock is stale vs pyproject.toml
+just model-checksums  # refresh pinned model digests after adding a model
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug
@@ -88,7 +95,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 
 ## Dependencies (uv)
 
-`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine), run `just lock`, and commit the lock plus the exports with the manifest change.
+`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. Those exports exist for later packaging work (`install.sh`, AppImage, CI — phases 2, 3 and 5 of #701) and are unused until those phases land. **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine), run `just lock`, and commit the lock plus the exports with the manifest change.
 
 | Constraint | Rule |
 |---|---|
@@ -97,6 +104,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | Whisper CPU torch | `requirements/whisper.txt` is compiled from `requirements/whisper.in`. Pin `torch`/`torchaudio` together to `+cpu` local versions — PyPI CUDA wheels win resolution regardless of index order, and torchaudio lags torch on the CPU index |
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
+| Speech models | Verified against digests pinned in `src/vocalinux/utils/model_checksums.txt` before install, by both `install.sh` and the runtime downloaders. **Fails closed** — an unpinned model is refused. Regenerate with `just model-checksums` (never by hand); `tests/test_model_checksums.py` fails if it falls behind. whisper.cpp URLs use a pinned Hugging Face commit, never `main` |
 
 Optional extras: `vosk`, `whisper`, `vad`, `dev`.
 

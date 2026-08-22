@@ -793,7 +793,7 @@ export default function HomePage() {
                 },
                 {
                   label: "Runtime",
-                  value: "Python 3.9+ with GTK 3 / PyGObject",
+                  value: "Python 3.11+ with GTK 3 / PyGObject",
                 },
                 {
                   label: "Memory",
@@ -835,7 +835,7 @@ export default function HomePage() {
               {
                 href: "/install/ubuntu/",
                 title: "Ubuntu",
-                description: "Ubuntu 22.04+ for GNOME, KDE, X11, and Wayland.",
+                description: "Ubuntu 24.04+ for GNOME, KDE, X11, and Wayland.",
               },
               {
                 href: "/install/fedora/",
@@ -945,7 +945,7 @@ export default function HomePage() {
                   question: "Which Linux distributions are supported?",
                   answer: (
                     <>
-                      Ubuntu 22.04+, Debian 11+, Fedora 39+, Arch, openSUSE
+                      Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch, openSUSE
                       Tumbleweed, and most modern desktops on X11 or Wayland.{" "}
                       <Link href="/install/" className="font-medium text-primary hover:underline">
                         Install guides

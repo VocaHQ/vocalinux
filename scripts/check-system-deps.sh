@@ -9,14 +9,14 @@ check_deps() {
     echo "Checking Vocalinux system dependencies..."
     echo ""
 
-    # Check for Python 3.9+
+    # Check for Python 3.11+ (requires-python in pyproject.toml)
     if command -v python3 >/dev/null 2>&1; then
         PY_VERSION=$(python3 -c "import sys; print('.'.join(map(str, sys.version_info[:2])))")
         echo "✓ Python $PY_VERSION"
 
         if [ "$(echo "$PY_VERSION" | cut -d. -f1)" -lt 3 ] || \
-           [ "$(echo "$PY_VERSION" | cut -d. -f2)" -lt 9 ]; then
-            echo "  ✗ Python 3.9+ required, found $PY_VERSION"
+           [ "$(echo "$PY_VERSION" | cut -d. -f2)" -lt 11 ]; then
+            echo "  ✗ Python 3.11+ required, found $PY_VERSION"
             MISSING=1
         fi
     else
@@ -172,7 +172,7 @@ PY
             echo "  If \"\${PYVER}-virtualenv\" is unavailable, try \"\${PYVER}-venv\"."
         elif [[ "$DETECTED_DISTRO" == "gentoo" ]]; then
             echo "Gentoo:"
-            echo "  sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.9 xdotool wtype"
+            echo "  sudo emerge dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 xdotool wtype"
         elif [[ "$DETECTED_DISTRO" == "alpine" ]]; then
             echo "Alpine Linux:"
             echo "  sudo apk add py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf xdotool wtype"

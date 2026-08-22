@@ -14,7 +14,7 @@ authors = [
 maintainers = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 keywords = [
     "voice", "dictation", "speech", "recognition",
     "linux", "accessibility", "voice-typing", "speech-to-text"
@@ -26,8 +26,6 @@ classifiers = [
     "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -65,15 +63,22 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-timeout>=2.1.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
     "pre-commit>=3.0.0",
     "mypy>=1.0.0",
 ]
 docs = [
     "sphinx>=6.0.0",
     "sphinx-rtd-theme>=1.2.0",
+]
+
+# Formatters and linters, deliberately outside the `dev` extra: `uv sync
+# --only-group lint` installs them without the project, so the lint job needs
+# no portaudio/girepository headers to build pyaudio and PyGObject.
+[dependency-groups]
+lint = [
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
 ]
 
 [project.scripts]
@@ -92,7 +97,7 @@ Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 [tool.uv]
 # Lock/exports are generated with uv; keep the minor pinned so lockfile
 # upgrades are deliberate (see `just lock`).
-required-version = ">=0.11,<0.12"
+required-version = ">=0.12,<0.13"
 
 [tool.setuptools]
 packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
@@ -105,10 +110,11 @@ version = {attr = "vocalinux.version.__version__"}
 "*" = ["*.svg", "*.wav", "*.onnx"]
 "vocalinux" = ["resources/**/*"]
 "vocalinux.speech_recognition" = ["data/*.onnx", "data/LICENSE"]
+"vocalinux.utils" = ["model_checksums.txt"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
+target-version = ['py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -166,8 +172,17 @@ exclude_lines = [
 show_missing = true
 
 [tool.mypy]
-python_version = "3.9"
+# Target the supported floor so typechecking covers what requires-python promises.
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["venv", "build", "dist", "node_modules"]
+
+# numpy 2.x ships stubs written in 3.12 syntax, which a 3.11 target cannot parse.
+# We only pass arrays through, so skipping the stubs costs little compared to
+# type-checking against the Python version we actually promise to support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

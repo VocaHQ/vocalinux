@@ -89,13 +89,10 @@ class TestWhisperSupport:
         model_mock = MagicMock()
         whisper_mock.load_model.return_value = model_mock
 
-        # Patch modules and mock the download method to avoid network/file operations
+        # os.path.exists is patched so the checkpoint looks present; load_model is
+        # mocked, so nothing touches the network or the filesystem.
         with (
             patch.dict(sys.modules, {"whisper": whisper_mock, "torch": torch_mock}),
-            patch(
-                "vocalinux.speech_recognition.recognition_manager."
-                "SpeechRecognitionManager._download_whisper_model"
-            ) as _mock_download,
             patch("os.path.exists", return_value=True),
         ):
             from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager

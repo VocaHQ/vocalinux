@@ -28,6 +28,15 @@ WHEEL="$1"
 VERSION="$2"
 OUTDIR="${3:-dist}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Same pywhispercpp release install.sh pins. Read from there rather than repeated
+# here: unpinned, this build picks up whatever PyPI published today, which is how
+# a 1.5.1 released mid-PR broke the Vulkan rebuild.
+PYWHISPERCPP_VERSION="$(sed -n 's/^PYWHISPERCPP_VERSION="\([^"]*\)"/\1/p' "$REPO_ROOT/install.sh" | head -n1)"
+if [ -z "$PYWHISPERCPP_VERSION" ]; then
+    echo "Could not read PYWHISPERCPP_VERSION from install.sh" >&2
+    exit 1
+fi
 ARCH="$(uname -m)"
 PYTHON="${PYTHON:-python3}"
 
@@ -100,8 +109,12 @@ rm -rf "$APPDIR/usr/lib/python${PY_VER}/site-packages"
 echo "== Installing Vocalinux + runtime deps into the bundle =="
 # --ignore-installed: pip otherwise treats the builder env's packages as
 # satisfying deps and skips copying vosk/pywhispercpp/etc. into AppDir.
+# pywhispercpp is named explicitly so this resolves to the pinned release rather
+# than the newest inside the wheel's >=1.5.0,<2 range: the Vulkan rebuild below
+# installs the pinned one, and two versions' libggml*.so in one AppDir leave
+# linuxdeploy chasing a dependency that is not there.
 "$PYTHON" -m pip install --no-cache-dir --ignore-installed --prefix "$APPDIR/usr" \
-  "$WHEEL" PyGObject pycairo onnxruntime
+  "$WHEEL" "pywhispercpp==$PYWHISPERCPP_VERSION" PyGObject pycairo onnxruntime
 
 echo "== Adding desktop entry + icon =="
 install -Dm644 "$REPO_ROOT/vocalinux.desktop" "$APPDIR/usr/share/applications/vocalinux.desktop"
@@ -240,7 +253,7 @@ rebuild_pywhispercpp_vulkan() {
       CMAKE_ARGS='-DCMAKE_INSTALL_RPATH=$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON' \
       "$PYTHON" -m pip install --verbose --no-cache-dir --force-reinstall \
         --no-binary pywhispercpp --ignore-installed --prefix "$APPDIR/usr" \
-        --log "$pip_log" pywhispercpp; then
+        --log "$pip_log" "pywhispercpp==$PYWHISPERCPP_VERSION"; then
     echo "pywhispercpp Vulkan rebuild failed. Last 80 log lines:" >&2
     tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
     if [ "$require_vulkan" = "1" ]; then

@@ -1,7 +1,24 @@
 # Vocalinux justfile
 # Convenient commands for development
-# Run `just` to list all recipes. Python tooling (pytest, black, mypy) lives in
-# venv/ — run `source venv/bin/activate` first.
+# Run `just` to list all recipes. Python tooling runs through `uv run` against
+# .venv/ — run `just deps` after cloning (requires uv).
+#
+# Two environments, deliberately separate:
+#   .venv/  dev tooling, built by uv from .python-version (3.13).
+#   venv/   what `just install` creates, always from the system Python — on
+#           distros where PyGObject cannot be pip-built (Ubuntu 24.04, Debian)
+#           the distro package is importable only from that interpreter.
+#           install.sh ignores an activated .venv and rebuilds
+#           venv/ if another interpreter created it, so `just install` is safe to
+#           run from any shell. Override with SYSTEM_PYTHON=/usr/bin/python3.12.
+
+# Extras and groups installed by `just deps` and requested by every recipe below.
+# `uv sync` prunes whatever the flags do not name — omitting `--group lint` really
+# does uninstall the linters — and `uv run` has pruned in past versions, so every
+# recipe asks for the same set rather than depending on which uv is installed.
+# CI lints with `--only-group lint` instead: that skips the project, whose
+# pyaudio/PyGObject need system headers a lint runner has no reason to install.
+DEV_EXTRAS := "--extra dev --extra vad --group lint"
 
 # List available recipes
 default:
@@ -15,42 +32,50 @@ install:
 install-dev:
     ./install.sh --dev
 
+# Install development dependencies into .venv/ (dev + vad extras)
+deps:
+    uv sync {{DEV_EXTRAS}}
+
+# Install every optional extra — whisper/vosk engines and docs (CUDA torch, multi-GB)
+deps-all:
+    uv sync --all-extras --group lint
+
 # Run test suite
 test:
     @echo "Running tests..."
-    pytest -v
+    uv run {{DEV_EXTRAS}} pytest -v
 
 # Run tests with coverage
 test-cov:
     @echo "Running tests with coverage..."
-    pytest --cov=src --cov-report=html --cov-report=term
+    uv run {{DEV_EXTRAS}} pytest --cov=src --cov-report=html --cov-report=term
     @echo "Coverage report generated in htmlcov/"
 
 # Run linters (flake8, black, isort)
 lint:
     @echo "Running flake8..."
-    flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+    uv run {{DEV_EXTRAS}} flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
     @echo "Checking black formatting..."
-    black --check --diff src/ tests/
+    uv run {{DEV_EXTRAS}} black --check --diff src/ tests/
     @echo "Checking isort..."
-    isort --check-only --diff --profile black src/ tests/
+    uv run {{DEV_EXTRAS}} isort --check-only --diff --profile black src/ tests/
 
 # Auto-format code (black + isort)
 format:
     @echo "Formatting with black..."
-    black src/ tests/
+    uv run {{DEV_EXTRAS}} black src/ tests/
     @echo "Sorting imports with isort..."
-    isort --profile black src/ tests/
+    uv run {{DEV_EXTRAS}} isort --profile black src/ tests/
 
 # Run type checking (mypy)
 typecheck:
     @echo "Running mypy..."
-    mypy src/
+    uv run {{DEV_EXTRAS}} mypy src/
 
 # Build distribution packages
 build:
     @echo "Building distribution packages..."
-    python -m build
+    uv build
     @echo "Built packages in dist/"
 
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
@@ -69,6 +94,11 @@ lock:
 # Fail if uv.lock is stale relative to pyproject.toml
 lock-check:
     uv lock --check
+
+# Refresh the pinned model digests from upstream metadata (no models downloaded).
+# Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
+model-checksums:
+    uv run {{DEV_EXTRAS}} python scripts/generate-model-checksums.py
 
 # Remove build artifacts
 clean:
@@ -96,16 +126,16 @@ run-debug:
 
 # Run from source
 run-source:
-    python -m vocalinux.main
+    uv run {{DEV_EXTRAS}} python -m vocalinux.main
 
 # Run from source with debug logging
 run-source-debug:
-    python -m vocalinux.main --debug
+    uv run {{DEV_EXTRAS}} python -m vocalinux.main --debug
 
 # Run pre-commit hooks on all files
 pre-commit:
-    pre-commit run --all-files
+    uv run {{DEV_EXTRAS}} pre-commit run --all-files
 
 # Print the current version
 version:
-    @python -c "from src.vocalinux.version import __version__; print(__version__)"
+    @uv run --no-sync python -c "from src.vocalinux.version import __version__; print(__version__)"

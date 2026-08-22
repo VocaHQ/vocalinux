@@ -38,6 +38,36 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# The installer must build its venv from the *system* Python: distro PyGObject
+# (python3-gi / python3-gobject) is compiled for that interpreter only. When the
+# script starts inside an activated virtualenv — a shell left in uv's .venv
+# after `just deps`, for instance — a bare `python3` resolves to that venv's
+# interpreter instead, and a venv created from it cannot import gi even with
+# --system-site-packages. Undo the activation for the installer's own process
+# before anything looks up an interpreter.
+deactivate_inherited_virtualenv() {
+    local venv_bin cleaned entry
+
+    [ -z "${VIRTUAL_ENV:-}" ] && return 0
+
+    print_warning "Running inside an activated virtualenv ($VIRTUAL_ENV)."
+    print_info "Ignoring it so the installation uses the system Python."
+
+    venv_bin="${VIRTUAL_ENV%/}/bin"
+    cleaned=""
+    while IFS= read -r entry; do
+        [ "$entry" = "$venv_bin" ] && continue
+        cleaned="${cleaned:+$cleaned:}$entry"
+    done < <(printf '%s\n' "${PATH//:/$'\n'}")
+
+    PATH="$cleaned"
+    export PATH
+    unset VIRTUAL_ENV
+    unset PYTHONHOME
+}
+
+deactivate_inherited_virtualenv
+
 # HTTP-level connectivity check. ICMP ping is blocked on many networks
 # (corporate firewalls, public Wi-Fi, CI runners), so probe the actual
 # endpoints the installer depends on. Returns 0 if any probe succeeds.
@@ -686,7 +716,7 @@ detect_distro() {
 
 # Check minimum required version for Ubuntu-based systems
 check_ubuntu_version() {
-    local MIN_VERSION="18.04"
+    local MIN_VERSION="24.04"
     if [[ "$DISTRO_FAMILY" == "ubuntu" ]]; then
         if [[ $(echo -e "$DISTRO_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$DISTRO_VERSION" == "$MIN_VERSION" ]]; then
             return 0
@@ -1727,7 +1757,7 @@ install_system_dependencies() {
     local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers glslang xclip xsel wl-clipboard"
     local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4"
     # Gentoo uses Portage and different package naming convention
-    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.9 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
+    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
     # Alpine Linux uses apk and has musl libc
     local APK_PACKAGES="py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf cmake wget curl unzip glslang vulkan-tools xclip xsel wl-clipboard"
     # Void Linux uses xbps
@@ -2093,7 +2123,7 @@ install_system_dependencies() {
             print_info "   ./install.sh --skip-system-deps"
             print_info ""
             print_info "4. Or install from source in a virtual environment:"
-            print_info "   python3 -m venv venv"
+            print_info "   /usr/bin/python3 -m venv --system-site-packages venv"
             print_info "   source venv/bin/activate"
             print_info "   pip install -e .[whisper,vad]"
             print_info ""
@@ -2411,33 +2441,129 @@ mkdir -p "$DATA_DIR/models"
 mkdir -p "$DESKTOP_DIR"
 mkdir -p "$ICON_DIR"
 
+# Interpreter the venv is built from. Resolved by select_python_interpreter();
+# nothing below may fall back to a bare `python3` for venv creation.
+PYTHON_CMD="python3"
+
+# The distro interpreter its GTK/PyGObject packages are built for. Overridable
+# (SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh) for systems that ship several.
+SYSTEM_PYTHON="${SYSTEM_PYTHON:-/usr/bin/python3}"
+
+python_version_of() {
+    "$1" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null
+}
+
+python_version_at_least() {
+    local version
+    version=$(python_version_of "$1") || return 1
+    [ -n "$version" ] || return 1
+    [[ $(printf '%s\n%s\n' "$version" "$2" | sort -V | head -n1) == "$2" ]]
+}
+
+python_has_gi() {
+    "$1" -c "import gi" >/dev/null 2>&1
+}
+
+# Pick the interpreter to build the venv from. Distro PyGObject is compiled for
+# exactly one Python, so prefer a candidate that can already import gi:
+# $SYSTEM_PYTHON is probed explicitly because PATH may expose a different
+# interpreter (pyenv, uv, /usr/local) that the distro packages were never built
+# for. Falls back to the newest-enough candidate when none of them has gi yet —
+# require_distro_gi() reports that case with a proper message later on.
+select_python_interpreter() {
+    local min_version="$1"
+    local candidates=() candidate seen="" first="" ok_version="" ok_system=""
+
+    if command_exists python3; then
+        candidates+=("$(command -v python3)")
+    fi
+    if [ -x "$SYSTEM_PYTHON" ]; then
+        candidates+=("$SYSTEM_PYTHON")
+    fi
+
+    for candidate in ${candidates[@]+"${candidates[@]}"}; do
+        case ":$seen:" in
+            *":$candidate:"*) continue ;;
+        esac
+        seen="${seen:+$seen:}$candidate"
+
+        [ -n "$first" ] || first="$candidate"
+        python_version_at_least "$candidate" "$min_version" || continue
+        [ -n "$ok_version" ] || ok_version="$candidate"
+        if [ "$candidate" = "$SYSTEM_PYTHON" ]; then
+            ok_system="$candidate"
+        fi
+
+        if python_has_gi "$candidate"; then
+            PYTHON_CMD="$candidate"
+            return 0
+        fi
+    done
+
+    # No candidate has gi yet; it may be installed later in this run. Prefer the
+    # distro interpreter, because its PyGObject is the one that will show up.
+    PYTHON_CMD="${ok_system:-${ok_version:-$first}}"
+    [ -n "$PYTHON_CMD" ]
+}
+
 # Check Python version
 check_python_version() {
-    local MIN_VERSION="3.9"
-    local PYTHON_CMD="python3"
+    # Keep in sync with requires-python in pyproject.toml.
+    local MIN_VERSION="3.11"
 
-    # Check if python3 command exists
-    if ! command_exists python3; then
+    if ! select_python_interpreter "$MIN_VERSION"; then
         print_error "Python 3 is not installed or not in PATH"
         return 1
     fi
 
-    # Get Python version
-    local PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    print_info "Detected Python version: $PY_VERSION"
+    local PY_VERSION
+    PY_VERSION=$(python_version_of "$PYTHON_CMD" || true)
+    print_info "Detected Python version: ${PY_VERSION:-unknown} ($PYTHON_CMD)"
 
-    # Compare versions
-    if [[ $(echo -e "$PY_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$PY_VERSION" == "$MIN_VERSION" ]]; then
+    if python_version_at_least "$PYTHON_CMD" "$MIN_VERSION"; then
         return 0
-    else
-        print_error "This application requires Python $MIN_VERSION or newer. Detected: $PY_VERSION"
-        return 1
     fi
+
+    print_error "This application requires Python $MIN_VERSION or newer. Detected: ${PY_VERSION:-unknown}"
+    return 1
+}
+
+# An existing venv built by a different interpreter than the selected one is the
+# classic cause of "distro PyGObject is not importable": PyGObject lives in the
+# system Python's site-packages and --system-site-packages only exposes it to a
+# venv of the *same* version. Such a venv otherwise survives every re-run,
+# because the installer reuses whatever it finds.
+# Where an interpreter's installation lives. For a venv this is the interpreter
+# it was built from, which is what decides whether distro gi is visible.
+python_base_prefix() {
+    "$1" -c "import sys; print(sys.base_prefix)" 2>/dev/null
+}
+
+venv_matches_selected_python() {
+    local venv_python="$VENV_DIR/bin/python"
+    local venv_base selected_base
+
+    [ -x "$venv_python" ] || return 1
+
+    # Compare installations, not the X.Y string: a distro 3.12 and a pyenv/uv
+    # 3.12 are not interchangeable, because distro PyGObject is importable only
+    # from the one it was built for.
+    venv_base=$(python_base_prefix "$venv_python") || return 1
+    selected_base=$(python_base_prefix "$PYTHON_CMD") || return 1
+    [ -n "$venv_base" ] && [ "$venv_base" = "$selected_base" ]
 }
 
 # Set up virtual environment with error handling
 setup_virtual_environment() {
     print_info "Setting up Python virtual environment in $VENV_DIR..."
+
+    # Discard a venv left behind by another interpreter before the reuse logic
+    # below can adopt it.
+    if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ] && ! venv_matches_selected_python; then
+        print_warning "Existing virtual environment in $VENV_DIR was built by a different Python than $PYTHON_CMD."
+        print_warning "Recreating it — distro PyGObject would stay invisible inside it otherwise."
+        rm -rf "$VENV_DIR"
+    fi
 
     # Check if virtual environment already exists
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
@@ -2464,9 +2590,9 @@ setup_virtual_environment() {
     # Create virtual environment
     # Use --system-site-packages to access pre-compiled system packages like PyGObject
     # This avoids build failures with Python 3.13+ where PyGObject may not build from source
-    python3 -m venv --system-site-packages "$VENV_DIR" || {
-        print_warning "python3 -m venv failed, trying python3 -m virtualenv..."
-        python3 -m virtualenv --system-site-packages "$VENV_DIR" || {
+    "$PYTHON_CMD" -m venv --system-site-packages "$VENV_DIR" || {
+        print_warning "$PYTHON_CMD -m venv failed, trying $PYTHON_CMD -m virtualenv..."
+        "$PYTHON_CMD" -m virtualenv --system-site-packages "$VENV_DIR" || {
             print_error "Failed to create virtual environment. Please check your Python installation."
             exit "$EXIT_MISSING_DEPS"
         }
@@ -2482,9 +2608,13 @@ setup_virtual_environment() {
     print_info "Virtual environment activated successfully."
 }
 
-# Check Python version
+# Check Python version. Not advisory: distro PyGObject is built for the system
+# interpreter, so a venv below the floor cannot import gi, and the install would
+# fail later somewhere less obvious.
 if ! check_python_version; then
-    print_warning "Continuing with unsupported Python version. Some features may not work correctly."
+    print_error "Point SYSTEM_PYTHON at a newer interpreter if one is installed:"
+    print_error "  SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh"
+    exit "$EXIT_MISSING_DEPS"
 fi
 
 # Set up virtual environment
@@ -2938,6 +3068,15 @@ install_whispercpp_with_gpu_support() {
                 print_warning "Could not install vosk; install it manually or pick another engine in Settings."
         fi
 
+        # Writing engine=vosk when the import still fails only moves the failure
+        # to startup, where it surfaces as ModuleNotFoundError: No module named
+        # 'vosk' and the app never comes up.
+        if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
+            print_warning "vosk is still not importable; leaving the engine configuration untouched."
+            SELECTED_ENGINE=""
+            return 0
+        fi
+
         local FALLBACK_VOSK_CONFIG="$CONFIG_DIR/config.json"
         if [ ! -f "$FALLBACK_VOSK_CONFIG" ]; then
             mkdir -p "$CONFIG_DIR"
@@ -3023,6 +3162,7 @@ PY
 require_distro_gi() {
     if ! "$VENV_DIR/bin/python" -c "import gi" 2>/dev/null; then
         print_error "Distro PyGObject (python3-gi / python3-gobject) is not importable in the venv."
+        print_error "The venv was built from $PYTHON_CMD (Python $(python_version_of "$PYTHON_CMD" || echo unknown))."
         print_error "Install it with your package manager. Pip cannot build PyGObject here."
         exit "$EXIT_MISSING_DEPS"
     fi
@@ -3523,6 +3663,150 @@ if ! install_python_package; then
     exit "$EXIT_NETWORK"
 fi
 
+# ---------------------------------------------------------------------------
+# Model integrity verification
+#
+# Models are 40MB-2GB downloads that end up being loaded by native code, so no
+# model is installed without matching a digest pinned in this repository.
+# src/vocalinux/utils/model_checksums.txt is the same manifest the application
+# uses at runtime; it is regenerated by scripts/generate-model-checksums.py.
+#
+# A model that cannot be verified is deleted and the function returns 1, which
+# callers already treat as "leave it for first run" rather than aborting the
+# install. The app re-downloads and re-verifies it later.
+# ---------------------------------------------------------------------------
+MODEL_CHECKSUMS_FILE="$INSTALL_DIR/src/vocalinux/utils/model_checksums.txt"
+
+# Print the digest of $1 using algorithm $2, trying the tools most likely present.
+compute_file_digest() {
+    local file="$1" algo="$2"
+
+    case "$algo" in
+        sha256)
+            if command_exists sha256sum; then sha256sum "$file" | cut -d' ' -f1
+            elif command_exists shasum; then shasum -a 256 "$file" | cut -d' ' -f1
+            elif command_exists openssl; then openssl dgst -sha256 "$file" | awk '{print $NF}'
+            else return 1; fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Compare $1 against algorithm $2 and digest $3. $4 labels the file in messages.
+verify_digest() {
+    local file="$1" algo="$2" expected="$3" label="$4" actual
+
+    if ! actual=$(compute_file_digest "$file" "$algo") || [ -z "$actual" ]; then
+        print_error "Cannot compute the $algo digest of $label: no sha256sum, shasum or openssl found."
+        return 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        print_error "$label failed $algo verification."
+        print_error "  expected: $expected"
+        print_error "  actual:   $actual"
+        print_error "The file does not match the digest pinned in this release."
+        return 1
+    fi
+
+    print_success "$label verified ($algo)"
+    return 0
+}
+
+# Verify $1 against the manifest entry named $2 (defaults to $1's basename).
+verify_model_checksum() {
+    local file="$1"
+    local key="${2:-$(basename "$file")}"
+    local algo expected size actual_size
+
+    if [ ! -f "$MODEL_CHECKSUMS_FILE" ]; then
+        print_error "Checksum manifest not found at $MODEL_CHECKSUMS_FILE."
+        print_error "Cannot verify $key; refusing to install an unverified model."
+        return 1
+    fi
+
+    # Manifest columns: filename  algorithm  digest  size-in-bytes
+    algo=$(awk -v k="$key" '$1==k {print $2; exit}' "$MODEL_CHECKSUMS_FILE")
+    expected=$(awk -v k="$key" '$1==k {print $3; exit}' "$MODEL_CHECKSUMS_FILE")
+    size=$(awk -v k="$key" '$1==k {print $4; exit}' "$MODEL_CHECKSUMS_FILE")
+
+    if [ -z "$algo" ] || [ -z "$expected" ]; then
+        print_error "No checksum is pinned for $key in $MODEL_CHECKSUMS_FILE."
+        print_error "Regenerate it with scripts/generate-model-checksums.py."
+        return 1
+    fi
+
+    # Size first: it is free, and it reports a truncated download as truncation
+    # rather than as a digest mismatch that reads like tampering.
+    if [ -n "$size" ] && [ "$size" != "0" ]; then
+        actual_size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null || echo "")
+        if [ -n "$actual_size" ] && [ "$actual_size" != "$size" ]; then
+            print_error "$key is $actual_size bytes, expected $size (truncated download?)."
+            return 1
+        fi
+    fi
+
+    verify_digest "$file" "$algo" "$expected" "$key"
+}
+
+# Verify an OpenAI Whisper checkpoint against the sha256 embedded in its own URL
+# (they publish each file under a path segment that is its digest).
+verify_openai_model_checksum() {
+    local file="$1" url="$2" label="$3" expected
+
+    expected=$(printf '%s\n' "$url" | grep -oE '/[0-9a-f]{64}/' | tr -d '/' | head -n1)
+    if [ -z "$expected" ]; then
+        print_error "$url carries no sha256 path segment; refusing to install an unverified model."
+        return 1
+    fi
+
+    verify_digest "$file" "sha256" "$expected" "$label"
+}
+
+# Download $1 to $2, preferring wget and falling back to curl. $3 labels the
+# model in error messages. Leaves no partial file behind on failure.
+download_model_file() {
+    local url="$1" dest="$2" label="$3"
+
+    if command_exists wget; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$dest" "$url" 2>&1; then
+            print_error "Failed to download $label with wget"
+            rm -f "$dest"
+            return 1
+        fi
+    elif command_exists curl; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+            print_error "Failed to download $label with curl"
+            rm -f "$dest"
+            return 1
+        fi
+    else
+        print_error "Neither wget nor curl is available to download $label"
+        return 1
+    fi
+
+    if [ ! -s "$dest" ]; then
+        print_error "Downloaded $label is empty or missing"
+        rm -f "$dest"
+        return 1
+    fi
+}
+
+# Print the digest pinned for manifest entry $1, or nothing when unpinned.
+pinned_digest_for() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
+    awk -v k="$1" '$1==k {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
+}
+
+# The Hugging Face commit the whisper.cpp digests were taken at.
+whispercpp_pinned_revision() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
+    awk '/^#[[:space:]]*whispercpp-revision:/ {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
+}
+
 # Function to download and install Whisper tiny model
 install_whisper_model() {
     print_info "Installing Whisper tiny model (~75MB)..."
@@ -3535,10 +3819,16 @@ install_whisper_model() {
     local TINY_MODEL_URL="https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
     local TINY_MODEL_PATH="$WHISPER_DIR/tiny.pt"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_openai_model_checksum "$TINY_MODEL_PATH" "$TINY_MODEL_URL" "Whisper tiny model"; then
+            print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing Whisper tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3560,26 +3850,15 @@ install_whisper_model() {
 
     local TEMP_FILE="$VOCALINUX_TMP_DIR/tiny.pt"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download Whisper model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download Whisper model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "Whisper model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
+    if ! verify_openai_model_checksum "$TEMP_FILE" "$TINY_MODEL_URL" "Whisper tiny model"; then
         rm -f "$TEMP_FILE"
+        print_warning "Whisper model will be downloaded and verified on first application run."
         return 1
     fi
 
@@ -3614,10 +3893,23 @@ install_vosk_models() {
     local SMALL_MODEL_NAME="vosk-model-small-en-us-0.15"
     local SMALL_MODEL_PATH="$MODELS_DIR/$SMALL_MODEL_NAME"
 
-    # Check if small model already exists
+    local SMALL_MODEL_ARCHIVE="$SMALL_MODEL_NAME.zip"
+    # The extracted tree has no digest of its own — the pin covers the zip, which
+    # is deleted after unpacking. So record the verified zip digest in a stamp and
+    # trust the directory only when the stamp still matches what we pin today.
+    # Anything else (an older install, a manual copy, a tampered tree) is replaced
+    # rather than assumed good.
+    local SMALL_MODEL_STAMP="$SMALL_MODEL_PATH/.vocalinux_verified"
     if [ -d "$SMALL_MODEL_PATH" ]; then
-        print_info "Small VOSK model already exists at $SMALL_MODEL_PATH"
-        return 0
+        local EXPECTED_ZIP_DIGEST
+        EXPECTED_ZIP_DIGEST=$(pinned_digest_for "$SMALL_MODEL_ARCHIVE")
+        if [ -n "$EXPECTED_ZIP_DIGEST" ] && [ -f "$SMALL_MODEL_STAMP" ] &&
+           [ "$(cat "$SMALL_MODEL_STAMP" 2>/dev/null)" = "$EXPECTED_ZIP_DIGEST" ]; then
+            print_info "Small VOSK model already exists at $SMALL_MODEL_PATH (verified)"
+            return 0
+        fi
+        print_warning "The existing VOSK model was not verified against the pinned digest; replacing it."
+        rm -rf "$SMALL_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3639,26 +3931,15 @@ install_vosk_models() {
 
     local TEMP_ZIP="$VOCALINUX_TMP_DIR/$(basename $SMALL_MODEL_URL)"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_ZIP" "$SMALL_MODEL_URL" 2>&1; then
-            print_error "Failed to download VOSK model with wget"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_ZIP" "$SMALL_MODEL_URL"; then
-            print_error "Failed to download VOSK model with curl"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
+    if ! download_model_file "$SMALL_MODEL_URL" "$TEMP_ZIP" "VOSK model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_ZIP" ] || [ ! -s "$TEMP_ZIP" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before extracting: a zip that fails its pinned digest must not get
+    # as far as writing files into the models directory.
+    if ! verify_model_checksum "$TEMP_ZIP"; then
         rm -f "$TEMP_ZIP"
+        print_warning "VOSK model will be downloaded and verified on first application run."
         return 1
     fi
 
@@ -3690,6 +3971,10 @@ install_vosk_models() {
         # Create a marker file to indicate this model was pre-installed
         echo "$(date)" > "$SMALL_MODEL_PATH/.vocalinux_preinstalled"
 
+        # Record the digest this tree was extracted from, so a later run can tell
+        # a verified model from one that merely exists.
+        pinned_digest_for "$SMALL_MODEL_ARCHIVE" > "$SMALL_MODEL_STAMP" 2>/dev/null || true
+
         return 0
     else
         print_error "VOSK model extraction failed - directory not found"
@@ -3705,14 +3990,29 @@ install_whispercpp_model() {
     local WHISPERCPP_DIR="$DATA_DIR/models/whispercpp"
     mkdir -p "$WHISPERCPP_DIR"
 
-    # whisper.cpp tiny model URL and path
-    local TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+    # whisper.cpp tiny model URL and path. The Hugging Face revision is pinned to
+    # the one the digests in model_checksums.txt were taken at, so upstream
+    # replacing ggml-tiny.bin cannot turn every install into a checksum failure.
+    local WHISPERCPP_REVISION
+    WHISPERCPP_REVISION=$(whispercpp_pinned_revision)
+    if [ -z "$WHISPERCPP_REVISION" ]; then
+        print_error "No whisper.cpp revision is pinned in $MODEL_CHECKSUMS_FILE."
+        print_warning "whisper.cpp model will be downloaded and verified on first application run."
+        return 1
+    fi
+    local TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/$WHISPERCPP_REVISION/ggml-tiny.bin"
     local TINY_MODEL_PATH="$WHISPERCPP_DIR/ggml-tiny.bin"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_model_checksum "$TINY_MODEL_PATH" "ggml-tiny.bin"; then
+            print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing whisper.cpp tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3734,26 +4034,15 @@ install_whispercpp_model() {
 
     local TEMP_FILE="$VOCALINUX_TMP_DIR/ggml-tiny.bin"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download whisper.cpp model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        # -f: fail on HTTP errors instead of saving the error page as the model
-        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download whisper.cpp model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "whisper.cpp model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
+    if ! verify_model_checksum "$TEMP_FILE" "ggml-tiny.bin"; then
         rm -f "$TEMP_FILE"
+        print_warning "whisper.cpp model will be downloaded and verified on first application run."
         return 1
     fi
 
@@ -3972,6 +4261,97 @@ if [ "$SKIP_MODELS" = "no" ]; then
 else
     print_info "Skipping VOSK model installation (--skip-models specified)"
     print_info "Models will be downloaded automatically on first application run"
+fi
+
+# config.json survives reinstalls — every writer above guards on "file does not
+# exist" — so an engine picked by an earlier attempt can outlive the venv that
+# supported it. vosk is the only engine shipped as an optional extra, so it is
+# the one that goes missing; say so here instead of letting the app die at
+# startup with ModuleNotFoundError.
+# Module each engine needs, and the pip name that provides it. whisper_cpp is
+# the default engine and the fallback, so it is what a broken config is moved to.
+engine_import_module() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "whisper" ;;
+        whisper_cpp) echo "pywhispercpp.model" ;;
+        *) echo "" ;;
+    esac
+}
+
+engine_pip_name() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "openai-whisper" ;;
+        whisper_cpp) echo "pywhispercpp" ;;
+        *) echo "" ;;
+    esac
+}
+
+venv_can_import() {
+    [ -x "$VENV_DIR/bin/python" ] || return 1
+    "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
+}
+
+# Point config.json at engine $2. Non-zero if it could not be rewritten.
+set_configured_engine() {
+    "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, engine = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    config = json.load(handle)
+config.setdefault("speech_recognition", {})["engine"] = engine
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
+verify_configured_engine() {
+    local CONFIG_FILE="$CONFIG_DIR/config.json"
+    [ -f "$CONFIG_FILE" ] || return 0
+
+    local CONFIGURED_ENGINE
+    CONFIGURED_ENGINE=$("$VENV_DIR/bin/python" - "$CONFIG_FILE" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("speech_recognition", {}).get("engine", ""))
+except Exception:
+    pass
+PY
+)
+
+    local MODULE
+    MODULE=$(engine_import_module "$CONFIGURED_ENGINE")
+    # remote_api and anything unrecognised need no extra module.
+    [ -n "$MODULE" ] || return 0
+    venv_can_import "$MODULE" && return 0
+
+    print_warning "$CONFIG_FILE selects the $CONFIGURED_ENGINE engine, but it is not importable in $VENV_DIR."
+
+    # Leaving it means the app dies at startup with ModuleNotFoundError, so move
+    # the config to the default engine when that one works.
+    if [ "$CONFIGURED_ENGINE" != "whisper_cpp" ] && venv_can_import "pywhispercpp.model"; then
+        if set_configured_engine "$CONFIG_FILE" "whisper_cpp"; then
+            print_success "Switched $CONFIG_FILE to the whisper_cpp engine."
+            print_info "Reinstall $(engine_pip_name "$CONFIGURED_ENGINE") and switch back in Settings if you want it."
+            return 0
+        fi
+    fi
+
+    print_error "Vocalinux cannot start with this configuration and no working engine is available."
+    print_error "Install the engine:  $VENV_DIR/bin/pip install $(engine_pip_name "$CONFIGURED_ENGINE")"
+    print_error "or edit $CONFIG_FILE and set speech_recognition.engine to an installed engine."
+    return 1
+}
+
+if ! verify_configured_engine; then
+    exit "$EXIT_MISSING_DEPS"
 fi
 
 # Update icon cache

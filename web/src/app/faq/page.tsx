@@ -26,11 +26,11 @@ const faqCategories = [
       },
       {
         q: "Which Linux distributions are supported?",
-        a: "Vocalinux works on Ubuntu 22.04+, Fedora 39+, Arch Linux, Manjaro, Debian, and most other Linux distributions. See our install guides for distro-specific instructions.",
+        a: "Vocalinux works on Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch Linux, Manjaro, and most other Linux distributions. See our install guides for distro-specific instructions.",
       },
       {
         q: "What are the system requirements?",
-        a: "You need Python 3.9+, a working microphone, and about 500MB of disk space. For GPU acceleration with whisper.cpp, you need Vulkan support (AMD, Intel, or NVIDIA).",
+        a: "You need Python 3.11+, a working microphone, and about 500MB of disk space. For GPU acceleration with whisper.cpp, you need Vulkan support (AMD, Intel, or NVIDIA).",
       },
     ],
   },
