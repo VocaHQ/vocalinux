@@ -2533,15 +2533,24 @@ check_python_version() {
 # system Python's site-packages and --system-site-packages only exposes it to a
 # venv of the *same* version. Such a venv otherwise survives every re-run,
 # because the installer reuses whatever it finds.
+# Where an interpreter's installation lives. For a venv this is the interpreter
+# it was built from, which is what decides whether distro gi is visible.
+python_base_prefix() {
+    "$1" -c "import sys; print(sys.base_prefix)" 2>/dev/null
+}
+
 venv_matches_selected_python() {
     local venv_python="$VENV_DIR/bin/python"
-    local venv_version selected_version
+    local venv_base selected_base
 
     [ -x "$venv_python" ] || return 1
 
-    venv_version=$(python_version_of "$venv_python") || return 1
-    selected_version=$(python_version_of "$PYTHON_CMD") || return 1
-    [ -n "$venv_version" ] && [ "$venv_version" = "$selected_version" ]
+    # Compare installations, not the X.Y string: a distro 3.12 and a pyenv/uv
+    # 3.12 are not interchangeable, because distro PyGObject is importable only
+    # from the one it was built for.
+    venv_base=$(python_base_prefix "$venv_python") || return 1
+    selected_base=$(python_base_prefix "$PYTHON_CMD") || return 1
+    [ -n "$venv_base" ] && [ "$venv_base" = "$selected_base" ]
 }
 
 # Set up virtual environment with error handling
