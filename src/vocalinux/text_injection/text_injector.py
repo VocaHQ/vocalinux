@@ -1615,10 +1615,28 @@ class TextInjector:
             if (
                 self.environment == DesktopEnvironment.X11
                 or self.environment == DesktopEnvironment.WAYLAND_XDOTOOL
+                # IBus commits text; it cannot synthesise key combinations. Send
+                # the shortcut through XIM's underlying X server instead.
+                or self.environment == DesktopEnvironment.X11_IBUS
             ):
                 return self._inject_shortcut_with_xdotool(shortcut)
-            else:
-                return self._inject_shortcut_with_wayland_tool(shortcut)
+            if self.environment == DesktopEnvironment.WAYLAND_IBUS:
+                # Same on Wayland: fall through to a virtual-keyboard tool. Without
+                # this, self.wayland_tool may be unset -> AttributeError -> the
+                # except below swallows it and every shortcut silently returns False.
+                if not getattr(self, "wayland_tool", None):
+                    if shutil.which("wtype"):
+                        tool = "wtype"
+                    elif shutil.which("ydotool"):
+                        tool = "ydotool"
+                    else:
+                        logger.error("No virtual-keyboard tool available for shortcuts")
+                        return False
+                    # Guarded like every other wayland_tool write; the injection
+                    # call itself stays outside, as _state_lock is not reentrant.
+                    with self._state_lock:
+                        self.wayland_tool = tool
+            return self._inject_shortcut_with_wayland_tool(shortcut)
         except Exception as e:
             logger.error(f"Failed to inject keyboard shortcut '{shortcut}': {e}")
             return False
