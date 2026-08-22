@@ -55,6 +55,11 @@ const reliabilityFeatures = [
 
 const releaseMap = [
   {
+    version: "v0.16.0",
+    highlights:
+      "Update checker with tray notifications, Right Alt PTT default for new installs, searchable language list, unused model deletion, Test Dictation missing-model message, IBus/XKB restore fixes, safer audio capture, clipboard restore, installer python3-gi requirement, and AppImage/GPU packaging hardening.",
+  },
+  {
     version: "v0.15.0",
     highlights:
       "Searchable settings with sidebar dictation footer, ibus-wayland on previously unbridged compositors, safer IBus teardown, Bluetooth mic capture crash fix, custom-shortcut Record/Set restore, and xdotool focus preserve.",

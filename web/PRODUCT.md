@@ -30,12 +30,16 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Speech languages: large selectable catalog (~33 + Auto-detect) shared by Settings/CLI; VOSK only lists languages with official Alphacephei models; remaining Whisper languages available via Auto-detect
 - Display servers: X11 and Wayland
 - Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
+- Searchable language combobox; delete unused downloaded speech models from Settings
 - Optional voice commands (English-only); Silero neural VAD with amplitude fallback
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
+- In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available
+- Optional disable of the missing-tray warning dialog
+- Settings → Audio family tone picker (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) with Preview; new installs default to Voca; catalog files are the family preview WAVs
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
-- Packaging: install.sh, AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented)
+- Packaging: install.sh (distro python3-gi required; no pip sdist of PyGObject), AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented); uv.lock pins Python deps; Justfile replaces Makefile
 - No usage telemetry in the installed app
 - AGPL-3.0; marketing version string is tracked in site package/version surfaces
 - Website is Next.js marketing + SEO guides (static export); languages page documents per-engine support honestly
@@ -43,7 +47,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 ## Brand commitments
 
 - Name: Vocalinux (part of [VocaHQ](https://vocahq.com) with VocaMac / VocaWin)
-- Mark: microphone logo assets under `public/`
+- Mark: shared Voca family mic for the app icon, tray states, and site favicons (`public/`)
 - Emerald accent in the project green family (not purple SaaS defaults)
 - Voice: practical, specific, Linux-native; not hype-first SaaS copy
 

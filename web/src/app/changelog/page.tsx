@@ -15,6 +15,23 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.16.0",
+    date: "2026-08-18",
+    type: "stable",
+    highlights: [
+      "In-app update checker (stable/nightly) plus tray Update Available when GitHub has a newer release (PR #631, #645)",
+      "New installs default to hold Right Alt push-to-talk; existing configs keep their shortcut (PR #648)",
+      "Searchable language list and delete unused downloaded speech models (PR #672, #671)",
+      "Family dictation tone picker in Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog tones are the family preview WAVs, not synthesized files (PR #707, #708)",
+      "License migrated to AGPL-3.0 (PR #660)",
+      "App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (PR #704)",
+      "Installer hardened with Justfile and uv lockfiles; distro python3-gi required (no pip sdist of PyGObject). Epic #701 remains open (PR #700, #705, #706)",
+      "Test Dictation no longer reports no speech when recognition never started (PR #702)",
+      "IBus/X11 reliability: restorable scoped injection, engine restore after teardown, XKB layout restore (PR #623, #643, #665)",
+      "Audio, clipboard, and AppImage/GPU packaging fixes (PR #629, #673, #588, #646, #674, #637)",
+    ],
+  },
+  {
     version: "v0.15.0",
     date: "2026-07-28",
     type: "stable",
