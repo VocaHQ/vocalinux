@@ -1244,6 +1244,43 @@
     background: var(--brand-softer);
   }
 
+  .family-card-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.55rem 0.75rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .family-platform {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .family-platform img {
+    width: 1.35rem;
+    height: 1.35rem;
+    flex: none;
+  }
+
+  .family-platform-pair {
+    display: inline-flex;
+    gap: 0.15rem;
+    align-items: center;
+  }
+
+  .family-platform-pair img {
+    width: 1.15rem;
+    height: 1.15rem;
+  }
+
   .family-card h3 {
     margin: 0;
     font-size: 1.15rem;
@@ -1256,7 +1293,7 @@
   }
 
   .family-card .chip {
-    margin-bottom: 0.7rem;
+    margin-bottom: 0;
     width: fit-content;
   }
 

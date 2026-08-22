@@ -869,7 +869,18 @@ export default function HomePage() {
           </div>
           <div className="family-grid">
             <div className="family-card is-here">
-              <span className="chip">You are here</span>
+              <div className="family-card-top">
+                <span className="family-platform">
+                  <img
+                    src="/brand/platforms/linux.svg"
+                    alt=""
+                    width={22}
+                    height={22}
+                  />
+                  Linux
+                </span>
+                <span className="chip">You are here</span>
+              </div>
               <h3>Vocalinux</h3>
               <p>
                 System tray app with whisper.cpp, Vulkan, and local engines on
@@ -877,7 +888,18 @@ export default function HomePage() {
               </p>
             </div>
             <a className="family-card" href="https://vocamac.com">
-              <span className="chip">Beta</span>
+              <div className="family-card-top">
+                <span className="family-platform">
+                  <img
+                    src="/brand/platforms/apple.svg"
+                    alt=""
+                    width={22}
+                    height={22}
+                  />
+                  macOS
+                </span>
+                <span className="chip">Beta</span>
+              </div>
               <h3>VocaMac</h3>
               <p>
                 Native macOS menu bar app. Offline voice-to-text with WhisperKit
@@ -885,18 +907,45 @@ export default function HomePage() {
               </p>
             </a>
             <a className="family-card" href="https://vocawin.com">
-              <span className="chip">Developer alpha</span>
+              <div className="family-card-top">
+                <span className="family-platform">
+                  <img
+                    src="/brand/platforms/windows.svg"
+                    alt=""
+                    width={22}
+                    height={22}
+                  />
+                  Windows
+                </span>
+                <span className="chip">Developer alpha</span>
+              </div>
               <h3>VocaWin</h3>
               <p>
                 Unsigned Windows speech-to-text. SmartScreen may warn about an
                 unknown publisher.
               </p>
             </a>
-            <a
-              className="family-card"
-              href="https://vocaphone.vocahq.com"
-            >
-              <span className="chip">Phone beta</span>
+            <a className="family-card" href="https://vocaphone.vocahq.com">
+              <div className="family-card-top">
+                <span className="family-platform">
+                  <span className="family-platform-pair">
+                    <img
+                      src="/brand/platforms/apple.svg"
+                      alt=""
+                      width={20}
+                      height={20}
+                    />
+                    <img
+                      src="/brand/platforms/android.svg"
+                      alt=""
+                      width={20}
+                      height={20}
+                    />
+                  </span>
+                  iPhone + Android
+                </span>
+                <span className="chip">Phone beta</span>
+              </div>
               <h3>VocaPhone</h3>
               <p>
                 Android beta and iOS TestFlight. On-device first, gateway
@@ -907,7 +956,18 @@ export default function HomePage() {
               className="family-card"
               href="https://vocagateway.vocahq.com/"
             >
-              <span className="chip">Early</span>
+              <div className="family-card-top">
+                <span className="family-platform">
+                  <img
+                    src="/brand/platforms/server.svg"
+                    alt=""
+                    width={22}
+                    height={22}
+                  />
+                  Infrastructure
+                </span>
+                <span className="chip">Early</span>
+              </div>
               <h3>VocaGateway</h3>
               <p>
                 Optional self-hosted speech-to-text on hardware you run. Not
