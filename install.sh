@@ -3753,6 +3753,12 @@ verify_openai_model_checksum() {
     verify_digest "$file" "sha256" "$expected" "$label"
 }
 
+# Print the digest pinned for manifest entry $1, or nothing when unpinned.
+pinned_digest_for() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
+    awk -v k="$1" '$1==k {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
+}
+
 # The Hugging Face commit the whisper.cpp digests were taken at.
 whispercpp_pinned_revision() {
     [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
@@ -3771,10 +3777,16 @@ install_whisper_model() {
     local TINY_MODEL_URL="https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
     local TINY_MODEL_PATH="$WHISPER_DIR/tiny.pt"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_openai_model_checksum "$TINY_MODEL_PATH" "$TINY_MODEL_URL" "Whisper tiny model"; then
+            print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing Whisper tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3819,8 +3831,8 @@ install_whisper_model() {
         return 1
     fi
 
-    # Verify the checksum before the file reaches its final location, where the
-    # "already exists" check above would treat it as a good model on every re-run.
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
     if ! verify_openai_model_checksum "$TEMP_FILE" "$TINY_MODEL_URL" "Whisper tiny model"; then
         rm -f "$TEMP_FILE"
         print_warning "Whisper model will be downloaded and verified on first application run."
@@ -3858,10 +3870,23 @@ install_vosk_models() {
     local SMALL_MODEL_NAME="vosk-model-small-en-us-0.15"
     local SMALL_MODEL_PATH="$MODELS_DIR/$SMALL_MODEL_NAME"
 
-    # Check if small model already exists
+    local SMALL_MODEL_ARCHIVE="$SMALL_MODEL_NAME.zip"
+    # The extracted tree has no digest of its own — the pin covers the zip, which
+    # is deleted after unpacking. So record the verified zip digest in a stamp and
+    # trust the directory only when the stamp still matches what we pin today.
+    # Anything else (an older install, a manual copy, a tampered tree) is replaced
+    # rather than assumed good.
+    local SMALL_MODEL_STAMP="$SMALL_MODEL_PATH/.vocalinux_verified"
     if [ -d "$SMALL_MODEL_PATH" ]; then
-        print_info "Small VOSK model already exists at $SMALL_MODEL_PATH"
-        return 0
+        local EXPECTED_ZIP_DIGEST
+        EXPECTED_ZIP_DIGEST=$(pinned_digest_for "$SMALL_MODEL_ARCHIVE")
+        if [ -n "$EXPECTED_ZIP_DIGEST" ] && [ -f "$SMALL_MODEL_STAMP" ] &&
+           [ "$(cat "$SMALL_MODEL_STAMP" 2>/dev/null)" = "$EXPECTED_ZIP_DIGEST" ]; then
+            print_info "Small VOSK model already exists at $SMALL_MODEL_PATH (verified)"
+            return 0
+        fi
+        print_warning "The existing VOSK model was not verified against the pinned digest; replacing it."
+        rm -rf "$SMALL_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3942,6 +3967,10 @@ install_vosk_models() {
         # Create a marker file to indicate this model was pre-installed
         echo "$(date)" > "$SMALL_MODEL_PATH/.vocalinux_preinstalled"
 
+        # Record the digest this tree was extracted from, so a later run can tell
+        # a verified model from one that merely exists.
+        pinned_digest_for "$SMALL_MODEL_ARCHIVE" > "$SMALL_MODEL_STAMP" 2>/dev/null || true
+
         return 0
     else
         print_error "VOSK model extraction failed - directory not found"
@@ -3970,10 +3999,16 @@ install_whispercpp_model() {
     local TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/$WHISPERCPP_REVISION/ggml-tiny.bin"
     local TINY_MODEL_PATH="$WHISPERCPP_DIR/ggml-tiny.bin"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_model_checksum "$TINY_MODEL_PATH" "ggml-tiny.bin"; then
+            print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing whisper.cpp tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -4018,8 +4053,8 @@ install_whispercpp_model() {
         return 1
     fi
 
-    # Verify the checksum before the file reaches its final location, where the
-    # "already exists" check above would treat it as a good model on every re-run.
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
     if ! verify_model_checksum "$TEMP_FILE" "ggml-tiny.bin"; then
         rm -f "$TEMP_FILE"
         print_warning "whisper.cpp model will be downloaded and verified on first application run."

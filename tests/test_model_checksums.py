@@ -217,6 +217,7 @@ INSTALL_DIR="%s"
         "verify_digest",
         "verify_model_checksum",
         "verify_openai_model_checksum",
+        "pinned_digest_for",
         "whispercpp_pinned_revision",
     )
 
@@ -337,6 +338,61 @@ INSTALL_DIR="%s"
 
         with self.assertRaises(ChecksumError):
             verify_model_file(str(target), "ggml-tiny.bin")
+
+
+class TestExistingModelsAreVerified(unittest.TestCase):
+    """A model that is already on disk must be hashed, not trusted.
+
+    Regression cover for the review finding on #713: all three installer
+    functions returned early when the model file existed, so every re-run — and
+    every install predating checksum verification — kept an unverified model.
+    """
+
+    SOURCE = INSTALL_SH.read_text()
+
+    def _function_body(self, name: str) -> str:
+        start = self.SOURCE.index(f"\n{name}() {{")
+        end = self.SOURCE.index("\n}\n", start)
+        return self.SOURCE[start:end]
+
+    def _exists_guard(self, name: str) -> str:
+        """The part of the function before it starts downloading."""
+        body = self._function_body(name)
+        marker = body.find("Check internet connectivity")
+        return body[:marker] if marker != -1 else body
+
+    def test_whisper_hashes_an_existing_model(self):
+        guard = self._exists_guard("install_whisper_model")
+        self.assertIn("verify_openai_model_checksum", guard)
+        self.assertIn("rm -f", guard)
+
+    def test_whispercpp_hashes_an_existing_model(self):
+        guard = self._exists_guard("install_whispercpp_model")
+        self.assertIn("verify_model_checksum", guard)
+        self.assertIn("rm -f", guard)
+
+    def test_vosk_requires_a_matching_verification_stamp(self):
+        guard = self._exists_guard("install_vosk_models")
+        self.assertIn(".vocalinux_verified", guard)
+        self.assertIn("rm -rf", guard)
+
+    def test_vosk_writes_the_stamp_after_extracting(self):
+        body = self._function_body("install_vosk_models")
+        self.assertIn('pinned_digest_for "$SMALL_MODEL_ARCHIVE" > "$SMALL_MODEL_STAMP"', body)
+
+    def test_no_installer_path_returns_zero_on_an_unverified_file(self):
+        """Each guard must verify before its `return 0`, not after."""
+        for name, checker in (
+            ("install_whisper_model", "verify_openai_model_checksum"),
+            ("install_whispercpp_model", "verify_model_checksum"),
+            ("install_vosk_models", ".vocalinux_verified"),
+        ):
+            guard = self._exists_guard(name)
+            self.assertLess(
+                guard.index(checker),
+                guard.index("return 0"),
+                f"{name} returns success before verifying an existing model",
+            )
 
 
 if __name__ == "__main__":
