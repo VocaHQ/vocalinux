@@ -25,7 +25,7 @@
     --dark-ink: #0b1a15;
     --sun: #e9b949;
     --red: #de6a57;
-    --focus: var(--brand-dark);
+    --focus: var(--sun);
     --mint: #cfe9dc;
     --on-dark: #fffdf7;
     --btn-bg: #0f6b57;
@@ -808,8 +808,8 @@
     overflow: hidden;
     border-top: 1px solid var(--ink);
     border-bottom: 1px solid var(--ink);
-    color: var(--on-dark);
-    background: var(--dark-ink);
+    color: var(--paper-bright);
+    background: var(--brand-dark);
   }
 
   .ribbon-track {
@@ -821,7 +821,8 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     white-space: nowrap;
-    animation: ribbon-move 32s linear infinite;
+    /* 28s per item cycle, matching vocahq.com; 4 cycles per group. */
+    animation: ribbon-move 112s linear infinite;
   }
 
   .ribbon-group {

@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { SiteChrome } from "@/components/site-chrome";
@@ -231,6 +231,16 @@ export default function HomePage() {
     uninstallDisplayCommand,
   } = installCommands;
 
+  useEffect(() => {
+    const track = document.querySelector(".ribbon-track");
+    if (!(track instanceof HTMLElement)) return undefined;
+    const onVisibility = () => {
+      track.style.animationPlayState = document.hidden ? "paused" : "running";
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
   return (
     <SiteChrome variant="home">
       <script
@@ -356,7 +366,7 @@ export default function HomePage() {
               key={copy}
               aria-hidden={copy === 1 ? true : undefined}
             >
-              {Array.from({ length: 6 }, (_, repeat) =>
+              {Array.from({ length: 4 }, (_, repeat) =>
                 ribbonItems.map((item) => (
                   <React.Fragment key={`${copy}-${repeat}-${item}`}>
                     <span>{item}</span>
