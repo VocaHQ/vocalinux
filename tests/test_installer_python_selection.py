@@ -125,13 +125,22 @@ select_python_interpreter "{min_version}" && echo "SELECTED=$PYTHON_CMD" || echo
 
         assert f"SELECTED={path_python}" in self._select(path_python, system_python)
 
-    def test_falls_back_to_version_match_when_no_candidate_has_gi(self, tmp_path):
-        # gi is installed later in the run, so selection must still yield the
-        # system interpreter rather than the placeholder "python3".
+    def test_falls_back_to_the_system_python_when_no_candidate_has_gi(self, tmp_path):
+        # gi is usually installed later in the same run, so the fallback has to
+        # pick the interpreter that PyGObject will land on. Picking the PATH one
+        # here is exactly the venv-cannot-import-gi bug this file covers.
         path_python = _fake_python(tmp_path / "pathbin" / "python3", "3.13", has_gi=False)
         system_python = _fake_python(tmp_path / "usrbin" / "python3", "3.14", has_gi=False)
 
         stdout = self._select(path_python, system_python)
+        assert f"SELECTED={system_python}" in stdout
+
+    def test_falls_back_to_path_python_when_the_system_one_is_too_old(self, tmp_path):
+        """Preferring the system interpreter must not override the floor."""
+        path_python = _fake_python(tmp_path / "pathbin" / "python3", "3.12", has_gi=False)
+        system_python = _fake_python(tmp_path / "usrbin" / "python3", "3.9", has_gi=False)
+
+        stdout = self._select(path_python, system_python, min_version="3.11")
         assert f"SELECTED={path_python}" in stdout
         assert "SELECTED=python3" not in stdout
 

@@ -2472,7 +2472,7 @@ python_has_gi() {
 # require_distro_gi() reports that case with a proper message later on.
 select_python_interpreter() {
     local min_version="$1"
-    local candidates=() candidate seen="" first="" ok_version=""
+    local candidates=() candidate seen="" first="" ok_version="" ok_system=""
 
     if command_exists python3; then
         candidates+=("$(command -v python3)")
@@ -2490,6 +2490,9 @@ select_python_interpreter() {
         [ -n "$first" ] || first="$candidate"
         python_version_at_least "$candidate" "$min_version" || continue
         [ -n "$ok_version" ] || ok_version="$candidate"
+        if [ "$candidate" = "$SYSTEM_PYTHON" ]; then
+            ok_system="$candidate"
+        fi
 
         if python_has_gi "$candidate"; then
             PYTHON_CMD="$candidate"
@@ -2497,7 +2500,9 @@ select_python_interpreter() {
         fi
     done
 
-    PYTHON_CMD="${ok_version:-$first}"
+    # No candidate has gi yet; it may be installed later in this run. Prefer the
+    # distro interpreter, because its PyGObject is the one that will show up.
+    PYTHON_CMD="${ok_system:-${ok_version:-$first}}"
     [ -n "$PYTHON_CMD" ]
 }
 
