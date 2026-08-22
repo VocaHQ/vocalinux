@@ -68,7 +68,7 @@ from ..utils.whispercpp_model_info import is_model_downloaded as is_whispercpp_m
 from ..utils.whispercpp_model_info import (
     list_downloaded_models as list_downloaded_whispercpp_models,
 )
-from ..version import __copyright__, __description__, __url__, __version__  # noqa: E402
+from ..version import __copyright__, __url__, __version__  # noqa: E402
 from .config_manager import (  # noqa: E402
     DEFAULT_CONFIG,
     DEFAULT_SOUND_EFFECT_TONE,
@@ -260,6 +260,67 @@ def _default_whispercpp_variant_for_size(model_size: str, language_id: str) -> O
 
 # Uniform width for right-hand row controls so they align down a page
 _CONTROL_WIDTH = 230
+
+VOCALINUX_SITE_URL = "https://vocalinux.com"
+VOCAHQ_SITE_URL = "https://vocahq.com"
+VOCAMAC_SITE_URL = "https://vocamac.com"
+VOCAPHONE_SITE_URL = "https://vocaphone.vocahq.com"
+VOCAGATEWAY_SITE_URL = "https://vocagateway.vocahq.com"
+GITHUB_ISSUES_URL = "https://github.com/VocaHQ/vocalinux/issues"
+VOCAHQ_DISCORD_URL = "https://discord.gg/UMJduhcqn"
+VOCAHQ_X_URL = "https://x.com/vocahq"
+VOCAHQ_MAILTO_URL = "mailto:hello@vocahq.com"
+
+# About page links that are not GitHub release URLs.
+_ABOUT_OPEN_URLS = frozenset(
+    {
+        VOCALINUX_SITE_URL,
+        VOCAHQ_SITE_URL,
+        VOCAMAC_SITE_URL,
+        VOCAPHONE_SITE_URL,
+        VOCAGATEWAY_SITE_URL,
+        GITHUB_ISSUES_URL,
+        VOCAHQ_DISCORD_URL,
+        VOCAHQ_X_URL,
+        VOCAHQ_MAILTO_URL,
+    }
+)
+
+# Official Talk-to-us marks from VocaHQ/.github brand/vocahq/social (commit 61c8eee).
+# Do not redraw. fill is currentColor; paint iron-white ink at load time.
+_ABOUT_INK = "#14231C"
+_ABOUT_ICON_TEXT_PX = 16
+
+_VOCAHQ_FAMILY_LINKS = (
+    (VOCAHQ_SITE_URL, "vocahq.com", "Family site", "Open vocahq.com"),
+    (VOCALINUX_SITE_URL, "vocalinux.com", "Linux, Available now", "Open vocalinux.com"),
+    (VOCAMAC_SITE_URL, "vocamac.com", "macOS, Beta", "Open vocamac.com"),
+    (
+        VOCAPHONE_SITE_URL,
+        "vocaphone.vocahq.com",
+        "Android beta / iOS source build",
+        "Open vocaphone.vocahq.com",
+    ),
+    (
+        VOCAGATEWAY_SITE_URL,
+        "vocagateway.vocahq.com",
+        "Optional self-hosted compute",
+        "Open vocagateway.vocahq.com",
+    ),
+)
+
+
+def _can_open_url(url: str) -> bool:
+    """Return True for GitHub project URLs or the About page allowlist."""
+    return bool(url) and (url in _ABOUT_OPEN_URLS or is_trusted_release_url(url))
+
+
+def _set_accessible_name(widget: Gtk.Widget, name: str) -> None:
+    """Set the ATK name so identical visible labels stay distinguishable."""
+    accessible = widget.get_accessible()
+    if accessible is not None:
+        accessible.set_name(name)
+
 
 MODEL_SIZE_TOOLTIP = (
     "Choose the largest model your computer can run comfortably. Tiny/Base are fastest, "
@@ -1571,7 +1632,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _open_web_url(self, url: str) -> None:
         """Open a trusted project URL in the user's default browser."""
-        if not url or not is_trusted_release_url(url):
+        if not _can_open_url(url):
             logger.warning("Refusing to open untrusted URL: %s", url)
             return
         try:
@@ -3360,6 +3421,58 @@ class SettingsDialog(Gtk.Dialog):
 
         self.power_user_switch.connect("state-set", self._on_power_user_toggled)
 
+    def _about_mark_image(self, icon_name: str) -> Optional[Gtk.Image]:
+        """Load a Design Talk-to-us SVG and paint currentColor as iron-white ink."""
+        from gi.repository import GdkPixbuf
+
+        from ..utils.resource_manager import ResourceManager
+
+        path = ResourceManager().get_icon_path(icon_name)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                svg = handle.read().replace("currentColor", _ABOUT_INK)
+            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+            loader.set_size(_ABOUT_ICON_TEXT_PX, _ABOUT_ICON_TEXT_PX)
+            loader.write(svg.encode("utf-8"))
+            loader.close()
+            pixbuf = loader.get_pixbuf()
+            if pixbuf is None:
+                return None
+            image = Gtk.Image.new_from_pixbuf(pixbuf)
+            image.set_pixel_size(_ABOUT_ICON_TEXT_PX)
+            return image
+        except Exception as exc:
+            logger.warning("Failed to load About mark %s: %s", icon_name, exc)
+            return None
+
+    def _about_open_button(
+        self,
+        url: str,
+        tooltip: str,
+        label: str = "Open",
+        icon_name: Optional[str] = None,
+        width: int = 100,
+    ) -> Gtk.Button:
+        """Button that opens a trusted About URL.
+
+        Unique labels (Report a bug or idea, Discord, X, Email) are the
+        accessible name. Shared "Open" labels use the tooltip instead.
+        """
+        button = Gtk.Button(label=label)
+        button.set_size_request(width, -1)
+        button.set_tooltip_text(tooltip)
+        if label == "Open":
+            _set_accessible_name(button, tooltip)
+        if icon_name:
+            image = self._about_mark_image(icon_name)
+            if image is not None:
+                button.set_image(image)
+                button.set_always_show_image(True)
+        button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
+        return button
+
     def _build_about_section(self):
         """Build the About page using the same PreferenceRow cards as other pages."""
         from gi.repository import GdkPixbuf
@@ -3379,7 +3492,10 @@ class SettingsDialog(Gtk.Dialog):
 
         app_group = PreferencesGroup(
             title="Vocalinux",
-            description=__description__,
+            description=(
+                "Available now on Linux (X11 and Wayland). After a model is downloaded, "
+                "speech is processed on this PC."
+            ),
             keywords=("about", "version", "app"),
             header_icon=about_icon,
         )
@@ -3395,15 +3511,15 @@ class SettingsDialog(Gtk.Dialog):
         )
         app_group.add_row(version_row)
 
-        website_btn = Gtk.Button(label="Open")
-        website_btn.set_size_request(100, -1)
-        website_btn.set_tooltip_text("Open the Vocalinux GitHub page")
-        website_btn.connect("clicked", lambda *_: self._open_web_url(__url__))
+        website_btn = self._about_open_button(
+            VOCALINUX_SITE_URL,
+            "Open vocalinux.com website",
+        )
         website_row = PreferenceRow(
             title="Website",
-            subtitle="Source code, issues, and documentation on GitHub",
+            subtitle="Product site at vocalinux.com",
             widget=website_btn,
-            keywords=("github", "website", "repo"),
+            keywords=("website", "vocalinux.com"),
         )
         app_group.add_row(website_row)
 
@@ -3461,6 +3577,10 @@ class SettingsDialog(Gtk.Dialog):
         self.open_release_btn.set_tooltip_text(
             "Open the release page in your browser for download links and install steps"
         )
+        _set_accessible_name(
+            self.open_release_btn,
+            "Open the latest release page",
+        )
         self.open_release_btn.connect("clicked", self._on_open_release_clicked)
         self.latest_release_row = PreferenceRow(
             title="Latest Release",
@@ -3488,6 +3608,78 @@ class SettingsDialog(Gtk.Dialog):
         self.release_notes_group.add_row(self.release_notes_row)
         self.about_tab.pack_start(self.release_notes_group, False, False, 0)
         self.release_notes_group.hide()
+
+        family_group = PreferencesGroup(
+            title="Part of VocaHQ",
+            description=(
+                "Vocalinux is part of VocaHQ. The same private dictation idea also ships "
+                "as VocaMac (macOS, beta), VocaWin (Windows, unsigned developer alpha), "
+                "and VocaPhone (Android beta / iOS source build). VocaGateway is optional "
+                "self-hosted compute. It is not on-device."
+            ),
+            keywords=("vocahq", "vocamac", "vocawin", "vocaphone", "vocagateway", "family"),
+        )
+        for url, title, subtitle, open_name in _VOCAHQ_FAMILY_LINKS:
+            family_group.add_row(
+                PreferenceRow(
+                    title=title,
+                    subtitle=subtitle,
+                    widget=self._about_open_button(url, open_name),
+                    keywords=(title, subtitle.lower()),
+                )
+            )
+        self.about_tab.pack_start(family_group, False, False, 0)
+
+        talk_group = PreferencesGroup(
+            title="Talk to us",
+            description=(
+                "Bugs, feedback, and feature ideas open a GitHub issue. You pick the "
+                "template on the next screen."
+            ),
+            keywords=("github", "discord", "contact", "bug", "feedback", "email"),
+        )
+        report_btn = self._about_open_button(
+            GITHUB_ISSUES_URL,
+            "Open GitHub issues for a bug or idea",
+            label="Report a bug or idea",
+            icon_name="github",
+            width=200,
+        )
+        talk_group.add_row(
+            PreferenceRow(
+                title="GitHub issues",
+                subtitle="https://github.com/VocaHQ/vocalinux/issues",
+                widget=report_btn,
+                keywords=("github", "issue", "bug", "idea"),
+            )
+        )
+        contact_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        for url, label, tooltip, icon_name in (
+            (VOCAHQ_DISCORD_URL, "Discord", "Open the VocaHQ Discord", "discord"),
+            (VOCAHQ_X_URL, "X", "Open X @vocahq", "x"),
+            (VOCAHQ_MAILTO_URL, "Email", "Email hello@vocahq.com", "mail"),
+        ):
+            contact_box.pack_start(
+                self._about_open_button(
+                    url,
+                    tooltip,
+                    label=label,
+                    icon_name=icon_name,
+                    width=110,
+                ),
+                False,
+                False,
+                0,
+            )
+        talk_group.add_row(
+            PreferenceRow(
+                title="Community",
+                subtitle="Discord, X, and email",
+                widget=contact_box,
+                keywords=("discord", "x", "twitter", "email", "mail"),
+            )
+        )
+        self.about_tab.pack_start(talk_group, False, False, 0)
 
     def _set_about_update_badge(self, visible: bool) -> None:
         """Show or hide the green New badge on the About sidebar row."""
