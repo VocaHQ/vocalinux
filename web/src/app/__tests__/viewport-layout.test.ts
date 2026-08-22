@@ -15,10 +15,19 @@ import path from "node:path";
 
 const root = path.resolve(__dirname, "../../..");
 const pageTsx = fs.readFileSync(path.join(root, "src/app/page.tsx"), "utf8");
+const terminalTsx = fs.readFileSync(
+  path.join(root, "src/components/terminal-block.tsx"),
+  "utf8",
+);
+const chromeTsx = fs.readFileSync(
+  path.join(root, "src/components/site-chrome.tsx"),
+  "utf8",
+);
 const globalsCss = fs.readFileSync(
   path.join(root, "src/styles/globals.css"),
   "utf8",
 );
+const homeSource = `${pageTsx}\n${terminalTsx}\n${chromeTsx}`;
 
 const CHROME =
   process.env.CHROME_PATH ||
@@ -42,9 +51,9 @@ describe("marketing home layout guards (shipped source)", () => {
     expect(globalsCss).toMatch(/overflow-x:\s*clip/);
     expect(globalsCss).toMatch(/\.terminal-panel pre/);
     expect(globalsCss).toMatch(/overflow-wrap:\s*anywhere|break-all|word-break/);
-    expect(pageTsx).toMatch(/break-all/);
-    expect(pageTsx).toMatch(/min-w-0/);
-    expect(pageTsx).toMatch(/overflow-x-clip|overflow-x-auto/);
+    expect(homeSource).toMatch(/break-all/);
+    expect(homeSource).toMatch(/min-w-0/);
+    expect(homeSource).toMatch(/overflow-x-clip|overflow-x-auto/);
   });
 
   it("hero uses solid display type (no gradient text slop)", () => {
@@ -52,6 +61,13 @@ describe("marketing home layout guards (shipped source)", () => {
     expect(pageTsx).not.toMatch(/bg-gradient-to-r from-primary via-teal/);
     expect(pageTsx).toMatch(/font-display/);
     expect(pageTsx).toMatch(/TerminalBlock|terminal-panel/);
+  });
+
+  it("uses the Voca family paper workbench tokens", () => {
+    expect(globalsCss).toMatch(/--paper:\s*#f4f1e8/);
+    expect(globalsCss).toMatch(/--brand:\s*#0f6b57/);
+    expect(globalsCss).not.toMatch(/linear-gradient|radial-gradient|conic-gradient/);
+    expect(pageTsx).not.toMatch(/linear-gradient|radial-gradient|conic-gradient/);
   });
 });
 
@@ -127,11 +143,11 @@ describe("marketing home three-viewport overflow (live browser)", () => {
 
         if (vp.width < 768) {
           await page.getByRole("button", { name: /toggle menu/i }).click();
-          const featuresVisible = await page
+          const howVisible = await page
             .locator("header")
-            .getByRole("link", { name: "Features" })
+            .getByRole("link", { name: "How it works" })
             .isVisible();
-          expect(featuresVisible).toBe(true);
+          expect(howVisible).toBe(true);
         }
 
         await context.close();

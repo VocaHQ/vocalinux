@@ -109,7 +109,7 @@ try {
       });
     }
 
-    // Mobile menu path check (header only; footer also has Features)
+    // Mobile menu path check (header only)
     let mobileMenuOk = true;
     if (vp.width < 768) {
       const toggle = page.getByRole("button", { name: /toggle menu/i });
@@ -118,7 +118,7 @@ try {
         await page.waitForTimeout(150);
         mobileMenuOk = await page
           .locator("header")
-          .getByRole("link", { name: "Features" })
+          .getByRole("link", { name: "How it works" })
           .isVisible();
         await toggle.click();
       } else {

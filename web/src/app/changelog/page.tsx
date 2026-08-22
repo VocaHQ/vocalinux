@@ -312,24 +312,24 @@ const getTypeStyles = (type: string) => {
     case "stable":
       return {
         badge:
-          "bg-primary/10 text-primary dark:text-[color:var(--terminal-fg)]",
+          "bg-primary/10 text-primary",
         label: "Stable",
       };
     case "beta":
       return {
         badge:
-          "bg-primary/10 text-primary dark:text-primary",
+          "bg-primary/10 text-primary",
         label: "Beta",
       };
     case "alpha":
       return {
         badge:
-          "bg-muted text-muted-foreground dark:text-muted-foreground",
+          "bg-muted text-muted-foreground",
         label: "Alpha",
       };
     default:
       return {
-        badge: "bg-muted text-zinc-700",
+        badge: "bg-muted text-muted-foreground",
         label: type,
       };
   }

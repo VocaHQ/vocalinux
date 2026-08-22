@@ -1,9 +1,7 @@
 import "@/styles/globals.css";
 import React from "react";
-import { Bricolage_Grotesque, Source_Sans_3 } from "next/font/google";
 import { type Metadata } from "next";
 import Script from "next/script";
-import { ThemeProvider } from "@/components/theme-provider";
 import {
   absoluteUrl,
   DEFAULT_OG_IMAGE_ALT,
@@ -15,26 +13,11 @@ import {
   VOCAHQ_URL,
 } from "@/lib/seo";
 
-const display = Bricolage_Grotesque({
-  subsets: ["latin"],
-  variable: "--font-display",
-  display: "swap",
-});
-
-const body = Source_Sans_3({
-  subsets: ["latin"],
-  variable: "--font-body",
-  display: "swap",
-});
-
 export const viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 5,
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0c0c0e" },
-  ],
+  themeColor: "#f4f1e8",
 };
 
 export const metadata: Metadata = {
@@ -174,8 +157,7 @@ const webSiteJsonLd = {
     "@type": "SearchAction",
     target: {
       "@type": "EntryPoint",
-      urlTemplate:
-        `${GITHUB_REPO_URL}/issues?q={search_term_string}`,
+      urlTemplate: `${GITHUB_REPO_URL}/issues?q={search_term_string}`,
     },
     "query-input": {
       "@type": "PropertyValueSpecification",
@@ -193,11 +175,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${display.variable} ${body.variable} scroll-smooth`}
-      suppressHydrationWarning
-    >
+    <html lang="en" className="scroll-smooth" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://api.github.com" />
         <script
@@ -218,9 +196,7 @@ export default function RootLayout({
             gtag('config', 'G-7NBBNJNNQ7');
           `}
         </Script>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          {children}
-        </ThemeProvider>
+        {children}
       </body>
     </html>
   );

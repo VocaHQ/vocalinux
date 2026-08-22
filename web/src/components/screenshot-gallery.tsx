@@ -9,25 +9,14 @@ import {
   Settings,
   X,
 } from "lucide-react";
-import {
-  darkScreenshotPath,
-  ThemeScreenshotImg,
-} from "@/components/theme-screenshot";
-
 export type Screenshot = {
   src: string;
-  /** Dark-theme variant; defaults to `/screenshots/dark/<file>`. */
-  srcDark?: string;
   alt: string;
   title: string;
   description: string;
   width: number;
   height: number;
 };
-
-function shotDarkSrc(shot: Screenshot): string {
-  return shot.srcDark ?? darkScreenshotPath(shot.src);
-}
 
 type ScreenshotGalleryProps = {
   productShots: Screenshot[];
@@ -42,27 +31,27 @@ function ScreenshotCard({
   onOpen: () => void;
 }) {
   return (
-    <figure className="flex h-full flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+    <figure className="gallery-card">
       <button
         type="button"
         onClick={onOpen}
-        className="group relative flex min-h-0 w-full flex-1 cursor-zoom-in items-center justify-center bg-zinc-50 p-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 dark:bg-zinc-900/50"
+        className="group relative flex min-h-0 w-full flex-1 cursor-zoom-in items-center justify-center bg-muted p-3 text-left"
         aria-label={`View larger: ${shot.title}`}
       >
-        <ThemeScreenshotImg
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
           src={shot.src}
-          srcDark={shotDarkSrc(shot)}
           alt={shot.alt}
           width={shot.width}
           height={shot.height}
           className="mx-auto h-auto max-h-64 w-full rounded-lg object-contain transition-transform duration-200 group-hover:scale-[1.02]"
         />
-        <span className="pointer-events-none absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-zinc-900/80 px-2.5 py-1 text-xs font-medium text-white opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 dark:bg-zinc-100/90 dark:text-zinc-900">
+        <span className="pointer-events-none absolute bottom-4 right-4 inline-flex items-center gap-1.5 rounded-full bg-[color:var(--dark-ink)] px-2.5 py-1 text-xs font-medium text-[color:var(--paper-bright)] opacity-0 shadow transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
           <Expand className="h-3.5 w-3.5" />
           Expand
         </span>
       </button>
-      <figcaption className="space-y-1 border-t border-zinc-200 p-4 dark:border-zinc-700">
+      <figcaption className="space-y-1">
         <h3 className="text-lg font-semibold">{shot.title}</h3>
         <p className="text-sm text-muted-foreground">{shot.description}</p>
       </figcaption>
@@ -162,9 +151,9 @@ function Lightbox({
         onClick={(event) => event.stopPropagation()}
       >
         <div className="relative flex max-h-[min(80vh,900px)] w-full items-center justify-center">
-          <ThemeScreenshotImg
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
             src={shot.src}
-            srcDark={shotDarkSrc(shot)}
             alt={shot.alt}
             width={shot.width}
             height={shot.height}
@@ -176,8 +165,8 @@ function Lightbox({
           <p id={titleId} className="text-lg font-semibold">
             {shot.title}
           </p>
-          <p className="mt-1 text-sm text-zinc-300">{shot.description}</p>
-          <p className="mt-2 text-xs text-zinc-400">
+          <p className="mt-1 text-sm text-white/80">{shot.description}</p>
+          <p className="mt-2 text-xs text-white/60">
             {index + 1} / {shots.length}
             <span className="mx-2">·</span>
             Esc to close · arrow keys to browse

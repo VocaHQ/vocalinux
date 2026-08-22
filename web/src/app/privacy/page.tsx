@@ -49,7 +49,7 @@ export default function PrivacyPage() {
       />
 
       <section>
-        <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-border bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary dark:text-[color:var(--terminal-fg)]">
+        <p className="mb-4 inline-flex items-center gap-2 rounded-full border border-border bg-primary/10 px-4 py-1.5 text-sm font-medium text-primary">
           <Shield className="h-4 w-4" />
           Privacy First
         </p>
@@ -65,8 +65,8 @@ export default function PrivacyPage() {
       {/* Key Privacy Points */}
       <section className="mb-12 grid gap-6 md:grid-cols-2 lg:grid-cols-3">
         <article className="rounded-[12px] border border-border bg-background p-6">
-          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3 dark:bg-primary/10">
-            <Lock className="h-6 w-6 text-primary dark:text-[color:var(--terminal-fg)]" />
+          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
+            <Lock className="h-6 w-6 text-primary" />
           </div>
           <h3 className="mb-2 text-xl font-semibold">Local engines</h3>
           <p className="text-sm text-muted-foreground">
@@ -76,7 +76,7 @@ export default function PrivacyPage() {
         </article>
 
         <article className="rounded-[12px] border border-border bg-background p-6">
-          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3 dark:bg-primary/10">
+          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
             <Server className="h-6 w-6 text-primary" />
           </div>
           <h3 className="mb-2 text-xl font-semibold">No Cloud Processing</h3>
@@ -87,7 +87,7 @@ export default function PrivacyPage() {
         </article>
 
         <article className="rounded-[12px] border border-border bg-background p-6">
-          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3 dark:bg-primary/10">
+          <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
             <Eye className="h-6 w-6 text-primary" />
           </div>
           <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
@@ -160,7 +160,7 @@ export default function PrivacyPage() {
                 discarded immediately after processing
               </li>
             </ol>
-            <p className="mt-4 rounded-lg bg-muted p-4 text-sm dark:bg-muted">
+            <p className="mt-4 rounded-lg bg-muted p-4 text-sm">
               <strong>Note:</strong> Local engines do not write audio to disk or send it over the
               network. Remote API sends audio to the server you configure.
             </p>
@@ -213,31 +213,31 @@ export default function PrivacyPage() {
             <tbody className="text-sm text-muted-foreground">
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Data leaves device</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">
+                <td className="py-3 text-primary">
                   Only with Remote API
                 </td>
                 <td className="py-3 text-primary">Always</td>
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Internet required</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">
+                <td className="py-3 text-primary">
                   Only for Remote API or a model download
                 </td>
                 <td className="py-3 text-primary">Yes</td>
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Source code available</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">Yes (AGPL-3.0)</td>
+                <td className="py-3 text-primary">Yes (AGPL-3.0)</td>
                 <td className="py-3 text-primary">No</td>
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Voice recordings stored</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">No</td>
+                <td className="py-3 text-primary">No</td>
                 <td className="py-3">Varies by service</td>
               </tr>
               <tr>
                 <td className="py-3 font-medium text-foreground">Cost</td>
-                <td className="py-3 text-primary dark:text-[color:var(--terminal-fg)]">Free forever</td>
+                <td className="py-3 text-primary">Free forever</td>
                 <td className="py-3">Subscription</td>
               </tr>
             </tbody>

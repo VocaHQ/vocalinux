@@ -43,7 +43,7 @@ npm run test:viewport
 - Home: `src/app/page.tsx`
 - Shared SEO shell: `src/components/seo-subpage-shell.tsx`
 - Tokens / utilities: `src/styles/globals.css`, `tailwind.config.ts`
-- Fonts: Bricolage Grotesque + Source Sans 3 in `src/app/layout.tsx`
+- Fonts: system display + body stacks in `src/styles/globals.css` (no remote webfonts)
 
 ## Maintaining this file
 

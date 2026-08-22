@@ -157,7 +157,7 @@ export default function AlternativesPage() {
                     <CheckCircle2 className="h-5 w-5 text-primary" aria-label="Yes" />
                   ) : (
                     <XCircle
-                      className="h-5 w-5 text-[#c45c5c] dark:text-[#e08b8b]"
+                      className="h-5 w-5 text-[#c45c5c]"
                       aria-label="No"
                     />
                   )}
@@ -167,7 +167,7 @@ export default function AlternativesPage() {
                     <CheckCircle2 className="h-5 w-5 text-primary" aria-label="Yes" />
                   ) : (
                     <XCircle
-                      className="h-5 w-5 text-[#c45c5c] dark:text-[#e08b8b]"
+                      className="h-5 w-5 text-[#c45c5c]"
                       aria-label="No"
                     />
                   )}
@@ -177,7 +177,7 @@ export default function AlternativesPage() {
                     <CheckCircle2 className="h-5 w-5 text-primary" aria-label="Yes" />
                   ) : (
                     <XCircle
-                      className="h-5 w-5 text-[#c45c5c] dark:text-[#e08b8b]"
+                      className="h-5 w-5 text-[#c45c5c]"
                       aria-label="No"
                     />
                   )}
@@ -187,7 +187,7 @@ export default function AlternativesPage() {
                     <CheckCircle2 className="h-5 w-5 text-primary" aria-label="Yes" />
                   ) : (
                     <XCircle
-                      className="h-5 w-5 text-[#c45c5c] dark:text-[#e08b8b]"
+                      className="h-5 w-5 text-[#c45c5c]"
                       aria-label="No"
                     />
                   )}
@@ -232,7 +232,7 @@ export default function AlternativesPage() {
               </div>
 
               <div className="rounded-[12px] border border-border bg-muted/40 p-4">
-                <p className="mb-2 text-sm font-semibold text-[#c45c5c] dark:text-[#e08b8b]">
+                <p className="mb-2 text-sm font-semibold text-[#c45c5c]">
                   Cons
                 </p>
                 <ul className="space-y-1.5">
@@ -241,7 +241,7 @@ export default function AlternativesPage() {
                       key={con}
                       className="flex items-start gap-2 text-sm text-muted-foreground"
                     >
-                      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#c45c5c] dark:text-[#e08b8b]" />
+                      <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#c45c5c]" />
                       {con}
                     </li>
                   ))}

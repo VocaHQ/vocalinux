@@ -304,7 +304,7 @@ export default async function DistroInstallPage({
           className={`rounded-[12px] border border-border p-6  ${styles.panelClass}`}
         >
           <h2 className="mb-3 inline-flex items-center gap-2 text-xl font-semibold">
-            <Terminal className="h-5 w-5 text-primary dark:text-[color:var(--terminal-fg)]" />
+            <Terminal className="h-5 w-5 text-primary" />
             Install command
           </h2>
           <div className="rounded-[12px] bg-[color:var(--terminal)] p-4">

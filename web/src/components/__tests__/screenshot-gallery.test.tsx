@@ -9,7 +9,6 @@ import {
 const productShots: Screenshot[] = [
   {
     src: "/screenshots/00-transcription.png",
-    srcDark: "/screenshots/dark/00-transcription.png",
     alt: "Transcription alt",
     title: "Transcription in action",
     description: "Dictate into apps",
@@ -18,7 +17,6 @@ const productShots: Screenshot[] = [
   },
   {
     src: "/screenshots/02-system-tray.png",
-    srcDark: "/screenshots/dark/02-system-tray.png",
     alt: "Tray alt",
     title: "System tray",
     description: "Tray states",
@@ -30,7 +28,6 @@ const productShots: Screenshot[] = [
 const settingsShots: Screenshot[] = [
   {
     src: "/screenshots/settings-speech-engine.png",
-    srcDark: "/screenshots/dark/settings-speech-engine.png",
     alt: "Speech engine alt",
     title: "Speech Engine",
     description: "Pick a model",
@@ -61,14 +58,10 @@ describe("ScreenshotGallery lightbox", () => {
     // Settings shot is third overall (index 2 -> 3/3)
     expect(within(dialog).getByText(/3 \/ 3/)).toBeInTheDocument();
     const speechImgs = within(dialog).getAllByAltText("Speech engine alt");
-    expect(speechImgs.length).toBe(2);
+    expect(speechImgs.length).toBe(1);
     expect(speechImgs[0]).toHaveAttribute(
       "src",
       "/screenshots/settings-speech-engine.png",
-    );
-    expect(speechImgs[1]).toHaveAttribute(
-      "src",
-      "/screenshots/dark/settings-speech-engine.png",
     );
     expect(within(dialog).getByText("Speech Engine")).toBeInTheDocument();
   });

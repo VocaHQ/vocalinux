@@ -264,13 +264,13 @@ export default function OfflinePage() {
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            Run with <code className="rounded bg-muted px-1 dark:bg-muted">--debug</code> and
+            Run with <code className="rounded bg-muted px-1">--debug</code> and
             watch network activity. Local engines should stay quiet during dictation.
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            Monitor with <code className="rounded bg-muted px-1 dark:bg-muted">tcpdump</code> or{" "}
-            <code className="rounded bg-muted px-1 dark:bg-muted">wireshark</code>. Local engines
+            Monitor with <code className="rounded bg-muted px-1">tcpdump</code> or{" "}
+            <code className="rounded bg-muted px-1">wireshark</code>. Local engines
             should stay quiet during dictation.
           </li>
           <li className="flex items-start gap-2">

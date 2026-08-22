@@ -196,8 +196,8 @@ export default function RsiPreventionPage() {
             >
               <h3 className="mb-2 font-semibold">{condition.name}</h3>
               <p className="mb-3 text-sm text-muted-foreground">{condition.description}</p>
-              <div className="rounded-lg bg-primary/10 p-3 dark:bg-primary/10">
-                <p className="text-sm text-primary dark:text-[color:var(--terminal-fg)]">
+              <div className="rounded-lg bg-primary/10 p-3">
+                <p className="text-sm text-primary">
                   <strong>How dictation helps:</strong> {condition.howDictationHelps}
                 </p>
               </div>
@@ -254,7 +254,7 @@ export default function RsiPreventionPage() {
         </div>
       </section>
 
-      <section className="rounded-[12px] border border-border bg-primary/10 p-8 dark:border-border">
+      <section className="rounded-[12px] border border-border bg-primary/10 p-8">
         <h2 className="mb-4 font-display text-2xl font-semibold text-primary">
           Take Care of Your Hands
         </h2>
@@ -273,7 +273,7 @@ export default function RsiPreventionPage() {
           </Link>
           <Link
             href="/use-cases/"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10 dark:bg-primary/10 dark:hover:bg-primary/10"
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10"
           >
             See Other Use Cases
           </Link>

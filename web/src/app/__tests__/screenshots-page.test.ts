@@ -52,7 +52,6 @@ describe("Screenshots page and assets", () => {
     expect(gallerySource).toContain('role="dialog"');
     expect(gallerySource).toContain("aria-modal");
     expect(gallerySource).toContain("View larger");
-    expect(gallerySource).toContain("ThemeScreenshotImg");
   });
 
   it("references every public screenshot asset from the page source", () => {
@@ -65,7 +64,6 @@ describe("Screenshots page and assets", () => {
       const darkPath = path.join(darkScreenshotsDir, file);
       expect(fs.existsSync(darkPath)).toBe(true);
       expect(fs.statSync(darkPath).size).toBeGreaterThan(1000);
-      expect(pageSource).toContain(`/screenshots/dark/${file}`);
     }
     expect(fs.existsSync(path.join(publicScreenshotsDir, "settings-shortcuts.png"))).toBe(
       false,
@@ -74,10 +72,8 @@ describe("Screenshots page and assets", () => {
 
   it("links to the gallery and only embeds a few product shots on home", () => {
     // Craft home shows a handful of real app shots, then /screenshots/ for the rest.
-    expect(homeSource).toContain('href: "/screenshots/"');
     expect(homeSource).toContain('href="/screenshots/"');
     expect(homeSource).toContain("/screenshots/00-transcription.png");
-    expect(homeSource).toContain("/screenshots/dark/00-transcription.png");
     expect(homeSource).not.toContain("/screenshots/05-about-view.png");
     expect(homeSource).not.toContain("/screenshots/settings-recognition.png");
     expect(homeSource).not.toContain("/screenshots/settings-audio.png");
@@ -85,9 +81,14 @@ describe("Screenshots page and assets", () => {
     expect(homeSource).not.toContain("/screenshots/settings-advanced.png");
   });
 
-  it("exposes Screenshots in the shared subpage shell nav", () => {
-    expect(shellSource).toContain('href: "/screenshots/"');
-    expect(shellSource).toContain('label: "Screenshots"');
+  it("exposes Screenshots in the shared site nav", () => {
+    const navSource = fs.readFileSync(
+      path.join(webRoot, "src/lib/site-nav.ts"),
+      "utf-8",
+    );
+    expect(navSource).toContain('href: "/screenshots/"');
+    expect(navSource).toContain('label: "Screenshots"');
+    expect(shellSource).toContain("SiteChrome");
   });
 
   it("includes captioned settings and product sections", () => {

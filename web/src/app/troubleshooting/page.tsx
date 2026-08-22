@@ -246,7 +246,7 @@ export default function TroubleshootingPage() {
           >
             <h2 className="mb-4 text-xl font-semibold">{item.title}</h2>
 
-            <div className="mb-4 rounded-lg bg-muted p-4 dark:bg-muted">
+            <div className="mb-4 rounded-lg bg-muted p-4">
               <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
                 <AlertTriangle className="h-4 w-4" />
                 Symptoms
@@ -260,8 +260,8 @@ export default function TroubleshootingPage() {
               </ul>
             </div>
 
-            <div className="rounded-lg bg-primary/10 p-4 dark:bg-primary/10">
-              <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary dark:text-[color:var(--terminal-fg)]">
+            <div className="rounded-lg bg-primary/10 p-4">
+              <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-primary">
                 <CheckCircle2 className="h-4 w-4" />
                 Solutions
               </p>

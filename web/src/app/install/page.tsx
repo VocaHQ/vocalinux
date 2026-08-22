@@ -57,7 +57,7 @@ export default function InstallGuidesPage() {
         </p>
 
         <div className="subpage-terminal mt-8 p-5 sm:p-6">
-          <p className="mb-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-zinc-500">
+          <p className="mb-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
             <Terminal className="h-3.5 w-3.5 text-[color:var(--terminal-fg)]" />
             install.sh --interactive
           </p>

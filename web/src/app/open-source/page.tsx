@@ -219,7 +219,7 @@ export default function OpenSourcePage() {
               {vsProprietary.map((row) => (
                 <tr key={row.feature} className="border-b border-border">
                   <td className="py-3 pr-4 font-medium">{row.feature}</td>
-                  <td className="py-3 pr-4 text-primary dark:text-[color:var(--terminal-fg)]">{row.vocalinux}</td>
+                  <td className="py-3 pr-4 text-primary">{row.vocalinux}</td>
                   <td className="py-3 text-muted-foreground">{row.proprietary}</td>
                 </tr>
               ))}

@@ -210,7 +210,7 @@ export default function WaylandPage() {
                     {item.method}
                   </td>
                   <td className="py-3 pr-4">
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary dark:text-[color:var(--terminal-fg)]">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
                       <CheckCircle2 className="h-3 w-3" />
                       {item.status}
                     </span>

@@ -23,8 +23,8 @@ const SyntaxHighlighter = dynamic<SyntaxHighlighterProps>(
   {
     ssr: false,
     loading: () => (
-      <div className="rounded-lg bg-zinc-900 p-4 text-sm">
-        <pre className="whitespace-pre-wrap text-green-400">Loading...</pre>
+      <div className="subpage-terminal p-4 text-sm">
+        <pre className="whitespace-pre-wrap">Loading...</pre>
       </div>
     ),
   },
@@ -57,7 +57,7 @@ export function CodeBlock({
   if (!style) {
     return (
       <div
-        className={`rounded-lg bg-zinc-900 p-4 text-sm ${className}`}
+        className={`subpage-terminal p-4 text-sm ${className}`}
         style={customStyle}
       >
         <pre className="whitespace-pre-wrap text-green-400">{children}</pre>
