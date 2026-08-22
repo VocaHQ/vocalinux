@@ -1,6 +1,6 @@
 # AGENTS.md — vocalinux.com (`web/`)
 
-Guidelines for agents working on the marketing site only. For the Python desktop app, see the repo root `AGENTS.md`.
+Guidelines for agents working on the marketing site only. For the Python desktop app, git worktrees, and PR rules, see the repo root [`AGENTS.md`](../AGENTS.md). Do not create branches, commits, or pull requests in the primary checkout.
 
 ## What this package is
 
@@ -24,6 +24,7 @@ cd web
 npm install
 npm run dev          # local (prefer -H 0.0.0.0 -p 3456 when sharing)
 npm run build        # static export
+npm run lint
 npm test
 npm run typecheck
 ```

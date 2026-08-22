@@ -1,300 +1,189 @@
-# AGENTS.md - Vocalinux
+# AGENTS.md — Vocalinux
 
-Guidelines for AI agents working on this codebase.
+Voice dictation for Linux: GTK 3 tray app (Python) plus a Next.js marketing site in `web/`. Default speech engine is **whisper.cpp** (`pywhispercpp`); OpenAI Whisper, Vosk, and a user-configured remote API are optional. Do not invent features, user counts, or privacy claims.
 
-## Project Overview
+## Critical: git worktrees for every branch and PR
 
-Vocalinux is a voice dictation system for Linux. It uses:
-- **Python 3.9+** for the main application
-- **GTK 3** (via PyGObject) for the desktop UI and system tray
-- **whisper.cpp** (default), **OpenAI Whisper**, and **Vosk** for speech recognition
-- **Next.js/TypeScript** for the website (in `web/`)
-
-### Key Dependencies
-- `pywhispercpp` - Python bindings for whisper.cpp (default engine)
-- `vosk` - Lightweight speech recognition (optional, `[vosk]` extra)
-- `pyaudio` - Audio capture
-- `PyGObject` - GTK integration (distro `python3-gi` only — never pip; see Dependency Management)
-- `psutil` - Process utilities (required by pywhispercpp)
-
-## Build & Test Commands
-
-### Python
+Never create a branch, commit, or open a pull request in the primary checkout. Always use a linked git worktree so the main working tree stays on `main` and stays clean. Do not `git switch` / `git checkout` a feature branch in the primary directory, and do not leave it dirty.
 
 ```bash
-# Install in development mode
-./install.sh --dev
-# Or manually:
-pip install -e ".[dev]"
+git fetch origin
+git worktree add /tmp/vocalinux-<task> -b <type>/<short-name> origin/main
 
-# just: https://just.systems or the distro package `just`
-# Dependency lock files (see "Dependency Management" below)
-just lock          # regenerate uv.lock + requirements/*.txt after changing deps
-just lock-check    # fail if uv.lock is stale relative to pyproject.toml
+# All edits, commits, and `gh pr create` happen inside that worktree.
 
-# Run all tests
+git worktree remove /tmp/vocalinux-<task>
+git worktree prune
+```
+
+Rules:
+
+- One worktree per branch, one branch per PR
+- Place worktrees **outside** the primary working tree (`/tmp/vocalinux-<task>` or a sibling directory such as `../.worktrees/vocalinux-<task>`)
+- Never run two tasks in the same worktree
+- Never commit directly to `main`
+- Clean up the worktree after the PR is pushed
+
+## Toolchain
+
+| Piece | Current |
+|---|---|
+| Python | `>=3.9` (`requires-python` in `pyproject.toml`; CI: 3.9, 3.10, 3.11, 3.13) |
+| GTK | GTK 3 via distro `python3-gi` (PyGObject). Never pip-install it |
+| uv | `>=0.11,<0.12` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth |
+| just | https://just.systems or distro package `just` |
+| Format / lint / types | Black + isort (line length 100), flake8 (`E9,F63,F7,F82` only), mypy `src/` |
+| Website | Next.js / TypeScript in `web/` — see `web/AGENTS.md` |
+
+Activate the venv before Python tooling: `source venv/bin/activate` (or prefix `./venv/bin/`).
+
+## Setup
+
+```bash
+./install.sh --dev                 # system deps + venv + editable install + tests
+# non-interactive / no TTY:
+./install.sh --dev --auto
+./install.sh --dev --auto --no-rebuild-whispercpp   # skip cmake/Vulkan rebuild
+
+source venv/bin/activate
+```
+
+Manual venv (must see distro `gi`):
+
+```bash
+uv venv --system-site-packages --python /usr/bin/python3
+source venv/bin/activate
+# exclude pygobject from uv sync/export:
+#   --no-install-package pygobject / --no-emit-package pygobject
+uv pip install -e ".[dev,vad]"
+```
+
+`install.sh` flags: `--engine=whisper_cpp|whisper|vosk|remote_api`, `--test`, `--skip-models`, `--venv-dir=PATH`. Default engine is `whisper_cpp`.
+
+## Commands
+
+```bash
+just lint          # flake8 (critical) + black --check + isort --check
+just format        # black + isort
+just typecheck     # mypy src/
+just test          # pytest -v
+just test-cov      # pytest --cov=src --cov-report=html
+just lock          # regenerate uv.lock + requirements/*.txt
+just lock-check    # fail if uv.lock is stale vs pyproject.toml
+just pre-commit    # pre-commit run --all-files
+just run-debug     # vocalinux --debug
+just run-source-debug
+```
+
+```bash
 pytest
-
-# Run a single test file
 pytest tests/test_command_processor.py
-
-# Run a single test function
 pytest tests/test_command_processor.py::TestCommandProcessor::test_initialization
-
-# Run tests with verbose output
-pytest -v
-
-# Run tests with coverage
-pytest --cov=src --cov-report=html
-
-# Run tests excluding slow/integration tests
 pytest -m "not slow"
 pytest -m "not integration"
-
-# Lint (check only)
-just lint
-# Or manually:
-flake8 src/ tests/ --select=E9,F63,F7,F82
-black --check --diff src/ tests/
-isort --check-only --diff --profile black src/ tests/
-
-# Auto-format code
-just format
-# Or manually:
-black src/ tests/
-isort --profile black src/ tests/
-
-# Type checking
-just typecheck
-# Or: mypy src/
-
-# Run the application
-vocalinux --debug
-# Or from source: python -m vocalinux.main --debug
+python -m vocalinux.main --debug
 ```
 
-### Website (Next.js)
+Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate site commands here.
 
-Website-specific agent notes, product truth, and design system live under `web/`:
+## Dependencies (uv)
 
-- `web/AGENTS.md` — commands and layout map
-- `web/PRODUCT.md` — product claims / audience for the site
-- `web/DESIGN.md` — visual system for marketing UI
+`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine), run `just lock`, and commit the lock plus the exports with the manifest change.
 
-```bash
-cd web
-npm install
-npm run dev      # Development server
-npm run build    # Production build
-npm run lint     # ESLint
-npm run test     # Jest tests
-```
+| Constraint | Rule |
+|---|---|
+| PyGObject | Distro `python3-gi` only, via `--system-site-packages`. Pip install fails on Ubuntu 24.04 (`girepository-2.0`). uv-managed interpreters do not see distro `gi` unless the venv is created that way |
+| `[vosk]` extra | Wheel-only on PyPI (no sdist). Never part of a source-buildable lock. `install.sh --engine=vosk` installs it |
+| Whisper CPU torch | `requirements/whisper.txt` is compiled from `requirements/whisper.in`. Pin `torch`/`torchaudio` together to `+cpu` local versions — PyPI CUDA wheels win resolution regardless of index order, and torchaudio lags torch on the CPU index |
+| pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
+| `[vad]` extra | `onnxruntime` for Silero VAD |
 
-## Dependency Management (uv + lockfiles)
+Optional extras: `vosk`, `whisper`, `vad`, `dev`.
 
-The source of truth is `uv.lock`. `just lock` regenerates it and the
-`requirements/*.txt` hash-pinned exports. Those exports exist for later
-packaging work (`install.sh`, AppImage, CI; phases 2, 3, and 5 of #701)
-and are unused until those phases land. Do not edit `requirements/*.txt`
-by hand. Change `pyproject.toml` (or `requirements/whisper.in` for the
-whisper engine), run `just lock`, and commit the lock plus the exports
-with the manifest change. uv itself is version-pinned via `[tool.uv]`
-in `pyproject.toml`.
-
-- **PyGObject always comes from the distro** (`python3-gi` through a
-  `--system-site-packages` venv). It cannot be pip-installed on Ubuntu 24.04, and
-  uv-managed interpreters do not see the distro gi — create venvs with
-  `uv venv --system-site-packages --python /usr/bin/python3`, and exclude the package
-  in uv sync/export (`--no-install-package pygobject` / `--no-emit-package pygobject`).
-- **vosk** is the optional `[vosk]` extra. It is wheel-only on PyPI (no sdist), so it
-  can never be part of a source-buildable lock. `install.sh --engine=vosk` installs it.
-- **Whisper engine (CPU torch)**: `requirements/whisper.txt` is compiled from
-  `requirements/whisper.in`, where `torch`/`torchaudio` are pinned together to `+cpu`
-  local versions — PyPI's CUDA-bundled wheels win resolution over the CPU index
-  regardless of index order, and torchaudio lags torch on the CPU index. Bump the pair
-  together.
-- **pywhispercpp**: pinned in `install.sh` via `PYWHISPERCPP_VERSION` — keep it in sync
-  with `uv.lock` when bumping.
-- Background, phase checklists, and open work: `docs/PACKAGING_PLAN.md`, epic #701.
-
-## Code Style Guidelines
-
-### Formatting
-
-- **Line length**: 100 characters
-- **Formatter**: Black
-- **Import sorter**: isort (black-compatible profile)
-- **Linter**: flake8
-
-### Import Order
-
-Use isort with black profile. Imports should be grouped:
-1. Standard library (`import os`, `from typing import ...`)
-2. Third-party packages (`import gi`, `from vosk import Model`)
-3. Local imports (`from vocalinux.common_types import ...`)
-
-### Type Hints
-
-Use type hints for all function signatures. Use `Protocol` for interfaces (see `common_types.py`).
-
-### Naming Conventions
-
-- **Classes**: `PascalCase` (e.g., `CommandProcessor`, `ConfigManager`)
-- **Functions/methods**: `snake_case` (e.g., `process_text`, `load_config`)
-- **Constants**: `UPPER_SNAKE_CASE` (e.g., `CONFIG_DIR`, `DEFAULT_CONFIG`)
-- **Private methods**: `_leading_underscore` (e.g., `_compile_patterns`)
-- **Module-level logger**: `logger = logging.getLogger(__name__)`
-
-### Docstrings
-
-Use triple-quoted docstrings for modules, classes, and public functions:
-
-```python
-"""Configuration manager for Vocalinux."""
-
-class ConfigManager:
-    """Manager for user configuration settings."""
-
-    def load_config(self):
-        """Load configuration from the config file."""
-```
-
-### Error Handling
-
-Use specific exception types, log errors with context:
-
-```python
-try:
-    with open(CONFIG_FILE, "r") as f:
-        user_config = json.load(f)
-except json.JSONDecodeError as e:
-    logger.error(f"Invalid JSON in config file: {e}")
-```
-
-### Logging
-
-Each module should have its own logger:
-
-```python
-import logging
-logger = logging.getLogger(__name__)
-```
-
-## Testing Guidelines
-
-- Place tests in `tests/` directory
-- Name test files as `test_*.py`, functions as `test_*`
-- Use `unittest.TestCase` or plain pytest functions
-- Use `pytest-mock` for mocking (via `mocker` fixture)
-
-### Test Markers
-
-```python
-@pytest.mark.slow          # Long-running tests
-@pytest.mark.integration   # Integration tests
-@pytest.mark.audio         # Requires audio hardware
-```
-
-## Project Structure
+## Layout
 
 ```
 src/vocalinux/
-├── main.py                    # Application entry point
-├── version.py                 # Version info
-├── common_types.py            # Shared types/enums/protocols
+├── main.py, version.py, common_types.py
+├── single_instance.py          # $XDG_DATA_HOME/vocalinux/instance.lock
+├── auto_pause_monitor.py       # unload model while configured apps run
+├── model_keepalive.py          # idle unload
+├── suspend_handler.py          # logind PrepareForSleep
 ├── speech_recognition/
-│   ├── recognition_manager.py # VOSK/Whisper/whisper.cpp management
-│   └── command_processor.py   # Voice command processing
+│   ├── recognition_manager.py  # whisper.cpp / Whisper / Vosk / remote
+│   ├── command_processor.py    # voice commands
+│   ├── silero_vad.py
+│   └── data/                   # bundled silero_vad.onnx
 ├── text_injection/
-│   └── text_injector.py       # X11/Wayland text injection
+│   ├── text_injector.py        # X11 / clipboard / xdotool
+│   └── ibus_engine.py          # Wayland IBus injection
 ├── ui/
-│   ├── tray_indicator.py      # System tray icon
-│   ├── settings_dialog.py     # Settings GUI
-│   ├── config_manager.py      # Configuration handling
-│   └── keyboard_backends/     # Keyboard input handling
-└── utils/
-    ├── resource_manager.py    # Resource utilities
-    ├── whispercpp_model_info.py   # whisper.cpp model metadata & hardware detection
-    └── vosk_model_info.py         # VOSK model metadata
+│   ├── tray_indicator.py, settings_dialog.py, first_run_dialog.py
+│   ├── config_manager.py, action_handler.py, audio_feedback.py
+│   ├── autostart_manager.py, keyboard_shortcuts.py
+│   ├── logging_dialog.py, logging_manager.py
+│   └── keyboard_backends/      # pynput (X11), evdev (Wayland)
+├── utils/
+│   ├── paths.py, resource_manager.py
+│   ├── update_checker.py, update_monitor.py
+│   └── whispercpp_model_info.py, vosk_model_info.py
+└── resources/                  # SVG icons + WAV cues (also repo resources/)
 ```
 
-## Release Process
+Also: `tests/`, `docs/`, `packaging/` (AppImage, AUR, Flatpak), `scripts/`, `install.sh`, `uninstall.sh`, `web/`.
 
-See `docs/RELEASE_PROCESS.md` for detailed release instructions.
+| Task | Start here |
+|---|---|
+| Voice command | `speech_recognition/command_processor.py` |
+| Engine / models | `speech_recognition/recognition_manager.py` |
+| Text injection | `text_injection/text_injector.py`, `ibus_engine.py` |
+| Settings | `ui/config_manager.py`, `ui/settings_dialog.py` |
+| Hotkeys | `ui/keyboard_shortcuts.py`, `ui/keyboard_backends/` |
 
-Quick summary:
-1. Update version in `src/vocalinux/version.py`
-2. Update version references in README.md, docs/INSTALL.md, docs/UPDATE.md
-3. Update web/src/app/page.tsx and web/package.json
-4. Run `just lint` to verify code quality
-5. Create branch `release/vX.Y.Z-PHASE`
-6. Commit with `chore(release): prepare vX.Y.Z-PHASE`
-7. Push and create PR
-8. After merge, create and push tag: `git tag -a vX.Y.Z-PHASE -m "Release X.Y.Z-PHASE"`
-9. GitHub Actions will build and publish automatically
+## Style
 
-## Commit Message Format
+- Type hints on all function signatures. `Protocol` interfaces live in `common_types.py`
+- Imports: stdlib → third-party → local (`isort` black profile)
+- Names: `PascalCase` classes, `snake_case` functions, `UPPER_SNAKE_CASE` constants, `_private` methods
+- `logger = logging.getLogger(__name__)` per module
+- Triple-quoted docstrings on modules, classes, and public functions
+- Specific exceptions; log errors with context
+- Tests: `tests/test_*.py`, `test_*` functions, `unittest.TestCase` or pytest; `pytest-mock` via `mocker`
+- Markers: `@pytest.mark.slow`, `integration`, `audio` (hardware). Default timeout 10s (`pytest-timeout`)
 
-Follow Conventional Commits:
+## Git and PRs
 
-```
-type(scope): short description
+Conventional Commits: `type(scope): short description` with optional body and `Fixes #123`.
 
-Longer description if needed.
+Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`.
 
-Fixes #123
-```
-
-**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
-
-**Examples**:
 ```
 feat(commands): add "select all" voice command
 fix(tray): resolve icon not updating on Wayland
 docs(readme): update installation instructions
 ```
 
-## Branch Naming
+Branch prefixes: `feature/`, `fix/`, `docs/`, `refactor/`, `test/`, `release/` (e.g. `release/v0.7.0-beta`).
 
-- `feature/` - New features
-- `fix/` - Bug fixes
-- `docs/` - Documentation updates
-- `refactor/` - Code refactoring
-- `test/` - Test additions/updates
-- `release/` - Release preparation (e.g., `release/v0.7.0-beta`)
+- Never push to `main`. Never commit on `main`
+- Every change goes through a PR (including docs)
+- Wait for CI (`.github/workflows/unified-pipeline.yml`) before asking for merge
+- Squash merge
+- **Do not merge the PR yourself**
+- Fill `.github/PULL_REQUEST_TEMPLATE.md`
 
-## Important Rules
+Releases: follow `docs/RELEASE_PROCESS.md`. Version source of truth is `src/vocalinux/version.py`; sync README, `docs/INSTALL.md`, `docs/UPDATE.md`, `web/src/app/page.tsx`, `web/package.json`. Prep on `release/vX.Y.Z-PHASE`; tag **after** merge.
 
-- **Never push directly to `main`** - Always create a branch and PR
-- **All changes require a PR** - Even small fixes and documentation updates
-- **Wait for CI to pass** before merging PRs
-- **Squash merge** PRs to keep history clean
+## Website
 
-## Cursor Cloud specific instructions
+Site-only work: `web/AGENTS.md` (commands, layout map). Product claims: `web/PRODUCT.md`. Visual system: `web/DESIGN.md`. Git/worktree/PR rules are this file — do not duplicate them under `web/`.
 
-The startup update script keeps a Python venv (`venv/`) and `web/node_modules` in sync. Standard commands live in the sections above and in `web/AGENTS.md`; notes below are the non-obvious gotchas for this environment.
+## Runtime (any Linux dev machine)
 
-- **Activate the venv first.** Python tooling (`vocalinux`, `pytest`, `just lint`, `mypy`) lives in `venv/`. Run `source venv/bin/activate` (or prefix with `./venv/bin/`) before use.
-- **The startup venv sync can strip dev extras.** If `pytest`/`black` suddenly vanish from `venv/`, the update script recreated a minimal venv — restore with `uv pip install -e ".[dev,vad]" --python ./venv/bin/python`. `uv` itself lives at `~/.local/bin/uv` (not always on `PATH` in non-interactive shells).
-- **The venv must be created with `--system-site-packages`.** GTK/`PyGObject` come from the apt package `python3-gi`; installing `PyGObject` from pip fails on Ubuntu 24.04 because the pinned version needs `girepository-2.0` (glib 2.80+), which the distro doesn't ship. The update script already creates the venv this way — don't drop that flag.
-- **`black --check` prints a Python-version warning.** `pyproject.toml` targets py314 but the VM runs Python 3.12; Black still reports "All done" and lint passes. This warning is benign.
-- **Desktop app is a GTK tray app.** An XFCE session (`xfwm4` + `xfce4-panel`) runs on `DISPLAY=:1`. Always give the app the session env: `DISPLAY=:1`, `DBUS_SESSION_BUS_ADDRESS=autolaunch:`, `XDG_RUNTIME_DIR=/run/user/1000`, `XDG_CURRENT_DESKTOP=XFCE`. Single-instance lock lives at `~/.local/share/vocalinux/instance.lock`; delete it after killing a stale instance. Kill instances by explicit PID (never `pkill -f`).
-- **Pre-installed agent skills (not committed to the repo).** The `humanizer` and `ponytail` skills live in this VM at `~/.cursor/skills/<name>/SKILL.md` (user-level, baked into the environment snapshot), so Cursor auto-discovers them for every session on this repo without adding them to git.
+- Create venvs with `--system-site-packages`. Do not drop that flag
+- Kill the app by PID, never `pkill -f vocalinux` (matches editors, shells, and cwd paths)
+- Stale instance: `$XDG_DATA_HOME/vocalinux/instance.lock` (default `~/.local/share/vocalinux/instance.lock`)
+- Default dictation shortcut: hold Right Alt (push-to-talk). Existing `~/.config/vocalinux/config.json` wins
+- Headless speech smoke: `pywhispercpp.model.Model` + `CommandProcessor` (first run may download the tiny model)
 
-### Running / using the desktop GUI end-to-end in the VM
-
-Convenience: this VM has an idempotent bring-up script at `~/.local/bin/vocalinux-gui-env.sh` (installed in the environment, not committed to the repo) that performs both steps below — run it once per boot, then launch the app. The manual steps are documented here as the source of truth in case the script is unavailable.
-
-Two things are missing from the base session and must be set up once per boot (packages already installed; these are runtime/session steps, not for the update script):
-
-1. **System tray (StatusNotifierWatcher).** The panel ships no tray by default, so the AppIndicator icon can't appear. Add the `systray` plugin and (re)start the panel: `xfconf-query -c xfce4-panel -p /plugins/plugin-6 -t string -s systray --create`, append `6` to `/panels/panel-1/plugin-ids`, then start the panel detached (`setsid bash -c xfce4-panel …`). Verify `org.kde.StatusNotifierWatcher` is on the session bus before launching the app. Keep the systray `size-max` unset or a sane value (e.g. 22); `size-max=0` renders zero-sized (invisible) icons.
-   - **AppIndicator + SVG icons must both be present or the icon shows blank.** The GI runtime comes from `gir1.2-ayatanaappindicator3-0.1` (+ `gir1.2-notify-0.7`). VocaLinux's tray/app icons are SVG, so `librsvg2-common` (the gdk-pixbuf SVG loader) is required — without it the icon registers on the bus but renders empty and the panel logs `gdk-pixbuf does not provide SVG support`. `scripts/check-system-deps.sh` should report `✓ AppIndicator/Ayatana GI runtime` and `✓ All critical dependencies found!`.
-2. **Virtual microphone (no audio server by default).** Create `/run/user/1000` (chown to your uid), start PulseAudio (`pulseaudio --start --exit-idle-time=-1`), then `pactl load-module module-null-sink sink_name=virtmic` + `module-virtual-source source_name=virtmic_src master=virtmic.monitor`, `pactl set-default-source virtmic_src`, and write `~/.asoundrc` with `pcm.!default pulse` / `ctl.!default pulse` so PyAudio sees an input device. Feed speech in with `paplay --device=virtmic <file.wav>`.
-
-Also set `audio.device_index` to `null` in `~/.config/vocalinux/config.json` (a stale index prevents opening the stream).
-
-**Dictation control is Right-Alt hold by default and stateful for toggle mode.** Default activation is hold `Right Alt` (Option) in push-to-talk mode (`shortcuts` in the config). Existing installs keep whatever is already saved in `~/.config/vocalinux/config.json`. The app catches synthetic X key events (`xdotool key Alt_R`), so it can be driven from a script. For push-to-talk: focus the target window → hold Right Alt → `paplay` the wav → release Right Alt → wait for whisper.cpp transcription + xdotool injection into the focused window. If testing toggle mode instead, launch a fresh (idle) app instance; toggle state persists across dictations, and any stray configured key tap will flip recording.
-
-- **Headless-only speech check (no GUI/audio setup):** drive the pipeline programmatically — transcribe with `from pywhispercpp.model import Model` and format via `vocalinux.speech_recognition.command_processor.CommandProcessor`. The first transcription downloads the ~74MB whisper.cpp `tiny` model (needs network); it is cached afterward.
-- **Website dev server:** `cd web && npm run dev -- -H 0.0.0.0 -p 3456` (per `web/AGENTS.md`). Lint currently reports 3 pre-existing `@next/next/no-html-link-for-pages` errors in `src/components/seo-subpage-shell.tsx`; typecheck, tests, and build are clean.
-- **Running `install.sh` here:** use `./install.sh --dev --auto` — `--auto` forces non-interactive mode (the Shell has no TTY) and it reuses the existing `venv/`. It also runs the full `pytest` suite and installs a wrapper at `~/.local/bin/vocalinux` (that dir is not on `PATH`; call the wrapper by full path or add it). Pass `--no-rebuild-whispercpp` to skip the lengthy cmake/Vulkan rebuild and reuse the pip-installed `pywhispercpp`.
+Update this file when commands, layout, or agent rules change.
