@@ -35,13 +35,21 @@ def _run(script: str) -> subprocess.CompletedProcess:
     )
 
 
-def _fake_python(path: Path, version: str, has_gi: bool) -> Path:
-    """Create a stub interpreter answering the probes install.sh runs."""
+def _fake_python(path: Path, version: str, has_gi: bool, base_prefix: str = "") -> Path:
+    """Create a stub interpreter answering the probes install.sh runs.
+
+    ``base_prefix`` defaults to the stub's own directory, so two stubs are
+    distinct installations unless they are told to share one.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "#!/bin/bash\n"
         'if [[ "$*" == *"sys.version_info"* ]]; then\n'
         f'    echo "{version}"\n'
+        "    exit 0\n"
+        "fi\n"
+        'if [[ "$*" == *"sys.base_prefix"* ]]; then\n'
+        f'    echo "{base_prefix or path.parent}"\n'
         "    exit 0\n"
         "fi\n"
         'if [[ "$*" == *"import gi"* ]]; then\n'
@@ -165,14 +173,17 @@ select_python_interpreter "3.9" && echo "SELECTED=$PYTHON_CMD" || echo "SELECT_F
 
 
 class TestVenvMatchesSelectedPython:
-    def test_matching_versions(self, tmp_path):
-        venv_python = _fake_python(tmp_path / "venv" / "bin" / "python", "3.14", has_gi=True)
-        selected = _fake_python(tmp_path / "usr" / "python3", "3.14", has_gi=True)
+    def test_venv_built_from_the_selected_interpreter(self, tmp_path):
+        base = str(tmp_path / "usr")
+        venv_python = _fake_python(
+            tmp_path / "venv" / "bin" / "python", "3.14", has_gi=True, base_prefix=base
+        )
+        selected = _fake_python(tmp_path / "usr" / "python3", "3.14", has_gi=True, base_prefix=base)
 
         script = f"""
 VENV_DIR="{venv_python.parents[1]}"
 PYTHON_CMD="{selected}"
-{_source("python_version_of", "venv_matches_selected_python")}
+{_source("python_base_prefix", "venv_matches_selected_python")}
 venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
 """
         result = _run(script)
@@ -185,7 +196,28 @@ venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
         script = f"""
 VENV_DIR="{venv_python.parents[1]}"
 PYTHON_CMD="{selected}"
-{_source("python_version_of", "venv_matches_selected_python")}
+{_source("python_base_prefix", "venv_matches_selected_python")}
+venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
+"""
+        result = _run(script)
+        assert "MISMATCH" in result.stdout
+
+    def test_same_version_from_a_different_installation_is_stale(self, tmp_path):
+        """A distro 3.12 and a pyenv/uv 3.12 are not interchangeable."""
+        venv_python = _fake_python(
+            tmp_path / "venv" / "bin" / "python",
+            "3.12",
+            has_gi=False,
+            base_prefix=str(tmp_path / "pyenv"),
+        )
+        selected = _fake_python(
+            tmp_path / "usr" / "python3", "3.12", has_gi=True, base_prefix="/usr"
+        )
+
+        script = f"""
+VENV_DIR="{venv_python.parents[1]}"
+PYTHON_CMD="{selected}"
+{_source("python_base_prefix", "venv_matches_selected_python")}
 venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
 """
         result = _run(script)
@@ -197,7 +229,7 @@ venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
         script = f"""
 VENV_DIR="{tmp_path}/nonexistent"
 PYTHON_CMD="{selected}"
-{_source("python_version_of", "venv_matches_selected_python")}
+{_source("python_base_prefix", "venv_matches_selected_python")}
 venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
 """
         result = _run(script)
