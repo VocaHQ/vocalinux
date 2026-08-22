@@ -4274,6 +4274,47 @@ fi
 # supported it. vosk is the only engine shipped as an optional extra, so it is
 # the one that goes missing; say so here instead of letting the app die at
 # startup with ModuleNotFoundError.
+# Module each engine needs, and the pip name that provides it. whisper_cpp is
+# the default engine and the fallback, so it is what a broken config is moved to.
+engine_import_module() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "whisper" ;;
+        whisper_cpp) echo "pywhispercpp.model" ;;
+        *) echo "" ;;
+    esac
+}
+
+engine_pip_name() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "openai-whisper" ;;
+        whisper_cpp) echo "pywhispercpp" ;;
+        *) echo "" ;;
+    esac
+}
+
+venv_can_import() {
+    [ -x "$VENV_DIR/bin/python" ] || return 1
+    "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
+}
+
+# Point config.json at engine $2. Non-zero if it could not be rewritten.
+set_configured_engine() {
+    "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, engine = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    config = json.load(handle)
+config.setdefault("speech_recognition", {})["engine"] = engine
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
 verify_configured_engine() {
     local CONFIG_FILE="$CONFIG_DIR/config.json"
     [ -f "$CONFIG_FILE" ] || return 0
@@ -4291,16 +4332,33 @@ except Exception:
 PY
 )
 
-    [ "$CONFIGURED_ENGINE" = "vosk" ] || return 0
-    "$VENV_DIR/bin/python" -c "import vosk" >/dev/null 2>&1 && return 0
+    local MODULE
+    MODULE=$(engine_import_module "$CONFIGURED_ENGINE")
+    # remote_api and anything unrecognised need no extra module.
+    [ -n "$MODULE" ] || return 0
+    venv_can_import "$MODULE" && return 0
 
-    print_warning "$CONFIG_FILE selects the VOSK engine, but vosk is not importable in $VENV_DIR."
-    print_warning "Vocalinux would fail to start. Fix it with either:"
-    print_warning "  $VENV_DIR/bin/pip install vosk"
-    print_warning "  or edit $CONFIG_FILE and set speech_recognition.engine to \"whisper_cpp\""
+    print_warning "$CONFIG_FILE selects the $CONFIGURED_ENGINE engine, but it is not importable in $VENV_DIR."
+
+    # Leaving it means the app dies at startup with ModuleNotFoundError, so move
+    # the config to the default engine when that one works.
+    if [ "$CONFIGURED_ENGINE" != "whisper_cpp" ] && venv_can_import "pywhispercpp.model"; then
+        if set_configured_engine "$CONFIG_FILE" "whisper_cpp"; then
+            print_success "Switched $CONFIG_FILE to the whisper_cpp engine."
+            print_info "Reinstall $(engine_pip_name "$CONFIGURED_ENGINE") and switch back in Settings if you want it."
+            return 0
+        fi
+    fi
+
+    print_error "Vocalinux cannot start with this configuration and no working engine is available."
+    print_error "Install the engine:  $VENV_DIR/bin/pip install $(engine_pip_name "$CONFIGURED_ENGINE")"
+    print_error "or edit $CONFIG_FILE and set speech_recognition.engine to an installed engine."
+    return 1
 }
 
-verify_configured_engine
+if ! verify_configured_engine; then
+    exit "$EXIT_MISSING_DEPS"
+fi
 
 # Update icon cache
 update_icon_cache
