@@ -281,6 +281,59 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config_manager.config["speech_recognition"]["vosk_model_size"], "medium")
         self.assertEqual(config_manager.config["speech_recognition"]["whisper_model_size"], "tiny")
 
+    def test_migrate_copies_model_size_to_whisper_cpp(self):
+        """A whisper.cpp config that predates the per-engine keys keeps its model.
+
+        DEFAULT_CONFIG already ships whisper_cpp_model_size, so the generic
+        fallback inside get_model_size_for_engine() can never fire for this
+        engine: after the merge the key is always present. Only the migration
+        can carry the user's own model_size across (#681).
+        """
+        with open(self.temp_config_file, "w") as f:
+            json.dump({"speech_recognition": {"engine": "whisper_cpp", "model_size": "small"}}, f)
+
+        config_manager = ConfigManager()
+
+        self.assertEqual(
+            config_manager.config["speech_recognition"]["whisper_cpp_model_size"], "small"
+        )
+        self.assertEqual(config_manager.get_model_size_for_engine("whisper_cpp"), "small")
+
+    def test_migrate_leaves_other_engines_on_their_defaults(self):
+        """The migration must not hand one engine's model to the others."""
+        with open(self.temp_config_file, "w") as f:
+            json.dump({"speech_recognition": {"engine": "vosk", "model_size": "large"}}, f)
+
+        config_manager = ConfigManager()
+
+        self.assertEqual(config_manager.get_model_size_for_engine("vosk"), "large")
+        self.assertEqual(config_manager.get_model_size_for_engine("whisper_cpp"), "tiny")
+        self.assertEqual(config_manager.get_model_size_for_engine("whisper"), "tiny")
+
+    def test_resolver_prefers_the_engine_key_over_the_generic_one(self):
+        """The generic key holds whichever engine saved last; it must not win.
+
+        This is the startup bug from #681: model_size still says "medium" from
+        the last VOSK save while the configured engine is whisper.cpp.
+        """
+        with open(self.temp_config_file, "w") as f:
+            json.dump(
+                {
+                    "speech_recognition": {
+                        "engine": "whisper_cpp",
+                        "model_size": "medium",
+                        "vosk_model_size": "medium",
+                        "whisper_cpp_model_size": "small",
+                    }
+                },
+                f,
+            )
+
+        config_manager = ConfigManager()
+
+        self.assertEqual(config_manager.get_model_size_for_engine("whisper_cpp"), "small")
+        self.assertEqual(config_manager.get_model_size_for_engine("vosk"), "medium")
+
     def test_update_speech_recognition_settings_per_engine(self):
         """Test that update_speech_recognition_settings saves per-engine model sizes."""
         config_manager = ConfigManager()
