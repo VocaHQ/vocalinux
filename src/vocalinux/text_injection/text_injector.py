@@ -1346,11 +1346,12 @@ class TextInjector:
         # - 0.1.x (distro packages): named sequences, e.g. ctrl+v
         # - 1.x (Flatpak build): keycode:value  (29=LEFTCTRL, 47=V)
         # Passing 1.x codes to 0.1.x does not paste; it types garbage (e.g. "2442").
+        paste_cmd: list = []
         try:
-            cmd = self._ydotool_ctrl_v_command()
-            logger.debug(f"Simulating paste with: {cmd}")
+            paste_cmd = self._ydotool_ctrl_v_command()
+            logger.debug(f"Simulating paste with: {paste_cmd}")
             subprocess.run(
-                cmd,
+                paste_cmd,
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1359,6 +1360,10 @@ class TextInjector:
             logger.info(f"Text injected via clipboard paste: '{text[:20]}...' ({len(text)} chars)")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             logger.warning(f"Paste simulation failed: {e}")
+            # timeout=3 SIGKILLs the ydotool client. ydotoold keeps any keys it
+            # already applied, so a virtual Ctrl can stay held until logout (#658).
+            if paste_cmd:
+                self._ydotool_release_paste_keys(paste_cmd)
             with self._state_lock:
                 if generation == self._clipboard_restore_generation:
                     self._clipboard_restore_target = None
@@ -1404,8 +1409,33 @@ class TextInjector:
 
     # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_V=47 press/release.
     _YDOTOOL_V1_CTRL_V = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+    _YDOTOOL_V1_CTRL_V_RELEASE = ["ydotool", "key", "47:0", "29:0"]
     # ydotool 0.1.x (common distro packages): named key sequences.
     _YDOTOOL_LEGACY_CTRL_V = ["ydotool", "key", "ctrl+v"]
+    _YDOTOOL_LEGACY_CTRL_RELEASE = ["ydotool", "key", "ctrl"]
+
+    def _ydotool_release_paste_keys(self, paste_cmd: list) -> None:
+        """Best-effort Ctrl/V up after a failed ydotool paste (#658).
+
+        Releasing an already-up key is a no-op. If ydotoold is still wedged the
+        follow-up may also time out; we swallow that so paste failure stays False.
+        """
+        if "29:1" in paste_cmd:
+            release = list(self._YDOTOOL_V1_CTRL_V_RELEASE)
+        else:
+            # 0.1.x has no keycode:value form. A ctrl tap is down+up; if Ctrl is
+            # already down, the up half should clear it.
+            release = list(self._YDOTOOL_LEGACY_CTRL_RELEASE)
+        try:
+            subprocess.run(
+                release,
+                check=False,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1,
+            )
+        except (OSError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            logger.debug("ydotool paste-key release did not complete")
 
     def _ydotool_ctrl_v_command(self) -> list:
         """Return argv to simulate Ctrl+V for the installed ydotool.
