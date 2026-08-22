@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { SiteChrome } from "@/components/site-chrome";
@@ -212,6 +212,12 @@ const editorWords = [
   "working",
 ];
 
+function formatPanelClock(date: Date): string {
+  const hours = date.getHours().toString().padStart(2, "0");
+  const minutes = date.getMinutes().toString().padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
 const ribbonItems = [
   "Ubuntu",
   "Fedora",
@@ -224,12 +230,28 @@ const ribbonItems = [
 ];
 
 export default function HomePage() {
+  const [panelClock, setPanelClock] = useState("");
   const {
     interactiveInstallCommand,
     interactiveInstallDisplayCommand,
     uninstallCommand,
     uninstallDisplayCommand,
   } = installCommands;
+
+  useEffect(() => {
+    const tick = () => setPanelClock(formatPanelClock(new Date()));
+    tick();
+    const msToNextMinute = 60_000 - (Date.now() % 60_000);
+    let intervalId = 0;
+    const timeoutId = window.setTimeout(() => {
+      tick();
+      intervalId = window.setInterval(tick, 60_000);
+    }, msToNextMinute);
+    return () => {
+      window.clearTimeout(timeoutId);
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   useEffect(() => {
     const track = document.querySelector(".ribbon-track");
@@ -297,7 +319,7 @@ export default function HomePage() {
                 <i className="rec-dot" aria-hidden="true"></i>
                 listening
               </span>
-              <span>11:24</span>
+              <span className="panel-clock">{panelClock}</span>
             </div>
             <div className="linux-window">
               <div className="linux-titlebar">

@@ -584,6 +584,12 @@
     color: var(--mint);
   }
 
+  .panel-clock {
+    min-width: 5ch;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
   .rec-dot {
     position: relative;
     width: 7px;
