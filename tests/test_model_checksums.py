@@ -71,9 +71,10 @@ class TestManifestCoverage(unittest.TestCase):
     def test_manifest_entries_are_well_formed(self):
         for filename in pinned_filenames():
             expected = expected_for(filename)
-            self.assertIn(expected.algo, {"sha256", "md5"}, filename)
-            length = 64 if expected.algo == "sha256" else 32
-            self.assertEqual(len(expected.digest), length, filename)
+            # sha256 only: the VOSK entries used to copy the md5 Alphacephei
+            # publishes, which pins nothing they could not change themselves.
+            self.assertEqual(expected.algo, "sha256", filename)
+            self.assertEqual(len(expected.digest), 64, filename)
             self.assertRegex(expected.digest, r"^[0-9a-f]+$", filename)
             self.assertGreater(expected.size, 0, filename)
 

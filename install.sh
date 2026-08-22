@@ -3688,12 +3688,6 @@ compute_file_digest() {
             elif command_exists openssl; then openssl dgst -sha256 "$file" | awk '{print $NF}'
             else return 1; fi
             ;;
-        md5)
-            if command_exists md5sum; then md5sum "$file" | cut -d' ' -f1
-            elif command_exists md5; then md5 -q "$file"
-            elif command_exists openssl; then openssl dgst -md5 "$file" | awk '{print $NF}'
-            else return 1; fi
-            ;;
         *)
             return 1
             ;;
@@ -3705,7 +3699,7 @@ verify_digest() {
     local file="$1" algo="$2" expected="$3" label="$4" actual
 
     if ! actual=$(compute_file_digest "$file" "$algo") || [ -z "$actual" ]; then
-        print_error "Cannot compute the $algo digest of $label: no sha256sum, shasum, md5sum or openssl found."
+        print_error "Cannot compute the $algo digest of $label: no sha256sum, shasum or openssl found."
         return 1
     fi
 
