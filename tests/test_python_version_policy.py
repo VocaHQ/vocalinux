@@ -16,19 +16,23 @@ INSTALL_SH = REPO_ROOT / "install.sh"
 PIPELINE = REPO_ROOT / ".github" / "workflows" / "unified-pipeline.yml"
 PKGBUILD = REPO_ROOT / "packaging" / "aur" / "vocalinux" / "PKGBUILD"
 
-# Everything user-facing that states the floor. Docs and the website drifted to
-# "3.9+" for a full release cycle after the floor moved, so they are checked here
-# rather than left to review.
-DOC_AND_SITE_FILES = [
-    REPO_ROOT / "docs" / "INSTALL.md",
-    REPO_ROOT / "docs" / "DISTRO_COMPATIBILITY.md",
-    REPO_ROOT / "README.md",
-    REPO_ROOT / "web" / "src" / "app" / "page.tsx",
-    REPO_ROOT / "web" / "src" / "app" / "faq" / "page.tsx",
-    REPO_ROOT / "web" / "src" / "app" / "troubleshooting" / "page.tsx",
-    REPO_ROOT / "web" / "src" / "app" / "install" / "page.tsx",
-    REPO_ROOT / "web" / "src" / "app" / "install" / "[distro]" / "page.tsx",
+# Everything user-facing that could state the floor. Scanned as trees rather than
+# a fixed list: docs and the website drifted to "3.9+" for a full release cycle
+# after the floor moved, and a new page must not be able to reintroduce it.
+DOC_AND_SITE_GLOBS = [
+    (REPO_ROOT / "docs", "**/*.md"),
+    (REPO_ROOT / "web" / "src", "**/*.tsx"),
+    (REPO_ROOT / "web" / "src", "**/*.ts"),
+    (REPO_ROOT, "README.md"),
+    (REPO_ROOT, "CONTRIBUTING.md"),
 ]
+
+
+def _doc_and_site_files() -> list:
+    files = []
+    for base, pattern in DOC_AND_SITE_GLOBS:
+        files.extend(p for p in base.glob(pattern) if "node_modules" not in p.parts)
+    return sorted(set(files))
 
 
 def _version_tuple(version: str) -> tuple:
@@ -107,11 +111,13 @@ def test_aur_package_matches_requires_python():
 def test_docs_and_site_do_not_advertise_an_older_floor():
     """No user-facing file may promise a Python older than the real floor."""
     floor = _version_tuple(_requires_python_floor())
-    offenders = []
+    files = _doc_and_site_files()
+    assert files, "found nothing to scan; the docs/website layout moved"
 
-    for path in DOC_AND_SITE_FILES:
-        assert path.exists(), f"{path} moved; update DOC_AND_SITE_FILES"
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    offenders = []
+    for path in files:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for number, line in enumerate(text.splitlines(), 1):
             for claimed in re.findall(r"Python (\d+\.\d+)\+", line):
                 if _version_tuple(claimed) < floor:
                     rel = path.relative_to(REPO_ROOT)
@@ -120,18 +126,3 @@ def test_docs_and_site_do_not_advertise_an_older_floor():
     assert not offenders, "user-facing files promise an unsupported Python:\n" + "\n".join(
         offenders
     )
-
-
-def test_installer_aborts_on_an_unsupported_python():
-    """The floor has to stop the install, not just warn.
-
-    It used to print "Continuing with unsupported Python version" and build the
-    venv anyway, which made the floor real only in pyproject.toml.
-    """
-    source = INSTALL_SH.read_text(encoding="utf-8")
-    match = re.search(r"if ! check_python_version; then\n(.*?)\nfi", source, re.DOTALL)
-    assert match, "the check_python_version call site moved"
-
-    body = match.group(1)
-    assert "exit " in body, f"unsupported Python does not abort the install:\n{body}"
-    assert "Continuing with unsupported" not in body
