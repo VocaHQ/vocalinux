@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#49BE68;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2FBFAA;stop-opacity:1" />
+    </linearGradient>
+    <radialGradient id="logoGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#2FBFAA;stop-opacity:0.08" />
+      <stop offset="100%" style="stop-color:#2FBFAA;stop-opacity:0" />
+    </radialGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#e4e4e7" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="#fafafa"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+
+  <!-- Top accent line -->
+  <rect x="0" y="0" width="1200" height="4" fill="url(#brandGrad)"/>
+  <!-- Bottom accent line -->
+  <rect x="0" y="626" width="1200" height="4" fill="url(#brandGrad)"/>
+
+  <!-- ==================== LEFT SIDE ==================== -->
+  <!-- Vertically centered in ~630px: content block is ~420px tall, starts at ~105 -->
+
+  <!-- Logo microphone icon + App name -->
+  <g transform="translate(80, 100)">
+    <circle cx="30" cy="32" r="55" fill="url(#logoGlow)"/>
+    <!-- Mic body -->
+    <rect x="16" y="8" width="28" height="38" rx="14" fill="url(#brandGrad)"/>
+    <!-- Mic lines -->
+    <line x1="24" y1="22" x2="36" y2="22" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+    <line x1="24" y1="30" x2="36" y2="30" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.5"/>
+    <!-- Mic stand arc -->
+    <path d="M 10,38 Q 10,58 30,58 Q 50,58 50,38" stroke="url(#brandGrad)" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+    <!-- Mic stand -->
+    <line x1="30" y1="58" x2="30" y2="68" stroke="url(#brandGrad)" stroke-width="3.5" stroke-linecap="round"/>
+    <line x1="20" y1="68" x2="40" y2="68" stroke="url(#brandGrad)" stroke-width="3.5" stroke-linecap="round"/>
+  </g>
+  <text x="150" y="148" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="52" font-weight="800" fill="#18181b" letter-spacing="-1.5">Vocalinux</text>
+
+  <!-- Tagline -->
+  <text x="80" y="220" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="30" font-weight="700" fill="#18181b" letter-spacing="-0.5">Dictate Privately. Locally. Instantly.</text>
+
+  <!-- Feature bullets (no em-dashes) -->
+  <g font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="17">
+    <g transform="translate(80, 270)">
+      <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
+      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">Local engines</tspan><tspan fill="#71717a" font-weight="400" dx="6">default path stays on the machine</tspan></text>
+    </g>
+    <g transform="translate(80, 302)">
+      <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
+      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">Any App</tspan><tspan fill="#71717a" font-weight="400" dx="6">types wherever your cursor is</tspan></text>
+    </g>
+    <g transform="translate(80, 334)">
+      <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
+      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">whisper.cpp + VOSK</tspan><tspan fill="#71717a" font-weight="400" dx="6">powered</tspan></text>
+    </g>
+    <g transform="translate(80, 366)">
+      <text x="0" y="0" fill="#2FBFAA" font-size="16" font-weight="700">&#x2022;</text>
+      <text x="18" y="0" fill="#27272a"><tspan font-weight="600">Free &amp; Open Source</tspan><tspan fill="#71717a" font-weight="400" dx="6">(AGPL-3.0)</tspan></text>
+    </g>
+  </g>
+
+  <!-- GitHub CTA button - icon and text vertically centered -->
+  <g transform="translate(80, 400)">
+    <rect width="280" height="50" rx="12" fill="#18181b"/>
+    <!-- GitHub icon + text centered as a group: total content ~200px wide, button 280px, offset=(280-200)/2=40 -->
+    <g transform="translate(48, 14)">
+      <path d="M11 0C4.925 0 0 4.925 0 11c0 4.86 3.15 8.985 7.52 10.44.55.1.756-.244.756-.546 0-.27-.01-1.17-.016-2.12-3.06.665-3.706-.736-3.706-.736-.5-1.27-1.222-1.608-1.222-1.608-1-.682.076-.668.076-.668 1.105.078 1.686 1.135 1.686 1.135.982 1.682 2.576 1.196 3.204.914.1-.71.384-1.196.698-1.47-2.442-.278-5.01-1.222-5.01-5.438 0-1.202.429-2.184 1.132-2.952-.114-.278-.49-1.397.106-2.914 0 0 .923-.296 3.024 1.128A10.546 10.546 0 0111 5.344c.935.004 1.876.126 2.754.37 2.1-1.424 3.022-1.128 3.022-1.128.598 1.517.222 2.636.108 2.914.705.768 1.13 1.75 1.13 2.952 0 4.226-2.572 5.156-5.022 5.428.396.34.744 1.012.744 2.04 0 1.472-.014 2.662-.014 3.024 0 .304.204.654.76.544C18.854 19.98 22 15.856 22 11 22 4.925 17.075 0 11 0z" fill="white"/>
+    </g>
+    <text x="80" y="32" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="16" font-weight="600" fill="white">Download on GitHub</text>
+  </g>
+
+  <!-- Distro compatibility pills -->
+  <g transform="translate(80, 476)">
+    <rect width="84" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="42" y="17" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#166534" text-anchor="middle">Ubuntu</text>
+
+    <rect x="94" width="84" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="136" y="17" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#166534" text-anchor="middle">Fedora</text>
+
+    <rect x="188" width="100" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="238" y="17" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#166534" text-anchor="middle">Arch Linux</text>
+
+    <rect x="298" width="84" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="340" y="17" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#166534" text-anchor="middle">Wayland</text>
+
+    <rect x="392" width="58" height="26" rx="13" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="421" y="17" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11.5" font-weight="500" fill="#166534" text-anchor="middle">X11</text>
+  </g>
+
+  <!-- URL branding -->
+  <text x="80" y="545" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="13" fill="#a1a1aa">vocalinux.com</text>
+
+  <!-- ==================== RIGHT SIDE - FEATURE CARDS ==================== -->
+  <!-- 4 cards, each 118px tall, with 20px gap between them -->
+  <!-- Total cards height: 4*118 + 3*20 = 532. Canvas usable = 630 - 8 (accent lines) = 622 -->
+  <!-- Top offset: (622 - 532) / 2 + 4 = 49 -->
+
+  <!-- Card 1: Local Processing -->
+  <g transform="translate(620, 49)">
+    <rect width="510" height="118" rx="16" fill="white" stroke="#e4e4e7" stroke-width="1.2"/>
+    <!-- Icon - vertically centered: (118-50)/2 = 34 -->
+    <g transform="translate(24, 34)">
+      <rect width="50" height="50" rx="13" fill="#f0fdf4"/>
+      <g transform="translate(13, 10)">
+        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" fill="none" stroke="#16a34a" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M9 12l2 2 4-4" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+    </g>
+    <!-- Text block - vertically centered: icon center at 34+25=59, text block ~40px tall, starts at 59-20+6=45 -->
+    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">Local Processing</text>
+    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Local engines keep audio on the</text>
+    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">machine. Remote API is optional.</text>
+    <!-- Badge - vertically centered alongside title -->
+    <rect x="418" y="37" width="72" height="26" rx="6" fill="#f0fdf4" stroke="#bbf7d0" stroke-width="1"/>
+    <text x="454" y="55" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#166534" text-anchor="middle">PRIVATE</text>
+  </g>
+
+  <!-- Card 2: System-Wide Dictation -->
+  <g transform="translate(620, 187)">
+    <rect width="510" height="118" rx="16" fill="white" stroke="#e4e4e7" stroke-width="1.2"/>
+    <g transform="translate(24, 34)">
+      <rect width="50" height="50" rx="13" fill="#eff6ff"/>
+      <g transform="translate(11, 11)">
+        <rect x="2" y="4" width="24" height="16" rx="2" fill="none" stroke="#2563eb" stroke-width="2"/>
+        <line x1="6" y1="10" x2="10" y2="10" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+        <line x1="18" y1="10" x2="22" y2="10" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+        <line x1="12" y1="10" x2="16" y2="10" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+        <line x1="8" y1="14" x2="20" y2="14" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+        <line x1="14" y1="20" x2="14" y2="26" stroke="#2563eb" stroke-width="2" stroke-linecap="round"/>
+        <path d="M14 26l-3 3h6l-3-3z" fill="#2563eb"/>
+      </g>
+    </g>
+    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">System-Wide Dictation</text>
+    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Types wherever your cursor is,</text>
+    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">in every app</text>
+    <rect x="418" y="37" width="72" height="26" rx="6" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+    <text x="454" y="55" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#1e40af" text-anchor="middle">ANY APP</text>
+  </g>
+
+  <!-- Card 3: whisper.cpp + VOSK -->
+  <g transform="translate(620, 325)">
+    <rect width="510" height="118" rx="16" fill="white" stroke="#e4e4e7" stroke-width="1.2"/>
+    <g transform="translate(24, 34)">
+      <rect width="50" height="50" rx="13" fill="#fefce8"/>
+      <g transform="translate(14, 9)">
+        <path d="M13 2L4 14h6l-1 10 9-12h-6l1-10z" fill="none" stroke="#ca8a04" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+      </g>
+    </g>
+    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">whisper.cpp + VOSK</text>
+    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Dual engine support for speed</text>
+    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">and accuracy</text>
+    <rect x="402" y="37" width="88" height="26" rx="6" fill="#fefce8" stroke="#fde68a" stroke-width="1"/>
+    <text x="446" y="55" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#92400e" text-anchor="middle">DUAL ENGINE</text>
+  </g>
+
+  <!-- Card 4: Push-to-Talk -->
+  <g transform="translate(620, 463)">
+    <rect width="510" height="118" rx="16" fill="white" stroke="#e4e4e7" stroke-width="1.2"/>
+    <g transform="translate(24, 34)">
+      <rect width="50" height="50" rx="13" fill="#fdf2f8"/>
+      <g transform="translate(14, 8)">
+        <rect x="4" y="2" width="14" height="20" rx="7" fill="none" stroke="#db2777" stroke-width="2"/>
+        <path d="M1 16c0 6 5 10 10 10s10-4 10-10" fill="none" stroke="#db2777" stroke-width="2" stroke-linecap="round"/>
+        <line x1="11" y1="26" x2="11" y2="30" stroke="#db2777" stroke-width="2" stroke-linecap="round"/>
+        <line x1="7" y1="30" x2="15" y2="30" stroke="#db2777" stroke-width="2" stroke-linecap="round"/>
+      </g>
+    </g>
+    <text x="90" y="49" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="19" font-weight="700" fill="#18181b">Push-to-Talk</text>
+    <text x="90" y="72" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Hold hotkey, speak, release.</text>
+    <text x="90" y="89" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="14" fill="#71717a">Instant results.</text>
+    <rect x="418" y="37" width="72" height="26" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+    <text x="454" y="55" font-family="'Inter', 'Helvetica Neue', Arial, sans-serif" font-size="11" font-weight="700" fill="#c2410c" text-anchor="middle">INSTANT</text>
+  </g>
+</svg>
