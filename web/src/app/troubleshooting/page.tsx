@@ -23,7 +23,7 @@ const troubleshootingItems = [
     solutions: [
       "Ensure you ran the installer from the homepage or install guide",
       "Check if the virtual environment is activated: source ~/.local/share/vocalinux/venv/bin/activate",
-      "Verify Python version (3.9+ required): python3 --version",
+      "Verify Python version (3.11+ required): python3 --version",
       "Try reinstalling: ./uninstall.sh && ./install.sh",
     ],
   },
@@ -114,7 +114,7 @@ const troubleshootingItems = [
     solutions: [
       "Ensure you have internet connectivity for downloading dependencies",
       "Run with sufficient permissions (don't use sudo unless specifically needed)",
-      "Check your distribution is supported (Ubuntu 22.04+, Fedora 39+, Arch)",
+      "Check your distribution is supported (Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch)",
       "Install system dependencies manually: sudo apt install python3-pip python3-gi python3-venv",
       "Check disk space: df -h",
     ],

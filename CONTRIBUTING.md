@@ -75,7 +75,7 @@ This will:
        gir1.2-gtk-3.0 libgirepository1.0-dev \
        python3-dev portaudio19-dev python3-venv xdotool
 
-   # Debian 11/12
+   # Debian 12+
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
        gir1.2-gtk-3.0 libgirepository1.0-dev libcairo2-dev \
        python3-dev portaudio19-dev python3-venv xdotool
@@ -88,7 +88,7 @@ This will:
    # For appindicator (system tray icon):
    # On older Ubuntu:
    sudo apt install -y gir1.2-appindicator3-0.1
-   # On Debian 11+ or newer Ubuntu:
+   # On Debian 12+ or newer Ubuntu:
    sudo apt install -y gir1.2-ayatanaappindicator3-0.1
    ```
 
