@@ -21,7 +21,11 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
-from ..utils.model_checksums import ChecksumError, verify_model_file, write_verification_stamp
+from ..utils.model_checksums import (
+    ChecksumError,
+    verify_model_file,
+    write_verification_stamp,
+)
 from ..utils.paths import models_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
 from ..utils.whisper_model_info import (
@@ -1266,6 +1270,16 @@ class SpeechRecognitionManager:
             # Check if model is downloaded
             model_path = get_model_path(self.model_size)
 
+            # A file that is merely present did not necessarily come through the
+            # download path: releases before checksum verification fetched ggml
+            # models from `resolve/main` with no check at all, and install.sh
+            # re-hashes only ggml-tiny.bin. whisper.cpp maps this straight through
+            # ctypes, so hash it here; a failure demotes it to "not downloaded".
+            if os.path.exists(model_path) and not self._whispercpp_model_is_verified(model_path):
+                if self._defer_download:
+                    self._model_initialized = False
+                    return
+
             if not os.path.exists(model_path):
                 if self._defer_download:
                     logger.info(
@@ -1290,6 +1304,29 @@ class SpeechRecognitionManager:
             logger.error(f"Failed to initialize whisper.cpp engine: {e}", exc_info=True)
             self.state = RecognitionState.ERROR
             raise
+
+    @staticmethod
+    def _whispercpp_model_is_verified(model_path: str) -> bool:
+        """Hash the model against its pin, or delete it and report False.
+
+        Cheap enough to do every time: sha256 runs at GB/s and whisper.cpp is
+        about to read the whole file anyway, so this is CPU over pages that are
+        being fetched regardless. Deleting rather than raising keeps the caller
+        simple, since an unverifiable model is indistinguishable from a missing
+        one as far as what happens next.
+        """
+        try:
+            verify_model_file(model_path)
+            return True
+        except ChecksumError as error:
+            logger.error("whisper.cpp model at %s is not trustworthy: %s", model_path, error)
+            try:
+                os.remove(model_path)
+            except OSError as remove_error:
+                logger.error("Could not remove %s: %s", model_path, remove_error)
+                return False
+            logger.info("Removed the unverified model; it will be downloaded again")
+            return False
 
     def _build_whispercpp_model_kwargs(self, n_threads: int) -> dict:
         model_kwargs = {

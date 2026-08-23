@@ -4,7 +4,8 @@ Vocalinux pulls 40MB-2GB model files from Hugging Face, Alphacephei and
 openaipublic.azureedge.net, then feeds them to native code -- whisper.cpp maps
 its ggml files through ``ctypes.cdll``. A tampered or truncated model is
 therefore not merely a bad transcription, so every download is checked against a
-digest pinned in this repository before it is moved into place.
+digest pinned in this repository before it is moved into place, and a model that
+is merely found on disk is hashed before it is handed to native code.
 
 One source of truth, consulted without a network lookup: ``model_checksums.txt``
 next to this module pins a sha256 per file name, for whisper.cpp (the

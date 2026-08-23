@@ -948,6 +948,17 @@ class TestWhisperInitialization(unittest.TestCase):
 class TestWhispercppInitialization(unittest.TestCase):
     """Test whisper.cpp engine initialization."""
 
+    def setUp(self):
+        # These cover device/backend selection, not integrity. _init_whispercpp
+        # now hashes an existing model before handing it to ctypes, and the model
+        # here is a mocked path with no bytes behind it. Verification itself is
+        # covered by tests/test_model_checksums.py.
+        patcher = patch.object(
+            SpeechRecognitionManager, "_whispercpp_model_is_verified", return_value=True
+        )
+        self.addCleanup(patcher.stop)
+        patcher.start()
+
     def test_init_whispercpp_invalid_model_size(self):
         """Test whisper.cpp with invalid model size."""
         manager = _make_manager(engine="whisper_cpp")
@@ -1076,6 +1087,17 @@ class TestWhispercppInitialization(unittest.TestCase):
 
 class TestWhispercppGpuDeviceSelection(unittest.TestCase):
     """Test whisper.cpp GPU device selection logic."""
+
+    def setUp(self):
+        # These cover device/backend selection, not integrity. _init_whispercpp
+        # now hashes an existing model before handing it to ctypes, and the model
+        # here is a mocked path with no bytes behind it. Verification itself is
+        # covered by tests/test_model_checksums.py.
+        patcher = patch.object(
+            SpeechRecognitionManager, "_whispercpp_model_is_verified", return_value=True
+        )
+        self.addCleanup(patcher.stop)
+        patcher.start()
 
     class ContextParamsModel:
         calls = []

@@ -548,6 +548,39 @@ class TestDownloadVoskModel:
                     manager._download_vosk_model()
 
 
+class TestWhispercppRejectsAnUnverifiedModelOnDisk:
+    """Wiring test: the hash has to happen where the model is picked up.
+
+    _download_whispercpp_model verifies before its rename, so the exposure is a
+    file that never came through it: releases before verification fetched ggml
+    models from `resolve/main` unchecked, and install.sh re-hashes only
+    ggml-tiny.bin. Without this the file goes to pywhispercpp/ctypes as-is.
+    """
+
+    def test_a_model_that_fails_its_pin_is_removed_and_not_loaded(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"not the model that is pinned")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = True
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch.object(manager, "_load_whispercpp_model") as load:
+                    manager._init_whispercpp()
+
+        assert not model.exists(), "an unverifiable model must not stay on disk"
+        load.assert_not_called()
+        assert manager._model_initialized is False
+
+
 class TestAudioReconnection:
     """Test audio reconnection logic."""
 
