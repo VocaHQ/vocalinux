@@ -85,7 +85,10 @@ lock:
     uv lock
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt
-    uv export --extra dev --no-emit-project --no-emit-package pygobject -o requirements/dev.txt
+    # --group lint too: the linters live in a dependency group, not in the dev
+    # extra, so exporting the extra alone produced a file that reproduced
+    # neither `just deps` nor what CI lints with.
+    uv export --extra dev --group lint --no-emit-project --no-emit-package pygobject -o requirements/dev.txt
     uv pip compile requirements/whisper.in --generate-hashes --emit-index-url \
         --index-url https://pypi.org/simple \
         --extra-index-url https://download.pytorch.org/whl/cpu \
