@@ -293,6 +293,22 @@ class TestTheFloorIsTheInterpreterNotTheReleaseLabel:
         ]
         assert not missing, f"install.sh calls these supported, the doc does not: {missing}"
 
+    def test_no_supported_distro_is_filed_under_experimental(self):
+        """The two tables have to mean what their headings say.
+
+        Linux Mint, Pop!_OS, elementary, Zorin, Manjaro and EndeavourOS sat in
+        "Experimental Support" while marked "Good Support", which is where the
+        installer's own idea of who is supported drifted from the document.
+        """
+        doc = (INSTALL_SH.parent / "docs" / "DISTRO_COMPATIBILITY.md").read_text(encoding="utf-8")
+        experimental = doc[doc.index("## Experimental Support") : doc.index("## Not Supported")]
+        misfiled = [
+            line.split("|")[1].strip()
+            for line in experimental.splitlines()
+            if line.startswith("|") and "✅" in line
+        ]
+        assert not misfiled, f"listed as supported but filed as experimental: {misfiled}"
+
     def test_no_release_number_gate_survives_in_the_installer(self):
         source = INSTALL_SH.read_text(encoding="utf-8")
         assert "check_ubuntu_version" not in source
