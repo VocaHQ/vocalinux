@@ -131,6 +131,8 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 
 ### Terminal
 - Dark ink surface, mint command text, copy in the chrome
+- GTK headerbar: copy on the left, title centered, grey window controls on the **right**
+- Prompt is `user@linux:~$`, not a Mac `$` or left-side traffic-light dots
 - Long URLs wrap (`break-all` / `overflow-wrap`) so mobile never overflows
 
 ### Navigation

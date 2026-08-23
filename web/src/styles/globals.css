@@ -1133,14 +1133,47 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.55rem 0.85rem;
-    border-bottom: 1px solid var(--line-dark);
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgb(207 233 220 / 12%);
+    background: rgb(7 16 13 / 55%);
+  }
+
+  .terminal-panel .terminal-chrome {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.5rem 0.7rem 0.5rem 0.55rem;
   }
 
   .terminal-chrome .window-title {
-    color: var(--mint);
+    overflow: hidden;
+    color: var(--faint-inverse);
     font-family: var(--font-mono);
     font-size: 0.72rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .terminal-panel .terminal-chrome .window-title {
+    min-width: 0;
+    text-align: center;
+  }
+
+  .terminal-panel .linux-controls {
+    margin-left: 0;
+  }
+
+  .terminal-panel .linux-controls i,
+  .workbench-terminal .linux-controls i {
+    background: rgb(207 233 220 / 12%);
+    border-color: rgb(207 233 220 / 34%);
+  }
+
+  .terminal-panel .linux-controls i.close,
+  .workbench-terminal .linux-controls i.close {
+    background: var(--mint);
+    border-color: var(--brand);
   }
 
   .terminal-copy {
@@ -1148,37 +1181,52 @@
     align-items: center;
     justify-content: center;
     width: 2rem;
-    height: 2rem;
-    color: var(--mint);
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-sm);
+    height: 1.85rem;
+    color: var(--faint-inverse);
+    background: rgb(207 233 220 / 6%);
+    border: 1px solid rgb(207 233 220 / 16%);
+    border-radius: 0.35rem;
     cursor: pointer;
   }
 
   .terminal-copy:hover,
   .terminal-copy.is-copied {
     color: var(--terminal-fg);
-    background: rgb(207 233 220 / 8%);
+    background: rgb(207 233 220 / 12%);
   }
 
   .terminal-panel pre {
     max-width: 100%;
     margin: 0;
-    padding: 1rem 1.15rem 1.15rem;
+    padding: 1.05rem 1.2rem 1.2rem;
     overflow-x: auto;
     color: var(--terminal-fg);
     font-family: var(--font-mono);
     font-size: 0.875rem;
-    line-height: 1.6;
+    line-height: 1.65;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
   }
 
   .terminal-prompt {
-    color: var(--mint);
     user-select: none;
+  }
+
+  .workbench-terminal .terminal-prompt {
+    color: rgb(207 233 220 / 48%);
+  }
+
+  .terminal-user {
+    color: var(--mint);
+  }
+
+  .terminal-path {
+    color: var(--faint-inverse);
+  }
+
+  .terminal-hash {
+    color: rgb(207 233 220 / 48%);
   }
 
   .subpage-terminal {

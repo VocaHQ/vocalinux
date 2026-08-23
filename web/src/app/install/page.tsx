@@ -2,10 +2,15 @@ import Link from "next/link";
 import { type Metadata } from "next";
 import { ChevronRight, Cpu, Laptop, Terminal } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
+import { TerminalBlock } from "@/components/terminal-block";
 import { buildPageMetadata } from "@/lib/seo";
 
 const installCommand =
   "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive";
+const installDisplayCommand = `curl -fsSL \\
+  https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh \\
+  -o /tmp/vl.sh && \\
+bash /tmp/vl.sh --interactive`;
 
 const distroGuides = [
   {
@@ -56,14 +61,12 @@ export default function InstallGuidesPage() {
           speech-to-text on Linux. Every guide is written for real desktop usage.
         </p>
 
-        <div className="subpage-terminal mt-8 p-5 sm:p-6">
-          <p className="mb-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-            <Terminal className="h-3.5 w-3.5 text-[color:var(--terminal-fg)]" />
-            install.sh --interactive
-          </p>
-          <code className="block overflow-x-auto break-all text-sm sm:text-base">
-            {installCommand}
-          </code>
+        <div className="mt-8">
+          <TerminalBlock
+            command={installCommand}
+            displayCommand={installDisplayCommand}
+            label="install.sh --interactive"
+          />
         </div>
         <p className="mt-4 text-sm text-muted-foreground">
           Prefer no installer? Download an{" "}

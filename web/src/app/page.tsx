@@ -372,6 +372,11 @@ export default function HomePage() {
             <div className="workbench-terminal">
               <div className="terminal-chrome">
                 <span className="window-title">~/bin</span>
+                <span className="linux-controls" aria-hidden="true">
+                  <i></i>
+                  <i></i>
+                  <i className="close"></i>
+                </span>
               </div>
               <pre>
                 <span className="terminal-prompt">$ </span>vocalinux

@@ -23,7 +23,6 @@ export function TerminalBlock({
   return (
     <div className="terminal-panel min-w-0">
       <div className="terminal-chrome">
-        <span className="window-title">{label}</span>
         <button
           type="button"
           onClick={handleCopy}
@@ -37,9 +36,19 @@ export function TerminalBlock({
             <Copy className="h-4 w-4" strokeWidth={1.75} />
           )}
         </button>
+        <span className="window-title">{label}</span>
+        <span className="linux-controls" aria-hidden="true">
+          <i></i>
+          <i></i>
+          <i className="close"></i>
+        </span>
       </div>
       <pre className="max-w-full min-w-0 overflow-x-auto break-all">
-        <span className="terminal-prompt">$ </span>
+        <span className="terminal-prompt">
+          <span className="terminal-user">user@linux</span>
+          <span className="terminal-path">:~</span>
+          <span className="terminal-hash">$ </span>
+        </span>
         {displayCommand}
       </pre>
     </div>
