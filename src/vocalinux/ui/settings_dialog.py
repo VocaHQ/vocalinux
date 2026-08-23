@@ -876,8 +876,14 @@ def _is_whisper_model_downloaded(model_name: str) -> bool:
     Only the directory the engine passes to ``whisper.load_model`` as
     ``download_root`` counts. A copy in the default ~/.cache/whisper is not used
     by the engine, so reporting it as downloaded would promise the user a model
-    that selecting it then spends up to 2.9GB fetching. ``_whisper_model_files``
-    still finds those stray copies, so deleting can clean them up.
+    that selecting it then spends up to 2.9GB fetching.
+
+    That has a corollary worth stating plainly, because this function is what
+    ``_list_downloaded_whisper_models`` filters on and the dialog can only delete
+    what it lists: deleting a model here also removes a copy in
+    ~/.cache/whisper, since ``_whisper_model_files`` returns both, but a model
+    that exists *only* there is not listed and so cannot be reclaimed from this
+    dialog at all.
     """
     model_file = os.path.join(_get_whisper_cache_dir(), whisper_model_file(model_name))
     return os.path.exists(model_file)
