@@ -9,10 +9,13 @@ dialog that reported "large" as missing no matter how often it was fetched.
 
 import os
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from vocalinux.utils.whisper_model_info import (
     WHISPER_MODEL_SIZES,
+    migrate_legacy_checkpoint_names,
     whisper_model_file,
 )
 
@@ -41,6 +44,54 @@ class TestWhisperModelFile(unittest.TestCase):
         }
         for size, expected in upstream.items():
             self.assertEqual(whisper_model_file(size), expected, size)
+
+
+class TestLegacyCheckpointMigration(unittest.TestCase):
+    """A checkpoint fetched by an earlier release must not be stranded.
+
+    That release saved "large" as large.pt, from the same large-v3 URL used
+    today. Under the old name load_model() cannot see it (2.9GB refetched),
+    Settings does not list it, and what is not listed cannot be deleted there.
+    """
+
+    def setUp(self):
+        self.cache = Path(self.enterContext(TemporaryDirectory()))
+
+    def test_a_legacy_large_is_renamed(self):
+        (self.cache / "large.pt").write_bytes(b"checkpoint")
+
+        renamed = migrate_legacy_checkpoint_names(str(self.cache))
+
+        self.assertEqual(renamed, ["large-v3.pt"])
+        self.assertEqual((self.cache / "large-v3.pt").read_bytes(), b"checkpoint")
+        self.assertFalse((self.cache / "large.pt").exists())
+
+    def test_names_that_already_match_are_untouched(self):
+        for size in ("tiny", "base", "small", "medium"):
+            (self.cache / f"{size}.pt").write_bytes(size.encode())
+
+        self.assertEqual(migrate_legacy_checkpoint_names(str(self.cache)), [])
+        for size in ("tiny", "base", "small", "medium"):
+            self.assertEqual((self.cache / f"{size}.pt").read_bytes(), size.encode())
+
+    def test_an_existing_upstream_file_is_never_clobbered(self):
+        """The real checkpoint wins; the stale duplicate is left for the user."""
+        (self.cache / "large.pt").write_bytes(b"legacy")
+        (self.cache / "large-v3.pt").write_bytes(b"current")
+
+        self.assertEqual(migrate_legacy_checkpoint_names(str(self.cache)), [])
+        self.assertEqual((self.cache / "large-v3.pt").read_bytes(), b"current")
+        self.assertEqual((self.cache / "large.pt").read_bytes(), b"legacy")
+
+    def test_a_rename_failure_is_not_fatal(self):
+        """Worst case is the refetch that would have happened regardless."""
+        (self.cache / "large.pt").write_bytes(b"checkpoint")
+
+        with patch("os.rename", side_effect=OSError("read-only")):
+            self.assertEqual(migrate_legacy_checkpoint_names(str(self.cache)), [])
+
+    def test_an_empty_cache_is_fine(self):
+        self.assertEqual(migrate_legacy_checkpoint_names(str(self.cache)), [])
 
 
 class TestSettingsDialogUsesTheSameName(unittest.TestCase):
@@ -80,6 +131,30 @@ class TestSettingsDialogUsesTheSameName(unittest.TestCase):
 
             with patch("os.path.exists", side_effect=exists):
                 self.assertFalse(settings_dialog._is_whisper_model_downloaded("large"))
+
+
+class TestTheDialogRescuesALegacyCheckpoint(unittest.TestCase):
+    """Wiring test: the rename has to happen where the list is built.
+
+    Without it a "large" downloaded by an earlier release stays absent from the
+    dialog, and absent means the delete button never offers it, so 2.9GB sits
+    there with no way to reclaim it short of a file manager.
+    """
+
+    def test_a_legacy_large_becomes_listed_and_therefore_deletable(self):
+        from vocalinux.ui import settings_dialog
+
+        with TemporaryDirectory() as cache:
+            Path(cache, "large.pt").write_bytes(b"checkpoint")
+
+            with patch.object(settings_dialog, "_get_whisper_cache_dir", return_value=cache):
+                listed = settings_dialog._list_downloaded_whisper_models()
+                self.assertIn("large", listed)
+                # Listed is only half of it: deletion resolves the path again.
+                self.assertEqual(
+                    settings_dialog._whisper_model_files("large"),
+                    [os.path.realpath(os.path.join(cache, "large-v3.pt"))],
+                )
 
 
 if __name__ == "__main__":

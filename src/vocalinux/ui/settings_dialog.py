@@ -50,7 +50,10 @@ from ..utils.vosk_model_info import (  # noqa: E402
     list_downloaded_vosk_models,
     vosk_model_dirname,
 )
-from ..utils.whisper_model_info import whisper_model_file  # noqa: E402
+from ..utils.whisper_model_info import (  # noqa: E402
+    migrate_legacy_checkpoint_names,
+    whisper_model_file,
+)
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
@@ -881,7 +884,13 @@ def _is_whisper_model_downloaded(model_name: str) -> bool:
 
 
 def _list_downloaded_whisper_models() -> list[str]:
-    """Return OpenAI Whisper catalog names that are present on disk."""
+    """Return OpenAI Whisper catalog names that are present on disk.
+
+    Checkpoints an earlier release stored under the catalog name are renamed
+    first, so a "large" downloaded back then is listed here (and can therefore be
+    deleted) instead of sitting on disk unreachable from this dialog.
+    """
+    migrate_legacy_checkpoint_names(_get_whisper_cache_dir())
     return [name for name in WHISPER_MODEL_INFO if _is_whisper_model_downloaded(name)]
 
 

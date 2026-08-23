@@ -7,7 +7,10 @@ made "large" (stored as large-v3.pt) download twice and never show as present.
 
 from __future__ import annotations
 
+import logging
 import os
+
+logger = logging.getLogger(__name__)
 
 _BASE = "https://openaipublic.azureedge.net/main/whisper/models"
 
@@ -36,3 +39,41 @@ def whisper_model_url(model_size: str) -> str:
 def whisper_model_file(model_size: str) -> str:
     """Return the file name ``openai-whisper`` stores for ``model_size``."""
     return os.path.basename(whisper_model_url(model_size))
+
+
+def migrate_legacy_checkpoint_names(cache_dir: str) -> list[str]:
+    """Rename checkpoints saved under the old f"{size}.pt" name. Returns the new names.
+
+    Vocalinux's own downloader used to name every checkpoint after the catalog
+    entry, which is wrong wherever upstream publishes a versioned file: "large"
+    is stored as large-v3.pt. A file left under the old name is invisible three
+    times over. load_model() looks for the upstream name and refetches 2.9GB,
+    Settings does not list it, and because it is not listed it cannot be deleted
+    from there either, so the disk stays occupied with no way to reclaim it from
+    the UI.
+
+    Renaming is safe rather than lucky: the old downloader fetched "large" from
+    the same large-v3 URL it uses today, so the bytes already are that
+    checkpoint. And ``openai-whisper`` verifies whatever it loads against the
+    sha256 in the URL, so even a wrong guess here costs at most the refetch that
+    would have happened anyway.
+    """
+    renamed = []
+    for size in WHISPER_MODEL_URLS:
+        upstream = whisper_model_file(size)
+        legacy = f"{size}.pt"
+        if legacy == upstream:
+            continue
+        legacy_path = os.path.join(cache_dir, legacy)
+        upstream_path = os.path.join(cache_dir, upstream)
+        if not os.path.isfile(legacy_path) or os.path.exists(upstream_path):
+            continue
+        try:
+            os.rename(legacy_path, upstream_path)
+        except OSError as error:
+            # Not fatal: the only cost is the refetch this would have avoided.
+            logger.warning("Could not rename %s to %s: %s", legacy_path, upstream, error)
+            continue
+        logger.info("Renamed legacy Whisper checkpoint %s to %s", legacy, upstream)
+        renamed.append(upstream)
+    return renamed

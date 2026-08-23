@@ -24,7 +24,11 @@ from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_so
 from ..utils.model_checksums import ChecksumError, verify_model_file, write_verification_stamp
 from ..utils.paths import models_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
-from ..utils.whisper_model_info import whisper_model_file, whisper_model_url
+from ..utils.whisper_model_info import (
+    migrate_legacy_checkpoint_names,
+    whisper_model_file,
+    whisper_model_url,
+)
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
@@ -1131,6 +1135,10 @@ class SpeechRecognitionManager:
             # and looks nowhere else, so a copy in ~/.cache/whisper saves nothing.
             whisper_cache_dir = os.path.join(MODELS_DIR, "whisper")
             os.makedirs(whisper_cache_dir, exist_ok=True)
+            # Before asking whether the model is here: an earlier release saved it
+            # under the catalog name, which for "large" is not what load_model
+            # looks for. Without this it refetches 2.9GB and orphans the old file.
+            migrate_legacy_checkpoint_names(whisper_cache_dir)
             model_file = os.path.join(whisper_cache_dir, whisper_model_file(self.model_size))
             model_exists = os.path.exists(model_file)
 
