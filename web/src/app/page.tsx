@@ -279,13 +279,13 @@ export default function HomePage() {
           <div className="hero-copy min-w-0">
             <p className="section-tag">local Linux voice typing</p>
             <h1 id="hero-title" className="font-display">
-              Say it once.
+              Dictate locally.
               <br />
-              <em>Your Linux types.</em>
+              <em>In any app.</em>
             </h1>
             <p className="hero-lede">
-              Hold a shortcut, speak, and the words land in the Linux app
-              already in front of you.
+              Hold Right Alt. Text lands in the focused window. Local engines
+              by default.
             </p>
             <div className="hero-cta">
               <div className="hero-actions">

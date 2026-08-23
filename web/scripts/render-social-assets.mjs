@@ -112,8 +112,8 @@ const ogHtml = `<!doctype html>
         <img src="${markData}" alt="" />
         Vocalinux
       </div>
-      <h1>Say it once.<br><em>Your Linux types.</em></h1>
-      <p class="lede">Hold a shortcut, speak, and the words land in the Linux app already in front of you.</p>
+      <h1>Dictate locally.<br><em>In any app.</em></h1>
+      <p class="lede">Hold Right Alt. Text lands in the focused window. Local engines by default.</p>
       <div class="proof">
         <span>X11 and Wayland</span>
         <span>No telemetry</span>
