@@ -29,6 +29,7 @@ This guide explains how to update Vocalinux to the latest version.
 - **Disable missing-tray warning**: Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
 - **Family mic icons**: App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (#704)
 - **Family dictation tone picker**: Settings → Audio dropdown (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) plus Preview. New installs and unknown saved names default to Voca. A saved catalog id, including Off, is left alone. Enable remains the master mute; Off skips start/stop only (#707)
+- **About page**: Settings → About groups this app, VocaHQ family sites, and talk-to-us (GitHub issues, Discord, X, email) (#718)
 
 ### Bug Fixes
 
@@ -39,7 +40,7 @@ This guide explains how to update Vocalinux to the latest version.
 - **Tray / Settings**: Prefer Ayatana AppIndicator on KDE (#621); reuse Settings/Logs windows (#669, fixes #653); separate Close from Test Dictation (#670, fixes #651)
 - **Settings**: Test Dictation no longer reports no speech when recognition never started (missing model / auto-pause / live engine out of sync) (#702)
 - **Clipboard**: Restore after ydotool clipboard-paste (#588); text-only reads and safer overlapping restore (#646)
-- **AppImage**: Ship transitive GI typelibs for non-Debian hosts (also hotfixed onto the v0.15.0 AppImages on 2026-08-03) (#637)
+- **AppImage**: Ship transitive GI typelibs for non-Debian hosts (also hotfixed onto the v0.15.0 AppImages on 2026-08-03) (#637); pin pywhispercpp to the version `install.sh` declares so a newer PyPI wheel cannot break the Vulkan rebuild (#718)
 - **Installer**: Distro python3-gi is required; pip no longer builds PyGObject from sdist. Unset `XDG_SESSION_TYPE` / `XDG_CURRENT_DESKTOP` no longer crash under `set -u` (#706)
 - **Installer / downloads / tests**: Gate `util-linux-extra` to Ubuntu 24.04+ (#635, fixes #526); report failed model downloads (#690); stop the suite from overwriting real `config.json` (#694)
 

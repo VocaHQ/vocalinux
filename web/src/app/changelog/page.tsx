@@ -29,6 +29,7 @@ const releases = [
       "Test Dictation no longer reports no speech when recognition never started (PR #702)",
       "IBus/X11 reliability: restorable scoped injection, engine restore after teardown, XKB layout restore (PR #623, #643, #665)",
       "Audio, clipboard, and AppImage/GPU packaging fixes (PR #629, #673, #588, #646, #674, #637)",
+      "Settings About page groups this app, the VocaHQ family, and talk-to-us links (PR #718)",
       "vocalinux.com restyled to the Voca family workbench; Discord and X links point at VocaHQ (PR #728, #729, #722, #717)",
     ],
   },

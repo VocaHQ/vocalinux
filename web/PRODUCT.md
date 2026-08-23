@@ -35,6 +35,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
 - In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available
+- Settings About page groups this app, VocaHQ family sites, and talk-to-us links (GitHub, Discord, X, email)
 - Optional disable of the missing-tray warning dialog
 - Settings → Audio family tone picker (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) with Preview; new installs default to Voca; catalog files are the family preview WAVs
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
