@@ -1388,6 +1388,43 @@
     font-size: 0.92rem;
   }
 
+  .footer-social {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 1.05rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .footer-social a {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    color: var(--ink);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    background: var(--paper-bright);
+  }
+
+  .footer-social a:hover {
+    color: var(--brand-dark);
+    border-color: var(--brand);
+    background: var(--brand-softer);
+  }
+
+  .footer-social-icon {
+    display: block;
+    width: 1.05rem;
+    height: 1.05rem;
+    background: currentColor;
+    mask-repeat: no-repeat;
+    mask-position: center;
+    mask-size: contain;
+  }
+
   .footer-col h2 {
     margin: 0 0 0.85rem;
     color: var(--faint);

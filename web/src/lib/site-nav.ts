@@ -1,4 +1,9 @@
-import { GITHUB_REPO_URL, VOCAHQ_URL } from "@/lib/seo";
+import {
+  DISCORD_URL,
+  GITHUB_REPO_URL,
+  VOCAHQ_URL,
+  X_URL,
+} from "@/lib/seo";
 
 export type NavLink = {
   href: string;
@@ -27,15 +32,20 @@ export const mobileExtraNav: NavLink[] = [
   { href: "/troubleshooting/", label: "Troubleshooting" },
 ];
 
+export const socialLinks: { href: string; label: string; icon: string }[] = [
+  { href: X_URL, label: "X", icon: "/brand/social/x.svg" },
+  { href: DISCORD_URL, label: "Discord", icon: "/brand/social/discord.svg" },
+  { href: GITHUB_REPO_URL, label: "GitHub", icon: "/brand/social/github.svg" },
+];
+
 export const footerGroups: { title: string; links: NavLink[] }[] = [
   {
     title: "Product",
     links: [
       { href: "/#how-it-works", label: "How it works" },
-      { href: "/#engines", label: "Engines" },
       { href: "/screenshots/", label: "Screenshots" },
-      { href: "/changelog/", label: "Changelog" },
-      { href: "/compare/", label: "Engine comparison" },
+      { href: "/#engines", label: "Engines" },
+      { href: "/compare/", label: "Compare engines" },
     ],
   },
   {
@@ -49,23 +59,23 @@ export const footerGroups: { title: string; links: NavLink[] }[] = [
     ],
   },
   {
-    title: "Desktop",
+    title: "Guides",
     links: [
+      { href: "/offline/", label: "Offline" },
       { href: "/wayland/", label: "Wayland" },
       { href: "/gpu-acceleration/", label: "GPU acceleration" },
       { href: "/desktop-reliability/", label: "Reliability" },
-      { href: "/offline/", label: "Offline" },
       { href: "/remote-api/", label: "Remote API" },
     ],
   },
   {
     title: "Project",
     links: [
-      { href: GITHUB_REPO_URL, label: "Source on GitHub" },
       { href: "/faq/", label: "FAQ" },
       { href: "/privacy/", label: "Privacy" },
-      { href: "https://discord.gg/t6muquAJbm", label: "Discord" },
-      { href: VOCAHQ_URL, label: "Part of the Voca family" },
+      { href: "/changelog/", label: "Changelog" },
+      { href: GITHUB_REPO_URL, label: "Source" },
+      { href: VOCAHQ_URL, label: "VocaHQ" },
     ],
   },
 ];

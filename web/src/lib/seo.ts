@@ -7,6 +7,8 @@ export const DEFAULT_OG_IMAGE_ALT = "Vocalinux - Voice Dictation for Linux";
 export const TWITTER_HANDLE = "@vocahq";
 export const VOCAHQ_URL = "https://vocahq.com";
 export const GITHUB_REPO_URL = "https://github.com/VocaHQ/vocalinux";
+export const X_URL = "https://x.com/vocahq";
+export const DISCORD_URL = "https://discord.gg/t6muquAJbm";
 
 interface PageMetadataOptions {
   title: string;

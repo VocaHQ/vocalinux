@@ -4,12 +4,13 @@ import React, { useEffect, useId, useState } from "react";
 import Link from "next/link";
 import { Star } from "lucide-react";
 import { VocalinuxLogo } from "@/components/optimized-image";
-import { GITHUB_REPO_URL } from "@/lib/seo";
+import { GITHUB_REPO_URL, VOCAHQ_URL } from "@/lib/seo";
 import {
   footerGroups,
   homeNav,
   mobileExtraNav,
   pageNav,
+  socialLinks,
   type NavLink,
 } from "@/lib/site-nav";
 
@@ -195,9 +196,30 @@ export function SiteChrome({
                 <span>Vocalinux</span>
               </Link>
               <p>
-                Offline voice typing for Linux. Local engines by default, X11
-                and Wayland, no required account.
+                Offline voice typing for Linux. Local engines by default, no
+                required account.
               </p>
+              <ul className="footer-social">
+                {socialLinks.map((item) => (
+                  <li key={item.href}>
+                    <a
+                      href={item.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={item.label}
+                      title={item.label}
+                    >
+                      <span
+                        className="footer-social-icon"
+                        style={{
+                          maskImage: `url(${item.icon})`,
+                          WebkitMaskImage: `url(${item.icon})`,
+                        }}
+                      />
+                    </a>
+                  </li>
+                ))}
+              </ul>
             </div>
             {footerGroups.map((group) => (
               <div className="footer-col" key={group.title}>
@@ -223,7 +245,12 @@ export function SiteChrome({
               </a>
               .
             </span>
-            <span>Part of the Voca family · X11 · Wayland · whisper.cpp</span>
+            <span>
+              Part of{" "}
+              <a href={VOCAHQ_URL} rel="noopener noreferrer">
+                VocaHQ
+              </a>
+            </span>
           </div>
         </div>
       </footer>
