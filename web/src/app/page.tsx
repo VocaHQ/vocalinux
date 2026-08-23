@@ -306,8 +306,8 @@ export default function HomePage() {
             </div>
             <div className="hero-proof">
               <span>X11 and Wayland</span>
-              <span>whisper.cpp · Whisper · VOSK</span>
-              <span>Remote API optional</span>
+              <span>No telemetry</span>
+              <span>AGPL-3.0</span>
             </div>
           </div>
 
@@ -380,8 +380,7 @@ export default function HomePage() {
               </div>
               <pre>
                 <span className="terminal-prompt">$ </span>vocalinux
-                {"\n"}engines: whisper.cpp · Whisper · VOSK
-                {"\n"}remote API optional
+                {"\n"}started in the system tray
               </pre>
             </div>
           </div>
