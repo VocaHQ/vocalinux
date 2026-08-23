@@ -204,8 +204,9 @@ export function SiteChrome({
                   <li key={item.href}>
                     <a
                       href={item.href}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                      {...(item.href.startsWith("http")
+                        ? { target: "_blank", rel: "noopener noreferrer" }
+                        : {})}
                       aria-label={item.label}
                       title={item.label}
                     >

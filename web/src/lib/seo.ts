@@ -9,6 +9,7 @@ export const VOCAHQ_URL = "https://vocahq.com";
 export const GITHUB_REPO_URL = "https://github.com/VocaHQ/vocalinux";
 export const X_URL = "https://x.com/vocahq";
 export const DISCORD_URL = "https://discord.gg/t6muquAJbm";
+export const EMAIL_URL = "mailto:hello@vocahq.com";
 
 interface PageMetadataOptions {
   title: string;

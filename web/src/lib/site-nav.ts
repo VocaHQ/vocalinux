@@ -1,5 +1,6 @@
 import {
   DISCORD_URL,
+  EMAIL_URL,
   GITHUB_REPO_URL,
   VOCAHQ_URL,
   X_URL,
@@ -36,6 +37,7 @@ export const socialLinks: { href: string; label: string; icon: string }[] = [
   { href: X_URL, label: "X", icon: "/brand/social/x.svg" },
   { href: DISCORD_URL, label: "Discord", icon: "/brand/social/discord.svg" },
   { href: GITHUB_REPO_URL, label: "GitHub", icon: "/brand/social/github.svg" },
+  { href: EMAIL_URL, label: "Email hello@vocahq.com", icon: "/brand/social/mail.svg" },
 ];
 
 export const footerGroups: { title: string; links: NavLink[] }[] = [
