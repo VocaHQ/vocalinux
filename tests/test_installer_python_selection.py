@@ -6,6 +6,7 @@ active after `just deps`) made it build venv/ from that interpreter, where the
 distro's gi is invisible.
 """
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -255,6 +256,42 @@ class TestTheFloorIsTheInterpreterNotTheReleaseLabel:
         ("linuxmint", "22"),
         ("elementary", "8"),
     ]
+
+    #: Family name in install.sh -> how docs/DISTRO_COMPATIBILITY.md spells it.
+    SUPPORTED_FAMILIES = {
+        "ubuntu": "Ubuntu",
+        "debian": "Debian",
+        "fedora": "Fedora",
+        "arch": "Arch Linux",
+        "suse": "openSUSE",
+    }
+
+    def test_a_documented_family_is_never_met_with_untested(self):
+        """Fedora, Arch and openSUSE used to get the Ubuntu/Debian-only warning.
+
+        That warning ends in a y/n prompt which exits on "n", so a distro the
+        project documents as supported, and in Fedora's case builds in the distro
+        matrix, could be talked out of installing.
+        """
+        source = INSTALL_SH.read_text(encoding="utf-8")
+        block = source[source.index("# Check compatibility") :]
+        block = block[: block.index("\nesac\n")]
+
+        arms = set()
+        for line in block.splitlines():
+            match = re.fullmatch(r"\s*([a-z|]+)\)", line)
+            if match:
+                arms.update(match.group(1).split("|"))
+
+        assert arms == set(self.SUPPORTED_FAMILIES), f"unexpected support tiers: {sorted(arms)}"
+
+    def test_the_installer_and_the_compatibility_doc_agree(self):
+        doc = (INSTALL_SH.parent / "docs" / "DISTRO_COMPATIBILITY.md").read_text(encoding="utf-8")
+        supported = doc[: doc.index("## Experimental Support")]
+        missing = [
+            name for name in self.SUPPORTED_FAMILIES.values() if f"| {name} |" not in supported
+        ]
+        assert not missing, f"install.sh calls these supported, the doc does not: {missing}"
 
     def test_no_release_number_gate_survives_in_the_installer(self):
         source = INSTALL_SH.read_text(encoding="utf-8")

@@ -1470,30 +1470,36 @@ EOF
 # Detect distribution
 detect_distro
 
-# Check compatibility
-if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-    print_info "Detected Debian — fully supported. Continuing with Debian-specific configuration."
-elif [[ "$DISTRO_FAMILY" != "ubuntu" ]]; then
-    print_warning "This installer is primarily designed for Ubuntu/Debian-based systems. Your system: $DISTRO_NAME"
-    print_warning "The application may still work, but you might need to install dependencies manually."
-    if [[ "$NON_INTERACTIVE" == "yes" ]]; then
-        print_info "Non-interactive mode: continuing anyway..."
-    else
-        read -p "Do you want to continue anyway? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit "$EXIT_USER_ABORT"
+# Check compatibility. These tiers mirror docs/DISTRO_COMPATIBILITY.md, and the
+# distro matrix builds on ubuntu, debian and fedora. Nothing here decides whether
+# the install can proceed: what Vocalinux needs is an interpreter at the floor
+# and that interpreter's distro PyGObject, checked by check_python_version()
+# (fatal) and require_distro_gi() further down. This block only says how much
+# help the package step is likely to be, so it must not turn away a distro the
+# project documents as supported, and it must not key off a release label:
+# derivatives carry their own numbering, so Linux Mint 22 and elementary OS 8
+# report "22" and "8" while being built on Ubuntu 24.04 with Python 3.12.
+case "$DISTRO_FAMILY" in
+    debian)
+        print_info "Detected Debian — fully supported. Continuing with Debian-specific configuration."
+        ;;
+    ubuntu|fedora|arch|suse)
+        print_info "Detected $DISTRO_NAME ($DISTRO_FAMILY family) — supported."
+        ;;
+    *)
+        print_warning "This installer has not been tested on $DISTRO_NAME; you may need to install dependencies manually."
+        print_warning "Vocalinux itself does not care which distribution it runs on, only that Python and PyGObject are new enough."
+        if [[ "$NON_INTERACTIVE" == "yes" ]]; then
+            print_info "Non-interactive mode: continuing anyway..."
+        else
+            read -p "Do you want to continue anyway? (y/n) " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                exit "$EXIT_USER_ABORT"
+            fi
         fi
-    fi
-fi
-# No release-number gate for the Ubuntu family. What Vocalinux needs is an
-# interpreter at the floor plus that interpreter's distro PyGObject, and a
-# release label is a poor proxy for either: derivatives carry their own
-# numbering, so Linux Mint 22 and elementary OS 8 report "22" and "8" while
-# being built on Ubuntu 24.04 with Python 3.12. Comparing those against "24.04"
-# turned supported systems away. check_python_version() below is the authority
-# and it is fatal, so anything that really is too old still stops there, with a
-# message about the interpreter rather than about the logo.
+        ;;
+esac
 
 # Handle installation mode selection
 if [[ "$INTERACTIVE_MODE" == "ask" ]]; then
