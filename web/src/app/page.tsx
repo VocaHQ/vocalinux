@@ -385,7 +385,10 @@ export default function HomePage() {
               <pre>
                 <TerminalPrompt />
                 vocalinux
-                {"\n"}audio stays on this machine
+                {"\n"}
+                <span className="terminal-comment">
+                  # audio stays on this machine
+                </span>
               </pre>
             </div>
           </div>

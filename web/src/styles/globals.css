@@ -1227,6 +1227,10 @@
     color: var(--paper-bright);
   }
 
+  .terminal-comment {
+    color: rgb(207 233 220 / 40%);
+  }
+
   .subpage-terminal {
     overflow: hidden;
     border-radius: 11px;
