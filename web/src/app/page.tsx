@@ -283,23 +283,26 @@ export default function HomePage() {
               Hold a shortcut, speak, and the words land in the Linux app
               already in front of you.
             </p>
-            <div className="hero-actions">
-              <a className="btn btn-primary" href="#install">
-                Get Vocalinux{" "}
-                <span className="btn-arrow btn-arrow-down" aria-hidden="true">
-                  ↓
-                </span>
-              </a>
-              <a
-                className="btn btn-secondary"
-                href={GITHUB_REPO_URL}
-                rel="noopener noreferrer"
-              >
-                View the source{" "}
-                <span className="btn-arrow" aria-hidden="true">
-                  ↗
-                </span>
-              </a>
+            <div className="hero-cta">
+              <div className="hero-actions">
+                <a className="btn btn-primary" href="#install">
+                  Install Vocalinux{" "}
+                  <span className="btn-arrow btn-arrow-down" aria-hidden="true">
+                    ↓
+                  </span>
+                </a>
+                <a
+                  className="btn btn-secondary"
+                  href={GITHUB_REPO_URL}
+                  rel="noopener noreferrer"
+                >
+                  View the source{" "}
+                  <span className="btn-arrow" aria-hidden="true">
+                    ↗
+                  </span>
+                </a>
+              </div>
+              <p className="hero-cta-note">No account. One install command.</p>
             </div>
             <div className="hero-proof">
               <span>X11 and Wayland</span>
@@ -984,17 +987,22 @@ export default function HomePage() {
           <p className="section-lede">
             Free and open source under AGPL-3.0. Local engines by default.
           </p>
-          <div className="hero-actions">
-            <a className="btn btn-primary" href="#install">
-              Get Vocalinux
-            </a>
-            <a
-              className="btn btn-secondary"
-              href={GITHUB_REPO_URL}
-              rel="noopener noreferrer"
-            >
-              View the source
-            </a>
+          <div className="hero-cta">
+            <div className="hero-actions">
+              <a className="btn btn-primary" href="#install">
+                Install Vocalinux
+              </a>
+              <a
+                className="btn btn-secondary"
+                href={GITHUB_REPO_URL}
+                rel="noopener noreferrer"
+              >
+                View the source
+              </a>
+            </div>
+            <p className="hero-cta-note">
+              Then hold Right Alt and speak into the app already in front of you.
+            </p>
           </div>
         </div>
       </section>

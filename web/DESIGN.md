@@ -119,6 +119,7 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 
 ### Buttons
 - Primary: brand teal, paper-bright text, 44px min height
+- Homepage / closing CTA: "Install Vocalinux", jumps to `#install`
 - Secondary: transparent with a 3:1 control outline
 - Hover: 2px lift, no bounce scale as the only affordance
 - Focus: 3px sun outline, 3px offset
@@ -133,7 +134,8 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 - Long URLs wrap (`break-all` / `overflow-wrap`) so mobile never overflows
 
 ### Navigation
-- Sticky paper bar, mark + name, 3–5 text links, one Get Vocalinux action
+- Sticky paper bar, mark + name, 3–5 text links, GitHub stars on desktop
+- Mobile menu keeps Install Vocalinux as the conversion action
 - Real mobile disclosure with `aria-expanded`
 - Resource-rich footer, not a second mega-menu in the header
 

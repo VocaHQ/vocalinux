@@ -179,7 +179,7 @@ export function SiteChrome({
             href={ctaHref}
             onClick={() => setOpen(false)}
           >
-            Get Vocalinux
+            Install Vocalinux
           </a>
         </nav>
       </header>
