@@ -9,7 +9,7 @@ digest pinned in this repository before it is moved into place.
 One source of truth, consulted without a network lookup: ``model_checksums.txt``
 next to this module pins a sha256 per file name, for whisper.cpp (the
 ``lfs.oid`` at the pinned Hugging Face revision) and for VOSK (the hash of the
-bytes the generator downloaded -- the md5 Alphacephei publishes beside a model
+bytes the generator downloaded; the md5 Alphacephei publishes beside a model
 pins nothing they could not change alongside it). Regenerate it with
 ``scripts/generate-model-checksums.py``.
 
