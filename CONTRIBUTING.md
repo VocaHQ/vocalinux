@@ -50,7 +50,8 @@ This will:
 1. Install all system dependencies
 2. Create a Python virtual environment
 3. Install the package in editable mode (`-e`)
-4. Install all dev dependencies (pytest, black, isort, flake8)
+4. Install the dev dependencies (pytest and friends; the linters live in the
+   `lint` dependency group, which `just deps` installs)
 5. Run the test suite automatically
 
 > **Note:** `install.sh` always builds `venv/` from the system Python
@@ -105,7 +106,7 @@ This will:
 
 5. **(Optional) Install pre-commit hooks:**
    ```bash
-   uv run --extra dev --extra vad pre-commit install
+   uv run --extra dev --extra vad --group lint pre-commit install
    ```
    > **Note:** Pre-commit hooks are optional. The CI pipeline runs the same checks, so you can skip this if you prefer faster local commits.
 
@@ -214,7 +215,7 @@ just test
 just test-cov
 
 # Run specific test file
-uv run --extra dev --extra vad pytest tests/test_command_processor.py
+uv run --extra dev --extra vad --group lint pytest tests/test_command_processor.py
 ```
 
 ### Writing Tests

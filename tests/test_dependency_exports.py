@@ -55,6 +55,23 @@ def test_every_linter_reaches_the_dev_export():
     assert not missing, f"missing from requirements/dev.txt; re-run `just lock`: {missing}"
 
 
+def test_documented_uv_run_examples_do_not_prune_the_linters():
+    """`uv sync`/`uv run` install exactly what the flags name and remove the rest.
+
+    That is why every justfile recipe passes the same DEV_EXTRAS. A documented
+    example that stops at `--extra dev` silently uninstalls black, isort and
+    flake8 from .venv, so the next `just lint` fails for a reason the reader has
+    no way to connect to the command they were told to run.
+    """
+    offenders = []
+    for path in sorted(REPO_ROOT.glob("*.md")) + sorted((REPO_ROOT / "docs").glob("**/*.md")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if "uv run --extra dev" in line or "uv sync --extra dev" in line:
+                if "--group lint" not in line:
+                    offenders.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()}")
+    assert not offenders, "these examples uninstall the linters:\n" + "\n".join(offenders)
+
+
 def test_the_dev_extra_reaches_the_dev_export():
     dev = _requirement_names(_pyproject()["project"]["optional-dependencies"]["dev"])
     missing = sorted(set(dev) - _exported_names(DEV_EXPORT))
