@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { SiteChrome } from "@/components/site-chrome";
-import { TerminalBlock } from "@/components/terminal-block";
+import { TerminalBlock, TerminalPrompt } from "@/components/terminal-block";
 import { GITHUB_REPO_URL } from "@/lib/seo";
 
 const GITHUB_REPO_PATH = GITHUB_REPO_URL.replace("https://github.com/", "");
@@ -227,6 +227,10 @@ const ribbonItems = [
   "Wayland",
   "on-device",
   "open source",
+  "no account",
+  "system tray",
+  "whisper.cpp",
+  "no telemetry",
 ];
 
 export default function HomePage() {
@@ -379,8 +383,9 @@ export default function HomePage() {
                 </span>
               </div>
               <pre>
-                <span className="terminal-prompt">$ </span>vocalinux
-                {"\n"}started in the system tray
+                <TerminalPrompt />
+                vocalinux
+                {"\n"}audio stays on this machine
               </pre>
             </div>
           </div>
@@ -727,11 +732,33 @@ export default function HomePage() {
             displayCommand={interactiveInstallDisplayCommand}
             label="install.sh --interactive"
           />
-          <p className="section-lede">
-            Then launch <code>vocalinux</code>. Prefer no installer? Download an{" "}
-            <a href={`${GITHUB_REPO_URL}/releases`}>AppImage</a> for x86_64 or
-            aarch64. Host text-injection tools are still required.
-          </p>
+          <p className="section-lede">Then launch <code>vocalinux</code>.</p>
+          <div className="install-alts">
+            <a
+              className="install-alt"
+              href={`${GITHUB_REPO_URL}/releases`}
+              rel="noopener noreferrer"
+            >
+              <p className="install-alt-kicker">No installer</p>
+              <h3>AppImage</h3>
+              <p>
+                x86_64 or aarch64 from GitHub Releases. No root. Host
+                text-injection tools are still required.
+              </p>
+            </a>
+            <a
+              className="install-alt"
+              href={`${GITHUB_REPO_URL}/blob/main/docs/INSTALL.md#from-source`}
+              rel="noopener noreferrer"
+            >
+              <p className="install-alt-kicker">From source</p>
+              <h3>Build it yourself</h3>
+              <p>
+                Clone the repo and run <code>./install.sh</code>. The install
+                guide has the full source path.
+              </p>
+            </a>
+          </div>
           <p className="section-link" style={{ marginTop: "1.6rem" }}>
             <Link href="/install/ubuntu/">Ubuntu guide</Link>
             {" · "}

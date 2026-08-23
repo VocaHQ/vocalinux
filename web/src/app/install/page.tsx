@@ -69,16 +69,34 @@ export default function InstallGuidesPage() {
           />
         </div>
         <p className="mt-4 text-sm text-muted-foreground">
-          Prefer no installer? Download an{" "}
-          <a
-            href="https://github.com/VocaHQ/vocalinux/releases"
-            className="font-semibold text-primary hover:underline"
-          >
-            AppImage
-          </a>{" "}
-          for x86_64 or aarch64 from GitHub Releases (host text-injection tools
-          still required).
+          Then launch <code>vocalinux</code>.
         </p>
+        <div className="install-alts">
+          <a
+            className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/releases"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">No installer</p>
+            <h3>AppImage</h3>
+            <p>
+              x86_64 or aarch64 from GitHub Releases. No root. Host
+              text-injection tools are still required.
+            </p>
+          </a>
+          <a
+            className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#from-source"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">From source</p>
+            <h3>Build it yourself</h3>
+            <p>
+              Clone the repo and run <code>./install.sh</code>. The install
+              guide has the full source path.
+            </p>
+          </a>
+        </div>
       </section>
 
       <section className="mt-12 grid gap-4 md:grid-cols-3">

@@ -137,7 +137,6 @@
     font-weight: 760;
     letter-spacing: -0.065em;
     line-height: 1.08;
-    text-wrap: balance;
   }
 
   h1 em,
@@ -146,10 +145,6 @@
     font-family: var(--font-display);
     font-style: normal;
     color: var(--brand);
-  }
-
-  p {
-    text-wrap: pretty;
   }
 
   :focus-visible {
@@ -547,7 +542,6 @@
 
   .section-title,
   .section-heading {
-    max-width: 20ch;
     margin: 0;
     font-size: clamp(2.2rem, 6vw, 4.2rem);
     font-weight: 760;
@@ -556,7 +550,6 @@
   }
 
   .section-lede {
-    max-width: 62ch;
     margin-top: 1.1rem;
     color: var(--muted-copy);
     font-size: 1.0625rem;
@@ -853,8 +846,8 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     white-space: nowrap;
-    /* 28s per item cycle, matching vocahq.com; 4 cycles per group. */
-    animation: ribbon-move 112s linear infinite;
+    /* 3.5s per item, matching vocahq.com; 4 copies per group. */
+    animation: ribbon-move 168s linear infinite;
   }
 
   .ribbon-group {
@@ -1213,20 +1206,24 @@
     user-select: none;
   }
 
-  .workbench-terminal .terminal-prompt {
-    color: rgb(207 233 220 / 48%);
+  .terminal-user {
+    color: #8ee4b0;
   }
 
-  .terminal-user {
-    color: var(--mint);
+  .terminal-at {
+    color: rgb(207 233 220 / 45%);
+  }
+
+  .terminal-host {
+    color: #7ec8e8;
   }
 
   .terminal-path {
-    color: var(--faint-inverse);
+    color: #9bb4ff;
   }
 
   .terminal-hash {
-    color: rgb(207 233 220 / 48%);
+    color: var(--paper-bright);
   }
 
   .subpage-terminal {
@@ -1654,6 +1651,51 @@
     margin-top: 1.6rem;
   }
 
+  .install-alts {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+    margin-top: 1.35rem;
+  }
+
+  .install-alt {
+    display: block;
+    min-width: 0;
+    padding: 1.1rem 1.2rem 1.2rem;
+    color: inherit;
+    background: var(--paper-bright);
+    border: 1px solid var(--ink);
+    border-radius: var(--radius-sm);
+    box-shadow: 0.22rem 0.22rem 0 var(--paper-deep);
+    text-decoration: none;
+  }
+
+  .install-alt:hover {
+    border-color: var(--brand);
+    box-shadow: 0.22rem 0.22rem 0 var(--brand-soft);
+  }
+
+  .install-alt-kicker {
+    margin: 0;
+    color: var(--brand-dark);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .install-alt h3 {
+    margin: 0.35rem 0 0;
+    font-size: 1.2rem;
+    letter-spacing: -0.03em;
+  }
+
+  .install-alt p:last-child {
+    margin: 0.45rem 0 0;
+    color: var(--muted-copy);
+    font-size: 0.95rem;
+  }
+
   @keyframes halo {
     0% { opacity: 0.85; transform: scale(0.55); }
     70%, 100% { opacity: 0; transform: scale(1.7); }
@@ -1726,6 +1768,10 @@ nextjs-portal {
     grid-template-columns: 13rem minmax(0, 1fr);
     align-items: center;
     gap: 1.5rem;
+  }
+
+  .install-alts {
+    grid-template-columns: 1fr 1fr;
   }
 
   .proof-grid {

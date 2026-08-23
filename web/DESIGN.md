@@ -93,7 +93,7 @@ No remote webfonts. No Geist, Inter, or Bricolage as the page face.
 ### Hierarchy
 - **Hero display:** clamp ~3.7–7.4rem, weight ~780, tracking -0.075em, line-height ~0.92
 - **Section title:** clamp ~2.2–4.7rem, tracking -0.065em
-- **Body:** 16–18px, line-height ~1.65, max ~65ch
+- **Body:** 16–18px, line-height ~1.65. Reflow with the shell; do not pretty-wrap or cap titles at 20ch
 - **Mono tags:** ~0.7rem, used sparingly
 
 Accent words in a headline use the same family, `font-style: normal`, brand color. Do not mix a second family into a heading.
@@ -132,7 +132,7 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 ### Terminal
 - Dark ink surface, mint command text, copy in the chrome
 - GTK headerbar: copy on the left, title centered, grey window controls on the **right**
-- Prompt is `user@linux:~$`, not a Mac `$` or left-side traffic-light dots
+- Prompt is `user@linux:~$` with colored user, host, and path, not a Mac `$`
 - Long URLs wrap (`break-all` / `overflow-wrap`) so mobile never overflows
 
 ### Navigation

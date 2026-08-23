@@ -3,6 +3,18 @@
 import React, { useCallback, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
+export function TerminalPrompt() {
+  return (
+    <span className="terminal-prompt">
+      <span className="terminal-user">user</span>
+      <span className="terminal-at">@</span>
+      <span className="terminal-host">linux</span>
+      <span className="terminal-path">:~</span>
+      <span className="terminal-hash">$ </span>
+    </span>
+  );
+}
+
 export function TerminalBlock({
   command,
   displayCommand,
@@ -44,11 +56,7 @@ export function TerminalBlock({
         </span>
       </div>
       <pre className="max-w-full min-w-0 overflow-x-auto break-all">
-        <span className="terminal-prompt">
-          <span className="terminal-user">user@linux</span>
-          <span className="terminal-path">:~</span>
-          <span className="terminal-hash">$ </span>
-        </span>
+        <TerminalPrompt />
         {displayCommand}
       </pre>
     </div>
