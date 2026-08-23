@@ -233,7 +233,7 @@ rebuild_pywhispercpp_vulkan() {
   fi
 
   if ! has_vulkan_build_deps; then
-    echo "Vulkan build deps missing (libvulkan-dev, cmake, g++, glslc/glslangValidator)." >&2
+    echo "Vulkan build deps missing (libvulkan-dev, cmake, g++, glslc/glslangValidator, spirv-headers)." >&2
     if [ "$require_vulkan" = "1" ]; then
       echo "VOCALINUX_APPIMAGE_REQUIRE_VULKAN=1: refusing to ship a CPU-only AppImage." >&2
       exit 1

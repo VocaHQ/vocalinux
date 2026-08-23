@@ -54,7 +54,9 @@ jobs:
             ninja-build \
             build-essential \
             libvulkan-dev \
-            glslc
+            glslc \
+            spirv-headers \
+            spirv-tools
 
       - name: Install build dependencies
         run: |
@@ -189,7 +191,9 @@ jobs:
             ninja-build \
             build-essential \
             libvulkan-dev \
-            glslc
+            glslc \
+            spirv-headers \
+            spirv-tools
 
       - name: Install build dependencies
         run: |

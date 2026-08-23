@@ -218,7 +218,9 @@ jobs:
             ninja-build \
             build-essential \
             libvulkan-dev \
-            glslc
+            glslc \
+            spirv-headers \
+            spirv-tools
 
       - name: Install GObject introspection dependencies
         run: |
