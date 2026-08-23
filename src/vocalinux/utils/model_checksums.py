@@ -37,6 +37,12 @@ logger = logging.getLogger(__name__)
 
 _MANIFEST_NAME = "model_checksums.txt"
 
+# Written into an extracted model tree to record the digest of the archive it
+# came out of. A directory has no hash of its own and the zip is deleted after
+# unpacking, so this file is the only evidence the tree was ever verified.
+# install.sh reads it under the same name; keep the two in step.
+VERIFICATION_STAMP_NAME = ".vocalinux_verified"
+
 # Hash of a 2GB model read in one go would sit in RAM; stream it instead.
 _CHUNK_SIZE = 1024 * 1024
 
@@ -132,6 +138,24 @@ def expected_for(filename: str) -> Optional[Expected]:
     """Return the pinned digest for a model file name, or None when unpinned."""
     entries, _ = _parse_manifest()
     return entries.get(os.path.basename(filename))
+
+
+def write_verification_stamp(tree_path: str, archive_name: str) -> None:
+    """Record inside ``tree_path`` the pinned digest of the archive it came from.
+
+    Only archives get a digest, so an extracted tree is trustworthy later only if
+    something writes down what was checked. ``install.sh`` re-downloads any VOSK
+    model whose stamp does not match the digest pinned today, which means a tree
+    left unstamped here — a first-run or Settings download — is refetched on the
+    next ``./install.sh``. That makes a failed write an error, not a warning.
+    """
+    expected = expected_for(archive_name)
+    if expected is None:
+        raise ChecksumError(f"Cannot stamp {tree_path}: {archive_name} has no pinned digest")
+    stamp = os.path.join(tree_path, VERIFICATION_STAMP_NAME)
+    with open(stamp, "w", encoding="utf-8") as handle:
+        handle.write(f"{expected.digest}\n")
+    logger.debug("Recorded verified digest for %s in %s", archive_name, stamp)
 
 
 def pinned_filenames() -> frozenset:

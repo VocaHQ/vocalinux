@@ -54,6 +54,15 @@ except ImportError:
 else:
     sys._vocalinux_real_numpy = _real_numpy
 
+# And the same for zipfile: test_recognition_manager.py and
+# test_recognition_manager_download_buffer.py assign a MagicMock to
+# sys.modules["zipfile"] at import time and never put it back, so any later test
+# that extracts a real archive gets a silent no-op. Keep the genuine module
+# reachable for the ones that need it.
+import zipfile as _real_zipfile  # noqa: E402
+
+sys._vocalinux_real_zipfile = _real_zipfile
+
 # Prevent specific known-blocking daemon threads from starting during tests.
 # Source code in ibus_engine.py and evdev_backend.py spawns daemon threads
 # (socket server, device monitor) that block on socket.accept() or

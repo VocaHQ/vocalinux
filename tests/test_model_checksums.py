@@ -11,10 +11,12 @@ import os
 import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from vocalinux.utils import model_checksums
 from vocalinux.utils.model_checksums import (
+    VERIFICATION_STAMP_NAME,
     ChecksumError,
     Expected,
     expected_for,
@@ -23,6 +25,7 @@ from vocalinux.utils.model_checksums import (
     verify_file,
     verify_model_file,
     whispercpp_revision,
+    write_verification_stamp,
 )
 from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
 from vocalinux.utils.whispercpp_model_info import (
@@ -357,6 +360,34 @@ class TestExistingModelsAreVerified(unittest.TestCase):
                 guard.index("return 0"),
                 f"{name} returns success before verifying an existing model",
             )
+
+
+class TestVerificationStamp(unittest.TestCase):
+    """The stamp is the only thing that makes an extracted tree verifiable.
+
+    Two implementations write and read it — this module and install.sh — so the
+    name and the contents have to be the same on both sides.
+    """
+
+    def test_the_installer_uses_the_same_stamp_name(self):
+        self.assertIn(VERIFICATION_STAMP_NAME, INSTALL_SH.read_text())
+
+    def test_it_records_the_pinned_digest_of_the_archive(self):
+        with TemporaryDirectory() as tree:
+            write_verification_stamp(tree, "vosk-model-small-en-us-0.15.zip")
+            written = Path(tree, VERIFICATION_STAMP_NAME).read_text()
+
+        pinned = expected_for("vosk-model-small-en-us-0.15.zip")
+        self.assertIsNotNone(pinned)
+        # install.sh compares with $(cat ...), which strips the trailing newline
+        # the shell's own writer leaves; match it byte for byte.
+        self.assertEqual(written, f"{pinned.digest}\n")
+
+    def test_it_refuses_to_stamp_an_unpinned_archive(self):
+        with TemporaryDirectory() as tree:
+            with self.assertRaises(ChecksumError):
+                write_verification_stamp(tree, "not-a-model-we-ship.zip")
+            self.assertFalse(Path(tree, VERIFICATION_STAMP_NAME).exists())
 
 
 if __name__ == "__main__":

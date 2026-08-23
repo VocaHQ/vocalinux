@@ -21,7 +21,7 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
-from ..utils.model_checksums import ChecksumError, verify_model_file
+from ..utils.model_checksums import ChecksumError, verify_model_file, write_verification_stamp
 from ..utils.paths import models_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
 from ..utils.whisper_model_info import whisper_model_file, whisper_model_url
@@ -2170,6 +2170,12 @@ class SpeechRecognitionManager:
             logger.info(f"Extracting VOSK model to {model_path}")
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
                 zip_ref.extractall(MODELS_DIR)
+
+            # The zip is about to go, and a directory carries no digest, so
+            # record what was verified. install.sh trusts an existing VOSK tree
+            # only when this stamp matches the digest it pins; without it the
+            # model we just checked is re-downloaded on the next ./install.sh.
+            write_verification_stamp(model_path, f"{model_name}.zip")
 
             os.remove(zip_path)
             logger.info("VOSK model downloaded and extracted successfully")

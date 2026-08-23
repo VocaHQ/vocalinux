@@ -25,6 +25,7 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, expected_for
 
 
 def _make_manager(engine="whisper_cpp", **kw):
@@ -37,22 +38,38 @@ def _make_manager(engine="whisper_cpp", **kw):
                 )
                 # Ensure vosk_model_map is set (normally done in _init_vosk)
                 if not hasattr(mgr, "vosk_model_map"):
+                    # The names _init_vosk() would pick for en-us. They have to be
+                    # real: the download path looks each one up in the checksum
+                    # manifest to stamp the tree it extracts.
                     mgr.vosk_model_map = {
-                        "small": "model-en-us-0.22-lgraph",
+                        "small": "vosk-model-small-en-us-0.15",
                         "medium": "vosk-model-en-us-0.22",
-                        "large": "vosk-model-en-us-0.22-lgraph",
+                        "large": "vosk-model-en-us-0.22",
                     }
                 return mgr
 
 
 # A real zip, embedded rather than built here: by the time this module is
 # imported, other test modules have already replaced zipfile/BytesIO in
-# sys.modules with mocks, so building one here yields empty bytes.
+# sys.modules with mocks, so building one here yields empty bytes. Its single
+# entry sits under the directory VOSK's small en-us archive unpacks to, because
+# that is the tree the downloader stamps after extracting.
 VOSK_ZIP_BYTES = base64.b64decode(
-    "UEsDBBQAAAAIAGpxFl0m8NsAFgAAAIgTAAAkAAAAbW9kZWwtZW4tdXMtMC4yMi1sZ3JhcGgvYW0vbW9kZWwucGts"
-    "7cExAQAAAMKg2otvCj+gAAAAAIC3AVBLAQIUAxQAAAAIAGpxFl0m8NsAFgAAAIgTAAAkAAAAAAAAAAAAAACAAQAA"
-    "AABtb2RlbC1lbi11cy0wLjIyLWxncmFwaC9hbS9tb2RlbC5wa2xQSwUGAAAAAAEAAQBSAAAAWAAAAAAA"
+    "UEsDBBQAAAAIAHV2F12oDuXYFgAAAIgTAAAoAAAAdm9zay1tb2RlbC1zbWFsbC1lbi11cy0wLjE1L2FtL2Zp"
+    "bmFsLm1kbO3BMQEAAADCoPVPbQo/oAAAAACAtwFQSwECFAMUAAAACAB1dhddqA7l2BYAAACIEwAAKAAAAAAA"
+    "AAAAAAAAgAEAAAAAdm9zay1tb2RlbC1zbWFsbC1lbi11cy0wLjE1L2FtL2ZpbmFsLm1kbFBLBQYAAAAAAQAB"
+    "AFYAAABcAAAAAAA="
 )
+
+
+class FakeRequestError(Exception):
+    """Stands in for requests.exceptions.RequestException.
+
+    A leaked mock makes ``except requests.exceptions.RequestException`` a
+    TypeError, so the mocked module needs a real class here. It must not be
+    ``Exception`` itself, or that clause swallows every other failure the
+    downloader is supposed to surface unwrapped.
+    """
 
 
 def _fake_clock(step=0.2):
@@ -383,6 +400,28 @@ class TestDownloadWhisperModel:
 class TestDownloadVoskModel:
     """Test _download_vosk_model() with runtime import mocking."""
 
+    @staticmethod
+    def _serve_zip(manager, tmp_path):
+        """Run a full download+extract of VOSK_ZIP_BYTES into tmp_path."""
+        mock_requests = MagicMock()
+        mock_response = MagicMock()
+        mock_response.headers = {"content-length": str(len(VOSK_ZIP_BYTES))}
+        mock_response.iter_content.return_value = [VOSK_ZIP_BYTES]
+        mock_requests.get.return_value = mock_response
+        mock_requests.exceptions.RequestException = FakeRequestError
+
+        # Extraction has to really happen here — the stamp lands in the tree it
+        # creates — and other modules leave a MagicMock in sys.modules["zipfile"].
+        real_zipfile = getattr(sys, "_vocalinux_real_zipfile", None) or __import__("zipfile")
+
+        with patch.dict("sys.modules", {"requests": mock_requests, "zipfile": real_zipfile}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.MODELS_DIR", str(tmp_path)
+            ):
+                with patch("time.time", side_effect=_fake_clock()):
+                    manager._download_vosk_model()
+        return mock_requests
+
     def test_download_vosk_progress_callback(self, tmp_path, skip_checksum):
         """Test progress callback during Vosk download."""
         manager = _make_manager(engine="vosk")
@@ -393,27 +432,41 @@ class TestDownloadVoskModel:
 
         manager._download_progress_callback = track_progress
 
-        zip_bytes = VOSK_ZIP_BYTES
-
-        mock_requests = MagicMock()
-        mock_response = MagicMock()
-        mock_response.headers = {"content-length": str(len(zip_bytes))}
-        mock_response.iter_content.return_value = [zip_bytes]
-        mock_requests.get.return_value = mock_response
-        mock_requests.exceptions.RequestException = Exception
-
-        with patch.dict("sys.modules", {"requests": mock_requests}):
-            with patch(
-                "vocalinux.speech_recognition.recognition_manager.MODELS_DIR", str(tmp_path)
-            ):
-                with patch("time.time", side_effect=_fake_clock()):
-                    manager._download_vosk_model()
+        mock_requests = self._serve_zip(manager, tmp_path)
 
         mock_requests.get.assert_called_once()
         call_args = mock_requests.get.call_args
         assert call_args is not None
         assert len(call_args[0]) > 0 or "url" in call_args[1]
         assert len(progress_calls) >= 1
+        # Otherwise the digest check could be deleted and this stay green.
+        skip_checksum.assert_called_once()
+
+    def test_download_vosk_stamps_the_extracted_tree(self, tmp_path, skip_checksum):
+        """A directory has no digest; install.sh reads this stamp instead.
+
+        Leave it out and every model fetched at first run or from Settings looks
+        unverified to the next ./install.sh, which downloads it again.
+        """
+        manager = _make_manager(engine="vosk")
+
+        self._serve_zip(manager, tmp_path)
+
+        stamp = tmp_path / "vosk-model-small-en-us-0.15" / VERIFICATION_STAMP_NAME
+        pinned = expected_for("vosk-model-small-en-us-0.15.zip")
+        assert pinned is not None, "the fixture model must be in the manifest"
+        assert stamp.read_text().strip() == pinned.digest
+
+    def test_download_vosk_fails_when_the_stamp_cannot_be_written(self, tmp_path, skip_checksum):
+        """An unstampable tree is one we would silently refetch; say so instead."""
+        manager = _make_manager(engine="vosk")
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.write_verification_stamp",
+            side_effect=OSError("read-only models directory"),
+        ):
+            with pytest.raises(OSError):
+                self._serve_zip(manager, tmp_path)
 
     def test_download_vosk_request_error(self, tmp_path):
         """Test Vosk download request error handling."""
