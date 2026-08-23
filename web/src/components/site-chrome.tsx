@@ -109,7 +109,7 @@ export function SiteChrome({
       <header className="site-header">
         <div className="shell header-inner">
           <Link href="/" className="brand" aria-label="Vocalinux home">
-            <VocalinuxLogo width={28} height={28} className="h-7 w-7" />
+            <VocalinuxLogo width={28} height={28} className="h-7 w-7" priority />
             <span>Vocalinux</span>
           </Link>
 
