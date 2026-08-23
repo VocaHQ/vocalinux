@@ -1082,6 +1082,7 @@ class TestAboutPage(unittest.TestCase):
             "Open vocamac.com",
             "Open vocaphone.vocahq.com",
             "Open vocagateway.vocahq.com",
+            "Open the Vocalinux GitHub repository",
             "Open the latest release page",
         ):
             self.assertIn(name, self.source)
@@ -1092,9 +1093,16 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("Product site at vocalinux.com", self.about)
         self.assertNotIn("Open the Vocalinux GitHub page", self.about)
 
+    def test_source_code_row_sits_beside_website(self):
+        self.assertIn('title="Source code"', self.about)
+        self.assertIn("GITHUB_REPO_URL", self.about)
+        self.assertIn("Open the Vocalinux GitHub repository", self.about)
+        self.assertLess(self.about.find("Website"), self.about.find("Source code"))
+
     def test_can_open_about_urls(self):
         from vocalinux.ui.settings_dialog import (
             GITHUB_ISSUES_URL,
+            GITHUB_REPO_URL,
             VOCAGATEWAY_SITE_URL,
             VOCAHQ_DISCORD_URL,
             VOCAHQ_MAILTO_URL,
@@ -1112,6 +1120,7 @@ class TestAboutPage(unittest.TestCase):
             VOCAMAC_SITE_URL,
             VOCAPHONE_SITE_URL,
             VOCAGATEWAY_SITE_URL,
+            GITHUB_REPO_URL,
             GITHUB_ISSUES_URL,
             VOCAHQ_DISCORD_URL,
             VOCAHQ_X_URL,
@@ -1170,6 +1179,34 @@ class TestAboutPage(unittest.TestCase):
             self.assertNotIn("#5865F2", packaged)
         self.assertNotIn("web-browser-symbolic", self.about)
         self.assertNotIn("mail-send-symbolic", self.about)
+
+    def test_launcher_icon_is_circular_family_logo(self):
+        """App/About icon is the approved teal circle lockup, not the square fill."""
+        from pathlib import Path
+
+        packaged = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "vocalinux"
+            / "resources"
+            / "icons"
+            / "scalable"
+            / "vocalinux.svg"
+        )
+        shipped = (
+            Path(__file__).resolve().parents[1]
+            / "resources"
+            / "icons"
+            / "scalable"
+            / "vocalinux.svg"
+        )
+        packaged_svg = packaged.read_text(encoding="utf-8")
+        shipped_svg = shipped.read_text(encoding="utf-8")
+        self.assertEqual(packaged_svg, shipped_svg)
+        self.assertIn('<circle cx="229" cy="231.5" r="221.5" fill="#0F6B57"/>', packaged_svg)
+        self.assertIn('aria-label="Vocalinux"', packaged_svg)
+        self.assertNotIn("<rect", packaged_svg)
+        self.assertIn('get_icon_path("vocalinux")', self.about)
 
 
 if __name__ == "__main__":

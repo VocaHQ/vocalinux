@@ -266,6 +266,7 @@ VOCAHQ_SITE_URL = "https://vocahq.com"
 VOCAMAC_SITE_URL = "https://vocamac.com"
 VOCAPHONE_SITE_URL = "https://vocaphone.vocahq.com"
 VOCAGATEWAY_SITE_URL = "https://vocagateway.vocahq.com"
+GITHUB_REPO_URL = __url__
 GITHUB_ISSUES_URL = "https://github.com/VocaHQ/vocalinux/issues"
 VOCAHQ_DISCORD_URL = "https://discord.gg/UMJduhcqn"
 VOCAHQ_X_URL = "https://x.com/vocahq"
@@ -279,6 +280,7 @@ _ABOUT_OPEN_URLS = frozenset(
         VOCAMAC_SITE_URL,
         VOCAPHONE_SITE_URL,
         VOCAGATEWAY_SITE_URL,
+        GITHUB_REPO_URL,
         GITHUB_ISSUES_URL,
         VOCAHQ_DISCORD_URL,
         VOCAHQ_X_URL,
@@ -3522,6 +3524,18 @@ class SettingsDialog(Gtk.Dialog):
             keywords=("website", "vocalinux.com"),
         )
         app_group.add_row(website_row)
+
+        source_btn = self._about_open_button(
+            GITHUB_REPO_URL,
+            "Open the Vocalinux GitHub repository",
+        )
+        source_row = PreferenceRow(
+            title="Source code",
+            subtitle=GITHUB_REPO_URL,
+            widget=source_btn,
+            keywords=("github", "source", "repo", "code"),
+        )
+        app_group.add_row(source_row)
 
         license_row = PreferenceRow(
             title="License",

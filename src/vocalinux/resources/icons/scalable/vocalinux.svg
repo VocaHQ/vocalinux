@@ -1,11 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Voca">
-  <rect width="1024" height="1024" fill="#0F6B57"/>
-  <g transform="translate(28.386 32.619) scale(2.116474)">
-    <path d="M 164 127 A 65 65 0 0 1 294 127 L 294 224 A 65 65 0 0 1 164 224 Z" fill="#F2F6F2"/>
-    <path d="M 144.87 202.02 A 87 87 0 1 0 312.13 202.02" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
-    <path d="M 228.5 313 L 228.5 382" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
-    <path d="M 170 382 L 287 382" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
-    <path d="M 123.12 168.78 A 129.0 99.2 0 0 0 123.12 283.22" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
-    <path d="M 333.88 168.78 A 129.0 99.2 0 0 1 333.88 283.22" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
-  </g>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 460 460" width="460" height="460" role="img" aria-label="Vocalinux">
+  <circle cx="229" cy="231.5" r="221.5" fill="#0F6B57"/>
+  <path d="M 164 127 A 65 65 0 0 1 294 127 L 294 224 A 65 65 0 0 1 164 224 Z" fill="#F2F6F2"/>
+  <path d="M 144.87 202.02 A 87 87 0 1 0 312.13 202.02" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
+  <path d="M 228.5 313 L 228.5 382" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
+  <path d="M 170 382 L 287 382" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
+  <path d="M 123.12 168.78 A 129.0 99.2 0 0 0 123.12 283.22" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
+  <path d="M 333.88 168.78 A 129.0 99.2 0 0 1 333.88 283.22" fill="none" stroke="#F2F6F2" stroke-width="18" stroke-linecap="round"/>
 </svg>
