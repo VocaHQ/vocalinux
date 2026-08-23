@@ -477,6 +477,16 @@ download_model_file() {
         self.model_path = self.models_dir / self.MODEL_NAME
         self.stamp = self.model_path / VERIFICATION_STAMP_NAME
 
+        # install_vosk_models probes for a downloader with `command -v` before it
+        # downloads anything. download_model_file is stubbed, so the probe is all
+        # that has to succeed, and a stub on PATH keeps the test from depending on
+        # the host having wget or curl.
+        self.fake_bin = self.root / "bin"
+        self.fake_bin.mkdir()
+        curl = self.fake_bin / "curl"
+        curl.write_text("#!/bin/sh\necho 'the stubbed downloader must not run' >&2\nexit 1\n")
+        curl.chmod(0o755)
+
     def _source(self) -> str:
         text = INSTALL_SH.read_text()
         chunks = []
@@ -494,7 +504,12 @@ download_model_file() {
             ["bash", "-c", script],
             capture_output=True,
             text=True,
-            env={**os.environ, "ROOT": str(self.root), **env},
+            env={
+                **os.environ,
+                "PATH": f"{self.fake_bin}{os.pathsep}{os.environ['PATH']}",
+                "ROOT": str(self.root),
+                **env,
+            },
         )
 
     @staticmethod
