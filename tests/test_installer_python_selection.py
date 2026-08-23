@@ -75,7 +75,7 @@ echo "PATH=$PATH"
 echo "VIRTUAL_ENV=${{VIRTUAL_ENV:-<unset>}}"
 """
         result = _run(script)
-        assert f"PATH=/usr/bin:/bin" in result.stdout
+        assert "PATH=/usr/bin:/bin" in result.stdout
         assert "VIRTUAL_ENV=<unset>" in result.stdout
 
     def test_removes_trailing_slash_venv_and_repeats(self, tmp_path):
