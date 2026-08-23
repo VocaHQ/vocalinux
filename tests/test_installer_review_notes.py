@@ -170,6 +170,7 @@ def test_session_type_env_reads_use_default_expansion() -> None:
 
 def test_agents_does_not_claim_requirements_are_consumed() -> None:
     text = AGENTS.read_text(encoding="utf-8")
-    assert "are unused until those phases land" in text
     assert "consumed by `install.sh`" not in text
+    assert "`uv.lock` is authoritative" in text
+    assert "Do not edit `requirements/*.txt` by hand" in text
     assert "https://just.systems" in text
