@@ -6,8 +6,10 @@ rather than on a user's machine, where it would surface as an unexplained
 refusal to install.
 """
 
+import base64
 import hashlib
 import os
+import shutil
 import subprocess
 import unittest
 from pathlib import Path
@@ -340,12 +342,31 @@ class TestExistingModelsAreVerified(unittest.TestCase):
 
     def test_vosk_requires_a_matching_verification_stamp(self):
         guard = self._exists_guard("install_vosk_models")
-        self.assertIn(".vocalinux_verified", guard)
-        self.assertIn("rm -rf", guard)
+        self.assertIn(VERIFICATION_STAMP_NAME, guard)
 
-    def test_vosk_writes_the_stamp_after_extracting(self):
+    def test_vosk_keeps_an_unstamped_tree_until_it_has_a_replacement(self):
+        """Deleting on sight would make every failed install a missing model.
+
+        No stamp is the ordinary case — an older install, or a tree the app
+        downloaded itself — and this runs on every ./install.sh. Removal belongs
+        after the replacement is downloaded, verified and unpacked, not before.
+        """
+        guard = self._exists_guard("install_vosk_models")
+        self.assertNotIn("rm -rf", guard)
+
+    def test_vosk_unpacks_to_staging_and_swaps_only_what_it_verified(self):
         body = self._function_body("install_vosk_models")
-        self.assertIn('pinned_digest_for "$SMALL_MODEL_ARCHIVE" > "$SMALL_MODEL_STAMP"', body)
+        order = [
+            body.index("verify_model_checksum"),
+            body.index('unzip -q "$TEMP_ZIP" -d "$STAGING_DIR"'),
+            body.index(f'> "$STAGING_DIR/$SMALL_MODEL_NAME/{VERIFICATION_STAMP_NAME}"'),
+            body.index('mv "$STAGING_DIR/$SMALL_MODEL_NAME" "$SMALL_MODEL_PATH"'),
+        ]
+        self.assertEqual(order, sorted(order), "verify, unpack, stamp, then swap")
+
+    def test_vosk_restores_the_old_tree_when_the_swap_fails(self):
+        body = self._function_body("install_vosk_models")
+        self.assertIn('mv "$REPLACED_DIR" "$SMALL_MODEL_PATH"', body)
 
     def test_no_installer_path_returns_zero_on_an_unverified_file(self):
         """Each guard must verify before its `return 0`, not after."""
@@ -388,6 +409,151 @@ class TestVerificationStamp(unittest.TestCase):
             with self.assertRaises(ChecksumError):
                 write_verification_stamp(tree, "not-a-model-we-ship.zip")
             self.assertFalse(Path(tree, VERIFICATION_STAMP_NAME).exists())
+
+
+class TestVoskInstallerReplacesRatherThanDeletes(unittest.TestCase):
+    """Run install_vosk_models for real, with the network and unzip around it.
+
+    The static checks above pin the shape of the code; these pin the behaviour
+    the review asked for: an install that fails after finding an unstamped tree
+    must leave that tree where it was, because "no stamp" is the ordinary state
+    of any model the app downloaded itself or that predates stamping.
+    """
+
+    # A zip whose top-level directory is the one the real archive unpacks to.
+    # Embedded rather than built here so no test that mocks zipfile can reach it.
+    FIXTURE_ZIP = base64.b64decode(
+        "UEsDBBQAAAAIAM92F12oDuXYFgAAAIgTAAAoAAAAdm9zay1tb2RlbC1zbWFsbC1lbi11cy0wLjE1L2FtL2Zp"
+        "bmFsLm1kbO3BMQEAAADCoPVPbQo/oAAAAACAtwFQSwMEFAAAAAgAz3YXXVXAPAMTAAAAEQAAACsAAAB2b3Nr"
+        "LW1vZGVsLXNtYWxsLWVuLXVzLTAuMTUvY29uZi9tb2RlbC5jb25m09XNzczTTUwuySxLtTUyMOACAFBLAQIU"
+        "AxQAAAAIAM92F12oDuXYFgAAAIgTAAAoAAAAAAAAAAAAAACAAQAAAAB2b3NrLW1vZGVsLXNtYWxsLWVuLXVz"
+        "LTAuMTUvYW0vZmluYWwubWRsUEsBAhQDFAAAAAgAz3YXXVXAPAMTAAAAEQAAACsAAAAAAAAAAAAAAIABXAAA"
+        "AHZvc2stbW9kZWwtc21hbGwtZW4tdXMtMC4xNS9jb25mL21vZGVsLmNvbmZQSwUGAAAAAAIAAgCvAAAAuAAA"
+        "AAAA"
+    )
+    MODEL_NAME = "vosk-model-small-en-us-0.15"
+
+    PRELUDE = """
+set -Eeuo pipefail
+print_info() { echo "INFO: $*"; }
+print_warning() { echo "WARNING: $*"; }
+print_error() { echo "ERROR: $*"; }
+print_success() { echo "SUCCESS: $*"; }
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+DATA_DIR="$ROOT/data"
+VOCALINUX_TMP_DIR="$ROOT/tmp"
+MODEL_CHECKSUMS_FILE="$ROOT/model_checksums.txt"
+mkdir -p "$VOCALINUX_TMP_DIR"
+
+# The installer only probes for these; the download itself is stubbed out.
+check_connectivity() { return 0; }
+download_model_file() {
+    echo "call" >> "$ROOT/downloads"
+    [ -z "${DOWNLOAD_FAILS:-}" ] || return 1
+    cp "$ROOT/${SERVED_ZIP:-fixture.zip}" "$2"
+}
+"""
+
+    FUNCTIONS = (
+        "compute_file_digest",
+        "verify_digest",
+        "verify_model_checksum",
+        "pinned_digest_for",
+        "install_vosk_models",
+    )
+
+    def setUp(self):
+        if not shutil.which("unzip"):
+            self.skipTest("unzip is required to exercise the extraction path")
+        self.root = Path(self.enterContext(TemporaryDirectory()))
+        (self.root / "fixture.zip").write_bytes(self.FIXTURE_ZIP)
+        # A manifest of our own, so the fixture is what the pin describes.
+        digest = hashlib.sha256(self.FIXTURE_ZIP).hexdigest()
+        self.digest = digest
+        (self.root / "model_checksums.txt").write_text(
+            f"{self.MODEL_NAME}.zip  sha256  {digest}  {len(self.FIXTURE_ZIP)}\n"
+        )
+        self.models_dir = self.root / "data" / "models"
+        self.model_path = self.models_dir / self.MODEL_NAME
+        self.stamp = self.model_path / VERIFICATION_STAMP_NAME
+
+    def _source(self) -> str:
+        text = INSTALL_SH.read_text()
+        chunks = []
+        for name in self.FUNCTIONS:
+            start = text.index(f"\n{name}() {{")
+            end = text.index("\n}\n", start) + len("\n}\n")
+            chunks.append(text[start:end])
+        return self.PRELUDE + "\n".join(chunks)
+
+    def _install(self, **env) -> subprocess.CompletedProcess:
+        script = (
+            self._source() + '\nif install_vosk_models; then echo "RC=0"; else echo "RC=$?"; fi\n'
+        )
+        return subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "ROOT": str(self.root), **env},
+        )
+
+    @staticmethod
+    def _rc(result: subprocess.CompletedProcess) -> str:
+        return result.stdout.strip().splitlines()[-1]
+
+    def _downloads(self) -> int:
+        path = self.root / "downloads"
+        return len(path.read_text().splitlines()) if path.exists() else 0
+
+    def test_fresh_install_extracts_and_stamps(self):
+        result = self._install()
+        self.assertEqual(self._rc(result), "RC=0", result.stdout + result.stderr)
+        self.assertTrue((self.model_path / "am" / "final.mdl").exists())
+        self.assertEqual(self.stamp.read_text().strip(), self.digest)
+
+    def test_a_stamped_tree_is_not_downloaded_again(self):
+        self.assertEqual(self._rc(self._install()), "RC=0")
+        self.assertEqual(self._rc(self._install()), "RC=0")
+        self.assertEqual(self._downloads(), 1, "the second run re-fetched a verified model")
+
+    def test_an_unstamped_tree_survives_a_failed_download(self):
+        """The regression: the old code deleted here and then failed to download."""
+        (self.model_path / "am").mkdir(parents=True)
+        (self.model_path / "am" / "final.mdl").write_bytes(b"an older install")
+
+        result = self._install(DOWNLOAD_FAILS="1")
+
+        self.assertEqual(self._rc(result), "RC=1")
+        self.assertEqual((self.model_path / "am" / "final.mdl").read_bytes(), b"an older install")
+
+    def test_an_unstamped_tree_survives_a_download_that_fails_verification(self):
+        (self.root / "tampered.zip").write_bytes(self.FIXTURE_ZIP + b"trailing junk")
+        (self.model_path / "am").mkdir(parents=True)
+        (self.model_path / "am" / "final.mdl").write_bytes(b"an older install")
+
+        result = self._install(SERVED_ZIP="tampered.zip")
+
+        self.assertEqual(self._rc(result), "RC=1")
+        self.assertEqual((self.model_path / "am" / "final.mdl").read_bytes(), b"an older install")
+
+    def test_an_unstamped_tree_is_replaced_once_a_verified_one_is_ready(self):
+        (self.model_path / "am").mkdir(parents=True)
+        (self.model_path / "am" / "final.mdl").write_bytes(b"an older install")
+        (self.model_path / "stale-file").write_text("gone after the swap")
+
+        result = self._install()
+
+        self.assertEqual(self._rc(result), "RC=0", result.stdout + result.stderr)
+        self.assertNotEqual(
+            (self.model_path / "am" / "final.mdl").read_bytes(), b"an older install"
+        )
+        self.assertFalse((self.model_path / "stale-file").exists(), "the swap must not merge")
+        self.assertEqual(self.stamp.read_text().strip(), self.digest)
+
+    def test_no_scratch_directories_are_left_behind(self):
+        self._install()
+        leftovers = [p.name for p in self.models_dir.iterdir() if p.name != self.MODEL_NAME]
+        self.assertEqual(leftovers, [])
 
 
 if __name__ == "__main__":

@@ -3895,21 +3895,24 @@ install_vosk_models() {
 
     local SMALL_MODEL_ARCHIVE="$SMALL_MODEL_NAME.zip"
     # The extracted tree has no digest of its own — the pin covers the zip, which
-    # is deleted after unpacking. So record the verified zip digest in a stamp and
-    # trust the directory only when the stamp still matches what we pin today.
-    # Anything else (an older install, a manual copy, a tampered tree) is replaced
-    # rather than assumed good.
+    # is deleted after unpacking. So whoever unpacks it records the verified zip
+    # digest in a stamp (here, and in the app's own downloader), and the directory
+    # is trusted only while that stamp matches what we pin today.
     local SMALL_MODEL_STAMP="$SMALL_MODEL_PATH/.vocalinux_verified"
+    local EXPECTED_ZIP_DIGEST
+    EXPECTED_ZIP_DIGEST=$(pinned_digest_for "$SMALL_MODEL_ARCHIVE" || true)
     if [ -d "$SMALL_MODEL_PATH" ]; then
-        local EXPECTED_ZIP_DIGEST
-        EXPECTED_ZIP_DIGEST=$(pinned_digest_for "$SMALL_MODEL_ARCHIVE")
         if [ -n "$EXPECTED_ZIP_DIGEST" ] && [ -f "$SMALL_MODEL_STAMP" ] &&
            [ "$(cat "$SMALL_MODEL_STAMP" 2>/dev/null)" = "$EXPECTED_ZIP_DIGEST" ]; then
             print_info "Small VOSK model already exists at $SMALL_MODEL_PATH (verified)"
             return 0
         fi
-        print_warning "The existing VOSK model was not verified against the pinned digest; replacing it."
-        rm -rf "$SMALL_MODEL_PATH"
+        # Unverified is not the same as known-bad, and this runs on every install:
+        # a tree unpacked before stamps existed, or by the app itself, simply has
+        # no stamp. Deleting it here would trade a working model for no model
+        # whenever the download, unzip or network that follows fails. Fetch and
+        # verify the replacement first; the swap below is what removes this tree.
+        print_warning "The existing VOSK model carries no matching verification stamp; re-downloading it."
     fi
 
     # Check internet connectivity
@@ -3945,41 +3948,74 @@ install_vosk_models() {
 
     print_info "Extracting VOSK model..."
 
-    # Extract the model
-    if command -v unzip >/dev/null 2>&1; then
-        if ! unzip -q "$TEMP_ZIP" -d "$MODELS_DIR"; then
-            print_error "Failed to extract VOSK model"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    else
+    if ! command -v unzip >/dev/null 2>&1; then
         print_error "unzip command not found. Cannot extract VOSK model."
         rm -f "$TEMP_ZIP"
         return 1
     fi
 
-    # Clean up zip file
-    rm -f "$TEMP_ZIP"
-
-    # Verify extraction
-    if [ -d "$SMALL_MODEL_PATH" ]; then
-        print_success "VOSK small model installed successfully at $SMALL_MODEL_PATH"
-
-        # Set proper permissions
-        chmod -R 755 "$SMALL_MODEL_PATH"
-
-        # Create a marker file to indicate this model was pre-installed
-        echo "$(date)" > "$SMALL_MODEL_PATH/.vocalinux_preinstalled"
-
-        # Record the digest this tree was extracted from, so a later run can tell
-        # a verified model from one that merely exists.
-        pinned_digest_for "$SMALL_MODEL_ARCHIVE" > "$SMALL_MODEL_STAMP" 2>/dev/null || true
-
-        return 0
-    else
-        print_error "VOSK model extraction failed - directory not found"
+    # Unpack beside the model rather than over it: any model already installed
+    # stays usable until a complete, verified replacement exists, and staging in
+    # MODELS_DIR keeps the swap a same-filesystem rename.
+    local STAGING_DIR="$MODELS_DIR/.vosk-staging.$$"
+    # A run killed mid-swap leaves its scratch directories behind; they are named
+    # so they can be recognised and are of no use to a later run.
+    find "$MODELS_DIR" -maxdepth 1 -type d \
+        \( -name '.vosk-staging.*' -o -name '.*.replaced.*' \) \
+        -exec rm -rf {} + 2>/dev/null || true
+    if ! mkdir -p "$STAGING_DIR"; then
+        print_error "Failed to create a staging directory under $MODELS_DIR"
+        rm -f "$TEMP_ZIP"
         return 1
     fi
+
+    if ! unzip -q "$TEMP_ZIP" -d "$STAGING_DIR"; then
+        print_error "Failed to extract VOSK model"
+        rm -f "$TEMP_ZIP"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    rm -f "$TEMP_ZIP"
+
+    if [ ! -d "$STAGING_DIR/$SMALL_MODEL_NAME" ]; then
+        print_error "VOSK model extraction failed - $SMALL_MODEL_NAME not found in the archive"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+
+    chmod -R 755 "$STAGING_DIR/$SMALL_MODEL_NAME"
+    echo "$(date)" > "$STAGING_DIR/$SMALL_MODEL_NAME/.vocalinux_preinstalled"
+
+    # Record the digest this tree was extracted from, so a later run can tell a
+    # verified model from one that merely exists. Written before the swap: an
+    # unstamped tree is one this function would download all over again.
+    if [ -z "$EXPECTED_ZIP_DIGEST" ] ||
+       ! printf '%s\n' "$EXPECTED_ZIP_DIGEST" > "$STAGING_DIR/$SMALL_MODEL_NAME/.vocalinux_verified"; then
+        print_error "Could not record the verified digest for $SMALL_MODEL_NAME"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+
+    # Swap. The old tree is moved aside rather than deleted, so a failed rename
+    # can put it back.
+    local REPLACED_DIR="$MODELS_DIR/.$SMALL_MODEL_NAME.replaced.$$"
+    if [ -d "$SMALL_MODEL_PATH" ] && ! mv "$SMALL_MODEL_PATH" "$REPLACED_DIR"; then
+        print_error "Could not move the existing VOSK model aside; keeping it"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    if ! mv "$STAGING_DIR/$SMALL_MODEL_NAME" "$SMALL_MODEL_PATH"; then
+        print_error "Failed to install the verified VOSK model"
+        if [ -d "$REPLACED_DIR" ]; then
+            mv "$REPLACED_DIR" "$SMALL_MODEL_PATH"
+        fi
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    rm -rf "$REPLACED_DIR" "$STAGING_DIR"
+
+    print_success "VOSK small model installed successfully at $SMALL_MODEL_PATH"
+    return 0
 }
 
 # Function to download and install whisper.cpp tiny model
