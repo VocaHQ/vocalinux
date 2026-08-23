@@ -16,7 +16,7 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 const releases = [
   {
     version: "v0.16.0",
-    date: "2026-08-18",
+    date: "2026-08-23",
     type: "stable",
     highlights: [
       "In-app update checker (stable/nightly) plus tray Update Available when GitHub has a newer release (PR #631, #645)",
@@ -29,6 +29,7 @@ const releases = [
       "Test Dictation no longer reports no speech when recognition never started (PR #702)",
       "IBus/X11 reliability: restorable scoped injection, engine restore after teardown, XKB layout restore (PR #623, #643, #665)",
       "Audio, clipboard, and AppImage/GPU packaging fixes (PR #629, #673, #588, #646, #674, #637)",
+      "vocalinux.com restyled to the Voca family workbench; Discord and X links point at VocaHQ (PR #728, #729, #722, #717)",
     ],
   },
   {

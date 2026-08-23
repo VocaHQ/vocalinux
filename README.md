@@ -66,6 +66,7 @@ No internet required. No data leaves your machine. Just speak and type.
 - Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE; optional missing-tray warning toggle (#670, #669, #621, #628)
 - Test Dictation: no longer reports no speech when recognition never started (#702)
 - Installer / downloads / tests: gate `util-linux-extra` to Ubuntu 24.04+; report failed model downloads; stop tests from overwriting real `config.json` (#635, #690, #694)
+- Website: vocalinux.com restyled to the Voca family workbench; Discord and X links point at VocaHQ (#728, #729, #722, #717)
 
 See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
 

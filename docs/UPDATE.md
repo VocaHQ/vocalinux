@@ -49,6 +49,9 @@ This guide explains how to update Vocalinux to the latest version.
 - Prefer Ayatana AppIndicator in Fedora/Arch packaging hints (#638)
 - CUDA device 0 note for dual NVIDIA (#644)
 - Discord and VocaHQ README shields; VocaHQ URL migration; VocaGateway rename (#695, #696, #697)
+- Discord invite and X handle point at VocaHQ (#722)
+- vocalinux.com restyled to the Voca family workbench; Open Graph card uses the flat Tux (#728, #729)
+- Website copy drops the stale 100% offline claim and marks VocaWin as alpha on the site (#717)
 - Codeberg mirror tag force-push (#633)
 - Installer hardening, Justfile in place of Makefile, and uv lockfiles with pinned build inputs. Epic #701 remains open (#700, #705 by @sesav)
 
