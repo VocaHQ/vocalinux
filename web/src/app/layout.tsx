@@ -52,15 +52,16 @@ export const metadata: Metadata = {
   publisher: SITE_NAME,
   icons: {
     icon: [
-      { url: "/vocalinux.png", type: "image/png" },
+      { url: "/brand/vocalinux-mark-circle.svg", type: "image/svg+xml" },
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
       { url: "/favicon-96x96.png", sizes: "96x96", type: "image/png" },
+      { url: "/vocalinux.png", type: "image/png", sizes: "512x512" },
     ],
     apple: [
       { url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" },
     ],
-    shortcut: "/vocalinux.png",
+    shortcut: "/favicon-32x32.png",
   },
   manifest: "/site.webmanifest",
   appleWebApp: {

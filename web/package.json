@@ -19,6 +19,7 @@
     "test:types": "tsc --noEmit --pretty",
     "test:all": "npm run test && npm run test:types",
     "test:viewport": "node scripts/viewport-qa.mjs http://127.0.0.1:3456",
+    "render:social": "node scripts/render-social-assets.mjs",
     "deploy": "next build && touch out/.nojekyll && echo 'vocalinux.com' > out/CNAME"
   },
   "dependencies": {

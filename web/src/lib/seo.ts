@@ -3,7 +3,8 @@ import { type Metadata } from "next";
 export const SITE_URL = "https://vocalinux.com";
 export const SITE_NAME = "Vocalinux";
 export const DEFAULT_OG_IMAGE_PATH = "/og-image.png";
-export const DEFAULT_OG_IMAGE_ALT = "Vocalinux - Voice Dictation for Linux";
+export const DEFAULT_OG_IMAGE_ALT =
+  "Say it once. Your Linux types. Offline voice dictation for Linux.";
 export const TWITTER_HANDLE = "@vocahq";
 export const VOCAHQ_URL = "https://vocahq.com";
 export const GITHUB_REPO_URL = "https://github.com/VocaHQ/vocalinux";
