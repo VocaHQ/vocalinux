@@ -28,6 +28,8 @@ function toWebp(src, dest) {
   execFileSync("convert", [src, dest]);
 }
 
+const skipIcons = process.env.OG_ONLY === "1";
+
 const sizes = [
   [16, join(pub, "favicon-16x16.png")],
   [32, join(pub, "favicon-32x32.png")],
@@ -42,28 +44,33 @@ const sizes = [
   [512, join(pub, "vocalinux.png")],
 ];
 
-for (const [size, dest] of sizes) {
-  convertPng(size, dest);
-  if (dest.endsWith(".png") && !dest.includes("favicon-")) {
-    const webp = dest.replace(/\.png$/i, ".webp");
-    if (
-      dest.includes("vocalinux-") ||
-      dest.endsWith("/vocalinux.png")
-    ) {
-      toWebp(dest, webp);
+if (!skipIcons) {
+  for (const [size, dest] of sizes) {
+    convertPng(size, dest);
+    if (dest.endsWith(".png") && !dest.includes("favicon-")) {
+      const webp = dest.replace(/\.png$/i, ".webp");
+      if (
+        dest.includes("vocalinux-") ||
+        dest.endsWith("/vocalinux.png")
+      ) {
+        toWebp(dest, webp);
+      }
     }
   }
-}
 
-convertPng(180, join(pub, "apple-touch-icon.png"), { paper: true });
-execFileSync("convert", [
-  join(pub, "favicon-16x16.png"),
-  join(pub, "favicon-32x32.png"),
-  join(pub, "favicon.ico"),
-]);
+  convertPng(180, join(pub, "apple-touch-icon.png"), { paper: true });
+  execFileSync("convert", [
+    join(pub, "favicon-16x16.png"),
+    join(pub, "favicon-32x32.png"),
+    join(pub, "favicon.ico"),
+  ]);
+}
 
 const markSvg = readFileSync(mark, "utf8");
 const markData = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(markSvg)}`;
+const tuxData = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+  readFileSync(join(pub, "brand/tux.svg"), "utf8"),
+)}`;
 const dotsData = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
   readFileSync(join(pub, "brand/paper-dots.svg"), "utf8"),
 )}`;
@@ -80,7 +87,7 @@ const ogHtml = `<!doctype html>
     background-image: url("${dotsData}");
     font-family: "Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
   }
-  .frame { display: flex; height: 630px; padding: 56px 64px; box-sizing: border-box; gap: 48px; }
+  .frame { display: flex; height: 630px; padding: 48px 40px 40px 64px; box-sizing: border-box; gap: 28px; }
   .copy { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; }
   .brand { display: flex; align-items: center; gap: 14px; font-size: 28px; font-weight: 600; letter-spacing: -0.03em; }
   .brand img { width: 56px; height: 56px; border-radius: 50%; }
@@ -90,7 +97,9 @@ const ogHtml = `<!doctype html>
   .proof { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 28px; padding-top: 22px; border-top: 1px solid #c9c8bd; color: #5f6861; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; }
   .proof span + span { padding-left: 18px; border-left: 1px solid #c9c8bd; }
   .url { margin-top: 26px; color: #5f6861; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
-  .workbench { width: 420px; flex: none; align-self: center; }
+  .right { position: relative; width: 520px; flex: none; align-self: stretch; }
+  .workbench { width: 340px; margin-top: 36px; }
+  .tux { position: absolute; right: 0; bottom: 0; height: 430px; width: auto; }
   .panel { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; color: #fffdf7; background: #0b1a15; border-radius: 10px; font-size: 14px; }
   .rec { width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #de6a57; display: inline-block; }
   .window { margin-top: 10px; background: #fffdf7; border: 1px solid #9ea59f; border-radius: 12px; overflow: hidden; }
@@ -121,16 +130,19 @@ const ogHtml = `<!doctype html>
       </div>
       <p class="url">vocalinux.com</p>
     </div>
-    <div class="workbench">
-      <div class="panel"><span>Vocalinux</span><span><i class="rec"></i>listening</span></div>
-      <div class="window">
-        <div class="titlebar"><span>notes.txt</span><span class="dots" aria-hidden="true"><i></i><i></i><i class="close"></i></span></div>
-        <div class="body">
-          <div class="ready">Ready to dictate</div>
-          <div class="hint">Hold Right Alt to record</div>
-          <div class="line">the words go where you are already working<i class="caret"></i></div>
+    <div class="right">
+      <div class="workbench">
+        <div class="panel"><span>Vocalinux</span><span><i class="rec"></i>listening</span></div>
+        <div class="window">
+          <div class="titlebar"><span>notes.txt</span><span class="dots" aria-hidden="true"><i></i><i></i><i class="close"></i></span></div>
+          <div class="body">
+            <div class="ready">Ready to dictate</div>
+            <div class="hint">Hold Right Alt to record</div>
+            <div class="line">the words go where you are already working<i class="caret"></i></div>
+          </div>
         </div>
       </div>
+      <img class="tux" src="${tuxData}" alt="Tux, the Linux mascot" />
     </div>
   </div>
 </body>
