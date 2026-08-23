@@ -6,13 +6,14 @@ its ggml files through ``ctypes.cdll``. A tampered or truncated model is
 therefore not merely a bad transcription, so every download is checked against a
 digest pinned in this repository before it is moved into place.
 
-Two sources of truth, no network lookup in either case:
+One source of truth, consulted without a network lookup: ``model_checksums.txt``
+next to this module pins a sha256 per file name, for whisper.cpp (the
+``lfs.oid`` at the pinned Hugging Face revision) and for VOSK (the hash of the
+bytes the generator downloaded -- the md5 Alphacephei publishes beside a model
+pins nothing they could not change alongside it). Regenerate it with
+``scripts/generate-model-checksums.py``.
 
-* ``model_checksums.txt`` next to this module pins a digest per file name for
-  whisper.cpp (sha256, from the pinned Hugging Face revision) and VOSK (md5, the
-  only hash Alphacephei publishes). Regenerate it with
-  ``scripts/generate-model-checksums.py``.
-OpenAI Whisper ``.pt`` checkpoints are absent from both: ``openai-whisper``
+OpenAI Whisper ``.pt`` checkpoints are absent from it: ``openai-whisper``
 downloads and verifies those itself, against the sha256 it reads out of the URL
 path, so Vocalinux neither fetches nor hashes them. ``install.sh`` does preinstall
 the tiny checkpoint, and verifies it there with its own bash implementation.

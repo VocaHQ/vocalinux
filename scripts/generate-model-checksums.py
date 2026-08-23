@@ -7,21 +7,23 @@ then hands them to native code (whisper.cpp loads its ggml files through
 so every downloader checks the file against a hash pinned *in this repository*
 rather than one fetched alongside the download.
 
-Both upstream registries publish hashes for their artifacts, so the manifest is
-built without downloading a single model:
+Where that hash comes from differs by registry, and so does what generating it
+costs:
 
 * whisper.cpp ships on Hugging Face, whose API exposes the sha256 of every LFS
-  blob (``lfs.oid``) plus the commit the listing was taken at. That commit is
-  pinned too -- the download URLs use it instead of ``main``, so upstream
-  retagging a file cannot turn every user's install into a checksum failure.
+  blob (``lfs.oid``) plus the commit the listing was taken at, so nothing is
+  downloaded for it. That commit is pinned too -- the download URLs use it
+  instead of ``main``, so upstream retagging a file cannot turn every user's
+  install into a checksum failure.
 * VOSK is different: ``model-list.json`` carries an md5 per model, but that is a
   metadata field from the same host we are pinning against, so copying it pins
   nothing an attacker could not change alongside the file. Those models are
-  downloaded once here and pinned by the sha256 of the bytes we actually
-  received; the published md5 is checked against them on the way through, so a
-  listing that disagrees with its own file is caught at generation time.
-  Downloading is incremental -- a model already pinned by sha256 is not fetched
-  again, so only new models cost bandwidth. Pass --refresh to redo all of them.
+  downloaded here and pinned by the sha256 of the bytes we actually received;
+  the published md5 is checked against them on the way through, so a listing
+  that disagrees with its own file is caught at generation time. Downloading is
+  incremental -- a model already pinned by sha256 is not fetched again, so only
+  new models cost bandwidth. A first run, or any run with --refresh, therefore
+  pulls every VOSK zip: ~21.9GB, roughly half an hour on a fast connection.
 
 The model names come from the package itself, so a model added to
 vosk_model_info.py or whispercpp_model_info.py is picked up on the next run and

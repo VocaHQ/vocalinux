@@ -4265,9 +4265,8 @@ fi
 
 # config.json survives reinstalls — every writer above guards on "file does not
 # exist" — so an engine picked by an earlier attempt can outlive the venv that
-# supported it. vosk is the only engine shipped as an optional extra, so it is
-# the one that goes missing; say so here instead of letting the app die at
-# startup with ModuleNotFoundError.
+# supported it. Repair it here instead of letting the app die at startup with
+# ModuleNotFoundError.
 # Module each engine needs, and the pip name that provides it. whisper_cpp is
 # the default engine and the fallback, so it is what a broken config is moved to.
 engine_import_module() {

@@ -95,7 +95,10 @@ lock:
 lock-check:
     uv lock --check
 
-# Refresh the pinned model digests from upstream metadata (no models downloaded).
+# Refresh the pinned model digests. whisper.cpp digests come from Hugging Face
+# `lfs` metadata and cost no bandwidth; VOSK is pinned by the bytes we fetch, so
+# every zip not already in the manifest is downloaded — a first run, or any run
+# with --refresh, pulls ~21.9GB and takes ~30 minutes.
 # Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
 model-checksums:
     uv run {{DEV_EXTRAS}} python scripts/generate-model-checksums.py
