@@ -9,6 +9,8 @@ distro's gi is invisible.
 import subprocess
 from pathlib import Path
 
+import pytest
+
 INSTALL_SH = Path(__file__).resolve().parents[1] / "install.sh"
 
 PRELUDE = """
@@ -234,6 +236,61 @@ venv_matches_selected_python && echo "MATCH" || echo "MISMATCH"
 """
         result = _run(script)
         assert "MISMATCH" in result.stdout
+
+
+class TestTheFloorIsTheInterpreterNotTheReleaseLabel:
+    """Any distro that ships a new enough Python must be installable.
+
+    The installer used to reject the Ubuntu family on `VERSION_ID` alone. That
+    label is not the requirement and derivatives do not share Ubuntu's numbering:
+    Linux Mint 22 and elementary OS 8 are built on Ubuntu 24.04 and ship Python
+    3.12, yet report "22" and "8", which sort below "24.04".
+    """
+
+    # The two shapes that matter, both handed an interpreter at 3.12: a label
+    # that sorts below the base release, and one that is not a release number at
+    # all. Pop!_OS and Kubuntu need no case of their own — they use Ubuntu's
+    # numbering, so they were never the ones being turned away.
+    DERIVATIVES = [
+        ("linuxmint", "22"),
+        ("elementary", "8"),
+    ]
+
+    def test_no_release_number_gate_survives_in_the_installer(self):
+        source = INSTALL_SH.read_text(encoding="utf-8")
+        assert "check_ubuntu_version" not in source
+        assert "requires Ubuntu" not in source, "the installer must not gate on a release label"
+
+    @staticmethod
+    def _check(interpreter: Path) -> str:
+        script = f"""
+PYTHON_CMD="python3"
+SYSTEM_PYTHON="{interpreter}"
+{_source("python_version_of", "python_version_at_least", "python_has_gi",
+         "select_python_interpreter", "check_python_version")}
+export PATH="{interpreter.parent}:/usr/bin:/bin"
+check_python_version && echo "ACCEPTED" || echo "REJECTED"
+"""
+        return _run(script).stdout
+
+    @pytest.mark.parametrize("distro_id,version_id", DERIVATIVES)
+    def test_a_derivative_with_a_new_enough_python_is_accepted(
+        self, tmp_path, distro_id, version_id
+    ):
+        """What the distro calls itself must not decide this; its Python must."""
+        interpreter = _fake_python(
+            tmp_path / f"{distro_id}-{version_id}" / "python3", "3.12", has_gi=True
+        )
+        assert "ACCEPTED" in self._check(interpreter)
+
+    def test_an_interpreter_below_the_floor_is_still_rejected(self, tmp_path):
+        """Dropping the label gate must not drop the real one."""
+        interpreter = _fake_python(tmp_path / "jammy" / "python3", "3.10", has_gi=True)
+        assert "REJECTED" in self._check(interpreter)
+
+    def test_the_floor_itself_is_accepted(self, tmp_path):
+        interpreter = _fake_python(tmp_path / "floor" / "python3", "3.11", has_gi=True)
+        assert "ACCEPTED" in self._check(interpreter)
 
 
 def test_installer_never_creates_venv_with_bare_python3():

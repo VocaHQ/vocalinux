@@ -149,6 +149,11 @@ no other. That rules out Ubuntu 22.04 (Python 3.10) and Debian 11 (3.9): a 3.11
 virtualenv on them cannot import the distro `gi`, and their `python3` is below
 the floor.
 
+Derivatives are judged by the interpreter they ship, not by their own version
+number, which rarely tracks the base release. Linux Mint 22 and elementary OS 8
+are built on Ubuntu 24.04 and qualify; Linux Mint 21 and Zorin OS 17 sit on
+Ubuntu 22.04 and do not.
+
 ### GPU Support (Optional)
 
 **whisper.cpp** supports GPU acceleration via **Vulkan**, which works with:

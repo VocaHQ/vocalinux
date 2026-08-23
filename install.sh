@@ -714,20 +714,6 @@ detect_distro() {
     fi
 }
 
-# Check minimum required version for Ubuntu-based systems
-check_ubuntu_version() {
-    local MIN_VERSION="24.04"
-    if [[ "$DISTRO_FAMILY" == "ubuntu" ]]; then
-        if [[ $(echo -e "$DISTRO_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$DISTRO_VERSION" == "$MIN_VERSION" ]]; then
-            return 0
-        else
-            print_error "This application requires Ubuntu $MIN_VERSION or newer. Detected: $DISTRO_VERSION"
-            return 1
-        fi
-    fi
-    return 0
-}
-
 # Detect NVIDIA GPU presence
 detect_nvidia_gpu() {
     # Check if nvidia-smi command exists and can successfully query GPU
@@ -1499,20 +1485,15 @@ elif [[ "$DISTRO_FAMILY" != "ubuntu" ]]; then
             exit "$EXIT_USER_ABORT"
         fi
     fi
-else
-    # Check version for Ubuntu-based systems
-    if ! check_ubuntu_version; then
-        if [[ "$NON_INTERACTIVE" == "yes" ]]; then
-            print_info "Non-interactive mode: continuing anyway..."
-        else
-            read -p "Do you want to continue anyway? (y/n) " -n 1 -r
-            echo
-            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit "$EXIT_USER_ABORT"
-            fi
-        fi
-    fi
 fi
+# No release-number gate for the Ubuntu family. What Vocalinux needs is an
+# interpreter at the floor plus that interpreter's distro PyGObject, and a
+# release label is a poor proxy for either: derivatives carry their own
+# numbering, so Linux Mint 22 and elementary OS 8 report "22" and "8" while
+# being built on Ubuntu 24.04 with Python 3.12. Comparing those against "24.04"
+# turned supported systems away. check_python_version() below is the authority
+# and it is fatal, so anything that really is too old still stops there, with a
+# message about the interpreter rather than about the logo.
 
 # Handle installation mode selection
 if [[ "$INTERACTIVE_MODE" == "ask" ]]; then
