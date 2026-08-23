@@ -62,6 +62,17 @@ VOSK_ZIP_BYTES = base64.b64decode(
 )
 
 
+MODEL_NAME = "vosk-model-small-en-us-0.15"
+
+# Same shape, but its top-level directory is not the model name: the downloader
+# has to notice rather than report a success that installed nothing.
+WRONG_LAYOUT_ZIP_BYTES = base64.b64decode(
+    "UEsDBBQAAAAIAHeGF11E9MkCEQAAANAHAAAcAAAAc29tZS1vdGhlci1uYW1lL2FtL2ZpbmFsLm1kbGNgGAWj"
+    "YBSMglEwCkbBUAcAUEsBAhQDFAAAAAgAd4YXXUT0yQIRAAAA0AcAABwAAAAAAAAAAAAAAIABAAAAAHNvbWUt"
+    "b3RoZXItbmFtZS9hbS9maW5hbC5tZGxQSwUGAAAAAAEAAQBKAAAASwAAAAAA"
+)
+
+
 class FakeRequestError(Exception):
     """Stands in for requests.exceptions.RequestException.
 
@@ -401,12 +412,13 @@ class TestDownloadVoskModel:
     """Test _download_vosk_model() with runtime import mocking."""
 
     @staticmethod
-    def _serve_zip(manager, tmp_path):
-        """Run a full download+extract of VOSK_ZIP_BYTES into tmp_path."""
+    def _serve_zip(manager, tmp_path, payload=None):
+        """Run a full download+extract of an archive into tmp_path."""
+        payload = VOSK_ZIP_BYTES if payload is None else payload
         mock_requests = MagicMock()
         mock_response = MagicMock()
-        mock_response.headers = {"content-length": str(len(VOSK_ZIP_BYTES))}
-        mock_response.iter_content.return_value = [VOSK_ZIP_BYTES]
+        mock_response.headers = {"content-length": str(len(payload))}
+        mock_response.iter_content.return_value = [payload]
         mock_requests.get.return_value = mock_response
         mock_requests.exceptions.RequestException = FakeRequestError
 
@@ -457,6 +469,11 @@ class TestDownloadVoskModel:
         assert pinned is not None, "the fixture model must be in the manifest"
         assert stamp.read_text().strip() == pinned.digest
 
+    @staticmethod
+    def _leftovers(tmp_path):
+        """Everything in MODELS_DIR that is not the finished model tree."""
+        return sorted(p.name for p in tmp_path.iterdir() if p.name != MODEL_NAME)
+
     def test_download_vosk_fails_when_the_stamp_cannot_be_written(self, tmp_path, skip_checksum):
         """An unstampable tree is one we would silently refetch; say so instead."""
         manager = _make_manager(engine="vosk")
@@ -467,6 +484,52 @@ class TestDownloadVoskModel:
         ):
             with pytest.raises(OSError):
                 self._serve_zip(manager, tmp_path)
+
+        # And it must not leave the tree behind: _init_vosk would call that
+        # installed while install.sh, finding no stamp, refetched it every run.
+        assert not (tmp_path / MODEL_NAME).exists()
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_failed_unpack_keeps_the_model_that_was_already_there(self, tmp_path, skip_checksum):
+        """Replacing is a swap: a broken download must not cost the old model."""
+        old = tmp_path / MODEL_NAME / "am"
+        old.mkdir(parents=True)
+        (old / "final.mdl").write_bytes(b"the model that was already installed")
+
+        manager = _make_manager(engine="vosk")
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.write_verification_stamp",
+            side_effect=OSError("read-only models directory"),
+        ):
+            with pytest.raises(OSError):
+                self._serve_zip(manager, tmp_path)
+
+        assert (old / "final.mdl").read_bytes() == b"the model that was already installed"
+        assert self._leftovers(tmp_path) == []
+
+    def test_an_archive_with_the_wrong_layout_is_refused(self, tmp_path, skip_checksum):
+        """A zip that unpacks somewhere else must not look like a success."""
+        manager = _make_manager(engine="vosk")
+
+        with pytest.raises(RuntimeError, match="does not contain"):
+            self._serve_zip(manager, tmp_path, payload=WRONG_LAYOUT_ZIP_BYTES)
+
+        assert not (tmp_path / MODEL_NAME).exists()
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_verified_download_replaces_an_older_tree(self, tmp_path, skip_checksum):
+        old = tmp_path / MODEL_NAME
+        (old / "am").mkdir(parents=True)
+        (old / "am" / "final.mdl").write_bytes(b"stale")
+        (old / "stale-file").write_text("must not survive the swap")
+
+        manager = _make_manager(engine="vosk")
+        self._serve_zip(manager, tmp_path)
+
+        assert (old / "am" / "final.mdl").read_bytes() != b"stale"
+        assert not (old / "stale-file").exists(), "the swap must replace, not merge"
+        assert (old / VERIFICATION_STAMP_NAME).exists()
+        assert self._leftovers(tmp_path) == []
 
     def test_download_vosk_request_error(self, tmp_path):
         """Test Vosk download request error handling."""

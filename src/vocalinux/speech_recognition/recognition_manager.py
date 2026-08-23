@@ -2168,14 +2168,7 @@ class SpeechRecognitionManager:
             if self._download_progress_callback:
                 self._download_progress_callback(1.0, 0, "Extracting model...")
             logger.info(f"Extracting VOSK model to {model_path}")
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(MODELS_DIR)
-
-            # The zip is about to go, and a directory carries no digest, so
-            # record what was verified. install.sh trusts an existing VOSK tree
-            # only when this stamp matches the digest it pins; without it the
-            # model we just checked is re-downloaded on the next ./install.sh.
-            write_verification_stamp(model_path, f"{model_name}.zip")
+            self._unpack_vosk_model(zipfile, zip_path, model_name, model_path)
 
             os.remove(zip_path)
             logger.info("VOSK model downloaded and extracted successfully")
@@ -2185,19 +2178,72 @@ class SpeechRecognitionManager:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to download VOSK model from {url}: {e}")
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
+            self._discard_vosk_scratch(zip_path, model_name)
             raise RuntimeError(f"Failed to download VOSK model: {e}") from e
         except zipfile.BadZipFile:
             logger.error(f"Downloaded file from {url} is not a valid zip file.")
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
+            self._discard_vosk_scratch(zip_path, model_name)
             raise RuntimeError("Downloaded VOSK model file is corrupted.")
         except (ChecksumError, OSError, RuntimeError, ValueError) as e:
             logger.error(f"An error occurred during VOSK model download/extraction: {e}")
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
+            self._discard_vosk_scratch(zip_path, model_name)
             raise
+
+    @staticmethod
+    def _vosk_scratch_paths(model_name: str) -> tuple:
+        """Where a download unpacks (staging) and parks the tree it replaces."""
+        return (
+            os.path.join(MODELS_DIR, f".{model_name}.incoming"),
+            os.path.join(MODELS_DIR, f".{model_name}.replaced"),
+        )
+
+    def _discard_vosk_scratch(self, zip_path: str, model_name: str) -> None:
+        """Leave nothing behind that a later run would mistake for a model."""
+        import shutil
+
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        for path in self._vosk_scratch_paths(model_name):
+            shutil.rmtree(path, ignore_errors=True)
+
+    def _unpack_vosk_model(self, zipfile, zip_path: str, model_name: str, model_path: str) -> None:
+        """Unpack the verified zip beside the model, stamp it, then swap it in.
+
+        The stamp is the only evidence the tree was ever checked, so a tree must
+        not become visible without one: _init_vosk would treat it as installed
+        while install.sh, finding no stamp, refetched it on every run. Unpacking
+        into a staging directory and renaming afterwards makes "extracted" and
+        "stamped" a single step, the way install_vosk_models already does it, and
+        keeps whatever was already there until the replacement is complete.
+        """
+        import shutil
+
+        staging, replaced = self._vosk_scratch_paths(model_name)
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.rmtree(replaced, ignore_errors=True)
+        os.makedirs(staging, exist_ok=True)
+
+        with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            zip_ref.extractall(staging)
+
+        extracted = os.path.join(staging, model_name)
+        if not os.path.isdir(extracted):
+            raise RuntimeError(f"{model_name}.zip does not contain a {model_name} directory")
+
+        write_verification_stamp(extracted, f"{model_name}.zip")
+
+        # Same filesystem, so both renames are cheap; the old tree is parked
+        # rather than deleted, so a failed swap can put it back.
+        if os.path.isdir(model_path):
+            os.rename(model_path, replaced)
+        try:
+            os.rename(extracted, model_path)
+        except OSError:
+            if os.path.isdir(replaced):
+                os.rename(replaced, model_path)
+            raise
+        shutil.rmtree(replaced, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
 
     def register_text_callback(self, callback: Callable[[str], None]):
         """
