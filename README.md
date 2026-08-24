@@ -462,8 +462,10 @@ Vocalinux is part of [VocaHQ](https://vocahq.com). Same privacy-first, offline v
 |----------|---------|---------|--------|--------|
 | 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Stable v0.16.0 |
 | 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta |
-| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 📋 Planned |
+| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Beta |
 
+> VocaWin is unsigned. SmartScreen may warn about an unknown publisher. It is not a Microsoft Store ship.
+>
 > Each platform uses native technologies for the best possible integration, while sharing the same privacy-first philosophy and offline-only architecture.
 
 ## 🤝 Contributing

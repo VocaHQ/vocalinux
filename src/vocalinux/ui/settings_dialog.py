@@ -3645,7 +3645,7 @@ class SettingsDialog(Gtk.Dialog):
             title="Part of VocaHQ",
             description=(
                 "Vocalinux is part of VocaHQ. The same private dictation idea also ships "
-                "as VocaMac (macOS, beta), VocaWin (Windows, unsigned developer alpha), "
+                "as VocaMac (macOS, beta), VocaWin (Windows, unsigned beta), "
                 "and VocaPhone (Android beta / iOS source build). VocaGateway is optional "
                 "self-hosted compute. It is not on-device."
             ),

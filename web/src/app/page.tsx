@@ -954,7 +954,7 @@ export default function HomePage() {
                   />
                   Windows
                 </span>
-                <span className="chip">Developer alpha</span>
+                <span className="chip">Beta</span>
               </div>
               <h3>VocaWin</h3>
               <p>
