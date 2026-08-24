@@ -83,11 +83,15 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$TOOLDIR" "$OUTDIR"
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 
 echo "== Fetching AppImage tooling ($ARCH) =="
-curl -fsSL -o "$TOOLDIR/linuxdeploy" \
+# Default --retry skips TLS RST (curl 35). GitHub continuous AppImages flake that way.
+curl_retry() {
+  curl --retry 5 --retry-all-errors --retry-delay 2 --fail --silent --show-error --location "$@"
+}
+curl_retry -o "$TOOLDIR/linuxdeploy" \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
-curl -fsSL -o "$TOOLDIR/linuxdeploy-plugin-gtk.sh" \
+curl_retry -o "$TOOLDIR/linuxdeploy-plugin-gtk.sh" \
   https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-curl -fsSL -o "$TOOLDIR/appimagetool" \
+curl_retry -o "$TOOLDIR/appimagetool" \
   "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
 chmod +x "$TOOLDIR/linuxdeploy" "$TOOLDIR/linuxdeploy-plugin-gtk.sh" "$TOOLDIR/appimagetool"
 
