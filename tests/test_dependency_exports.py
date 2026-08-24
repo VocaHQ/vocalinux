@@ -72,6 +72,18 @@ def test_documented_uv_run_examples_do_not_prune_the_linters():
     assert not offenders, "these examples uninstall the linters:\n" + "\n".join(offenders)
 
 
+def test_justfile_uv_run_recipes_do_not_sync():
+    """`uv run` without --no-sync prunes whisper/vosk after `just deps-all`."""
+    offenders = []
+    for number, line in enumerate(JUSTFILE.read_text(encoding="utf-8").splitlines(), 1):
+        stripped = line.lstrip()
+        if stripped.startswith("#") or not stripped.startswith("uv run"):
+            continue
+        if "--no-sync" not in stripped:
+            offenders.append(f"{number}: {stripped}")
+    assert not offenders, "uv run without --no-sync undoes just deps-all:\n" + "\n".join(offenders)
+
+
 def test_the_dev_extra_reaches_the_dev_export():
     dev = _requirement_names(_pyproject()["project"]["optional-dependencies"]["dev"])
     missing = sorted(set(dev) - _exported_names(DEV_EXPORT))

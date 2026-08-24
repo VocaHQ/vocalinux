@@ -37,7 +37,7 @@ Rules:
 
 Two virtualenvs, on purpose:
 
-- **`.venv/`** — uv's, for dev tooling. Every `just` recipe runs through `uv run`, so no activation is needed.
+- **`.venv/`** — uv's, for dev tooling. `just deps` syncs it; every other Python `just` recipe uses `uv run --no-sync` so it does not prune extras that `just deps-all` installed. No activation needed.
 - **`venv/`** — what `install.sh` builds for the app itself, from the *system* Python so distro `gi` is importable.
 
 Never run `install.sh` from an activated `.venv`: it drops an inherited `VIRTUAL_ENV` from `PATH` and picks `$SYSTEM_PYTHON` (default `/usr/bin/python3`) precisely because a venv built from uv's interpreter cannot see distro PyGObject.
@@ -74,6 +74,7 @@ just typecheck     # mypy src/
 just test          # pytest -v
 just test-cov      # pytest --cov=src --cov-report=html
 just deps          # sync .venv with dev+vad extras and the lint group
+just deps-all      # also whisper/vosk/docs; later recipes use --no-sync so they keep it
 just lock          # regenerate uv.lock + requirements/*.txt
 just lock-check    # fail if uv.lock is stale vs pyproject.toml
 just model-checksums  # refresh pinned model digests after adding a model

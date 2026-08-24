@@ -23,6 +23,7 @@ from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
 from ..utils.model_checksums import (
     ChecksumError,
+    expected_for,
     verify_model_file,
     write_verification_stamp,
 )
@@ -1276,9 +1277,15 @@ class SpeechRecognitionManager:
             # re-hashes only ggml-tiny.bin. whisper.cpp maps this straight through
             # ctypes, so hash it here; a failure demotes it to "not downloaded".
             if os.path.exists(model_path) and not self._whispercpp_model_is_verified(model_path):
-                if self._defer_download:
+                if os.path.exists(model_path):
+                    logger.error(
+                        "Refusing to load unverified whisper.cpp model at %s",
+                        model_path,
+                    )
                     self._model_initialized = False
-                    return
+                    if self._defer_download:
+                        return
+                    raise RuntimeError(f"whisper.cpp model at {model_path} failed verification")
 
             if not os.path.exists(model_path):
                 if self._defer_download:
@@ -1307,19 +1314,18 @@ class SpeechRecognitionManager:
 
     @staticmethod
     def _whispercpp_model_is_verified(model_path: str) -> bool:
-        """Hash the model against its pin, or delete it and report False.
+        """Hash the model against its pin. Delete only a digest/size mismatch.
 
-        Cheap enough to do every time: sha256 runs at GB/s and whisper.cpp is
-        about to read the whole file anyway, so this is CPU over pages that are
-        being fetched regardless. Deleting rather than raising keeps the caller
-        simple, since an unverifiable model is indistinguishable from a missing
-        one as far as what happens next.
+        An unpinned name is refused, not deleted. If remove fails, return False
+        so the caller does not hand the file to ctypes.
         """
         try:
             verify_model_file(model_path)
             return True
         except ChecksumError as error:
             logger.error("whisper.cpp model at %s is not trustworthy: %s", model_path, error)
+            if expected_for(model_path) is None:
+                return False
             try:
                 os.remove(model_path)
             except OSError as remove_error:

@@ -580,6 +580,56 @@ class TestWhispercppRejectsAnUnverifiedModelOnDisk:
         load.assert_not_called()
         assert manager._model_initialized is False
 
+    def test_a_model_that_cannot_be_deleted_is_still_not_loaded(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"not the model that is pinned")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = False
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.os.remove",
+                    side_effect=OSError("read-only"),
+                ):
+                    with patch.object(manager, "_load_whispercpp_model") as load:
+                        with pytest.raises(RuntimeError, match="failed verification"):
+                            manager._init_whispercpp()
+
+        assert model.exists()
+        load.assert_not_called()
+
+    def test_an_unpinned_model_is_refused_not_deleted(self, tmp_path):
+        model = tmp_path / "ggml-not-in-manifest.bin"
+        model.write_bytes(b"bytes")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = True
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch.object(manager, "_load_whispercpp_model") as load:
+                    manager._init_whispercpp()
+
+        assert model.exists(), "a missing pin is not a reason to delete the file"
+        load.assert_not_called()
+        assert manager._model_initialized is False
+
 
 class TestAudioReconnection:
     """Test audio reconnection logic."""

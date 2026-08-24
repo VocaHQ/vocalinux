@@ -60,10 +60,13 @@ def _config(config_dir: Path, engine: str) -> Path:
     return path
 
 
-def _check(config_dir: Path, venv_dir: Path) -> subprocess.CompletedProcess:
+def _check(
+    config_dir: Path, venv_dir: Path, selected_engine: str = ""
+) -> subprocess.CompletedProcess:
     script = f"""
 CONFIG_DIR="{config_dir}"
 VENV_DIR="{venv_dir}"
+SELECTED_ENGINE="{selected_engine}"
 for fn in engine_import_module engine_pip_name venv_can_import set_configured_engine verify_configured_engine; do
     source <(sed -n "/^$fn() {{$/,/^}}$/p" "{INSTALL_SH}")
 done
@@ -142,6 +145,38 @@ def test_silent_without_a_config_file(tmp_path):
     result = _check(tmp_path / "config", venv)
 
     assert "EXIT=0" in result.stdout
+
+
+def test_repairs_whisper_cpp_to_vosk_when_that_is_what_works(tmp_path):
+    """Reinstall: config still says whisper_cpp, pywhispercpp is gone, vosk is in."""
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable={"vosk"})
+    config = _config(tmp_path / "config", "whisper_cpp")
+
+    result = _check(tmp_path / "config", venv)
+
+    assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "vosk"
+    assert "Switched" in result.stdout
+
+
+def test_honors_selected_engine_ahead_of_the_default_fallback(tmp_path):
+    """SELECTED_ENGINE is tried before the default vosk/whisper extras."""
+    venv = tmp_path / "venv"
+    _venv_python(venv, importable={"vosk", "whisper"})
+    config = _config(tmp_path / "config", "whisper_cpp")
+
+    result = _check(tmp_path / "config", venv, selected_engine="whisper")
+
+    assert "EXIT=0" in result.stdout
+    assert _engine_of(config) == "whisper"
+
+
+def test_vosk_fallback_rewrites_an_existing_config_file():
+    """The fallback used to write vosk only when config.json was missing."""
+    text = INSTALL_SH.read_text(encoding="utf-8")
+    assert 'set_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"' in text
+    assert '[ ! -f "$FALLBACK_VOSK_CONFIG" ]' not in text
 
 
 def test_unreadable_config_is_not_treated_as_an_engine(tmp_path):

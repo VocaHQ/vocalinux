@@ -153,6 +153,11 @@ class TestWhisperSupport:
                 patch(
                     "vocalinux.speech_recognition.recognition_manager._show_notification"
                 ) as notify_mock,
+                patch.object(
+                    rm.SpeechRecognitionManager,
+                    "_whispercpp_model_is_verified",
+                    return_value=True,
+                ),
                 patch.dict(
                     os.environ,
                     {"GGML_VULKAN": "1", "GGML_CUDA": "1"},

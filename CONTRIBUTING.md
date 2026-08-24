@@ -70,13 +70,15 @@ This will:
 
 2. **Install system dependencies:**
    ```bash
-   # Ubuntu
+   # Ubuntu 24.04+ (`just deps` pip-builds PyGObject 3.56 from the lock)
    sudo apt update
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository1.0-dev \
+       gir1.2-gtk-3.0 libgirepository-2.0-dev libgirepository1.0-dev \
        python3-dev portaudio19-dev python3-venv xdotool
 
-   # Debian 12+
+   # Debian 12 cannot pip-build PyGObject 3.56 (glib 2.74). Use Option 1
+   # (`./install.sh --dev`) for tests and running from source, then
+   # `venv/bin/pytest` / `venv/bin/python -m vocalinux.main --debug`.
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
        gir1.2-gtk-3.0 libgirepository1.0-dev libcairo2-dev \
        python3-dev portaudio19-dev python3-venv xdotool
@@ -98,6 +100,9 @@ This will:
    # Requires uv (https://docs.astral.sh/uv/); creates .venv/ with dev + vad extras
    just deps
    ```
+   `just deps` compiles PyGObject from the lock into `.venv`. That needs
+   `libgirepository-2.0-dev` (Ubuntu 24.04+). Debian 12 cannot build it; use
+   Option 1 and the installer `venv/` instead.
 
 4. **Run the application:**
    ```bash
@@ -106,7 +111,7 @@ This will:
 
 5. **(Optional) Install pre-commit hooks:**
    ```bash
-   uv run --extra dev --extra vad --group lint pre-commit install
+   uv run --no-sync pre-commit install
    ```
    > **Note:** Pre-commit hooks are optional. The CI pipeline runs the same checks, so you can skip this if you prefer faster local commits.
 
@@ -119,14 +124,14 @@ The repository uses two virtual environments on purpose — don't merge them:
 | `.venv/`  | `just deps` (uv) | pinned in `.python-version` | dev tooling: pytest, black, mypy, `just` recipes |
 | `venv/`   | `./install.sh` | the system Python | running the installed app, which needs distro PyGObject |
 
-`gi` (PyGObject) is the reason. `uv sync` builds it from source into `.venv/`,
-which works wherever glib 2.80+ and the `girepository` headers are present (Arch,
-Fedora, recent CI runners) but fails on Ubuntu 24.04 and Debian — there the distro
-package is the only option, and it is importable only from the system interpreter.
-`install.sh` therefore never reuses `.venv/`: it builds `venv/` from the system
-Python with `--system-site-packages`, and rebuilds it if another interpreter
-created it. Set `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh` on systems that
-ship several system interpreters.
+`gi` (PyGObject) is the reason. `just deps` / `uv sync` build it from source into
+`.venv/`, which works wherever glib 2.80+ and `libgirepository-2.0-dev` are
+present (Arch, Fedora, Ubuntu 24.04 with that package, CI). Debian 12 cannot
+build PyGObject 3.56 at all; use `./install.sh --dev` and `venv/bin/pytest`.
+`install.sh` never reuses `.venv/`: it builds `venv/` from the system Python with
+`--system-site-packages`, and rebuilds it if another interpreter created it. Set
+`SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh` on systems that ship several
+system interpreters.
 
 ## Making Changes
 

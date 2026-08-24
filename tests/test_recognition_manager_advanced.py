@@ -480,10 +480,15 @@ class TestInitWhispercpp(unittest.TestCase):
                     "pywhispercpp.model": mock_pywhispercpp,
                 },
             ):
-                try:
-                    mgr._init_whispercpp()
-                except Exception:
-                    pass
+                with patch.object(
+                    SpeechRecognitionManager,
+                    "_whispercpp_model_is_verified",
+                    return_value=True,
+                ):
+                    try:
+                        mgr._init_whispercpp()
+                    except Exception:
+                        pass
 
     def test_cpu_fallback_filters_unsupported_whispercpp_params(self):
         mgr = _make_manager(engine="whisper_cpp")

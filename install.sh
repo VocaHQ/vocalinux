@@ -2897,6 +2897,48 @@ should_rebuild_whispercpp() {
     return 1
 }
 
+# Module each engine needs, and the pip name that provides it. Defined here so
+# the whisper.cpp -> vosk fallback can rewrite an existing config.json; the
+# writers above used to skip a file that already existed.
+engine_import_module() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "whisper" ;;
+        whisper_cpp) echo "pywhispercpp.model" ;;
+        *) echo "" ;;
+    esac
+}
+
+engine_pip_name() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "openai-whisper" ;;
+        whisper_cpp) echo "pywhispercpp" ;;
+        *) echo "" ;;
+    esac
+}
+
+venv_can_import() {
+    [ -x "$VENV_DIR/bin/python" ] || return 1
+    "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
+}
+
+# Point config.json at engine $2. Non-zero if it could not be rewritten.
+set_configured_engine() {
+    "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, engine = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    config = json.load(handle)
+config.setdefault("speech_recognition", {})["engine"] = engine
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
 install_whispercpp_with_gpu_support() {
     local PIP_LOG_FILE="$1"
 
@@ -3065,7 +3107,13 @@ install_whispercpp_with_gpu_support() {
         fi
 
         local FALLBACK_VOSK_CONFIG="$CONFIG_DIR/config.json"
-        if [ ! -f "$FALLBACK_VOSK_CONFIG" ]; then
+        if [ -f "$FALLBACK_VOSK_CONFIG" ]; then
+            if set_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"; then
+                print_success "Switched $FALLBACK_VOSK_CONFIG to the vosk engine."
+            else
+                print_warning "Could not rewrite $FALLBACK_VOSK_CONFIG to vosk."
+            fi
+        else
             mkdir -p "$CONFIG_DIR"
             cat > "$FALLBACK_VOSK_CONFIG" << 'FALLBACK_VOSK_CONFIG'
 {
@@ -4286,51 +4334,10 @@ else
     print_info "Models will be downloaded automatically on first application run"
 fi
 
-# config.json survives reinstalls — every writer above guards on "file does not
-# exist" — so an engine picked by an earlier attempt can outlive the venv that
-# supported it. Repair it here instead of letting the app die at startup with
-# ModuleNotFoundError.
-# Module each engine needs, and the pip name that provides it. whisper_cpp is
-# the default engine and the fallback, so it is what a broken config is moved to.
-engine_import_module() {
-    case "$1" in
-        vosk) echo "vosk" ;;
-        whisper) echo "whisper" ;;
-        whisper_cpp) echo "pywhispercpp.model" ;;
-        *) echo "" ;;
-    esac
-}
-
-engine_pip_name() {
-    case "$1" in
-        vosk) echo "vosk" ;;
-        whisper) echo "openai-whisper" ;;
-        whisper_cpp) echo "pywhispercpp" ;;
-        *) echo "" ;;
-    esac
-}
-
-venv_can_import() {
-    [ -x "$VENV_DIR/bin/python" ] || return 1
-    "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
-}
-
-# Point config.json at engine $2. Non-zero if it could not be rewritten.
-set_configured_engine() {
-    "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
-import json
-import sys
-
-path, engine = sys.argv[1], sys.argv[2]
-with open(path) as handle:
-    config = json.load(handle)
-config.setdefault("speech_recognition", {})["engine"] = engine
-with open(path, "w") as handle:
-    json.dump(config, handle, indent=2)
-    handle.write("\n")
-PY
-}
-
+# config.json survives reinstalls, so an engine picked by an earlier attempt
+# can outlive the venv that supported it. Repair it here instead of letting the
+# app die at startup with ModuleNotFoundError. Prefer SELECTED_ENGINE when that
+# extra is importable (the whisper.cpp -> vosk fallback), then any working extra.
 verify_configured_engine() {
     local CONFIG_FILE="$CONFIG_DIR/config.json"
     [ -f "$CONFIG_FILE" ] || return 0
@@ -4356,15 +4363,25 @@ PY
 
     print_warning "$CONFIG_FILE selects the $CONFIGURED_ENGINE engine, but it is not importable in $VENV_DIR."
 
-    # Leaving it means the app dies at startup with ModuleNotFoundError, so move
-    # the config to the default engine when that one works.
-    if [ "$CONFIGURED_ENGINE" != "whisper_cpp" ] && venv_can_import "pywhispercpp.model"; then
-        if set_configured_engine "$CONFIG_FILE" "whisper_cpp"; then
-            print_success "Switched $CONFIG_FILE to the whisper_cpp engine."
+    # Leaving it means the app dies at startup with ModuleNotFoundError. Prefer
+    # SELECTED_ENGINE (set by the whisper.cpp -> vosk fallback), then any extra
+    # the venv can actually import.
+    local CANDIDATE MODULE_FOR_CANDIDATE TRIED=""
+    for CANDIDATE in ${SELECTED_ENGINE:+$SELECTED_ENGINE} whisper_cpp vosk whisper; do
+        [ "$CANDIDATE" != "$CONFIGURED_ENGINE" ] || continue
+        case " $TRIED " in
+            *" $CANDIDATE "*) continue ;;
+        esac
+        TRIED="$TRIED $CANDIDATE"
+        MODULE_FOR_CANDIDATE=$(engine_import_module "$CANDIDATE")
+        [ -n "$MODULE_FOR_CANDIDATE" ] || continue
+        venv_can_import "$MODULE_FOR_CANDIDATE" || continue
+        if set_configured_engine "$CONFIG_FILE" "$CANDIDATE"; then
+            print_success "Switched $CONFIG_FILE to the $CANDIDATE engine."
             print_info "Reinstall $(engine_pip_name "$CONFIGURED_ENGINE") and switch back in Settings if you want it."
             return 0
         fi
-    fi
+    done
 
     print_error "Vocalinux cannot start with this configuration and no working engine is available."
     print_error "Install the engine:  $VENV_DIR/bin/pip install $(engine_pip_name "$CONFIGURED_ENGINE")"
