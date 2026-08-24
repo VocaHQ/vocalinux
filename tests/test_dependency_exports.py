@@ -88,3 +88,56 @@ def test_the_dev_extra_reaches_the_dev_export():
     dev = _requirement_names(_pyproject()["project"]["optional-dependencies"]["dev"])
     missing = sorted(set(dev) - _exported_names(DEV_EXPORT))
     assert not missing, f"missing from requirements/dev.txt; re-run `just lock`: {missing}"
+
+
+#: Recipes that may call `uv run --no-sync` without depending on `_tooling`.
+#: `version` reads one string out of version.py with a bare interpreter, so
+#: syncing the whole dev environment ahead of it would buy nothing.
+NO_TOOLING_NEEDED = {"version"}
+
+
+def _justfile_recipes() -> dict:
+    """Map every recipe name to its dependency list and its body lines."""
+    recipes = {}
+    current = None
+    for line in JUSTFILE.read_text(encoding="utf-8").splitlines():
+        header = re.match(r"^([a-z_][A-Za-z0-9_-]*):(.*)$", line)
+        if header:
+            current = header.group(1)
+            recipes[current] = (header.group(2).split(), [])
+        elif current and line.startswith((" ", "\t")):
+            recipes[current][1].append(line.strip())
+        elif line.strip():
+            current = None
+    return recipes
+
+
+def test_no_sync_recipes_bootstrap_the_venv():
+    """Something has to create .venv before `uv run --no-sync` can use it.
+
+    Nothing does, once every recipe stops syncing: a fresh clone gets an empty
+    .venv and `error: Failed to spawn: pytest`. No CI job would catch it either,
+    because the pipeline drives uv directly and never runs `just`.
+    """
+    offenders = []
+    for name, (dependencies, body) in _justfile_recipes().items():
+        if name in NO_TOOLING_NEEDED:
+            continue
+        if not any("uv run --no-sync" in body_line for body_line in body):
+            continue
+        if "_tooling" not in dependencies:
+            offenders.append(name)
+    assert not offenders, "these run tooling out of .venv but never create it:\n" + "\n".join(
+        offenders
+    )
+
+
+def test_default_is_the_first_recipe():
+    """`just` with no arguments runs the first recipe, whatever it is named.
+
+    A recipe added above `default` silently becomes what bare `just` does, and
+    `[private]` does not exempt it — which is how `_tooling` first landed here,
+    turning `just` into a sync instead of the recipe listing.
+    """
+    first = next(iter(_justfile_recipes()))
+    assert first == "default", f"bare `just` would run `{first}` instead of listing recipes"

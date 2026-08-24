@@ -16,14 +16,25 @@
 # Extras and groups installed by `just deps`. `uv sync` prunes whatever the flags
 # do not name — omitting `--group lint` really does uninstall the linters.
 # Recipes that run tools use `uv run --no-sync` so they do not undo `just deps-all`
-# (whisper/vosk/docs). CI lints with `--only-group lint` instead: that skips the
-# project, whose pyaudio/PyGObject need system headers a lint runner has no
-# reason to install.
+# (whisper/vosk/docs). They depend on `_tooling` for the same reason: with nothing
+# left to create .venv/, `uv run --no-sync` on a fresh clone leaves an empty one
+# behind and fails with `Failed to spawn: pytest`. CI lints with `--only-group lint`
+# instead: that skips the project, whose pyaudio/PyGObject need system headers a
+# lint runner has no reason to install.
 DEV_EXTRAS := "--extra dev --extra vad --group lint"
 
 # List available recipes
 default:
     @just --list
+
+# Create .venv/ and keep it matching the lock. --inexact is what makes this safe
+# to run ahead of every recipe: a plain `uv sync` removes extraneous packages, so
+# it would uninstall whatever `just deps-all` installed — the very thing the
+# --no-sync flags below exist to prevent. `version` skips this; it reads one
+# string out of version.py and needs a bare interpreter, not a sync.
+[private]
+_tooling:
+    uv sync --inexact {{DEV_EXTRAS}}
 
 # Install Vocalinux
 install:
@@ -42,18 +53,18 @@ deps-all:
     uv sync --all-extras --group lint
 
 # Run test suite
-test:
+test: _tooling
     @echo "Running tests..."
     uv run --no-sync pytest -v
 
 # Run tests with coverage
-test-cov:
+test-cov: _tooling
     @echo "Running tests with coverage..."
     uv run --no-sync pytest --cov=src --cov-report=html --cov-report=term
     @echo "Coverage report generated in htmlcov/"
 
 # Run linters (flake8, black, isort)
-lint:
+lint: _tooling
     @echo "Running flake8..."
     uv run --no-sync flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
     @echo "Checking black formatting..."
@@ -62,14 +73,14 @@ lint:
     uv run --no-sync isort --check-only --diff --profile black src/ tests/
 
 # Auto-format code (black + isort)
-format:
+format: _tooling
     @echo "Formatting with black..."
     uv run --no-sync black src/ tests/
     @echo "Sorting imports with isort..."
     uv run --no-sync isort --profile black src/ tests/
 
 # Run type checking (mypy)
-typecheck:
+typecheck: _tooling
     @echo "Running mypy..."
     uv run --no-sync mypy src/
 
@@ -104,7 +115,7 @@ lock-check:
 # every zip not already in the manifest is downloaded. A first run, or any run
 # with --refresh, pulls ~21.9GB and takes ~30 minutes.
 # Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
-model-checksums:
+model-checksums: _tooling
     uv run --no-sync python scripts/generate-model-checksums.py
 
 # Remove build artifacts
@@ -132,15 +143,15 @@ run-debug:
     vocalinux --debug
 
 # Run from source
-run-source:
+run-source: _tooling
     uv run --no-sync python -m vocalinux.main
 
 # Run from source with debug logging
-run-source-debug:
+run-source-debug: _tooling
     uv run --no-sync python -m vocalinux.main --debug
 
 # Run pre-commit hooks on all files
-pre-commit:
+pre-commit: _tooling
     uv run --no-sync pre-commit run --all-files
 
 # Print the current version
