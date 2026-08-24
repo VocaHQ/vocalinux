@@ -272,6 +272,7 @@ GPU_NAME=""
 GPU_MEMORY=""
 HAS_VULKAN="no"
 VULKAN_DEVICE=""
+VULKAN_SOFTWARE_DEVICE=""
 # Initialize mode/state variables that are set later by flags or prompts so
 # that every read under `set -u` is well-defined in every code path.
 INSTALL_TAG=""
@@ -865,22 +866,52 @@ get_cuda_cmake_args() {
     printf '%s\n' "$CUDA_ARGS"
 }
 
-# Detect Vulkan support for whisper.cpp
-detect_vulkan() {
-    # Only a deviceName counts: the loader prints a header even when no ICD
-    # resolves. Read all of it, not head -20, so this agrees with
-    # check_vulkan_gpu_compatibility. (|| true: no match must not abort pipefail.)
-    if command -v vulkaninfo >/dev/null 2>&1; then
-        local vulkan_devices
-        vulkan_devices=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true)
-        if [ -n "$vulkan_devices" ]; then
-            HAS_VULKAN="yes"
-            VULKAN_DEVICE=$(printf '%s\n' "$vulkan_devices" | head -1)
+# CPU implementations of Vulkan. whisper.cpp on these is slower than its own CPU
+# backend, so they must never be reported as a GPU. One list, read by both
+# detect_vulkan and check_vulkan_gpu_compatibility.
+VULKAN_SOFTWARE_PATTERNS=(llvmpipe swiftshader lavapipe zink virtio venus)
+
+is_software_renderer() {
+    local name="$1" pattern
+    for pattern in "${VULKAN_SOFTWARE_PATTERNS[@]}"; do
+        if printf '%s' "$name" | grep -iq "$pattern"; then
             return 0
         fi
-    fi
+    done
+    return 1
+}
+
+# List the Vulkan devices vulkaninfo reports, one per line.
+vulkan_device_names() {
+    command -v vulkaninfo >/dev/null 2>&1 || return 1
+    # (|| true: no match must not abort pipefail.)
+    vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true
+}
+
+# Detect Vulkan support for whisper.cpp
+detect_vulkan() {
+    # Only a hardware deviceName counts. The loader prints a header even when no
+    # ICD resolves, and a software renderer is not a GPU -- reporting either as
+    # one is what made Step 1 promise Vulkan performance the machine cannot give.
     HAS_VULKAN="no"
     VULKAN_DEVICE=""
+    VULKAN_SOFTWARE_DEVICE=""
+
+    local devices name
+    devices=$(vulkan_device_names) || return 1
+    [ -n "$devices" ] || return 1
+
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        if is_software_renderer "$name"; then
+            [ -n "$VULKAN_SOFTWARE_DEVICE" ] || VULKAN_SOFTWARE_DEVICE="$name"
+            continue
+        fi
+        HAS_VULKAN="yes"
+        VULKAN_DEVICE="$name"
+        return 0
+    done <<< "$devices"
+
     return 1
 }
 
@@ -909,17 +940,6 @@ check_vulkan_gpu_compatibility() {
         "SNB"
     )
 
-    # Software renderers and virtual devices to skip (not real hardware GPUs)
-    # These are CPU-based implementations that shouldn't affect compatibility detection
-    local SOFTWARE_RENDERER_PATTERNS=(
-        "llvmpipe"
-        "swiftshader"
-        "lavapipe"
-        "zink"
-        "virtio"
-        "venus"
-    )
-
     # Check if vulkaninfo is available
     if ! command -v vulkaninfo >/dev/null 2>&1; then
         echo "unknown:vulkaninfo not available"
@@ -928,29 +948,19 @@ check_vulkan_gpu_compatibility() {
 
     # Get all device names from vulkaninfo
     local DEVICE_NAMES_RAW
-    DEVICE_NAMES_RAW=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true)
+    DEVICE_NAMES_RAW=$(vulkan_device_names || true)
 
     # Separate hardware GPUs from software renderers
     local HARDWARE_GPUS=""
-    local HARDWARE_GPU_COUNT=0
     while IFS= read -r device_name; do
         [ -z "$device_name" ] && continue
-
-        local is_software=false
-        for pattern in "${SOFTWARE_RENDERER_PATTERNS[@]}"; do
-            if echo "$device_name" | grep -iq "$pattern"; then
-                is_software=true
-                break
-            fi
-        done
-
-        if [ "$is_software" = false ]; then
-            if [ -n "$HARDWARE_GPUS" ]; then
-                HARDWARE_GPUS="${HARDWARE_GPUS}, ${device_name}"
-            else
-                HARDWARE_GPUS="$device_name"
-            fi
-            ((HARDWARE_GPU_COUNT++))
+        if is_software_renderer "$device_name"; then
+            continue
+        fi
+        if [ -n "$HARDWARE_GPUS" ]; then
+            HARDWARE_GPUS="${HARDWARE_GPUS}, ${device_name}"
+        else
+            HARDWARE_GPUS="$device_name"
         fi
     done <<< "$DEVICE_NAMES_RAW"
 
@@ -987,15 +997,9 @@ check_vulkan_gpu_compatibility() {
     while IFS= read -r device_name; do
         [ -z "$device_name" ] && continue
 
-        # Skip software renderers
-        local is_software=false
-        for pattern in "${SOFTWARE_RENDERER_PATTERNS[@]}"; do
-            if echo "$device_name" | grep -iq "$pattern"; then
-                is_software=true
-                break
-            fi
-        done
-        [ "$is_software" = true ] && continue
+        if is_software_renderer "$device_name"; then
+            continue
+        fi
 
         # Check against known incompatible patterns
         local is_incompatible=false
@@ -1122,6 +1126,8 @@ get_engine_recommendation() {
     elif [[ "$HAS_VULKAN" == "yes" ]]; then
         # Non-NVIDIA GPU with Vulkan support
         echo "whisper_cpp:✓:$VULKAN_DEVICE detected - Great performance with whisper.cpp Vulkan"
+    elif [ -n "$VULKAN_SOFTWARE_DEVICE" ]; then
+        echo "whisper_cpp:✓:Software Vulkan only ($VULKAN_SOFTWARE_DEVICE) - whisper.cpp CPU mode"
     elif [ "$TOTAL_RAM_GB" -ge 8 ]; then
         # No GPU but decent RAM
         echo "whisper_cpp:✓:No GPU detected, but ${TOTAL_RAM_GB}GB RAM - whisper.cpp CPU mode"

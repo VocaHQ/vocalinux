@@ -16,15 +16,25 @@ import pytest
 INSTALL_SH = Path(__file__).resolve().parents[1] / "install.sh"
 SOURCE = INSTALL_SH.read_text()
 
-FUNCTIONS = ("detect_vulkan", "check_vulkan_gpu_compatibility")
+FUNCTIONS = (
+    "is_software_renderer",
+    "vulkan_device_names",
+    "detect_vulkan",
+    "check_vulkan_gpu_compatibility",
+)
 
 PRELUDE = """
 set -uo pipefail
 HAS_VULKAN="no"
 VULKAN_DEVICE=""
+VULKAN_SOFTWARE_DEVICE=""
 print_info() { echo "INFO: $*"; }
 print_warning() { echo "WARNING: $*"; }
 """
+
+# The one list both detectors read; lifted from install.sh so it cannot drift.
+PATTERNS = re.search(r"^VULKAN_SOFTWARE_PATTERNS=\([^)]*\)", SOURCE, re.M)
+assert PATTERNS, "VULKAN_SOFTWARE_PATTERNS missing from install.sh"
 
 # A loader that resolved no driver: header, error, no device.
 NO_DEVICES = """\
@@ -48,6 +58,22 @@ DEVICE_PAST_LINE_20 = (
     + "\tdeviceName         = AMD Radeon RX 7900 XTX (RADV NAVI31)\n"
 )
 
+SOFTWARE_ONLY = """\
+==========
+VULKANINFO
+==========
+
+Devices:
+========
+GPU0:
+\tdeviceName         = llvmpipe (LLVM 15.0.6, 256 bits)
+"""
+
+# A real adapter the loader happens to list after the software one.
+SOFTWARE_THEN_HARDWARE = (
+    SOFTWARE_ONLY + "\tdeviceName         = AMD Radeon RX 7900 XTX (RADV NAVI31)\n"
+)
+
 DEVICE_EARLY = """\
 ==========
 VULKANINFO
@@ -61,7 +87,7 @@ GPU0:
 
 
 def _functions() -> str:
-    chunks = []
+    chunks = [PATTERNS.group(0)]
     for name in FUNCTIONS:
         match = re.search(rf"^{name}\(\) \{{.*?^\}}", SOURCE, re.M | re.S)
         assert match, f"{name} not found in install.sh"
@@ -155,3 +181,50 @@ class TestTheTwoDetectorsAgree:
             "detect_vulkan announced a GPU that check_vulkan_gpu_compatibility "
             f"cannot find:\n{result.stdout}"
         )
+
+
+class TestSoftwareRenderers:
+    """whisper.cpp on a CPU implementation of Vulkan is slower than its own CPU
+    backend, so a software renderer must not be reported as a GPU."""
+
+    def test_a_software_renderer_is_not_a_gpu(self, tmp_path):
+        result = _run(
+            tmp_path,
+            SOFTWARE_ONLY,
+            'detect_vulkan; echo "RC=$? HAS=$HAS_VULKAN DEV=[$VULKAN_DEVICE]"',
+        )
+        assert "RC=1 HAS=no DEV=[]" in result.stdout, result.stdout + result.stderr
+
+    def test_it_is_remembered_for_the_message(self, tmp_path):
+        """Step 1 says "software Vulkan only", which beats "no GPU detected"."""
+        result = _run(
+            tmp_path, SOFTWARE_ONLY, 'detect_vulkan || true; echo "SOFT=[$VULKAN_SOFTWARE_DEVICE]"'
+        )
+        assert "SOFT=[llvmpipe (LLVM 15.0.6, 256 bits)]" in result.stdout
+
+    def test_hardware_still_wins_when_listed_after_software(self, tmp_path):
+        result = _run(
+            tmp_path,
+            SOFTWARE_THEN_HARDWARE,
+            'detect_vulkan; echo "HAS=$HAS_VULKAN DEV=[$VULKAN_DEVICE]"',
+        )
+        assert "HAS=yes" in result.stdout, result.stdout + result.stderr
+        assert "DEV=[AMD Radeon RX 7900 XTX (RADV NAVI31)]" in result.stdout
+
+    def test_both_detectors_agree_that_it_is_not_hardware(self, tmp_path):
+        result = _run(
+            tmp_path,
+            SOFTWARE_ONLY,
+            'detect_vulkan || true; echo "HAS=$HAS_VULKAN"; check_vulkan_gpu_compatibility || true',
+        )
+        assert "HAS=no" in result.stdout
+        assert "No hardware GPU found" in result.stdout
+
+    @pytest.mark.parametrize(
+        "name", ["llvmpipe", "swiftshader", "lavapipe", "zink", "virtio", "venus"]
+    )
+    def test_every_pattern_is_recognised(self, tmp_path, name):
+        result = _run(
+            tmp_path, NO_DEVICES, f'is_software_renderer "{name} (something)"; echo "RC=$?"'
+        )
+        assert "RC=0" in result.stdout, result.stdout + result.stderr
