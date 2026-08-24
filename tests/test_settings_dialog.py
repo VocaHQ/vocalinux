@@ -1040,7 +1040,7 @@ class TestAboutPage(unittest.TestCase):
     def test_product_status_and_honest_network_copy(self):
         self.assertIn("Available now on Linux (X11 and Wayland)", self.about)
         self.assertIn("After a model is downloaded", self.about)
-        self.assertIn("unsigned beta", self.about)
+        self.assertIn("unsigned beta, v0.1.0-beta.1", self.about)
         self.assertIn("Android beta / iOS source build", self.about)
         self.assertIn("optional", self.about.lower())
         self.assertIn("self-hosted compute", self.about)
@@ -1048,6 +1048,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertNotIn("100% offline", self.about)
         self.assertNotIn("fully offline", self.about)
         self.assertNotIn("Coming soon", self.about)
+        self.assertNotIn("releases/download", self.about)
 
     def test_family_and_talk_urls(self):
         for url in (
