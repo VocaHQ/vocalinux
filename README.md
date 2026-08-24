@@ -9,12 +9,13 @@
 <!-- Badge rows ordered narrowest → widest (steps out into the hero) -->
 
 <!-- Values + packaging (narrow) -->
-[![Privacy: 100% offline](https://img.shields.io/badge/privacy-100%25%20offline-success)](https://github.com/VocaHQ/vocalinux#features)
+[![Privacy: on-device](https://img.shields.io/badge/privacy-on--device%20after%20model%20download-success)](https://github.com/VocaHQ/vocalinux#features)
 [![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/VocaHQ/vocalinux#features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Discord](https://img.shields.io/discord/1538633755877580810?logo=discord&logoColor=white&label=Discord)](https://discord.gg/t6muquAJbm)
+[![Email](https://img.shields.io/badge/hello%40vocahq.com-1a7f4e)](mailto:hello@vocahq.com)
 [![VocaHQ](https://img.shields.io/badge/VocaHQ-vocahq.com-1a7f4e)](https://vocahq.com)
 
 <!-- Identity + quality (medium) -->
@@ -36,9 +37,9 @@
 
 Linux has always punched above its weight, except when it comes to voice typing. Vocalinux fixes that.
 
-It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using fully offline speech recognition. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
+It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using on-device speech recognition after you download a model. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
 
-No internet required. No data leaves your machine. Just speak and type.
+Models are downloaded once. After that, speech-to-text stays on your machine. No Voca account is required. Just speak and type.
 
 ## 📚 What's New in v0.16.0
 
@@ -78,7 +79,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 - 🎤 **Toggle or Push-to-Talk** activation modes
 - ⚡ **Real-time transcription** with minimal latency
 - 🌎 **Universal compatibility** across all Linux applications
-- 🔒 **100% Offline operation** for privacy and reliability
+- 🔒 **On-device after model download** — speech-to-text stays on your machine
 - 🤖 **whisper.cpp by default** - High-performance C++ speech recognition
 - 🎮 **Universal GPU support** - Vulkan acceleration for AMD, Intel, and NVIDIA
 - 🎨 **System tray integration** with visual status indicators
@@ -456,17 +457,21 @@ This script generates all three sounds using the same smooth glide algorithm. Yo
 
 ## 🌐 The Voca Ecosystem
 
-Vocalinux is part of [VocaHQ](https://vocahq.com). Same privacy-first, offline voice dictation idea, one app per operating system.
+Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text first, one app per platform. Optional [VocaGateway](https://vocagateway.vocahq.com) is self-hosted and not on-device.
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Stable v0.16.0 |
-| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta |
-| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Beta v0.1.0-beta.1 |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.0`) |
+| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta (`v0.9.0`) |
+| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Unsigned beta (`v0.1.0-beta.1`) |
+| 📱 Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | 🚀 Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |
+| 🖧 Gateway | **VocaGateway** | [vocagateway.vocahq.com](https://vocagateway.vocahq.com) | [VocaHQ/vocagateway](https://github.com/VocaHQ/vocagateway) | 🧪 Early · optional · not on-device |
 
 > VocaWin is unsigned. SmartScreen may warn about an unknown publisher. It is not a Microsoft Store ship.
 >
-> Each platform uses native technologies for the best possible integration, while sharing the same privacy-first philosophy and offline-only architecture.
+> Each platform uses native technologies. The shared bar is on-device first; [VocaGateway](https://vocagateway.vocahq.com) is optional self-hosted compute and is not on-device.
+>
+> Talk to us: [Discord](https://discord.gg/t6muquAJbm) · [X @vocahq](https://x.com/vocahq) · [hello@vocahq.com](mailto:hello@vocahq.com)
 
 ## 🤝 Contributing
 
