@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=61,<82"]
+# >=77 for the SPDX license string below.
+requires = ["setuptools>=77,<82"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,7 +8,8 @@ name = "vocalinux"
 dynamic = ["version"]
 description = "A seamless voice dictation system for Linux"
 readme = "README.md"
-license = {text = "AGPL-3.0"}
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 authors = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
@@ -23,7 +25,6 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: GTK",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -100,7 +101,20 @@ Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 required-version = ">=0.12,<0.13"
 
 [tool.setuptools]
-packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
+# Resource dirs carry no .py files, but setuptools still treats them as packages.
+packages = [
+    "vocalinux",
+    "vocalinux.resources",
+    "vocalinux.resources.icons",
+    "vocalinux.resources.icons.scalable",
+    "vocalinux.resources.sounds",
+    "vocalinux.speech_recognition",
+    "vocalinux.speech_recognition.data",
+    "vocalinux.text_injection",
+    "vocalinux.ui",
+    "vocalinux.ui.keyboard_backends",
+    "vocalinux.utils",
+]
 package-dir = {"" = "src"}
 
 [tool.setuptools.dynamic]
