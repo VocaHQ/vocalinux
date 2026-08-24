@@ -867,23 +867,20 @@ get_cuda_cmake_args() {
 
 # Detect Vulkan support for whisper.cpp
 detect_vulkan() {
-    # Check for vulkaninfo command
+    # Only a deviceName counts: the loader prints a header even when no ICD
+    # resolves. Read all of it, not head -20, so this agrees with
+    # check_vulkan_gpu_compatibility. (|| true: no match must not abort pipefail.)
     if command -v vulkaninfo >/dev/null 2>&1; then
-        # (|| true guards against pipefail aborts: head closes the pipe early
-        # and grep exits 1 when there is no match)
-        local vulkan_output
-        vulkan_output=$(vulkaninfo --summary 2>/dev/null | head -20 || true)
-        if [ -n "$vulkan_output" ]; then
+        local vulkan_devices
+        vulkan_devices=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true)
+        if [ -n "$vulkan_devices" ]; then
             HAS_VULKAN="yes"
-            # Try to extract GPU name
-            VULKAN_DEVICE=$(echo "$vulkan_output" | grep -i "deviceName" | head -1 | cut -d'=' -f2 | xargs || true)
-            if [ -z "$VULKAN_DEVICE" ]; then
-                VULKAN_DEVICE="Vulkan-compatible GPU"
-            fi
+            VULKAN_DEVICE=$(printf '%s\n' "$vulkan_devices" | head -1)
             return 0
         fi
     fi
     HAS_VULKAN="no"
+    VULKAN_DEVICE=""
     return 1
 }
 
