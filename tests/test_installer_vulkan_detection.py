@@ -228,3 +228,99 @@ class TestSoftwareRenderers:
             tmp_path, NO_DEVICES, f'is_software_renderer "{name} (something)"; echo "RC=$?"'
         )
         assert "RC=0" in result.stdout, result.stdout + result.stderr
+
+
+class TestDiagnosticsDoNotPolluteCapturedOutput:
+    """install.sh runs under `set -Eeuo pipefail` with an ERR trap that calls
+    print_error. While print_error wrote to stdout, that message landed *inside*
+    `$(detect_whispercpp_backends)` -- so a machine with a working Vulkan GPU
+    parsed garbage, fell back to CPU, and never logged the error, because the
+    substitution had swallowed it. `vulkaninfo --features` exits non-zero on real
+    drivers, which is what fired the trap.
+    """
+
+    # A working hardware GPU, and --features exiting non-zero as it does in practice.
+    STUB = """#!/bin/bash
+case "$1" in
+  --summary) echo "\tdeviceName         = Intel(R) Graphics (LNL)" ;;
+  --features) echo "VK_KHR_16bit_storage"; exit 1 ;;
+esac
+"""
+
+    FUNCTIONS = (
+        "is_software_renderer",
+        "vulkan_device_names",
+        "detect_nvidia_gpu",
+        "detect_vulkan",
+        "check_vulkan_gpu_compatibility",
+        "cuda_toolkit_root_has_runtime_library",
+        "find_valid_cuda_toolkit_root",
+        "detect_whispercpp_backends",
+        # the real ones, so the test fails if they go back to stdout
+        "print_error",
+        "print_warning",
+    )
+
+    def _script(self, tmp_path: Path, body: str) -> subprocess.CompletedProcess:
+        binary = tmp_path / "bin"
+        binary.mkdir(exist_ok=True)
+        for tool in NEEDED_TOOLS + ("find", "ls", "wc", "dirname", "basename", "readlink"):
+            found = shutil.which(tool)
+            if found and not (binary / tool).exists():
+                (binary / tool).symlink_to(found)
+        stub = binary / "vulkaninfo"
+        stub.write_text(self.STUB)
+        stub.chmod(0o755)
+
+        chunks = [PATTERNS.group(0)]
+        for name in self.FUNCTIONS:
+            match = re.search(rf"^{name}\(\) \{{.*?^\}}", SOURCE, re.M | re.S)
+            assert match, f"{name} not found in install.sh"
+            chunks.append(match.group(0))
+
+        prelude = (
+            "set -Eeuo pipefail\n"
+            f'export PATH="{binary}"\n'
+            'HAS_NVIDIA_GPU="no"\nHAS_VULKAN="no"\nVULKAN_DEVICE=""\n'
+            'VULKAN_SOFTWARE_DEVICE=""\nGPU_NAME=""\nGPU_MEMORY=""\n'
+            'INSTALL_LOG_FILE="/dev/null"\n'
+            'print_info() { echo "INFO: $*"; }\n'
+            'print_success() { echo "SUCCESS: $*"; }\n'
+        )
+        trap = (
+            "trap 'print_error \"Unexpected error near line $LINENO "
+            "(exit code $?); see $INSTALL_LOG_FILE\"' ERR\n"
+        )
+        return subprocess.run(
+            ["bash", "-c", prelude + "\n".join(chunks) + "\n" + trap + body],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    def test_print_error_stays_off_stdout(self, tmp_path):
+        result = self._script(tmp_path, 'print_error "boom"')
+        assert "boom" not in result.stdout
+        assert "boom" in result.stderr
+
+    def test_print_warning_stays_off_stdout(self, tmp_path):
+        result = self._script(tmp_path, 'print_warning "careful"')
+        assert "careful" not in result.stdout
+        assert "careful" in result.stderr
+
+    def test_backend_info_is_a_single_clean_line(self, tmp_path):
+        result = self._script(
+            tmp_path, 'B=$(detect_whispercpp_backends); printf "%s" "$B" | wc -l; echo "[$B]"'
+        )
+        assert "ERROR" not in result.stdout, f"trap output captured:\n{result.stdout}"
+        lines = result.stdout.splitlines()
+        assert lines, result.stdout + result.stderr
+        assert lines[0] == "0", f"BACKEND_INFO spans several lines:\n{result.stdout}"
+
+    def test_a_working_gpu_is_still_offered(self, tmp_path):
+        """The user-visible symptom: Step 3 refused GPU on hardware that supports it."""
+        result = self._script(
+            tmp_path,
+            'B=$(detect_whispercpp_backends); CAN=$(echo "$B" | cut -d: -f3); echo "CAN=[$CAN]"',
+        )
+        assert "CAN=[true]" in result.stdout, result.stdout + result.stderr

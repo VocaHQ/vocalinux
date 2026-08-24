@@ -26,12 +26,15 @@ print_success() {
     echo -e "\e[1;32m[SUCCESS]\e[0m $1"
 }
 
+# Diagnostics go to stderr, not stdout: `exec > >(tee ...) 2>&1` keeps them in the
+# log and on screen either way, but stdout is what every $( ) captures. Writing
+# them there let the ERR trap's own message land inside a captured value.
 print_error() {
-    echo -e "\e[1;31m[ERROR]\e[0m $1"
+    echo -e "\e[1;31m[ERROR]\e[0m $1" >&2
 }
 
 print_warning() {
-    echo -e "\e[1;33m[WARNING]\e[0m $1"
+    echo -e "\e[1;33m[WARNING]\e[0m $1" >&2
 }
 
 command_exists() {
@@ -973,7 +976,8 @@ check_vulkan_gpu_compatibility() {
     # Get Vulkan features and check for VK_KHR_16bit_storage
     # Modern GPUs (AMD, Intel Gen8+, NVIDIA) all support this extension
     local FEATURES_OUTPUT
-    FEATURES_OUTPUT=$(vulkaninfo --features 2>/dev/null)
+    # Exits non-zero on drivers that still print usable output; the text is what matters.
+    FEATURES_OUTPUT=$(vulkaninfo --features 2>/dev/null) || true
 
     if [ -n "$FEATURES_OUTPUT" ]; then
         # Check for VK_KHR_16bit_storage extension or equivalent features
@@ -1059,7 +1063,8 @@ detect_whispercpp_backends() {
     local VULKAN_COMPAT_REASON=""
     if [[ "$HAS_VULKAN" == "yes" && "$HAS_NVIDIA_GPU" != "yes" ]]; then
         local COMPAT_RESULT
-        COMPAT_RESULT=$(check_vulkan_gpu_compatibility)
+        # Returns non-zero for "unknown"/"incompatible", which are answers, not errors.
+        COMPAT_RESULT=$(check_vulkan_gpu_compatibility) || true
         VULKAN_COMPATIBLE=$(echo "$COMPAT_RESULT" | cut -d':' -f1)
         VULKAN_COMPAT_REASON=$(echo "$COMPAT_RESULT" | cut -d':' -f2-)
     elif [[ "$HAS_NVIDIA_GPU" == "yes" ]]; then
