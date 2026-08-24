@@ -3842,6 +3842,12 @@ whispercpp_pinned_revision() {
     awk '/^#[[:space:]]*whispercpp-revision:/ {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
 }
 
+# False when the cloned release predates the manifest. That app has no runtime
+# verification either, so refusing to pre-download would protect nothing.
+model_verification_available() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ]
+}
+
 # Function to download and install Whisper tiny model
 install_whisper_model() {
     print_info "Installing Whisper tiny model (~75MB)..."
@@ -4308,15 +4314,27 @@ install_resources_to_venv || print_warning "Venv resource installation failed"
 # Install models based on selected engine
 # whisper.cpp is now the default engine
 if [ "$SKIP_MODELS" = "no" ]; then
+    # Once, rather than once per engine.
+    if ! model_verification_available; then
+        print_warning "This release pins no model checksums, so the installer cannot verify"
+        print_warning "model downloads. The application will download and verify them on"
+        print_warning "first run instead."
+        print_warning "(The installer is newer than ${INSTALL_TAG:-the checked-out revision}.)"
+    fi
+
     # Check which engines are installed and download appropriate models
 
     # Install whisper.cpp model (default engine)
     if is_pywhispercpp_installed; then
-        print_info "whisper.cpp is installed - downloading tiny model (default engine)..."
-        install_whispercpp_model || print_warning "whisper.cpp model download failed - model will be downloaded on first run"
+        if model_verification_available; then
+            print_info "whisper.cpp is installed - downloading tiny model (default engine)..."
+            install_whispercpp_model || print_warning "whisper.cpp model download failed - model will be downloaded on first run"
+        else
+            print_info "Leaving the whisper.cpp model to the first application run."
+        fi
     fi
 
-    # Install OpenAI Whisper model if whisper engine is installed
+    # Needs no manifest: the sha256 is a path segment of its own URL.
     if "$VENV_DIR/bin/python" -c "import whisper" 2>/dev/null; then
         print_info "Whisper (OpenAI) is installed - downloading tiny model..."
         install_whisper_model || print_warning "Whisper model download failed - model will be downloaded on first run"
@@ -4328,7 +4346,11 @@ fi
 
 # Install VOSK models (always useful as fallback)
 if [ "$SKIP_MODELS" = "no" ]; then
-    install_vosk_models || print_warning "VOSK model installation failed - models will be downloaded on first run"
+    if model_verification_available; then
+        install_vosk_models || print_warning "VOSK model installation failed - models will be downloaded on first run"
+    else
+        print_info "Leaving the VOSK model to the first application run."
+    fi
 else
     print_info "Skipping VOSK model installation (--skip-models specified)"
     print_info "Models will be downloaded automatically on first application run"
