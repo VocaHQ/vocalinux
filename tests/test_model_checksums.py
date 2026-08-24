@@ -616,6 +616,21 @@ download_model_file() { echo "DOWNLOAD ATTEMPTED"; return 1; }
             )
         self.assertEqual(result.returncode, 1)
 
+    def test_vosk_refuses_before_spending_the_download(self):
+        """The 40MB fetch must not happen when nothing can verify it."""
+        with TemporaryDirectory() as tmp:
+            result = self._run(
+                f'DATA_DIR="{tmp}/data"; VOCALINUX_TMP_DIR="{tmp}/tmp"; '
+                f'mkdir -p "$DATA_DIR" "$VOCALINUX_TMP_DIR"; '
+                f'MODEL_CHECKSUMS_FILE="{tmp}/nope.txt"; '
+                "install_vosk_models; echo RC=$?",
+                functions=("pinned_digest_for", "install_vosk_models"),
+            )
+        out = result.stdout + result.stderr
+        self.assertIn("RC=1", out)
+        self.assertIn("No checksum is pinned", out)
+        self.assertNotIn("DOWNLOAD ATTEMPTED", out, "refused only after downloading 40MB")
+
     def _model_install_block(self) -> str:
         """The top-level section deciding which models are pre-downloaded."""
         start = self.SOURCE.index("# Install models based on selected engine")

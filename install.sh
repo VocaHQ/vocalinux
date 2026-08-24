@@ -3956,6 +3956,13 @@ install_vosk_models() {
         print_warning "The existing VOSK model carries no matching verification stamp; re-downloading it."
     fi
 
+    # Refuse before spending the download, not after verification rejects it.
+    if [ -z "$EXPECTED_ZIP_DIGEST" ]; then
+        print_error "No checksum is pinned for $SMALL_MODEL_ARCHIVE in $MODEL_CHECKSUMS_FILE."
+        print_warning "VOSK model will be downloaded and verified on first application run."
+        return 1
+    fi
+
     # Check internet connectivity
     if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
         print_warning "Neither wget nor curl found. Cannot download VOSK models."
