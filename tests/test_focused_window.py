@@ -49,6 +49,11 @@ class TestLooksLikeTerminal(unittest.TestCase):
     def test_empty_window_is_not_a_terminal(self):
         self.assertFalse(looks_like_terminal(FocusedWindow()))
 
+    def test_non_string_identity_is_ignored(self):
+        mock_value = MagicMock()
+        window = FocusedWindow(app_id=mock_value, wm_class=mock_value, process_name=mock_value)
+        self.assertFalse(looks_like_terminal(window))
+
 
 class TestGetFocusedWindow(unittest.TestCase):
     """Probe helpers should fail closed and parse compositor JSON."""

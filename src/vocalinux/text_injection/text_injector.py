@@ -1328,13 +1328,21 @@ class TextInjector:
         return DEFAULT_PASTE_SHORTCUT
 
     def _should_use_terminal_paste(self) -> bool:
-        """Return True when clipboard injection should send Ctrl+Shift+V."""
-        preference = self._paste_shortcut_preference()
-        if preference == "ctrl+shift+v":
-            return True
-        if preference == "ctrl+v":
+        """Return True when clipboard injection should send Ctrl+Shift+V.
+
+        Detection is best-effort. A probe error must not abort injection — the
+        caller falls back to Ctrl+V.
+        """
+        try:
+            preference = self._paste_shortcut_preference()
+            if preference == "ctrl+shift+v":
+                return True
+            if preference == "ctrl+v":
+                return False
+            return bool(is_focused_window_terminal())
+        except Exception as exc:
+            logger.debug(f"Terminal paste detection failed: {exc}")
             return False
-        return is_focused_window_terminal()
 
     def _inject_via_clipboard_paste(self, text: str) -> bool:
         """

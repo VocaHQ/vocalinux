@@ -158,3 +158,24 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
                     ) as mock_cmd:
                         self.assertTrue(injector._inject_via_clipboard_paste("hello"))
                         mock_cmd.assert_called_once_with(terminal=True)
+
+    def test_clipboard_paste_survives_mocked_subprocess_run(self):
+        """Patching text_injector.subprocess.run also shadows stdlib subprocess.
+
+        Existing clipboard-restore tests do that. Window detection must fail
+        closed instead of raising TypeError on MagicMock stdout.
+        """
+        injector = _make_injector()
+        with patch.object(injector, "_copy_to_clipboard", return_value=True):
+            with patch.object(injector, "_read_clipboard", return_value="old"):
+                with patch.object(
+                    injector,
+                    "_ydotool_ctrl_v_command",
+                    return_value=["ydotool", "key", "ctrl+v"],
+                ):
+                    with patch.object(injector, "_should_copy_to_clipboard", return_value=False):
+                        with patch(
+                            "vocalinux.text_injection.text_injector.subprocess.run",
+                            return_value=MagicMock(returncode=0),
+                        ):
+                            self.assertTrue(injector._inject_via_clipboard_paste("hello"))

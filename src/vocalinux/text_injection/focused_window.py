@@ -113,12 +113,18 @@ class FocusedWindow:
 
     def identity_blob(self) -> str:
         """Return a lowercase blob of app identity fields, excluding the title."""
-        parts = [self.app_id, self.wm_class, self.process_name]
-        return " ".join(part for part in parts if part).lower()
+        parts = [
+            part
+            for part in (self.app_id, self.wm_class, self.process_name)
+            if isinstance(part, str) and part
+        ]
+        return " ".join(parts).lower()
 
 
 def _normalize_token(value: str) -> str:
     """Collapse a class, app-id, or process name to an alphanumeric token."""
+    if not isinstance(value, str):
+        return ""
     return _TOKEN_SPLIT.sub("", value.lower())
 
 
@@ -126,7 +132,7 @@ def _identity_tokens(window: FocusedWindow) -> set[str]:
     """Return normalized tokens from app identity fields."""
     tokens: set[str] = set()
     for raw in (window.app_id, window.wm_class, window.process_name):
-        if not raw:
+        if not isinstance(raw, str) or not raw:
             continue
         lowered = raw.lower()
         tokens.add(_normalize_token(lowered))
@@ -170,12 +176,15 @@ def _run_text(cmd: list[str], env: Optional[dict[str, str]] = None) -> str:
         return ""
     if result.returncode != 0:
         return ""
-    return (result.stdout or "").strip()
+    stdout = result.stdout
+    if not isinstance(stdout, str):
+        return ""
+    return stdout.strip()
 
 
 def _process_name_for_pid(pid: str) -> str:
     """Read ``/proc/<pid>/comm`` when the pid looks numeric."""
-    if not pid.isdigit():
+    if not isinstance(pid, str) or not pid.isdigit():
         return ""
     try:
         with open(f"/proc/{pid}/comm", "r", encoding="utf-8") as handle:
