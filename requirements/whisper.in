@@ -10,5 +10,5 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
 openai-whisper>=20231117
-torch==2.11.0+cpu
+torch==2.13.0
 torchaudio==2.11.0+cpu
