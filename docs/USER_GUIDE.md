@@ -42,7 +42,7 @@ Vocalinux capitalizes the start of dictation and letters after `.`, `!`, or `?`.
 
 ### Dictating into terminals
 
-When Vocalinux injects through the clipboard (the usual Wayland / ydotool path), it sends **Ctrl+V** in ordinary text fields and **Ctrl+Shift+V** in terminal emulator windows. Auto-detect covers standalone terminals such as GNOME Terminal, Konsole, Kitty, Alacritty, foot, WezTerm, and Ghostty.
+When Vocalinux injects through the clipboard (the usual Wayland / ydotool path), it sends **Ctrl+V** in ordinary text fields and **Ctrl+Shift+V** in terminal emulator windows. Auto-detect works on X11 and on Hyprland, Sway, and niri. On GNOME or KDE Wayland, set **Settings → Dictation → Clipboard Paste Shortcut** to **Ctrl+Shift+V**.
 
 Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**. Choose **Ctrl+V** if a window was mis-detected as a terminal.
 
