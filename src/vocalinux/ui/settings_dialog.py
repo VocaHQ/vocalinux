@@ -75,7 +75,9 @@ from ..utils.whispercpp_model_info import (
 from ..version import __copyright__, __url__, __version__  # noqa: E402
 from .config_manager import (  # noqa: E402
     DEFAULT_CONFIG,
+    DEFAULT_PASTE_SHORTCUT,
     DEFAULT_SOUND_EFFECT_TONE,
+    PASTE_SHORTCUTS,
     SOUND_EFFECT_TONES,
 )
 from .keyboard_backends import (  # noqa: E402
@@ -2347,6 +2349,16 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.set("text_injection", "append_trailing_space", enabled)
         self.config_manager.save_settings()
         logger.info(f"Append trailing space {'enabled' if enabled else 'disabled'}")
+
+    def _on_paste_shortcut_changed(self, widget):
+        """Handle clipboard paste-shortcut combo changes."""
+        if self._initializing or self._applying_settings:
+            return
+
+        shortcut_id = self.paste_shortcut_combo.get_active_id() or DEFAULT_PASTE_SHORTCUT
+        self.config_manager.set_paste_shortcut(shortcut_id)
+        self.config_manager.save_settings()
+        logger.info(f"Paste shortcut set to {self.config_manager.get_paste_shortcut()}")
         return False
 
     def _on_sound_effects_toggled(self, widget, state):
@@ -2700,12 +2712,31 @@ class SettingsDialog(Gtk.Dialog):
         )
         output_group.add_row(append_trailing_space_row)
 
+        self.paste_shortcut_combo = Gtk.ComboBoxText()
+        self.paste_shortcut_combo.set_size_request(_CONTROL_WIDTH, -1)
+        self.paste_shortcut_combo.set_tooltip_text(
+            "Clipboard injection uses Ctrl+V in ordinary fields and Ctrl+Shift+V "
+            "in terminal windows. Override this when a nested terminal panel "
+            "(for example in an IDE) is not detected."
+        )
+        _prevent_scroll_on_hover(self.paste_shortcut_combo)
+        for shortcut_id, display_name in PASTE_SHORTCUTS:
+            self.paste_shortcut_combo.append(shortcut_id, display_name)
+        paste_shortcut_row = PreferenceRow(
+            title="Clipboard Paste Shortcut",
+            subtitle="Auto-detect terminals, or force Ctrl+V / Ctrl+Shift+V",
+            widget=self.paste_shortcut_combo,
+            keywords=("paste", "terminal", "ctrl", "clipboard"),
+        )
+        output_group.add_row(paste_shortcut_row)
+
         self.recognition_settings_tab.pack_start(output_group, False, False, 0)
         self.copy_to_clipboard_switch.connect("state-set", self._on_copy_to_clipboard_toggled)
         self.auto_capitalize_switch.connect("state-set", self._on_auto_capitalize_toggled)
         self.append_trailing_space_switch.connect(
             "state-set", self._on_append_trailing_space_toggled
         )
+        self.paste_shortcut_combo.connect("changed", self._on_paste_shortcut_changed)
 
         if not silero_active:
             vad_info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -4141,6 +4172,7 @@ class SettingsDialog(Gtk.Dialog):
         copy_to_clipboard = text_injection_settings.get("copy_to_clipboard", False)
         auto_capitalize = text_injection_settings.get("auto_capitalize", True)
         append_trailing_space = text_injection_settings.get("append_trailing_space", True)
+        paste_shortcut = self.config_manager.get_paste_shortcut()
 
         self.autostart_switch.set_active(autostart_enabled)
         self.start_minimized_switch.set_active(start_minimized)
@@ -4148,6 +4180,8 @@ class SettingsDialog(Gtk.Dialog):
         self.copy_to_clipboard_switch.set_active(copy_to_clipboard)
         self.auto_capitalize_switch.set_active(auto_capitalize)
         self.append_trailing_space_switch.set_active(append_trailing_space)
+        if not self.paste_shortcut_combo.set_active_id(paste_shortcut):
+            self.paste_shortcut_combo.set_active_id(DEFAULT_PASTE_SHORTCUT)
         self.sound_effects_switch.set_active(self.config_manager.is_sound_effects_enabled())
         tone_id = self.config_manager.get_sound_effects_tone()
         if not self.sound_tone_combo.set_active_id(tone_id):

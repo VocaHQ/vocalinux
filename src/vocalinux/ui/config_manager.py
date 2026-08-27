@@ -36,6 +36,21 @@ SOUND_EFFECT_TONES: tuple[tuple[str, str], ...] = (
 SOUND_EFFECT_TONE_IDS = frozenset(tone_id for tone_id, _label in SOUND_EFFECT_TONES)
 DEFAULT_SOUND_EFFECT_TONE = "voca"
 
+PASTE_SHORTCUTS: tuple[tuple[str, str], ...] = (
+    ("auto", "Auto-detect"),
+    ("ctrl+v", "Ctrl+V"),
+    ("ctrl+shift+v", "Ctrl+Shift+V"),
+)
+PASTE_SHORTCUT_IDS = frozenset(shortcut_id for shortcut_id, _label in PASTE_SHORTCUTS)
+DEFAULT_PASTE_SHORTCUT = "auto"
+
+
+def normalize_paste_shortcut(shortcut: Any) -> str:
+    """Return a paste-shortcut id. Missing or unknown values become auto."""
+    if isinstance(shortcut, str) and shortcut in PASTE_SHORTCUT_IDS:
+        return shortcut
+    return DEFAULT_PASTE_SHORTCUT
+
 
 def normalize_sound_effect_tone(tone: Any) -> str:
     """Return a catalog id. Missing, blank, or unknown values become voca."""
@@ -107,6 +122,9 @@ DEFAULT_CONFIG = {
         # the next dictation session (push-to-talk / toggle) continues cleanly
         # without glueing onto the previous sentence ("Hello.This").
         "append_trailing_space": True,
+        # Clipboard-paste chord: auto-detect terminals, or force Ctrl+V /
+        # Ctrl+Shift+V when a nested terminal panel is not detected.
+        "paste_shortcut": "auto",
     },
     "advanced": {
         "power_user_mode": False,
@@ -459,6 +477,16 @@ class ConfigManager:
         if "sound_effects" not in self.config:
             self.config["sound_effects"] = {}
         self.config["sound_effects"]["tone"] = normalize_sound_effect_tone(tone)
+
+    def get_paste_shortcut(self) -> str:
+        """Return the clipboard-paste shortcut id (auto when unset or unknown)."""
+        return normalize_paste_shortcut(self.config.get("text_injection", {}).get("paste_shortcut"))
+
+    def set_paste_shortcut(self, shortcut: str) -> None:
+        """Save a paste-shortcut id. Unknown ids are stored as auto."""
+        if "text_injection" not in self.config:
+            self.config["text_injection"] = {}
+        self.config["text_injection"]["paste_shortcut"] = normalize_paste_shortcut(shortcut)
 
     def _update_dict_recursive(self, target: dict, source: dict):
         """

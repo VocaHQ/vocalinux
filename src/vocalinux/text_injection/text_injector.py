@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Optional  # noqa: F401
 
 from ..utils.paths import config_dir
+from .focused_window import is_focused_window_terminal
 from .ibus_engine import (
     IBusTextInjector,
     is_ibus_active_input_method,
@@ -976,7 +977,7 @@ class TextInjector:
                     "-a",
                     "Vocalinux",
                     "Text copied to clipboard",
-                    "Text injection failed - paste with Ctrl+V",
+                    "Text injection failed — paste with Ctrl+V " "(Ctrl+Shift+V in a terminal)",
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1308,14 +1309,44 @@ class TextInjector:
 
         return "" if saw_empty else None
 
+    def _paste_shortcut_preference(self) -> str:
+        """Return the configured clipboard-paste shortcut id."""
+        from ..ui.config_manager import DEFAULT_PASTE_SHORTCUT, normalize_paste_shortcut
+
+        try:
+            import json
+
+            config_path = os.path.join(config_dir(), "config.json")
+            if os.path.exists(config_path):
+                with open(config_path, "r") as handle:
+                    config = json.load(handle)
+                return normalize_paste_shortcut(
+                    config.get("text_injection", {}).get("paste_shortcut")
+                )
+        except Exception as exc:
+            logger.debug(f"Could not read paste_shortcut setting: {exc}")
+        return DEFAULT_PASTE_SHORTCUT
+
+    def _should_use_terminal_paste(self) -> bool:
+        """Return True when clipboard injection should send Ctrl+Shift+V."""
+        preference = self._paste_shortcut_preference()
+        if preference == "ctrl+shift+v":
+            return True
+        if preference == "ctrl+v":
+            return False
+        return is_focused_window_terminal()
+
     def _inject_via_clipboard_paste(self, text: str) -> bool:
         """
-        Inject text by copying to clipboard and simulating Ctrl+V with ydotool.
+        Inject text by copying to clipboard and simulating a paste with ydotool.
 
-        Workaround for ydotool's US-ASCII-only key events (see issue #362).
-        Saves the previous clipboard and restores it after a short delay.
-        Overlapping pastes share one restore target (pre-first-injection content)
-        and a generation counter so stale restore threads exit.
+        Ordinary text fields receive Ctrl+V. Terminal emulators typically bind
+        paste to Ctrl+Shift+V, so auto-detect (or the Settings override) picks
+        that chord instead. Workaround for ydotool's US-ASCII-only key events
+        (see issue #362). Saves the previous clipboard and restores it after a
+        short delay. Overlapping pastes share one restore target
+        (pre-first-injection content) and a generation counter so stale restore
+        threads exit.
 
         Returns:
             True if successful, False otherwise
@@ -1342,13 +1373,18 @@ class TextInjector:
             self._clipboard_restore_generation += 1
             generation = self._clipboard_restore_generation
 
-        # Simulate Ctrl+V via ydotool. Syntax differs by major version:
+        # Simulate paste via ydotool. Syntax differs by major version:
         # - 0.1.x (distro packages): named sequences, e.g. ctrl+v
-        # - 1.x (Flatpak build): keycode:value  (29=LEFTCTRL, 47=V)
+        # - 1.x (Flatpak build): keycode:value  (29=LEFTCTRL, 42=LEFTSHIFT, 47=V)
         # Passing 1.x codes to 0.1.x does not paste; it types garbage (e.g. "2442").
         try:
-            cmd = self._ydotool_ctrl_v_command()
-            logger.debug(f"Simulating paste with: {cmd}")
+            use_terminal_paste = self._should_use_terminal_paste()
+            cmd = self._ydotool_ctrl_v_command(terminal=use_terminal_paste)
+            logger.debug(
+                "Simulating %s paste with: %s",
+                "terminal" if use_terminal_paste else "standard",
+                cmd,
+            )
             subprocess.run(
                 cmd,
                 check=True,
@@ -1402,32 +1438,25 @@ class TextInjector:
 
         return True
 
-    # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_V=47 press/release.
+    # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_LEFTSHIFT=42, KEY_V=47.
     _YDOTOOL_V1_CTRL_V = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
+    _YDOTOOL_V1_CTRL_SHIFT_V = ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
     # ydotool 0.1.x (common distro packages): named key sequences.
     _YDOTOOL_LEGACY_CTRL_V = ["ydotool", "key", "ctrl+v"]
+    _YDOTOOL_LEGACY_CTRL_SHIFT_V = ["ydotool", "key", "ctrl+shift+v"]
 
-    def _ydotool_ctrl_v_command(self) -> list:
-        """Return argv to simulate Ctrl+V for the installed ydotool.
-
-        ydotool 0.1.x expects ``key ctrl+v``. ydotool 1.x expects
-        ``key 29:1 47:1 47:0 29:0`` (evdev press/release).
-
-        Flatpak always ships pinned ydotool 1.0.4 under /app, so we use the
-        keycode form there without probing. Host installs probe ``key --help``.
-        """
-        cached = getattr(self, "_ydotool_ctrl_v_cmd", None)
+    def _ydotool_uses_legacy_named_keys(self) -> bool:
+        """Return True when the installed ydotool expects named key sequences."""
+        cached = getattr(self, "_ydotool_legacy_named_keys", None)
         if cached is not None:
-            return list(cached)
+            return bool(cached)
 
-        # Flatpak package pins ydotool v1.0.4 (see packaging/flatpak manifest).
         ydotool_path = shutil.which("ydotool")
         if not isinstance(ydotool_path, str):
             ydotool_path = ""
         if os.environ.get("FLATPAK_ID") or ydotool_path.startswith("/app/"):
-            cmd = list(self._YDOTOOL_V1_CTRL_V)
-            self._ydotool_ctrl_v_cmd = cmd
-            return list(cmd)
+            self._ydotool_legacy_named_keys = False
+            return False
 
         help_text = ""
         try:
@@ -1443,16 +1472,42 @@ class TextInjector:
 
         # 0.1.x help: "separated by plus (+)" / examples like alt+r, CTRL+alt+f3
         if "plus (+)" in help_text or "separated by plus" in help_text.lower():
-            cmd = list(self._YDOTOOL_LEGACY_CTRL_V)
+            uses_legacy = True
         elif ":1" in help_text or "keycode" in help_text.lower():
-            cmd = list(self._YDOTOOL_V1_CTRL_V)
+            uses_legacy = False
         else:
             # Unknown help text: prefer named sequence (safe on 0.1.x; fails
             # loudly on 1.x rather than typing digit garbage).
-            logger.debug("Unrecognized ydotool key --help; defaulting to legacy ctrl+v syntax")
-            cmd = list(self._YDOTOOL_LEGACY_CTRL_V)
+            logger.debug("Unrecognized ydotool key --help; defaulting to legacy named keys")
+            uses_legacy = True
 
-        self._ydotool_ctrl_v_cmd = cmd
+        self._ydotool_legacy_named_keys = uses_legacy
+        return uses_legacy
+
+    def _ydotool_ctrl_v_command(self, *, terminal: bool = False) -> list:
+        """Return argv to simulate paste for the installed ydotool.
+
+        ydotool 0.1.x expects ``key ctrl+v`` or ``key ctrl+shift+v``. ydotool 1.x
+        expects evdev press/release keycodes (29=LEFTCTRL, 42=LEFTSHIFT, 47=V).
+
+        Flatpak always ships pinned ydotool 1.0.4 under /app, so we use the
+        keycode form there without probing. Host installs probe ``key --help``.
+        """
+        cache_attr = "_ydotool_terminal_paste_cmd" if terminal else "_ydotool_ctrl_v_cmd"
+        cached = getattr(self, cache_attr, None)
+        if cached is not None:
+            return list(cached)
+
+        if self._ydotool_uses_legacy_named_keys():
+            cmd = (
+                list(self._YDOTOOL_LEGACY_CTRL_SHIFT_V)
+                if terminal
+                else list(self._YDOTOOL_LEGACY_CTRL_V)
+            )
+        else:
+            cmd = list(self._YDOTOOL_V1_CTRL_SHIFT_V) if terminal else list(self._YDOTOOL_V1_CTRL_V)
+
+        setattr(self, cache_attr, cmd)
         return list(cmd)
 
     # evdev keycodes for modifier keys. If any of these is still physically held

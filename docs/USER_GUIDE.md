@@ -40,6 +40,12 @@ Vocalinux supports login autostart using the standard Linux desktop-session mech
 
 Vocalinux capitalizes the start of dictation and letters after `.`, `!`, or `?`. Each completed utterance also leaves a trailing space so the next push-to-talk or toggle session does not glue onto the previous sentence (`Hello.This` → `Hello. This`).
 
+### Dictating into terminals
+
+When Vocalinux injects through the clipboard (the usual Wayland / ydotool path), it sends **Ctrl+V** in ordinary text fields and **Ctrl+Shift+V** in terminal emulator windows. Auto-detect covers standalone terminals such as GNOME Terminal, Konsole, Kitty, Alacritty, foot, WezTerm, and Ghostty.
+
+Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**. Choose **Ctrl+V** if a window was mis-detected as a terminal.
+
 ### Understanding the Status Icons
 
 - **Microphone off** (gray): Voice typing is inactive
