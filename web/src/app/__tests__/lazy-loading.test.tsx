@@ -62,24 +62,17 @@ describe('Lazy Loading Behavior', () => {
   });
 
   describe('VocalinuxLogo Component', () => {
-    it('lazy loads logo by default', () => {
+    it('lazy loads the circular mark by default', () => {
       render(<VocalinuxLogo />);
-      
-      expect(mockImage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          priority: false,
-        })
-      );
+      const img = screen.getByAltText('Vocalinux');
+      expect(img).toHaveAttribute('src', '/brand/vocalinux-mark-circle.svg');
+      expect(img).toHaveAttribute('loading', 'lazy');
     });
 
-    it('eager loads logo when priority is set', () => {
+    it('eager loads the mark when priority is set', () => {
       render(<VocalinuxLogo priority />);
-      
-      expect(mockImage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          priority: true,
-        })
-      );
+      const img = screen.getByAltText('Vocalinux');
+      expect(img).toHaveAttribute('loading', 'eager');
     });
   });
 
@@ -93,14 +86,7 @@ describe('Lazy Loading Behavior', () => {
     });
 
     it('prevents layout shift with explicit dimensions', () => {
-      const { container } = render(
-        <VocalinuxLogo width={64} height={64} />
-      );
-      
-      const picture = container.querySelector('picture');
-      expect(picture).toBeInTheDocument();
-      
-      // Picture element helps with responsive images and prevents layout shift
+      render(<VocalinuxLogo width={64} height={64} />);
       const img = screen.getByAltText('Vocalinux');
       expect(img).toHaveAttribute('width', '64');
       expect(img).toHaveAttribute('height', '64');
@@ -119,20 +105,10 @@ describe('Lazy Loading Behavior', () => {
       expect(source).toHaveAttribute('type', 'image/webp');
     });
 
-    it('browser selects WebP source before loading image', () => {
-      const { container } = render(
-        <VocalinuxLogo width={32} height={32} />
-      );
-      
-      const picture = container.querySelector('picture');
-      const source = picture?.querySelector('source');
-      const img = picture?.querySelector('img');
-      
-      // picture > source should come before img in DOM order
-      if (source && img) {
-        const children = Array.from(picture?.children || []);
-        expect(children.indexOf(source)).toBeLessThan(children.indexOf(img));
-      }
+    it('ships the circular mark as an SVG', () => {
+      render(<VocalinuxLogo width={32} height={32} />);
+      const img = screen.getByAltText('Vocalinux');
+      expect(img).toHaveAttribute('src', '/brand/vocalinux-mark-circle.svg');
     });
   });
 });

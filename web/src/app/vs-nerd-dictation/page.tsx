@@ -24,7 +24,7 @@ const comparisonRows = [
   },
   {
     feature: "Offline voice dictation",
-    vocalinux: "100% offline with multiple engine options",
+    vocalinux: "Local engines, plus an optional Remote API",
     nerdDictation: "Offline dictation, single CLI-centered flow",
     winner: "Vocalinux",
     icon: Command,
@@ -154,7 +154,7 @@ export default function VsNerdDictationPage() {
                   </td>
                   <td className="px-4 py-4 text-sm text-muted-foreground">{row.vocalinux}</td>
                   <td className="px-4 py-4 text-sm text-muted-foreground">{row.nerdDictation}</td>
-                  <td className="px-4 py-4 text-sm font-semibold text-primary dark:text-[color:var(--terminal-fg)]">
+                  <td className="px-4 py-4 text-sm font-semibold text-primary">
                     <span className="inline-flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4" />
                       {row.winner}

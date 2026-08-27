@@ -74,35 +74,6 @@ class TestDownloadFunctions(unittest.TestCase):
         )
         return manager
 
-    def test_download_whisper_model_success(self):
-        """Test successful Whisper model download with progress tracking."""
-        with patch("builtins.open", mock_open()) as mock_file:
-            with patch("os.rename") as mock_rename:
-                with patch("os.path.dirname") as mock_dirname:
-                    with patch("os.makedirs"):
-                        mock_dirname.return_value = "/fake/dir"
-
-                        mock_response = MagicMock()
-                        mock_response.headers = {"content-length": "1024"}
-                        mock_response.iter_content.return_value = [b"x" * 512, b"y" * 512]
-
-                        progress_calls = []
-
-                        def progress_cb(progress, speed, status):
-                            progress_calls.append((progress, speed, status))
-
-                        with patch("requests.get", return_value=mock_response):
-                            manager = self._create_manager(engine="whisper")
-                            manager._download_progress_callback = progress_cb
-
-                            # This should call the download function
-                            manager._download_whisper_model("/fake/cache")
-
-                            # Verify file was written
-                            mock_file.assert_called()
-                            # Verify progress callback was called
-                            assert len(progress_calls) > 0, "Progress callback not called"
-
     def test_download_whisper_model_cancelled(self):
         """Test Whisper download cancellation."""
         # Verify the cancelled flag exists and can be set
@@ -584,7 +555,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = True
         manager.state = RecognitionState.IDLE
 
-        manager.start_recognition()
+        assert manager.start_recognition() is True
 
         assert manager.state == RecognitionState.LISTENING
         assert manager.should_record is True
@@ -606,7 +577,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = False
         manager.state = RecognitionState.IDLE
 
-        manager.start_recognition()
+        assert manager.start_recognition() is False
 
         # Should stay idle if model not ready
         assert manager.state == RecognitionState.IDLE
@@ -627,7 +598,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager._model_initialized = True
         manager.state = RecognitionState.LISTENING
 
-        manager.start_recognition()
+        assert manager.start_recognition() is False
 
         # Should still be listening (no-op)
         assert manager.state == RecognitionState.LISTENING

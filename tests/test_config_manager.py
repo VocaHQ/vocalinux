@@ -485,6 +485,15 @@ class TestConfigManager(unittest.TestCase):
         config_manager = ConfigManager()
         self.assertTrue(config_manager.is_sound_effects_enabled())
 
+    def test_sound_effects_tone_defaults_to_voca(self):
+        """New installs and missing tone keys resolve to voca."""
+        from vocalinux.ui.config_manager import DEFAULT_SOUND_EFFECT_TONE
+
+        config_manager = ConfigManager()
+        self.assertEqual(DEFAULT_SOUND_EFFECT_TONE, "voca")
+        self.assertEqual(config_manager.get_sound_effects_tone(), "voca")
+        self.assertEqual(config_manager.config["sound_effects"]["tone"], "voca")
+
     def test_missing_tray_warning_enabled_by_default(self):
         """Test that the missing tray support warning is enabled by default."""
         config_manager = ConfigManager()
@@ -604,13 +613,23 @@ class TestTypedAccessors(unittest.TestCase):
         self.assertEqual(advanced["whispercpp_n_threads"], 0)
 
     def test_whispercpp_advanced_persistence(self):
-        self.config_manager.set("advanced", "whispercpp_temperature", 0.5)
-        self.config_manager.set("advanced", "whispercpp_no_timestamps", False)
-        self.config_manager.set("advanced", "whispercpp_initial_prompt", "Meeting notes")
-        self.config_manager.save_config()
+        # This class skips ConfigManager.__init__, so unlike TestConfigManager
+        # nothing has redirected CONFIG_FILE: without the patches below this
+        # save_config() overwrites the developer's real ~/.config/vocalinux/
+        # config.json with the synthetic fixture from setUp.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_file = os.path.join(temp_dir, "config.json")
+            with (
+                patch("vocalinux.ui.config_manager.CONFIG_DIR", temp_dir),
+                patch("vocalinux.ui.config_manager.CONFIG_FILE", temp_file),
+            ):
+                self.config_manager.set("advanced", "whispercpp_temperature", 0.5)
+                self.config_manager.set("advanced", "whispercpp_no_timestamps", False)
+                self.config_manager.set("advanced", "whispercpp_initial_prompt", "Meeting notes")
+                self.config_manager.save_config()
 
-        new_manager = ConfigManager()
-        advanced = new_manager.get_settings().get("advanced", {})
-        self.assertEqual(advanced["whispercpp_temperature"], 0.5)
-        self.assertFalse(advanced["whispercpp_no_timestamps"])
-        self.assertEqual(advanced["whispercpp_initial_prompt"], "Meeting notes")
+                new_manager = ConfigManager()
+                advanced = new_manager.get_settings().get("advanced", {})
+                self.assertEqual(advanced["whispercpp_temperature"], 0.5)
+                self.assertFalse(advanced["whispercpp_no_timestamps"])
+                self.assertEqual(advanced["whispercpp_initial_prompt"], "Meeting notes")

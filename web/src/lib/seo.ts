@@ -3,8 +3,14 @@ import { type Metadata } from "next";
 export const SITE_URL = "https://vocalinux.com";
 export const SITE_NAME = "Vocalinux";
 export const DEFAULT_OG_IMAGE_PATH = "/og-image.png";
-export const DEFAULT_OG_IMAGE_ALT = "Vocalinux - Voice Dictation for Linux";
-export const TWITTER_HANDLE = "@jatinkrmalik";
+export const DEFAULT_OG_IMAGE_ALT =
+  "Dictate locally. In any app. Offline voice dictation for Linux.";
+export const TWITTER_HANDLE = "@vocahq";
+export const VOCAHQ_URL = "https://vocahq.com";
+export const GITHUB_REPO_URL = "https://github.com/VocaHQ/vocalinux";
+export const X_URL = "https://x.com/vocahq";
+export const DISCORD_URL = "https://discord.gg/t6muquAJbm";
+export const EMAIL_URL = "mailto:hello@vocahq.com";
 
 interface PageMetadataOptions {
   title: string;

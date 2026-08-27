@@ -55,16 +55,16 @@ export const VocalinuxLogo: React.FC<{
   priority?: boolean;
 }> = ({ className = "", width = 32, height = 32, priority = false }) => {
   return (
-    <picture className={className}>
-      <source srcSet="/vocalinux.webp" type="image/webp" />
-      <Image
-        src="/vocalinux.png"
-        alt="Vocalinux"
-        width={width}
-        height={height}
-        className={className}
-        priority={priority}
-      />
-    </picture>
+    // SVG lockup; next/image is for raster.
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src="/brand/vocalinux-mark-circle.svg"
+      alt="Vocalinux"
+      width={width}
+      height={height}
+      className={className}
+      decoding="async"
+      loading={priority ? "eager" : "lazy"}
+    />
   );
 };

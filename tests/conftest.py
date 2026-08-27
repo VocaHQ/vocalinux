@@ -3,9 +3,12 @@ Configuration file for pytest.
 This file makes sure that the 'src' module can be imported in tests.
 """
 
+import atexit
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -13,6 +16,33 @@ import pytest
 
 # Set PYTEST_RUNNING early so audio_feedback module can detect it
 os.environ["PYTEST_RUNNING"] = "1"
+
+# Isolate the whole test process from the developer's real desktop session
+# and Vocalinux state, mirroring a fresh CI runner:
+#   * XDG base dirs point at a throwaway directory, so locally downloaded
+#     models (~/.local/share/vocalinux/models) and the real config file
+#     never leak into tests. This must happen at conftest import time:
+#     vocalinux modules freeze paths like MODELS_DIR at first import during
+#     collection, before any fixture could run. The directory is shared for
+#     the whole session on purpose — some tests rely on directories that
+#     earlier tests created, exactly as they do on CI with the runner's HOME.
+#   * Desktop session variables are cleared: a developer's GNOME/Wayland
+#     session flips IBus/keyboard code paths (issue #478) that CI never sees.
+# Tests that need specific values set them via patch.dict/monkeypatch, which
+# layer on top of this.
+_XDG_ISOLATION_DIR = tempfile.mkdtemp(prefix="vocalinux-pytest-xdg-")
+os.environ["XDG_DATA_HOME"] = os.path.join(_XDG_ISOLATION_DIR, "data")
+os.environ["XDG_CONFIG_HOME"] = os.path.join(_XDG_ISOLATION_DIR, "config")
+os.environ["XDG_CACHE_HOME"] = os.path.join(_XDG_ISOLATION_DIR, "cache")
+for _var in (
+    "XDG_CURRENT_DESKTOP",
+    "XDG_SESSION_TYPE",
+    "XDG_SESSION_DESKTOP",
+    "DESKTOP_SESSION",
+    "WAYLAND_DISPLAY",
+):
+    os.environ.pop(_var, None)
+atexit.register(shutil.rmtree, _XDG_ISOLATION_DIR, ignore_errors=True)
 
 # Several legacy tests replace sys.modules["numpy"] with MagicMock at module
 # import time. Preserve the real module once so newer tests can restore it
@@ -23,6 +53,15 @@ except ImportError:
     _real_numpy = None
 else:
     sys._vocalinux_real_numpy = _real_numpy
+
+# And the same for zipfile: test_recognition_manager.py and
+# test_recognition_manager_download_buffer.py assign a MagicMock to
+# sys.modules["zipfile"] at import time and never put it back, so any later test
+# that extracts a real archive gets a silent no-op. Keep the genuine module
+# reachable for the ones that need it.
+import zipfile as _real_zipfile  # noqa: E402
+
+sys._vocalinux_real_zipfile = _real_zipfile
 
 # Prevent specific known-blocking daemon threads from starting during tests.
 # Source code in ibus_engine.py and evdev_backend.py spawns daemon threads

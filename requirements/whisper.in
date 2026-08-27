@@ -1,0 +1,14 @@
+# OpenAI Whisper engine, CPU-only wheels from the PyTorch index.
+#
+# torch/torchaudio are pinned to +cpu local-version builds so the
+# CUDA-bundled PyPI wheels can never match, regardless of index order.
+# Bump these pins together in step with each other when regenerating
+# (`just lock`).
+#
+# The extra-index line below propagates into whisper.txt so plain
+# `pip install -r requirements/whisper.txt` resolves against the CPU index.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+openai-whisper>=20231117
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu

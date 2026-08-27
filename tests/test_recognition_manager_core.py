@@ -474,7 +474,7 @@ class TestStartStopRecognition(unittest.TestCase):
         """Test successful recognition start."""
         manager = SpeechRecognitionManager(engine="vosk")
 
-        manager.start_recognition()
+        self.assertTrue(manager.start_recognition())
 
         self.assertEqual(manager.state, RecognitionState.LISTENING)
         self.assertTrue(manager.should_record)
@@ -492,7 +492,7 @@ class TestStartStopRecognition(unittest.TestCase):
         # Second start should not create new threads
         manager.audio_thread = self.threadInstance
         manager.recognition_thread = self.threadInstance
-        manager.start_recognition()
+        self.assertFalse(manager.start_recognition())
 
         # No new threads created
         self.threadMock.assert_not_called()

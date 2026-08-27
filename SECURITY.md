@@ -4,7 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.15.x  | :white_check_mark: |
+| 0.16.x  | :white_check_mark: |
+| 0.15.x  | :x:                |
 | 0.14.x  | :x:                |
 | 0.13.x  | :x:                |
 | 0.12.x  | :x:                |
@@ -97,4 +98,4 @@ pip install --upgrade -e .
 
 For security concerns: jatinkrmalik@gmail.com
 
-For general issues: https://github.com/jatinkrmalik/vocalinux/issues
+For general issues: https://github.com/VocaHQ/vocalinux/issues

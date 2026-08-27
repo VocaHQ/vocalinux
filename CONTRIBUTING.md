@@ -23,15 +23,15 @@ We are committed to providing a welcoming and inclusive environment. Please be r
 
 ### Ways to Contribute
 
-- 🐛 **Report bugs** - Found a bug? [Open an issue](https://github.com/jatinkrmalik/vocalinux/issues/new)
-- 💡 **Suggest features** - Have an idea? [Start a discussion](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 **Report bugs** - Found a bug? [Open an issue](https://github.com/VocaHQ/vocalinux/issues/new)
+- 💡 **Suggest features** - Have an idea? [Start a discussion](https://github.com/VocaHQ/vocalinux/discussions)
 - 📖 **Improve documentation** - Docs can always be better!
-- 🔧 **Fix bugs** - Check the [issues](https://github.com/jatinkrmalik/vocalinux/issues) for things to work on
+- 🔧 **Fix bugs** - Check the [issues](https://github.com/VocaHQ/vocalinux/issues) for things to work on
 - ✨ **Add features** - Pick up a feature from the roadmap
 
 ### Good First Issues
 
-New to the project? Look for issues labeled [`good first issue`](https://github.com/jatinkrmalik/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+New to the project? Look for issues labeled [`good first issue`](https://github.com/VocaHQ/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
 
 ## Development Setup
 
@@ -50,8 +50,15 @@ This will:
 1. Install all system dependencies
 2. Create a Python virtual environment
 3. Install the package in editable mode (`-e`)
-4. Install all dev dependencies (pytest, black, isort, flake8)
+4. Install the dev dependencies (pytest and friends; the linters live in the
+   `lint` dependency group, which `just deps` installs)
 5. Run the test suite automatically
+
+> **Note:** `install.sh` always builds `venv/` from the system Python
+> (`/usr/bin/python3`, or `$SYSTEM_PYTHON`), because distro PyGObject is only
+> importable from that interpreter. It ignores an activated virtualenv, so you can
+> run it from a shell that still has uv's `.venv` active. See
+> [The two environments](#the-two-environments).
 
 ### Option 2: Manual Setup
 
@@ -63,13 +70,15 @@ This will:
 
 2. **Install system dependencies:**
    ```bash
-   # Ubuntu
+   # Ubuntu 24.04+ (`just deps` pip-builds PyGObject 3.56 from the lock)
    sudo apt update
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository1.0-dev \
+       gir1.2-gtk-3.0 libgirepository-2.0-dev libgirepository1.0-dev \
        python3-dev portaudio19-dev python3-venv xdotool
 
-   # Debian 11/12
+   # Debian 12 cannot pip-build PyGObject 3.56 (glib 2.74). Use Option 1
+   # (`./install.sh --dev`) for tests and running from source, then
+   # `venv/bin/pytest` / `venv/bin/python -m vocalinux.main --debug`.
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
        gir1.2-gtk-3.0 libgirepository1.0-dev libcairo2-dev \
        python3-dev portaudio19-dev python3-venv xdotool
@@ -82,29 +91,47 @@ This will:
    # For appindicator (system tray icon):
    # On older Ubuntu:
    sudo apt install -y gir1.2-appindicator3-0.1
-   # On Debian 11+ or newer Ubuntu:
+   # On Debian 12+ or newer Ubuntu:
    sudo apt install -y gir1.2-ayatanaappindicator3-0.1
    ```
 
-3. **Set up Python environment:**
+3. **Set up the Python environment:**
    ```bash
-   python3 -m venv venv --system-site-packages
-   source venv/bin/activate
-   pip install --upgrade pip setuptools wheel
-   pip install -e ".[dev]"
+   # Requires uv (https://docs.astral.sh/uv/); creates .venv/ with dev + vad extras
+   just deps
    ```
+   `just deps` compiles PyGObject from the lock into `.venv`. That needs
+   `libgirepository-2.0-dev` (Ubuntu 24.04+). Debian 12 cannot build it; use
+   Option 1 and the installer `venv/` instead.
 
 4. **Run the application:**
    ```bash
-   source venv/bin/activate
-   vocalinux --debug
+   just run-source-debug
    ```
 
 5. **(Optional) Install pre-commit hooks:**
    ```bash
-   pre-commit install
+   uv run --no-sync pre-commit install
    ```
    > **Note:** Pre-commit hooks are optional. The CI pipeline runs the same checks, so you can skip this if you prefer faster local commits.
+
+### The two environments
+
+The repository uses two virtual environments on purpose — don't merge them:
+
+| Directory | Created by | Python | Used for |
+|-----------|-----------|--------|----------|
+| `.venv/`  | `just deps` (uv) | pinned in `.python-version` | dev tooling: pytest, black, mypy, `just` recipes |
+| `venv/`   | `./install.sh` | the system Python | running the installed app, which needs distro PyGObject |
+
+`gi` (PyGObject) is the reason. `just deps` / `uv sync` build it from source into
+`.venv/`, which works wherever glib 2.80+ and `libgirepository-2.0-dev` are
+present (Arch, Fedora, Ubuntu 24.04 with that package, CI). Debian 12 cannot
+build PyGObject 3.56 at all; use `./install.sh --dev` and `venv/bin/pytest`.
+`install.sh` never reuses `.venv/`: it builds `venv/` from the system Python with
+`--system-site-packages`, and rebuilds it if another interpreter created it. Set
+`SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh` on systems that ship several
+system interpreters.
 
 ## Making Changes
 
@@ -136,12 +163,11 @@ We use automated tools to ensure consistent code style:
 - **flake8** - Linting
 
 ```bash
-# Format your code
-black src/ tests/
-isort src/ tests/
+# Format your code (black + isort)
+just format
 
-# Check for issues
-flake8 src/ tests/
+# Check for issues (flake8 + black + isort, as CI runs them)
+just lint
 ```
 
 Pre-commit hooks will run these automatically before each commit.
@@ -187,20 +213,14 @@ vocalinux/
 ### Running Tests
 
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
 # Run all tests
-pytest
+just test
 
 # Run with coverage
-pytest --cov=src --cov-report=html
+just test-cov
 
 # Run specific test file
-pytest tests/test_command_processor.py
-
-# Run with verbose output
-pytest -v
+uv run --extra dev --extra vad --group lint pytest tests/test_command_processor.py
 ```
 
 ### Writing Tests
@@ -257,7 +277,7 @@ The test server supports both API formats:
 ### Before Submitting
 
 - [ ] Code follows the style guidelines
-- [ ] Tests pass locally (`pytest`)
+- [ ] Tests pass locally (`just test`)
 - [ ] Pre-commit hooks pass
 - [ ] Documentation is updated (if needed)
 - [ ] Commit messages are clear and descriptive
@@ -322,14 +342,15 @@ We follow [Semantic Versioning](https://semver.org/):
 
 ### Getting Help
 
-- 💬 [GitHub Discussions](https://github.com/jatinkrmalik/vocalinux/discussions) - Ask questions
-- 🐛 [GitHub Issues](https://github.com/jatinkrmalik/vocalinux/issues) - Report bugs
+- 💬 [Discord](https://discord.gg/t6muquAJbm) — fastest place to talk with maintainers and other contributors
+- 💬 [GitHub Discussions](https://github.com/VocaHQ/vocalinux/discussions) - Ask questions
+- 🐛 [GitHub Issues](https://github.com/VocaHQ/vocalinux/issues) - Report bugs
 
 ### Stay Connected
 
 - ⭐ Star the repository to show support
 - 👀 Watch for updates
-- 🐦 Follow [@jatinkrmalik](https://twitter.com/jatinkrmalik) on Twitter
+- 🐦 Follow [@vocahq](https://x.com/vocahq) on X
 
 ## License
 
@@ -337,7 +358,7 @@ Contributions are licensed under the [GNU Affero General Public License v3.0](LI
 (AGPL-3.0), matching the other [VocaHQ](https://github.com/VocaHQ) distribution
 projects ([VocaMac](https://github.com/VocaHQ/vocamac),
 [VocaPhone](https://github.com/VocaHQ/vocaphone),
-[VocaServer](https://github.com/VocaHQ/vocaserver)). By opening a pull request, you
+[VocaGateway](https://github.com/VocaHQ/vocagateway)). By opening a pull request, you
 agree that your contribution may be distributed under that license.
 
 ---

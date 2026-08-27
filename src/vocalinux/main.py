@@ -186,7 +186,7 @@ def check_dependencies():
             logger.error("")
             logger.error("For the best experience, use the recommended installer:")
             logger.error(
-                "  curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash"
+                "  curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash"
             )
         return False
 

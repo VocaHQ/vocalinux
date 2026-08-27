@@ -1,166 +1,162 @@
 ---
 name: Vocalinux website
-description: Offline Linux voice dictation marketing site — workstation craft, not SaaS chrome
+description: Linux voice dictation marketing site in the Voca family workbench language
 colors:
-  ink: "#09090b"
-  paper: "#ffffff"
-  paper-raised: "#f4f4f5"
-  surface-muted: "#f4f4f5"
-  primary: "#1a7f4e"
-  primary-deep: "#14663e"
-  primary-soft: "#ecfdf3"
-  terminal: "#0a0a0c"
-  terminal-fg: "#6ee7a8"
-  muted: "#52525b"
-  border: "#e4e4e7"
-  status-no: "#c45c5c"
-  status-no-dark: "#e08b8b"
-  dark-bg: "#0c0c0e"
-  dark-raised: "#16161a"
-  dark-muted: "#a1a1aa"
+  paper: "#f4f1e8"
+  paper-deep: "#ebe5d8"
+  paper-bright: "#fffdf7"
+  ink: "#14231c"
+  muted-copy: "#58625c"
+  faint: "#5f6861"
+  line: "#c9c8bd"
+  brand: "#0f6b57"
+  brand-dark: "#0b493d"
+  brand-soft: "#cfe9dc"
+  brand-softer: "#e5f2eb"
+  dark-ink: "#0b1a15"
+  sun: "#e9b949"
+  red: "#de6a57"
+  terminal: "#0b1a15"
+  terminal-fg: "#cfe9dc"
 typography:
-  display:
-    fontFamily: "var(--font-display), ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(2.25rem, 5vw, 3.75rem)"
-    fontWeight: 600
-    lineHeight: 1.08
-    letterSpacing: "-0.03em"
-  headline:
-    fontFamily: "var(--font-display), ui-sans-serif, system-ui, sans-serif"
-    fontSize: "clamp(1.75rem, 3vw, 2.5rem)"
-    fontWeight: 600
-    lineHeight: 1.15
-    letterSpacing: "-0.025em"
-  body:
-    fontFamily: "var(--font-body), ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.0625rem"
-    fontWeight: 400
-    lineHeight: 1.65
-  label:
-    fontFamily: "var(--font-body), ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.8125rem"
-    fontWeight: 600
-    lineHeight: 1.4
-    letterSpacing: "0.02em"
-  mono:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
-    fontSize: "0.875rem"
+  display: '"Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif'
+  body: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
+  mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
 rounded:
-  sm: "6px"
-  md: "10px"
-  lg: "14px"
+  sm: "0.45rem"
+  md: "1rem"
+  lg: "1.4rem"
 spacing:
-  section-y: "5rem"
-  gutter: "1.5rem"
-  content-max: "72rem"
+  shell: "min(1180px, calc(100% - 2rem))"
+  section-y: "5.5rem"
 ---
 
 # Design system: vocalinux.com
 
 ## Overview
 
-**Creative north star: "The Linux desk utility"**
+**Creative north star: the Linux desk in the Voca family**
 
-Pure white / near-black iron surfaces, committed emerald, real app screenshots as proof, full-bleed install strip, asymmetric home hero. Not generic AI SaaS (purple mesh, gradient text, icon-card grids, browser-fake demos).
+Vocalinux.com is a Voca product site. It should feel related to VocaHQ, VocaMac, VocaPhone, and VocaGateway before anyone reads the logo: warm paper, deep green ink, one teal accent, editorial type, flat surfaces, and real product proof.
 
-Home is a persuade surface: first viewport shows product + screenshot; conversion lives in the install strip; then desktop proof. Child pages share the same shell and tokens via `SeoSubpageShell`.
+The Linux-specific job is to show local desktop dictation with distribution and display-server truth. Pair a GTK-style window (not macOS traffic lights) with a terminal. Explain the user outcome before the install command.
 
-**Key characteristics**
-- Pure white / zinc iron surfaces (not cream, not purple)
-- Display (Bricolage Grotesque) + body (Source Sans 3); mono for install only
-- Real `public/screenshots/` on the home feature section
-- Full-bleed dark install strip as primary conversion
-- Feature rail + dense engine list instead of rainbow icon cards
+Child pages share the same shell, tokens, and paper canvas. Paper is the only
+marketing theme. There is no site-wide dark mode. The screenshots gallery is
+the exception: a page-local Light/Dark flip shows the captured GTK shots in
+both appearances, defaulting to `prefers-color-scheme` until the visitor
+overrides it for that tab.
 
 ## Colors
 
-Committed emerald on pure iron neutrals.
+Warm paper with one product teal. No second chromatic brand color.
 
-### Primary
-- **Signal green** (`#1a7f4e` light / `#50c878` dark): buttons, focus, success marks, key links
-- **Deep canopy** (`#14663e`): hover/pressed primary
+### Surfaces
+- **Paper** `#f4f1e8`: page canvas
+- **Deep paper** `#ebe5d8`: recessed bands (install, engines)
+- **Bright paper** `#fffdf7`: windows and cards
+- **Dark ink** `#0b1a15`: panel bar, terminal, optional dark band
 
-### Neutral
-- **Ink** (`#09090b` / `#fafafa` dark): primary text
-- **Iron white** (`#ffffff`): page background (light)
-- **Surface** (`#f4f4f5` / `#16161a`): elevated panels
-- **Muted** (`#52525b` / `#a1a1aa`): secondary text
-- **Seam** (`#e4e4e7` / `#27272a`): borders
-- **Terminal night** (`#0a0a0c`) / **Terminal leaf** (`#6ee7a8`): install command surfaces
+### Ink
+- **Ink** `#14231c`: headings and strong borders
+- **Muted copy** `#58625c`: body
+- **Faint** `#5f6861`: metadata
+- **Line** `#c9c8bd`: quiet borders
+- **Line dark** `#9ea59f`: window outlines
 
-### Status (comparison tables)
-- **Yes:** primary emerald
-- **No:** soft rose `#c45c5c` light / `#e08b8b` dark (distinct without form-error noise)
+### Accent
+- **Brand teal** `#0f6b57`: primary buttons, links, live marks
+- **Dark teal** `#0b493d`: hover / pressed
+- **Mint** `#cfe9dc` / **mint soft** `#e5f2eb`: tags and chips
+
+### Annotations only
+- **Sun** `#e9b949`: focus rings
+- **Red** `#de6a57`: recording dot, never as a brand fill
 
 ### Named rules
-**The one signal rule.** Emerald is the only chromatic accent on marketing pages (except status-no rose on comparison marks). No purple, cyan glow pairs, multi-colored metric chips, or rainbow icon tiles.
+**The family paper rule.** Backgrounds stay warm paper, with dark ink only for the tray bar, terminal, and ribbon. Not zinc white, not a second site-wide dark theme, not purple mesh.
 
-**The iron surface rule.** Backgrounds stay pure white or near-black iron. Never warm cream/beige as the default, and never purple-to-blue gradients.
+**The one signal rule.** Teal is the only chromatic accent on marketing pages. Yellow and red are physical details (focus, recording), not competing brands.
+
+**The no-gradient rule.** Solid fills only. No linear, radial, or conic gradients.
 
 ## Typography
 
-**Display:** Bricolage Grotesque  
-**Body:** Source Sans 3  
-**Mono:** system UI monospace for install commands only
+System-first, same stacks as VocaHQ / VocaMac.
 
-No Geist/Inter as the whole-page face.
+- **Display:** Avenir Next / Helvetica Neue / Segoe UI / Arial
+- **Body:** system UI sans
+- **Mono:** system UI monospace for commands, tags, and metadata
+
+No remote webfonts. No Geist, Inter, or Bricolage as the page face.
 
 ### Hierarchy
-- **Display** (600, clamp 2.25–3.75rem): home hero
-- **Headline** (600, clamp 1.75–2.5rem): section titles
-- **Title** (600, ~1.125rem): card/row titles
-- **Body** (400, ~17px, 1.65 lh, max ~70ch)
-- **Label** (600, ~0.8125rem): nav, meta; mono uppercase only for short kickers
+- **Hero display:** clamp ~3.7–7.4rem, weight ~780, tracking -0.075em, line-height ~0.92
+- **Section title:** clamp ~2.2–4.7rem, tracking -0.065em
+- **Body:** 16–18px, line-height ~1.65. Reflow with the shell; do not pretty-wrap or cap titles at 20ch
+- **Mono tags:** ~0.7rem, used sparingly
 
-### Named rules
-**The no costume mono rule.** Monospace is for shell commands, paths, and config keys, not marketing labels.
+Accent words in a headline use the same family, `font-style: normal`, brand color. Do not mix a second family into a heading.
 
 ## Layout
 
-- Content max width ~72rem
-- Section vertical rhythm ~4–6rem; more space above a heading than below it
-- Home first viewport: asymmetric offer + screenshot when wide; stacked on small screens
-- Install strip full-bleed dark band
-- Features: settings shot paired with a stretched feature rail (matched heights)
-- Child pages: breadcrumbs + content in `max-w-6xl`, shared shell chrome
+- Shell: `min(1180px, calc(100% - 2rem))`
+- Sticky paper header, ~70px, one line of nav on desktop
+- Home first viewport: split offer + Linux workbench when wide; stacked on small screens
+- Section padding ~5.5–9rem desktop, ~4–6rem mobile
+- Alternate paper / deep paper for rhythm
+- Child pages: breadcrumbs + content in the same shell
 
 ## Elevation and shapes
 
-Flat by default. Soft shadows only on terminal / primary elevated panels, not hairline + wide glow together.
+Flat fills, 1px borders, paper-window shadows. Small rotations only on decorative notes, never on long copy or controls.
 
-- Panels and cards: 6–14px radius (use 12px as the common surface radius)
-- Pills only for small controls (Install nav chip, default engine badge)
+- Controls: 0.45rem radius
+- Windows: ~10–14px radius
+- Pills only for tiny tags (engine badge, section tag)
 
 ## Components
 
 ### Buttons
-- Primary: solid signal green, white text, full-pill on marketing CTAs
-- Secondary/ghost: border + background, no scale-bounce hover
-- Focus: 2px ring in primary
+- Primary: brand teal, paper-bright text, 44px min height
+- Homepage / closing CTA: "Install Vocalinux", jumps to `#install`
+- Secondary: transparent with a 3:1 control outline
+- Hover: 2px lift, no bounce scale as the only affordance
+- Focus: 3px sun outline, 3px offset
 
-### Feature rail
-- Single bordered panel, divided rows, link affordance on the row
-- No oversized icon tiles stacked above headings
+### Linux window
+- GTK-style headerbar: title, then window controls on the **right**
+- Grey control circles, not red/yellow/green traffic lights
+- Bright paper body, dark ink panel bar above (tray analogue)
 
-### Terminal panel
-- Near-black surface, leaf green command text, copy in chrome
+### Terminal
+- Dark ink surface, mint command text, copy in the chrome
+- GTK headerbar: copy on the left, title centered, grey window controls on the **right**
+- Prompt is `user@linux:~$` with colored user, host, and path, not a Mac `$`
 - Long URLs wrap (`break-all` / `overflow-wrap`) so mobile never overflows
 
 ### Navigation
-- Fixed translucent bar, seam border
-- Home: simple links + Install pill
-- Child: category dropdowns + Install pill + theme toggle
+- Sticky paper bar, mark + name, 3–5 text links, GitHub stars on desktop
+- Mobile menu keeps Install Vocalinux as the conversion action
+- Real mobile disclosure with `aria-expanded`
+- Resource-rich footer, not a second mega-menu in the header
+
+### Screenshot gallery
+- Paper chrome stays paper; do not put `html.dark` on this page
+- Light/Dark is a sliding switch over stacked light and dark PNG pairs
+- Default from the browser color scheme; `sessionStorage` holds a tab override
 
 ## Do's and don'ts
 
 ### Do
-- Lead with install and real product proof (screenshots)
+- Lead with the dictation outcome, then the install command
+- Use real screenshots and a faithful Linux window, not a fake SaaS dashboard
 - Keep product claims accurate (offline local engines; remote only when configured)
-- Keep marketing copy short and specific
+- Honor `prefers-reduced-motion`
 
 ### Don't
-- Gradient text, animated mesh/orb backgrounds, or cyan+green dual glows
-- Repeated icon-in-rounded-square feature cards as the page structure
+- CSS gradients, gradient text, mesh/orbs, or glass panels
+- macOS traffic-light chrome on Linux surfaces
 - Tracked uppercase eyebrows on every section
-- Scatter identical fade-up motion on every block
-- Invent metrics, testimonials, or "blazing" claims
+- Invent metrics, testimonials, or "AI-powered" claims
+- Recolor the Vocalinux mark

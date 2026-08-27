@@ -26,7 +26,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install system dependencies
@@ -49,7 +49,14 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc \
+            spirv-headers \
+            spirv-tools
 
       - name: Install build dependencies
         run: |
@@ -97,6 +104,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (x86_64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ steps.version.outputs.version }}" dist
           ls -la dist/*.AppImage
@@ -184,7 +193,7 @@ jobs:
 
           #### Using Install Script
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+          curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
           \`\`\`
 
           #### AppImage (no install, no root)
@@ -204,7 +213,7 @@ jobs:
           | **Version** | ${{ steps.version.outputs.version }} |
           | **Base Version** | ${{ steps.version.outputs.base_version }} |
           | **Build Date** | ${{ steps.version.outputs.date }} |
-          | **Python** | 3.9+ |
+          | **Python** | 3.11+ |
           | **OS** | Linux (X11 & Wayland) |
 
           ---
@@ -221,8 +230,8 @@ jobs:
           ### Links
 
           - [Documentation](https://vocalinux.com)
-          - [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-          - [Other Releases](https://github.com/jatinkrmalik/vocalinux/releases)
+          - [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+          - [Other Releases](https://github.com/VocaHQ/vocalinux/releases)
 
           ---
 
@@ -275,7 +284,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
           cache: 'pip'
 
       - name: Install system dependencies
@@ -298,7 +307,14 @@ jobs:
             gir1.2-rsvg-2.0 \
             librsvg2-common \
             libdbusmenu-gtk3-4 \
-            libnotify4
+            libnotify4 \
+            cmake \
+            ninja-build \
+            build-essential \
+            libvulkan-dev \
+            glslc \
+            spirv-headers \
+            spirv-tools
 
       - name: Install build dependencies
         run: |
@@ -310,6 +326,8 @@ jobs:
           ls -la dist/
 
       - name: Build AppImage (aarch64)
+        env:
+          VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
           bash packaging/appimage/build.sh dist/*.whl "${{ needs.nightly.outputs.version }}" dist
           ls -la dist/*.AppImage

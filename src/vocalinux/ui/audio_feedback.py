@@ -9,7 +9,12 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import wave
 from pathlib import Path  # noqa: F401
+from typing import Optional
+
+from .config_manager import DEFAULT_SOUND_EFFECT_TONE, normalize_sound_effect_tone
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +64,30 @@ def _is_sound_effects_enabled() -> bool:
         return ConfigManager().is_sound_effects_enabled()
     except Exception:
         return True
+
+
+def _resolved_tone() -> str:
+    try:
+        from .config_manager import ConfigManager
+
+        return ConfigManager().get_sound_effects_tone()
+    except Exception:
+        return DEFAULT_SOUND_EFFECT_TONE
+
+
+def tone_sound_path(tone_id: str, kind: str) -> str:
+    """Return the WAV path for a catalog start/stop cue."""
+    return _resource_manager.get_sound_path(f"{tone_id}_{kind}")
+
+
+def _wav_duration_seconds(sound_path: str) -> float:
+    try:
+        with wave.open(sound_path, "rb") as wav_file:
+            frames = wav_file.getnframes()
+            rate = wav_file.getframerate() or 1
+            return frames / float(rate)
+    except Exception:
+        return 0.35
 
 
 def _get_audio_player():
@@ -166,12 +195,36 @@ def _play_sound_file(sound_path):
 
 
 def play_start_sound():
-    return _play_sound_file(START_SOUND) if _is_sound_effects_enabled() else False
+    if not _is_sound_effects_enabled():
+        return False
+    tone = _resolved_tone()
+    if tone == "off":
+        return False
+    return _play_sound_file(tone_sound_path(tone, "start"))
 
 
 def play_stop_sound():
-    return _play_sound_file(STOP_SOUND) if _is_sound_effects_enabled() else False
+    if not _is_sound_effects_enabled():
+        return False
+    tone = _resolved_tone()
+    if tone == "off":
+        return False
+    return _play_sound_file(tone_sound_path(tone, "stop"))
 
 
 def play_error_sound():
     return _play_sound_file(ERROR_SOUND) if _is_sound_effects_enabled() else False
+
+
+def preview_tone(tone_id: Optional[str] = None) -> bool:
+    """Play start then stop for a catalog tone. Off plays nothing."""
+    tone = normalize_sound_effect_tone(tone_id if tone_id is not None else _resolved_tone())
+    if tone == "off":
+        return False
+    start_path = tone_sound_path(tone, "start")
+    stop_path = tone_sound_path(tone, "stop")
+    if not _play_sound_file(start_path):
+        return False
+    delay = _wav_duration_seconds(start_path) + 0.08
+    threading.Timer(delay, _play_sound_file, args=(stop_path,)).start()
+    return True

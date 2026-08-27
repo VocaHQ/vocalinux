@@ -28,8 +28,8 @@ jobs:
       fail-fast: false
       matrix:
         container:
-          - ubuntu:22.04
           - ubuntu:24.04
+          - ubuntu:26.04
           - debian:12
           - fedora:39
     container:
@@ -268,8 +268,8 @@ jobs:
           echo "Check individual job logs for details."
           echo ""
           echo "Expected behavior:"
-          echo "  ✓ ubuntu:22.04 - Full support expected"
           echo "  ✓ ubuntu:24.04 - Full support expected"
+          echo "  ✓ ubuntu:26.04 - Full support expected"
           echo "  ✓ debian:12 - Full support expected"
           echo "  ⚠ fedora:39 - Good support, minor differences expected"
           echo ""

@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+# >=77 for the SPDX license string below.
+requires = ["setuptools>=77,<82"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,14 +8,15 @@ name = "vocalinux"
 dynamic = ["version"]
 description = "A seamless voice dictation system for Linux"
 readme = "README.md"
-license = {text = "AGPL-3.0"}
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 authors = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
 maintainers = [
     {name = "Jatin K Malik", email = "jatinkrmalik@gmail.com"}
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 keywords = [
     "voice", "dictation", "speech", "recognition",
     "linux", "accessibility", "voice-typing", "speech-to-text"
@@ -23,11 +25,8 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: X11 Applications :: GTK",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -38,22 +37,20 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "vosk>=0.3.45",
-    "pywhispercpp>=1.2.0",
-    "pydub>=0.25.1",
-    "pynput>=1.7.6",
-    "evdev>=1.6.0; sys_platform == 'linux'",
+    "pywhispercpp>=1.5.0,<2",
+    "pynput>=1.7.6,<2",
+    "evdev>=1.6.0,<2; sys_platform == 'linux'",
     "requests>=2.28.0",
-    "tqdm>=4.64.0",
-    "numpy>=1.22.0",
+    "numpy>=1.22.0,<3",
     "pyaudio>=0.2.13",
-    "python-xlib; sys_platform == 'linux'",
     "PyGObject; sys_platform == 'linux'",
-    "psutil>=5.9.0",
-    "lxml>=6.1.0",
+    "psutil>=5.9.0,<8",
 ]
 
 [project.optional-dependencies]
+vosk = [
+    "vosk>=0.3.45",
+]
 whisper = [
     "openai-whisper>=20231117",
     "torch>=2.0.0",
@@ -67,15 +64,22 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-timeout>=2.1.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
     "pre-commit>=3.0.0",
     "mypy>=1.0.0",
 ]
 docs = [
     "sphinx>=6.0.0",
     "sphinx-rtd-theme>=1.2.0",
+]
+
+# Formatters and linters, deliberately outside the `dev` extra: `uv sync
+# --only-group lint` installs them without the project, so the lint job needs
+# no portaudio/girepository headers to build pyaudio and PyGObject.
+[dependency-groups]
+lint = [
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
 ]
 
 [project.scripts]
@@ -85,14 +89,32 @@ vocalinux = "vocalinux.main:main"
 vocalinux-gui = "vocalinux.main:main"
 
 [project.urls]
-Homepage = "https://github.com/jatinkrmalik/vocalinux"
-Documentation = "https://github.com/jatinkrmalik/vocalinux/tree/main/docs"
-Repository = "https://github.com/jatinkrmalik/vocalinux"
-Issues = "https://github.com/jatinkrmalik/vocalinux/issues"
-Changelog = "https://github.com/jatinkrmalik/vocalinux/releases"
+Homepage = "https://github.com/VocaHQ/vocalinux"
+Documentation = "https://github.com/VocaHQ/vocalinux/tree/main/docs"
+Repository = "https://github.com/VocaHQ/vocalinux"
+Issues = "https://github.com/VocaHQ/vocalinux/issues"
+Changelog = "https://github.com/VocaHQ/vocalinux/releases"
+
+[tool.uv]
+# Lock/exports are generated with uv; keep the minor pinned so lockfile
+# upgrades are deliberate (see `just lock`).
+required-version = ">=0.12,<0.13"
 
 [tool.setuptools]
-packages = ["vocalinux", "vocalinux.resources", "vocalinux.speech_recognition", "vocalinux.text_injection", "vocalinux.ui", "vocalinux.ui.keyboard_backends", "vocalinux.utils"]
+# Resource dirs carry no .py files, but setuptools still treats them as packages.
+packages = [
+    "vocalinux",
+    "vocalinux.resources",
+    "vocalinux.resources.icons",
+    "vocalinux.resources.icons.scalable",
+    "vocalinux.resources.sounds",
+    "vocalinux.speech_recognition",
+    "vocalinux.speech_recognition.data",
+    "vocalinux.text_injection",
+    "vocalinux.ui",
+    "vocalinux.ui.keyboard_backends",
+    "vocalinux.utils",
+]
 package-dir = {"" = "src"}
 
 [tool.setuptools.dynamic]
@@ -102,10 +124,11 @@ version = {attr = "vocalinux.version.__version__"}
 "*" = ["*.svg", "*.wav", "*.onnx"]
 "vocalinux" = ["resources/**/*"]
 "vocalinux.speech_recognition" = ["data/*.onnx", "data/LICENSE"]
+"vocalinux.utils" = ["model_checksums.txt"]
 
 [tool.black]
 line-length = 100
-target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']
+target-version = ['py311', 'py312', 'py313', 'py314']
 include = '\.pyi?$'
 exclude = '''
 /(
@@ -163,8 +186,17 @@ exclude_lines = [
 show_missing = true
 
 [tool.mypy]
-python_version = "3.9"
+# Target the supported floor so typechecking covers what requires-python promises.
+python_version = "3.11"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
 exclude = ["venv", "build", "dist", "node_modules"]
+
+# numpy 2.x ships stubs written in 3.12 syntax, which a 3.11 target cannot parse.
+# We only pass arrays through, so skipping the stubs costs little compared to
+# type-checking against the Python version we actually promise to support.
+[[tool.mypy.overrides]]
+module = ["numpy", "numpy.*"]
+follow_imports = "skip"
+follow_imports_for_stubs = true

@@ -2,6 +2,64 @@
 
 This guide explains how to update Vocalinux to the latest version.
 
+## What's New in v0.16.0
+
+0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
+
+### Highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Update checker** | Settings → About checks stable/nightly; tray shows Update Available for newer GitHub releases (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
+
+### New Features
+
+- **In-app update checker**: Settings → About with stable/nightly channels (#631)
+- **Update notifications**: Tray menu Update Available entry and About badge when a newer release exists (#645)
+- **Right Alt push-to-talk default**: New installs only; existing configs are unchanged (#648)
+- **Searchable language combobox**: Filter the long language list by name or code (#672, fixes #652)
+- **Delete unused models**: Remove leftover downloaded speech models from Settings (#671, fixes #650)
+- **Disable missing-tray warning**: Settings toggle for desktops that false-positive the tray check (#628, fixes #620)
+- **Family mic icons**: App icon, tray states, and site favicons use the shared Voca family mic instead of the old Linux rounded-rect (#704)
+- **Family dictation tone picker**: Settings → Audio dropdown (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) plus Preview. New installs and unknown saved names default to Voca. A saved catalog id, including Off, is left alone. Enable remains the master mute; Off skips start/stop only (#707)
+- **About page**: Settings → About groups this app, VocaHQ family sites, and talk-to-us (GitHub issues, Discord, X, email) (#718)
+
+### Bug Fixes
+
+- **IBus**: Require a restorable engine for scoped injection (#623); restore engine after `register_component` teardown (#643, fixes #558); restore XKB layout after scoped injection on X11 (#665, fixes #664)
+- **Injection**: Stop typing `test` during the wtype probe (#627, fixes #622)
+- **whisper.cpp**: Skip unsupported `context_params` on pywhispercpp 1.4 (#626, fixes #625); use CUDA device 0 when CUDA-backed (#636); honor bundled GPU libs and skip software Vulkan devices (#674)
+- **Audio**: Filter unsafe virtual capture devices (#629, fixes #624); open stereo mics at native channel count (#673, fixes #666); catalog tones are the family preview WAVs, not the synthesized #707 files. `generate_sounds.py` does not clobber catalog ids (#708)
+- **Tray / Settings**: Prefer Ayatana AppIndicator on KDE (#621); reuse Settings/Logs windows (#669, fixes #653); separate Close from Test Dictation (#670, fixes #651)
+- **Settings**: Test Dictation no longer reports no speech when recognition never started (missing model / auto-pause / live engine out of sync) (#702)
+- **Clipboard**: Restore after ydotool clipboard-paste (#588); text-only reads and safer overlapping restore (#646)
+- **AppImage**: Ship transitive GI typelibs for non-Debian hosts (also hotfixed onto the v0.15.0 AppImages on 2026-08-03) (#637); pin pywhispercpp to the version `install.sh` declares so a newer PyPI wheel cannot break the Vulkan rebuild (#718)
+- **Installer**: Distro python3-gi is required; pip no longer builds PyGObject from sdist. Unset `XDG_SESSION_TYPE` / `XDG_CURRENT_DESKTOP` no longer crash under `set -u` (#706)
+- **Installer / downloads / tests**: Gate `util-linux-extra` to Ubuntu 24.04+ (#635, fixes #526); report failed model downloads (#690); stop the suite from overwriting real `config.json` (#694)
+
+### Docs / maintenance
+
+- Website screenshot refresh for v0.15 (#630)
+- Prefer Ayatana AppIndicator in Fedora/Arch packaging hints (#638)
+- CUDA device 0 note for dual NVIDIA (#644)
+- Discord and VocaHQ README shields; VocaHQ URL migration; VocaGateway rename (#695, #696, #697)
+- Discord invite and X handle point at VocaHQ (#722)
+- vocalinux.com restyled to the Voca family workbench; Open Graph card uses the flat Tux (#728, #729)
+- Website copy drops the stale 100% offline claim and marks VocaWin as alpha on the site (#717)
+- Codeberg mirror tag force-push (#633)
+- Installer hardening, Justfile in place of Makefile, and uv lockfiles with pinned build inputs. Epic #701 remains open (#700, #705 by @sesav)
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
+
+---
+
 ## What's New in v0.15.0
 
 0.15.0 is a **minor** release on the stable line. It redesigns settings navigation, adds AppImage packages, expands the speech-language catalog (Hungarian and many more), cleans up continuous dictation spacing/capitalization, adds power/GPU controls, and improves Wayland IBus on compositors that ship `ibus-wayland`, on top of the 0.14 packaging work (Flatpak, AUR, configurable hotkeys).
@@ -56,7 +114,7 @@ This guide explains how to update Vocalinux to the latest version.
 - robots.txt no longer blocks indexable pages (#610)
 - Website CI lint / action warning cleanup (#611)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.15.0).
 
 ---
 
@@ -82,7 +140,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **IBus**: Wait for FocusIn before commit on scoped injection. Cold first activation on GNOME Wayland could commit before mutter bound a client context, so the first dictation of a session was dropped while logs still reported success (#533, fixes #523)
 - **Settings UI**: Wrap each notebook tab in a vertical ScrolledWindow so the dialog fits 1080p monitors instead of growing past the screen; forward wheel events from unfocused combos/spins to the tab scroller and drop nested Advanced ScrolledWindow shadows (#538, #541)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.2).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.2).
 
 ---
 
@@ -114,7 +172,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Refreshed v0.14 UI screenshots and website gallery (#521)
 - README Star History and related polish
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.1).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.1).
 
 ---
 
@@ -149,7 +207,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 
 - **Code style** — Removed an outdated long comment about whisper.cpp default thread counts (#505)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.14.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.14.0-beta).
 
 ---
 
@@ -185,7 +243,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Website**: New documentation pages for Remote API, Silero VAD, advanced whisper.cpp settings, and desktop reliability (#470)
 - **CI**: Automatic pull-request labeling by changed files (#473)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.13.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.13.0-beta).
 
 ---
 
@@ -223,7 +281,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Community** — GitHub Sponsors funding configuration added
 - **Behavioral coverage** — CUDA diagnostics and release-facing reliability fixes include targeted tests
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.12.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.12.0-beta).
 
 ---
 
@@ -253,7 +311,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Clarify missing GNOME AppIndicator support on Debian (#385)
 - Redesigned OG image for vocalinux.com (#392)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.10.2-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.10.2-beta).
 
 ---
 
@@ -293,7 +351,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - Bumped `brace-expansion` in development dependencies (#357)
 - Disabled copy-to-clipboard by default in Settings (#370)
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.10.1-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.10.1-beta).
 
 ---
 
@@ -328,7 +386,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Grouped shortcut selector** — Settings dropdown now organises shortcuts by Either/Left/Right side
 - **pipx documentation** — New `DISTRO_COMPATIBILITY.md` section for pipx users
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.9.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.9.0-beta).
 
 ---
 
@@ -363,7 +421,7 @@ See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/
 - **Web SEO Enhancements** — Added 8 additional optimized pages for discoverability
 - **Homepage Refresh** — Updated voice-themed visual polish on the web landing page
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.8.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.8.0-beta).
 
 ---
 
@@ -376,7 +434,7 @@ Vocalinux checks GitHub Releases in the background about every six hours (and sh
 Simply re-run the installation command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 The installer will:
@@ -391,7 +449,7 @@ The installer will:
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.15.0
+git checkout v0.16.0
 ./install.sh
 ```
 
@@ -427,7 +485,7 @@ If your update doesn't go smoothly, try a clean reinstall:
 ./uninstall.sh
 
 # Reinstall fresh
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ### Old Version Still Running
@@ -467,5 +525,5 @@ sudo pacman -S python-gobject gtk3
 ## Need Help?
 
 - 📖 [Installation Guide](INSTALL.md)
-- 🐛 [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)

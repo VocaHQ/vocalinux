@@ -37,10 +37,11 @@ Use this checklist for every release:
 - [ ] Confirm install docs/website mention **AppImage** when this release ships AppImages
 
 ### Testing & Verification
-- [ ] Run `make test` - All tests pass
-- [ ] Run `make lint` - No linting errors
-- [ ] Run `make typecheck` - No type errors
-- [ ] Run `make build` - Package builds successfully
+Install `just` from https://just.systems or the distro package `just`.
+- [ ] Run `just test` - All tests pass
+- [ ] Run `just lint` - No linting errors
+- [ ] Run `just typecheck` - No type errors
+- [ ] Run `just build` - Package builds successfully
 - [ ] Run `npm run build` in `web/` - Website builds successfully
 
 > Note: CI workflows also sync website version metadata from `src/vocalinux/version.py`, but source files should still be updated in-repo during release prep for review clarity.
@@ -130,7 +131,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
 7. `## Thanks` — external PR authors and issue reporters by `@handle`
 8. `## Install / Upgrade` — `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
-9. Footer compare link: `https://github.com/jatinkrmalik/vocalinux/compare/vPREV...vX.Y.Z`
+9. Footer compare link: `https://github.com/VocaHQ/vocalinux/compare/vPREV...vX.Y.Z`
 
 #### Include / exclude
 
@@ -177,7 +178,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 **Install Commands:**
 Keep install commands on `main/install.sh` (installer resolves latest release tag automatically):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 **Release Announcement (lines ~31-34):**
@@ -203,7 +204,7 @@ Add a new "What's New" section at the top:
 - Feature 2
 - Bug fix 1
 
-See the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.5.0-beta).
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.5.0-beta).
 
 ---
 
@@ -258,20 +259,21 @@ Also align `web/package-lock.json` top-level `version` fields with `web/package.
 
 ### Step 5: Verify Everything Works
 
-Run the full verification suite:
+Run the full verification suite. Install `just` from
+https://just.systems or the distro package `just`.
 
 ```bash
 # Run tests
-make test
+just test
 
 # Run linting
-make lint
+just lint
 
 # Run type checking
-make typecheck
+just typecheck
 
 # Build package
-make build
+just build
 
 # Website build
 cd web && npm run build && cd ..
@@ -338,7 +340,7 @@ Key changes since 0.4.1-alpha:
 - Feature 2
 - Bug fix 1
 
-Full changelog: https://github.com/jatinkrmalik/vocalinux/releases"
+Full changelog: https://github.com/VocaHQ/vocalinux/releases"
 
 # Push tag
 git push origin v0.5.0-beta
@@ -349,12 +351,14 @@ git push origin v0.5.0-beta
 After pushing the tag, the GitHub Actions workflow will automatically:
 
 1. Build the Python package (wheel and sdist)
-2. Create a GitHub Release with auto-generated notes
-3. Publish to PyPI
-4. Deploy the website to vocalinux.com
-5. Mark as pre-release if version contains alpha/beta/rc
+2. Build and attach AppImages for x86_64 and aarch64
+3. Create a GitHub Release with auto-generated notes
+4. Publish to PyPI
+5. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
+6. Deploy the website to vocalinux.com
+7. Mark as pre-release if version contains alpha/beta/rc
 
-Monitor at: https://github.com/jatinkrmalik/vocalinux/actions
+Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 ### Step 9: Post-Release Tasks
 
@@ -409,6 +413,7 @@ git push origin v0.5.1-beta
 | 0.14.1 | 2026-07-17 | Stable | Flatpak packaging, AUR package, layout-aware hotkeys, installer/text-injection fixes |
 | 0.14.2 | 2026-07-17 | Stable | IBus engine launch + FocusIn gate; settings tabs scroll to fit monitor |
 | 0.15.0 | 2026-07-28 | Stable | Searchable settings + sidebar dictation footer, AppImage, expanded languages, dictation polish, auto-pause/keepalive, Vulkan device selection, ibus-wayland, Bluetooth mic + shortcut UI fixes |
+| 0.16.0 | 2026-08-23 | Stable | Update checker + tray notify, Right Alt PTT default (new installs), searchable language list, delete unused models, Voca tone picker (family preview WAVs), About page, AGPL-3.0, family mic icons, installer/just/uv pinning, Test Dictation missing-model message, IBus/audio/clipboard/GPU/AppImage reliability, vocalinux.com family workbench restyle |
 
 ## Questions?
 

@@ -15,14 +15,28 @@
 # bundled, same runtime prerequisite as the PyPI install path documented
 # in docs/INSTALL.md. Add bundling if users hit missing-binary complaints.
 #
-# GPU note: the pip pywhispercpp wheel is CPU-only. Vulkan/CUDA rebuilds
-# stay on install.sh for now; the AppImage logs when GPU libs are absent.
+# GPU: pip wheels of pywhispercpp are CPU-only. This script rebuilds
+# pywhispercpp from source with GGML_VULKAN=1 when Vulkan headers and a
+# shader compiler are on the build host. The AppImage uses the host Vulkan
+# loader/ICDs at runtime (do not bundle NVIDIA/AMD driver ICDs).
+# Set VOCALINUX_APPIMAGE_REQUIRE_VULKAN=1 in CI so a failed rebuild fails
+# the job instead of shipping a CPU-only image. Set
+# VOCALINUX_APPIMAGE_SKIP_VULKAN=1 to force the CPU wheel.
 set -euo pipefail
 
 WHEEL="$1"
 VERSION="$2"
 OUTDIR="${3:-dist}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# Same pywhispercpp release install.sh pins. Read from there rather than repeated
+# here: unpinned, this build picks up whatever PyPI published today, which is how
+# a 1.5.1 released mid-PR broke the Vulkan rebuild.
+PYWHISPERCPP_VERSION="$(sed -n 's/^PYWHISPERCPP_VERSION="\([^"]*\)"/\1/p' "$REPO_ROOT/install.sh" | head -n1)"
+if [ -z "$PYWHISPERCPP_VERSION" ]; then
+    echo "Could not read PYWHISPERCPP_VERSION from install.sh" >&2
+    exit 1
+fi
 ARCH="$(uname -m)"
 PYTHON="${PYTHON:-python3}"
 
@@ -69,11 +83,15 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$TOOLDIR" "$OUTDIR"
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 
 echo "== Fetching AppImage tooling ($ARCH) =="
-curl -fsSL -o "$TOOLDIR/linuxdeploy" \
+# Default --retry skips TLS RST (curl 35). GitHub continuous AppImages flake that way.
+curl_retry() {
+  curl --retry 5 --retry-all-errors --retry-delay 2 --fail --silent --show-error --location "$@"
+}
+curl_retry -o "$TOOLDIR/linuxdeploy" \
   "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
-curl -fsSL -o "$TOOLDIR/linuxdeploy-plugin-gtk.sh" \
+curl_retry -o "$TOOLDIR/linuxdeploy-plugin-gtk.sh" \
   https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-curl -fsSL -o "$TOOLDIR/appimagetool" \
+curl_retry -o "$TOOLDIR/appimagetool" \
   "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
 chmod +x "$TOOLDIR/linuxdeploy" "$TOOLDIR/linuxdeploy-plugin-gtk.sh" "$TOOLDIR/appimagetool"
 
@@ -95,8 +113,12 @@ rm -rf "$APPDIR/usr/lib/python${PY_VER}/site-packages"
 echo "== Installing Vocalinux + runtime deps into the bundle =="
 # --ignore-installed: pip otherwise treats the builder env's packages as
 # satisfying deps and skips copying vosk/pywhispercpp/etc. into AppDir.
+# pywhispercpp is named explicitly so this resolves to the pinned release rather
+# than the newest inside the wheel's >=1.5.0,<2 range: the Vulkan rebuild below
+# installs the pinned one, and two versions' libggml*.so in one AppDir leave
+# linuxdeploy chasing a dependency that is not there.
 "$PYTHON" -m pip install --no-cache-dir --ignore-installed --prefix "$APPDIR/usr" \
-  "$WHEEL" PyGObject pycairo onnxruntime
+  "$WHEEL" "pywhispercpp==$PYWHISPERCPP_VERSION" PyGObject pycairo onnxruntime
 
 echo "== Adding desktop entry + icon =="
 install -Dm644 "$REPO_ROOT/vocalinux.desktop" "$APPDIR/usr/share/applications/vocalinux.desktop"
@@ -176,6 +198,90 @@ copy_gi_runtime_libs() {
   done
 }
 
+has_vulkan_build_deps() {
+  if [ -f /usr/include/vulkan/vulkan.h ] || pkg-config --exists vulkan 2>/dev/null; then
+    :
+  else
+    return 1
+  fi
+  command -v cmake >/dev/null 2>&1 || return 1
+  command -v g++ >/dev/null 2>&1 || command -v clang++ >/dev/null 2>&1 || return 1
+  command -v glslc >/dev/null 2>&1 || command -v glslangValidator >/dev/null 2>&1 || return 1
+  return 0
+}
+
+remove_appdir_pywhispercpp() {
+  find "$APPDIR/usr" -depth \( \
+    -name 'pywhispercpp' -o \
+    -name 'pywhispercpp.libs' -o \
+    -name 'pywhispercpp-*.dist-info' -o \
+    -name '_pywhispercpp*' \
+  \) -exec rm -rf {} + 2>/dev/null || true
+}
+
+copy_whisper_native_libs_to_usr_lib() {
+  mkdir -p "$APPDIR/usr/lib"
+  local lib
+  while IFS= read -r lib; do
+    [ -n "$lib" ] || continue
+    cp -aL "$lib" "$APPDIR/usr/lib/" 2>/dev/null || cp -a "$lib" "$APPDIR/usr/lib/"
+    echo "  staged $(basename "$lib") -> usr/lib"
+  done < <(find "$APPDIR/usr" \( -name 'libggml*.so*' -o -name 'libwhisper.so*' \) ! -path '*/usr/lib/*' 2>/dev/null || true)
+}
+
+rebuild_pywhispercpp_vulkan() {
+  local require_vulkan="${VOCALINUX_APPIMAGE_REQUIRE_VULKAN:-0}"
+  if [ "${VOCALINUX_APPIMAGE_SKIP_VULKAN:-0}" = "1" ]; then
+    echo "== Skipping pywhispercpp Vulkan rebuild (VOCALINUX_APPIMAGE_SKIP_VULKAN=1) =="
+    return 0
+  fi
+
+  if ! has_vulkan_build_deps; then
+    echo "Vulkan build deps missing (libvulkan-dev, cmake, g++, glslc/glslangValidator, spirv-headers)." >&2
+    if [ "$require_vulkan" = "1" ]; then
+      echo "VOCALINUX_APPIMAGE_REQUIRE_VULKAN=1: refusing to ship a CPU-only AppImage." >&2
+      exit 1
+    fi
+    echo "Warning: AppImage will use the CPU-only pywhispercpp wheel." >&2
+    return 0
+  fi
+
+  echo "== Rebuilding pywhispercpp with Vulkan =="
+  remove_appdir_pywhispercpp
+  local pip_log="$WORKDIR/pywhispercpp-vulkan.log"
+  export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+  # Hosts that default cc/c++ to clang (this Cloud Agent image) fail the
+  # CMAKE C++ compiler test: clang does not search gcc's libstdc++ path.
+  if ! CC="${CC:-gcc}" CXX="${CXX:-g++}" \
+      GGML_VULKAN=1 \
+      CMAKE_ARGS='-DCMAKE_INSTALL_RPATH=$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON' \
+      "$PYTHON" -m pip install --verbose --no-cache-dir --force-reinstall \
+        --no-binary pywhispercpp --ignore-installed --prefix "$APPDIR/usr" \
+        --log "$pip_log" "pywhispercpp==$PYWHISPERCPP_VERSION"; then
+    echo "pywhispercpp Vulkan rebuild failed. Last 80 log lines:" >&2
+    tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
+    if [ "$require_vulkan" = "1" ]; then
+      exit 1
+    fi
+    echo "Warning: continuing with the CPU-only pywhispercpp wheel." >&2
+    return 0
+  fi
+
+  local vk_lib
+  vk_lib="$(find "$APPDIR/usr" -name 'libggml-vulkan.so*' 2>/dev/null | head -1 || true)"
+  if [ -z "$vk_lib" ]; then
+    echo "Vulkan rebuild did not produce libggml-vulkan.so." >&2
+    if [ "$require_vulkan" = "1" ]; then
+      tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
+      exit 1
+    fi
+    echo "Warning: AppImage will use CPU-only pywhispercpp." >&2
+    return 0
+  fi
+  echo "  found $vk_lib"
+  copy_whisper_native_libs_to_usr_lib
+}
+
 echo "== Copying GObject-Introspection typelibs (not handled by linuxdeploy-plugin-gtk) =="
 copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 0
 
@@ -197,6 +303,8 @@ APPRUN
 # to know the exact interpreter minor version at runtime.
 ln -sfn "python${PY_VER}" "$APPDIR/usr/lib/python3"
 chmod +x "$APPDIR/AppRun"
+
+rebuild_pywhispercpp_vulkan
 
 echo "== Running linuxdeploy (resolves the shared-library closure + GTK theming) =="
 export DEPLOY_GTK_VERSION=3

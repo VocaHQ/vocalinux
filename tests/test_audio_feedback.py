@@ -305,28 +305,30 @@ class TestAudioFeedback(unittest.TestCase):
             self.assertFalse(result)
 
     def test_play_start_sound(self):
-        """Test playing start sound."""
+        """Test playing start sound (default tone is voca)."""
         # Import the module first
         import vocalinux.ui.audio_feedback as audio_feedback
 
-        with patch.object(audio_feedback, "_play_sound_file") as mock_play:
-            # Call the function
+        with (
+            patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+            patch.object(audio_feedback, "_resolved_tone", return_value="voca"),
+            patch.object(audio_feedback, "_play_sound_file") as mock_play,
+        ):
             audio_feedback.play_start_sound()
-
-            # Verify _play_sound_file was called with correct path
-            mock_play.assert_called_once_with(audio_feedback.START_SOUND)
+            mock_play.assert_called_once_with(audio_feedback.tone_sound_path("voca", "start"))
 
     def test_play_stop_sound(self):
-        """Test playing stop sound."""
+        """Test playing stop sound (default tone is voca)."""
         # Import the module first
         import vocalinux.ui.audio_feedback as audio_feedback
 
-        with patch.object(audio_feedback, "_play_sound_file") as mock_play:
-            # Call the function
+        with (
+            patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+            patch.object(audio_feedback, "_resolved_tone", return_value="voca"),
+            patch.object(audio_feedback, "_play_sound_file") as mock_play,
+        ):
             audio_feedback.play_stop_sound()
-
-            # Verify _play_sound_file was called with correct path
-            mock_play.assert_called_once_with(audio_feedback.STOP_SOUND)
+            mock_play.assert_called_once_with(audio_feedback.tone_sound_path("voca", "stop"))
 
     def test_play_error_sound(self):
         """Test playing error sound."""
@@ -422,3 +424,116 @@ class TestAudioFeedback(unittest.TestCase):
         ):
             result = audio_feedback._is_sound_effects_enabled()
             self.assertTrue(result)
+
+    def test_missing_or_unknown_tone_uses_voca_not_legacy_pair(self):
+        """Unset or unknown tone ids play voca, not start_recording/stop_recording."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+        from vocalinux.ui.config_manager import (
+            DEFAULT_SOUND_EFFECT_TONE,
+            normalize_sound_effect_tone,
+        )
+
+        self.assertEqual(DEFAULT_SOUND_EFFECT_TONE, "voca")
+        for raw in (None, "", "fifth", "01-linux-glide", "not-a-tone"):
+            self.assertEqual(normalize_sound_effect_tone(raw), "voca")
+
+        with (
+            patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+            patch.object(audio_feedback, "_resolved_tone", return_value="voca"),
+            patch.object(audio_feedback, "_play_sound_file") as mock_play,
+        ):
+            audio_feedback.play_start_sound()
+            audio_feedback.play_stop_sound()
+            played = [call.args[0] for call in mock_play.call_args_list]
+            self.assertTrue(played[0].endswith("voca_start.wav"))
+            self.assertTrue(played[1].endswith("voca_stop.wav"))
+            self.assertFalse(any("start_recording.wav" in path for path in played))
+
+    def test_off_plays_nothing_for_start_stop(self):
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with (
+            patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+            patch.object(audio_feedback, "_resolved_tone", return_value="off"),
+            patch.object(audio_feedback, "_play_sound_file") as mock_play,
+        ):
+            self.assertFalse(audio_feedback.play_start_sound())
+            self.assertFalse(audio_feedback.play_stop_sound())
+            mock_play.assert_not_called()
+
+        with (
+            patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+            patch.object(audio_feedback, "_play_sound_file") as mock_play,
+        ):
+            self.assertTrue(audio_feedback.play_error_sound())
+            mock_play.assert_called_once_with(audio_feedback.ERROR_SOUND)
+
+    def test_each_catalog_id_maps_to_its_pair(self):
+        import vocalinux.ui.audio_feedback as audio_feedback
+        from vocalinux.ui.config_manager import SOUND_EFFECT_TONE_IDS, normalize_sound_effect_tone
+
+        catalog_ids = (
+            "lift",
+            "flick",
+            "ember",
+            "step",
+            "voca",
+            "soft",
+            "chirp",
+            "scale",
+            "drop",
+            "glass",
+            "off",
+        )
+        self.assertEqual(set(catalog_ids), set(SOUND_EFFECT_TONE_IDS))
+        self.assertNotIn("fifth", SOUND_EFFECT_TONE_IDS)
+
+        for tone_id in catalog_ids:
+            self.assertEqual(normalize_sound_effect_tone(tone_id), tone_id)
+            if tone_id == "off":
+                continue
+            start = audio_feedback.tone_sound_path(tone_id, "start")
+            stop = audio_feedback.tone_sound_path(tone_id, "stop")
+            self.assertTrue(os.path.isfile(start), start)
+            self.assertTrue(os.path.isfile(stop), stop)
+            self.assertTrue(start.endswith(f"{tone_id}_start.wav"))
+            self.assertTrue(stop.endswith(f"{tone_id}_stop.wav"))
+
+            with (
+                patch.object(audio_feedback, "_is_sound_effects_enabled", return_value=True),
+                patch.object(audio_feedback, "_resolved_tone", return_value=tone_id),
+                patch.object(audio_feedback, "_play_sound_file") as mock_play,
+            ):
+                audio_feedback.play_start_sound()
+                audio_feedback.play_stop_sound()
+                self.assertEqual(mock_play.call_args_list[0].args[0], start)
+                self.assertEqual(mock_play.call_args_list[1].args[0], stop)
+
+    def test_preview_tone_does_not_crash(self):
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        class ImmediateTimer:
+            def __init__(self, delay, function, args=None, kwargs=None):
+                self.function = function
+                self.args = args or ()
+                self.kwargs = kwargs or {}
+
+            def start(self):
+                self.function(*self.args, **self.kwargs)
+
+        with (
+            patch.object(audio_feedback, "_play_sound_file", return_value=True) as mock_play,
+            patch.object(audio_feedback.threading, "Timer", ImmediateTimer),
+        ):
+            self.assertTrue(audio_feedback.preview_tone("voca"))
+            self.assertEqual(len(mock_play.call_args_list), 2)
+            self.assertTrue(mock_play.call_args_list[0].args[0].endswith("voca_start.wav"))
+            self.assertTrue(mock_play.call_args_list[1].args[0].endswith("voca_stop.wav"))
+
+            mock_play.reset_mock()
+            self.assertFalse(audio_feedback.preview_tone("off"))
+            mock_play.assert_not_called()
+
+            mock_play.reset_mock()
+            self.assertTrue(audio_feedback.preview_tone("not-a-tone"))
+            self.assertTrue(mock_play.call_args_list[0].args[0].endswith("voca_start.wav"))

@@ -533,7 +533,7 @@ class TextInjector:
                 logger.info(
                     "IBus daemon not running. This is normal on some desktop environments "
                     "(e.g., KDE Plasma). Using alternative text injection method. "
-                    "For IBus setup, see: https://github.com/jatinkrmalik/vocalinux/wiki/IBus-Setup"
+                    "For IBus setup, see: https://github.com/VocaHQ/vocalinux/wiki/IBus-Setup"
                 )
             # Some Wayland compositors (COSMIC, Sway, Hyprland, ...) do not deliver
             # IBus commits to native Wayland apps, so IBus would silently drop the

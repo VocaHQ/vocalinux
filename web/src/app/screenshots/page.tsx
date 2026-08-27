@@ -105,7 +105,7 @@ const settingsShots: Screenshot[] = [
 export const metadata: Metadata = buildPageMetadata({
   title: "Vocalinux Screenshots | Linux Voice Dictation UI",
   description:
-    "See Vocalinux in action: system tray, log viewer, and settings pages for speech model, dictation, audio, performance, application, advanced options, and about/updates. Light and dark themes included.",
+    "See Vocalinux in action: system tray, log viewer, and settings pages for speech model, dictation, audio, performance, application, advanced options, and about/updates. Flip between light and dark app shots.",
   path: "/screenshots",
   keywords: [
     "Vocalinux screenshots",
@@ -150,16 +150,15 @@ export default function ScreenshotsPage() {
       <section>
         <p className="border-primary/30 bg-primary/10 mb-4 inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-sm font-medium text-primary">
           <Camera className="h-4 w-4" />
-          v0.15 UI
+          v0.16 UI
         </p>
         <h1 className="mb-5 font-display text-4xl font-semibold tracking-tight sm:text-5xl">
           Vocalinux Screenshots
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
           A look at offline voice dictation on Linux: tray controls, debugging
-          tools, and the searchable sidebar settings UI from v0.15. Toggle the
-          site theme to switch between light and dark app shots. Click any image
-          to expand it and browse the gallery.
+          tools, and the searchable sidebar settings UI from v0.16. Flip light
+          and dark app shots. Click any image to expand it.
         </p>
       </section>
 

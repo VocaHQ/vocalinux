@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 Questions & Discussions
-    url: https://github.com/jatinkrmalik/vocalinux/discussions
+    url: https://github.com/VocaHQ/vocalinux/discussions
     about: Ask questions or discuss ideas in GitHub Discussions
   - name: 📖 Documentation
-    url: https://github.com/jatinkrmalik/vocalinux/tree/main/docs
+    url: https://github.com/VocaHQ/vocalinux/tree/main/docs
     about: Check out the documentation before opening an issue

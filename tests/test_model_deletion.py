@@ -92,23 +92,17 @@ def test_whisper_list_and_delete(tmp_path):
     tiny.write_bytes(b"weights")
     missing_default = tmp_path / "missing-whisper-cache"
 
-    from vocalinux.ui.settings_dialog import (
-        _delete_whisper_model,
-        _list_downloaded_whisper_models,
-    )
+    import vocalinux.ui.settings_dialog as sd
 
+    # Patch the same module object we call. String-target patch() on 3.9/3.10
+    # follows vocalinux.ui.settings_dialog, which can be a different copy than
+    # sys.modules after a test-time reload.
     with (
-        patch(
-            "vocalinux.ui.settings_dialog._get_whisper_cache_dir",
-            return_value=str(cache),
-        ),
-        patch(
-            "vocalinux.ui.settings_dialog.os.path.expanduser",
-            return_value=str(missing_default),
-        ),
+        patch.object(sd, "_get_whisper_cache_dir", return_value=str(cache)),
+        patch.object(sd.os.path, "expanduser", return_value=str(missing_default)),
     ):
-        assert _list_downloaded_whisper_models() == ["tiny"]
-        deleted = _delete_whisper_model("tiny")
+        assert sd._list_downloaded_whisper_models() == ["tiny"]
+        deleted = sd._delete_whisper_model("tiny")
         assert deleted == [str(tiny)]
         assert not tiny.exists()
-        assert _list_downloaded_whisper_models() == []
+        assert sd._list_downloaded_whisper_models() == []

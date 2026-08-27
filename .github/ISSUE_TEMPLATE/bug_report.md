@@ -25,8 +25,8 @@ What actually happened.
 If applicable, add screenshots to help explain your problem.
 
 ## 💻 Environment
-- **OS**: [e.g., Ubuntu 22.04]
-- **Python Version**: [e.g., 3.10]
+- **OS**: [e.g., Ubuntu 24.04]
+- **Python Version**: [e.g., 3.12]
 - **Vocalinux Version**: [e.g., 0.2.0-alpha]
 - **Display Server**: [X11 / Wayland]
 - **Speech Engine**: [VOSK / Whisper]

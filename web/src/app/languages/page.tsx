@@ -292,7 +292,7 @@ const features = [
   {
     title: "Offline Processing",
     description:
-      "All language processing happens locally on your machine. No cloud, no data upload.",
+      "Local engines process each language on your machine. Remote API is optional.",
     icon: CheckCircle2,
   },
 ];
@@ -361,7 +361,7 @@ export default function LanguagesPage() {
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
           Dictate in your native language. Vocalinux lists {languageCount} languages in Settings,
-          and whisper.cpp / Whisper can auto-detect many more - all offline, with no cloud upload.
+          and whisper.cpp / Whisper can auto-detect many more. Local engines stay on the machine.
         </p>
       </section>
 

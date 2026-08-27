@@ -15,9 +15,9 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const benefits = [
   {
-    title: "No Internet Required",
+    title: "Works without a network",
     description:
-      "Works on airplanes, in tunnels, on remote farms. Your voice never needs to leave your machine.",
+      "After the model is downloaded, local engines work with no internet. Remote API needs the server you configured.",
     icon: WifiOff,
     iconColor: "text-primary",
     iconBg: "bg-primary/10",
@@ -25,7 +25,7 @@ const benefits = [
   {
     title: "Zero Data Collection",
     description:
-      "No telemetry, no analytics, no usage tracking. There's no server to send data to even if we wanted to.",
+      "No telemetry, no analytics, no usage tracking. Local engines have nowhere to send audio unless you enable Remote API.",
     icon: Database,
     iconColor: "text-primary",
     iconBg: "bg-primary/10",
@@ -49,47 +49,36 @@ const benefits = [
 ];
 
 const vsCloud = [
-  { feature: "Requires internet", offline: false, cloud: true },
-  { feature: "Voice data uploaded to servers", offline: false, cloud: true },
+  { feature: "Requires internet for local dictation", offline: false, cloud: true },
+  { feature: "Voice data uploaded to vendor servers", offline: false, cloud: true },
   { feature: "Account/signup required", offline: false, cloud: true },
   { feature: "Subscription cost", offline: false, cloud: true },
-  { feature: "Works in airplane mode", offline: true, cloud: false },
-  { feature: "GDPR/privacy compliant by default", offline: true, cloud: false },
+  { feature: "Works in airplane mode after model download", offline: true, cloud: false },
   { feature: "Vendor can shut down service", offline: false, cloud: true },
-  { feature: "Sensitive content safe", offline: true, cloud: false },
 ];
 
 const sensitiveUseCases = [
   {
-    title: "Medical Professionals",
-    description: "Patient notes, diagnoses, and medical records must stay private.",
+    title: "Local engines keep audio on the machine",
+    description:
+      "whisper.cpp, Whisper, and VOSK process speech on your hardware. That is a default for those engines, not a legal or compliance promise.",
   },
   {
-    title: "Legal Professionals",
-    description: "Attorney-client privilege requires absolute data confidentiality.",
+    title: "Works after the model is downloaded",
+    description:
+      "Once the model is on disk, local engines keep working without a network. Remote API still needs the server you set.",
   },
   {
-    title: "Journalists & Sources",
-    description: "Protecting sources means keeping all communications offline.",
-  },
-  {
-    title: "Corporate Trade Secrets",
-    description: "Product plans, financial data, and strategies shouldn't leave your network.",
-  },
-  {
-    title: "Government & Defense",
-    description: "Classified or sensitive government work requires air-gapped solutions.",
-  },
-  {
-    title: "Personal Journals",
-    description: "Your private thoughts and reflections deserve complete privacy.",
+    title: "Remote API is opt-in",
+    description:
+      "If you point Vocalinux at a server you configure, audio goes there. Local engines do not.",
   },
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "100% Offline Voice Dictation - No Cloud, No Upload | Vocalinux",
+  title: "Offline Voice Dictation - Local Engines | Vocalinux",
   description:
-    "Completely offline voice dictation for Linux. No cloud processing, no data upload, no account required. Your voice data never leaves your computer.",
+    "Local engines run on your Linux machine with no cloud account. Remote API is optional if you want a server you configure.",
   path: "/offline",
   keywords: [
     "offline voice dictation",
@@ -107,9 +96,9 @@ export default function OfflinePage() {
   const articleJsonLd = {
     "@context": "https://schema.org",
     "@type": "Article",
-    headline: "100% Offline Voice Dictation for Linux",
+    headline: "Offline Voice Dictation for Linux",
     description:
-      "Why Vocalinux is completely offline. No cloud processing, no data upload, maximum privacy.",
+      "Local engines process speech on your machine. Remote API is optional and talks only to a server you configure.",
     dateModified: "2026-02-22",
     author: {
       "@type": "Person",
@@ -137,15 +126,15 @@ export default function OfflinePage() {
       <section>
         <p className="subpage-kicker">
           <CloudOff className="h-4 w-4" />
-          100% Offline
+          Offline
         </p>
         <h1 className="mb-5 font-display text-4xl font-semibold tracking-tight sm:text-5xl">
           Offline Voice Dictation
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Your voice never leaves your computer. All speech recognition happens locally using
-          whisper.cpp, VOSK, or OpenAI Whisper models running on your hardware. No cloud. No
-          upload. No exceptions.
+          Local engines keep speech recognition on your computer using whisper.cpp, VOSK, or
+          OpenAI Whisper models on your hardware. Remote API is optional and talks only to a
+          server you configure.
         </p>
       </section>
 
@@ -184,16 +173,22 @@ export default function OfflinePage() {
                   <td className="py-3 pr-4">{row.feature}</td>
                   <td className="py-3 pr-4 text-center">
                     {row.offline ? (
-                      <CheckCircle2 className="mx-auto h-5 w-5 text-primary" />
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-primary" aria-label="Yes" />
                     ) : (
-                      <XCircle className="mx-auto h-5 w-5 text-muted-foreground/50" />
+                      <XCircle
+                        className="mx-auto h-5 w-5 text-muted-foreground/50"
+                        aria-label="No"
+                      />
                     )}
                   </td>
                   <td className="py-3 text-center">
                     {row.cloud ? (
-                      <CheckCircle2 className="mx-auto h-5 w-5 text-primary" />
+                      <CheckCircle2 className="mx-auto h-5 w-5 text-primary" aria-label="Yes" />
                     ) : (
-                      <XCircle className="mx-auto h-5 w-5 text-muted-foreground/50" />
+                      <XCircle
+                        className="mx-auto h-5 w-5 text-muted-foreground/50"
+                        aria-label="No"
+                      />
                     )}
                   </td>
                 </tr>
@@ -204,7 +199,7 @@ export default function OfflinePage() {
       </section>
 
       <section className="mb-12">
-        <h2 className="mb-6 font-display text-2xl font-semibold">When Offline Matters Most</h2>
+        <h2 className="mb-6 font-display text-2xl font-semibold">Local engines</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {sensitiveUseCases.map((useCase) => (
             <div
@@ -241,8 +236,9 @@ export default function OfflinePage() {
           </li>
         </ul>
         <p className="mt-4 text-sm text-muted-foreground">
-          Models are downloaded once (74MB-3.0GB depending on size), then all processing happens
-          locally. No network requests during dictation.
+          Models are downloaded once (74MB-3.0GB depending on size). After that, local engines
+          process on the machine. Remote API is the exception: it sends audio to the server you
+          configure.
         </p>
       </section>
 
@@ -258,7 +254,7 @@ export default function OfflinePage() {
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
             Read every line of code on{" "}
             <a
-              href="https://github.com/jatinkrmalik/vocalinux"
+              href="https://github.com/VocaHQ/vocalinux"
               target="_blank"
               rel="noopener noreferrer"
               className="font-semibold hover:underline"
@@ -268,16 +264,18 @@ export default function OfflinePage() {
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            Run with <code className="rounded bg-muted px-1 dark:bg-muted">--debug</code> to see all network activity (there is none)
+            Run with <code className="rounded bg-muted px-1">--debug</code> and
+            watch network activity. Local engines should stay quiet during dictation.
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            Monitor with <code className="rounded bg-muted px-1 dark:bg-muted">tcpdump</code> or{" "}
-            <code className="rounded bg-muted px-1 dark:bg-muted">wireshark</code> - you&apos;ll see silence
+            Monitor with <code className="rounded bg-muted px-1">tcpdump</code> or{" "}
+            <code className="rounded bg-muted px-1">wireshark</code>. Local engines
+            should stay quiet during dictation.
           </li>
           <li className="flex items-start gap-2">
             <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0" />
-            Disconnect from the internet and verify dictation still works perfectly
+            Disconnect from the internet and check that a local engine still dictates
           </li>
         </ul>
       </section>
@@ -285,8 +283,8 @@ export default function OfflinePage() {
       <section className="rounded-[12px] border border-border bg-muted p-8">
         <h2 className="mb-4 font-display text-2xl font-semibold">Truly Private Voice Dictation</h2>
         <p className="mb-6 text-muted-foreground">
-          Install Vocalinux and take control of your voice data. No cloud, no tracking, no
-          compromises.
+          Install Vocalinux and use a local engine if you want speech recognition on the machine.
+          Remote API stays optional.
         </p>
         <div className="flex flex-wrap gap-4">
           <Link

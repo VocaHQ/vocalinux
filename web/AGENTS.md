@@ -1,6 +1,6 @@
 # AGENTS.md — vocalinux.com (`web/`)
 
-Guidelines for agents working on the marketing site only. For the Python desktop app, see the repo root `AGENTS.md`.
+Guidelines for agents working on the marketing site only. For the Python desktop app, git worktrees, and PR rules, see the repo root [`AGENTS.md`](../AGENTS.md). Do not create branches, commits, or pull requests in the primary checkout.
 
 ## What this package is
 
@@ -24,6 +24,7 @@ cd web
 npm install
 npm run dev          # local (prefer -H 0.0.0.0 -p 3456 when sharing)
 npm run build        # static export
+npm run lint
 npm test
 npm run typecheck
 ```
@@ -42,7 +43,7 @@ npm run test:viewport
 - Home: `src/app/page.tsx`
 - Shared SEO shell: `src/components/seo-subpage-shell.tsx`
 - Tokens / utilities: `src/styles/globals.css`, `tailwind.config.ts`
-- Fonts: Bricolage Grotesque + Source Sans 3 in `src/app/layout.tsx`
+- Fonts: system display + body stacks in `src/styles/globals.css` (no remote webfonts)
 
 ## Maintaining this file
 

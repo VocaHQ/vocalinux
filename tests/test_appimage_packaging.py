@@ -1,5 +1,6 @@
 """Regression guards for AppImage packaging."""
 
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -56,3 +57,32 @@ def test_appimage_build_smokes_gi_without_host_typelibs():
     text = BUILD_SH.read_text()
     assert "smoke_gi_imports" in text
     assert "unshare --user --mount" in text
+
+
+def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():
+    text = BUILD_SH.read_text()
+    assert "GGML_VULKAN=1" in text
+    assert "libggml-vulkan" in text
+    assert "VOCALINUX_APPIMAGE_REQUIRE_VULKAN" in text
+    assert "VOCALINUX_APPIMAGE_SKIP_VULKAN" in text
+    assert "rebuild_pywhispercpp_vulkan" in text
+    assert 'CC="${CC:-gcc}"' in text
+    assert 'CXX="${CXX:-g++}"' in text
+
+
+def test_appimage_pins_pywhispercpp_to_the_installer_version():
+    """An unpinned source build takes whatever PyPI published that day.
+
+    pywhispercpp 1.5.1 landed mid-review and failed to compile with Vulkan on
+    the runner, breaking both AppImage jobs while nothing in the repo changed.
+    """
+    build = BUILD_SH.read_text(encoding="utf-8")
+    # Both installs: the bundle install resolves the wheel's dependency range and
+    # the Vulkan rebuild replaces it. Pinning one mixes two versions' libggml.
+    assert build.count("pywhispercpp==$PYWHISPERCPP_VERSION") == 2
+    assert 'PYWHISPERCPP_VERSION="$(sed' in build, "the pin must come from install.sh"
+
+    installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    assert re.search(
+        r'^PYWHISPERCPP_VERSION="\d+\.\d+\.\d+"', installer, re.M
+    ), "install.sh no longer declares the version build.sh reads"

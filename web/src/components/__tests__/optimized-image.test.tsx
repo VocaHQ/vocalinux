@@ -98,21 +98,10 @@ describe('VocalinuxLogo', () => {
     expect(img).toBeInTheDocument();
   });
 
-  it('renders a picture element with WebP source for logo', () => {
-    const { container } = render(<VocalinuxLogo />);
-    const picture = container.querySelector('picture');
-    expect(picture).toBeInTheDocument();
-
-    const source = container.querySelector('source');
-    expect(source).toBeInTheDocument();
-    expect(source).toHaveAttribute('srcset', '/vocalinux.webp');
-    expect(source).toHaveAttribute('type', 'image/webp');
-  });
-
-  it('provides PNG fallback for the logo', () => {
+  it('uses the circular mark', () => {
     render(<VocalinuxLogo />);
     const img = screen.getByAltText('Vocalinux');
-    expect(img).toHaveAttribute('src', '/vocalinux.png');
+    expect(img).toHaveAttribute('src', '/brand/vocalinux-mark-circle.svg');
   });
 
   it('uses default dimensions when not specified', () => {
@@ -130,14 +119,14 @@ describe('VocalinuxLogo', () => {
   });
 
   it('applies custom className', () => {
-    const { container } = render(<VocalinuxLogo className="logo-class" />);
-    const picture = container.querySelector('picture');
-    expect(picture).toHaveClass('logo-class');
+    render(<VocalinuxLogo className="logo-class" />);
+    const img = screen.getByAltText('Vocalinux');
+    expect(img).toHaveClass('logo-class');
   });
 
   it('passes priority prop for eager loading', () => {
     render(<VocalinuxLogo priority />);
     const img = screen.getByAltText('Vocalinux');
-    expect(img).not.toHaveAttribute('loading', 'lazy');
+    expect(img).toHaveAttribute('loading', 'eager');
   });
 });

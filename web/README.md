@@ -70,8 +70,7 @@ web/
 │   │   ├── layout.tsx          # Root layout
 │   │   └── page.tsx            # Homepage
 │   ├── components/
-│   │   ├── dictation-overlay.tsx
-│   │   ├── theme-toggle.tsx
+│   │   ├── site-chrome.tsx
 │   │   └── ui/                 # Reusable UI components
 │   ├── hooks/
 │   └── lib/
@@ -83,8 +82,8 @@ web/
 ## 🎨 Features
 
 - **Responsive Design** - Works on desktop and mobile
-- **Dark/Light Theme** - Automatic theme switching
-- **Modern UI** - Built with Tailwind CSS and Framer Motion
+- **Family workbench UI** - Warm paper, system type, same language as VocaHQ
+- **Modern UI** - Built with Tailwind CSS
 - **SEO Optimized** - Proper meta tags and structure
 - **Fast Loading** - Optimized static generation
 

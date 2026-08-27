@@ -22,15 +22,15 @@ const faqCategories = [
     questions: [
       {
         q: "How do I install Vocalinux?",
-        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection).",
+        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection).",
       },
       {
         q: "Which Linux distributions are supported?",
-        a: "Vocalinux works on Ubuntu 22.04+, Fedora 39+, Arch Linux, Manjaro, Debian, and most other Linux distributions. See our install guides for distro-specific instructions.",
+        a: "Vocalinux works on Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch Linux, Manjaro, and most other Linux distributions. See our install guides for distro-specific instructions.",
       },
       {
         q: "What are the system requirements?",
-        a: "You need Python 3.9+, a working microphone, and about 500MB of disk space. For GPU acceleration with whisper.cpp, you need Vulkan support (AMD, Intel, or NVIDIA).",
+        a: "You need Python 3.11+, a working microphone, and about 500MB of disk space. For GPU acceleration with whisper.cpp, you need Vulkan support (AMD, Intel, or NVIDIA).",
       },
     ],
   },
@@ -40,8 +40,8 @@ const faqCategories = [
     iconColor: "text-primary",
     questions: [
       {
-        q: "Is Vocalinux really 100% offline?",
-        a: "Yes for local engines. whisper.cpp, Whisper, and VOSK run on your Linux machine. Vocalinux also offers an optional Remote API engine for servers you configure yourself.",
+        q: "Does Vocalinux work offline?",
+        a: "Local engines (whisper.cpp, Whisper, and VOSK) run on your Linux machine. Remote API is optional and only talks to a server you configure.",
       },
       {
         q: "Does Vocalinux send any data to external servers?",
@@ -239,7 +239,7 @@ export default function FaqPage() {
             <span className="inline-flex items-center gap-2">
               <ChevronRight className="h-4 w-4 text-primary" />
               <a
-                href="https://github.com/jatinkrmalik/vocalinux/issues"
+                href="https://github.com/VocaHQ/vocalinux/issues"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="font-semibold text-primary hover:underline"

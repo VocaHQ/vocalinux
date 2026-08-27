@@ -7,11 +7,10 @@ Key focus areas:
 - IBus engine utility functions
 """
 
+import base64
 import os
 import sys
 import time
-import zipfile as REAL_ZIPFILE  # Capture real zipfile before any test mocks it
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -26,6 +25,7 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, expected_for
 
 
 def _make_manager(engine="whisper_cpp", **kw):
@@ -38,12 +38,75 @@ def _make_manager(engine="whisper_cpp", **kw):
                 )
                 # Ensure vosk_model_map is set (normally done in _init_vosk)
                 if not hasattr(mgr, "vosk_model_map"):
+                    # The names _init_vosk() would pick for en-us. They have to be
+                    # real: the download path looks each one up in the checksum
+                    # manifest to stamp the tree it extracts.
                     mgr.vosk_model_map = {
-                        "small": "model-en-us-0.22-lgraph",
+                        "small": "vosk-model-small-en-us-0.15",
                         "medium": "vosk-model-en-us-0.22",
-                        "large": "vosk-model-en-us-0.22-lgraph",
+                        "large": "vosk-model-en-us-0.22",
                     }
                 return mgr
+
+
+# A real zip, embedded rather than built here: by the time this module is
+# imported, other test modules have already replaced zipfile/BytesIO in
+# sys.modules with mocks, so building one here yields empty bytes. Its single
+# entry sits under the directory VOSK's small en-us archive unpacks to, because
+# that is the tree the downloader stamps after extracting.
+VOSK_ZIP_BYTES = base64.b64decode(
+    "UEsDBBQAAAAIAHV2F12oDuXYFgAAAIgTAAAoAAAAdm9zay1tb2RlbC1zbWFsbC1lbi11cy0wLjE1L2FtL2Zp"
+    "bmFsLm1kbO3BMQEAAADCoPVPbQo/oAAAAACAtwFQSwECFAMUAAAACAB1dhddqA7l2BYAAACIEwAAKAAAAAAA"
+    "AAAAAAAAgAEAAAAAdm9zay1tb2RlbC1zbWFsbC1lbi11cy0wLjE1L2FtL2ZpbmFsLm1kbFBLBQYAAAAAAQAB"
+    "AFYAAABcAAAAAAA="
+)
+
+
+MODEL_NAME = "vosk-model-small-en-us-0.15"
+
+# Same shape, but its top-level directory is not the model name: the downloader
+# has to notice rather than report a success that installed nothing.
+WRONG_LAYOUT_ZIP_BYTES = base64.b64decode(
+    "UEsDBBQAAAAIAHeGF11E9MkCEQAAANAHAAAcAAAAc29tZS1vdGhlci1uYW1lL2FtL2ZpbmFsLm1kbGNgGAWj"
+    "YBSMglEwCkbBUAcAUEsBAhQDFAAAAAgAd4YXXUT0yQIRAAAA0AcAABwAAAAAAAAAAAAAAIABAAAAAHNvbWUt"
+    "b3RoZXItbmFtZS9hbS9maW5hbC5tZGxQSwUGAAAAAAEAAQBKAAAASwAAAAAA"
+)
+
+
+class FakeRequestError(Exception):
+    """Stands in for requests.exceptions.RequestException.
+
+    A leaked mock makes ``except requests.exceptions.RequestException`` a
+    TypeError, so the mocked module needs a real class here. It must not be
+    ``Exception`` itself, or that clause swallows every other failure the
+    downloader is supposed to surface unwrapped.
+    """
+
+
+def _fake_clock(step=0.2):
+    """Monotonic stand-in for time.time().
+
+    A fixed side_effect list runs out unpredictably: time.time is patched
+    globally, so logging consumes ticks too.
+    """
+    from itertools import count
+
+    counter = count()
+    return lambda: next(counter) * step
+
+
+@pytest.fixture
+def skip_checksum():
+    """Accept the synthetic payloads these tests stream.
+
+    Downloads are verified against the digests pinned in model_checksums.txt, so
+    a few hundred bytes of ``b"x"`` are correctly rejected. These tests cover
+    download *mechanics* (progress, content-length, URL shaping); integrity
+    itself is covered by tests/test_model_checksums.py. Yielding the mock lets
+    each test still assert that verification was reached.
+    """
+    with patch("vocalinux.speech_recognition.recognition_manager.verify_model_file") as mock_verify:
+        yield mock_verify
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +129,7 @@ def cleanup_sys_modules():
 class TestDownloadWhispercppModel:
     """Test _download_whispercpp_model() with runtime import mocking."""
 
-    def test_download_whispercpp_success_basic(self, tmp_path):
+    def test_download_whispercpp_success_basic(self, tmp_path, skip_checksum):
         """Test successful whisper.cpp model download."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -87,8 +150,10 @@ class TestDownloadWhispercppModel:
 
         assert os.path.exists(model_file)
         assert os.path.getsize(model_file) == 1000
+        # The model is only installed after it is verified.
+        skip_checksum.assert_called_once()
 
-    def test_download_whispercpp_progress_callback(self, tmp_path):
+    def test_download_whispercpp_progress_callback(self, tmp_path, skip_checksum):
         """Test progress callback is invoked during download."""
         manager = _make_manager(engine="whisper_cpp")
         progress_calls = []
@@ -111,7 +176,7 @@ class TestDownloadWhispercppModel:
                 "vocalinux.speech_recognition.recognition_manager.get_model_path",
                 return_value=model_file,
             ):
-                with patch("time.time", side_effect=[0, 0.2, 0.4, 0.6]):
+                with patch("time.time", side_effect=_fake_clock()):
                     manager._download_whispercpp_model()
 
         mock_requests.get.assert_called_once()
@@ -120,7 +185,7 @@ class TestDownloadWhispercppModel:
         assert len(call_args[0]) > 0 or "url" in call_args[1]
         assert len(progress_calls) >= 1
 
-    def test_download_whispercpp_no_content_length(self, tmp_path):
+    def test_download_whispercpp_no_content_length(self, tmp_path, skip_checksum):
         """Test download when content-length header is missing."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -159,7 +224,7 @@ class TestDownloadWhispercppModel:
                 with pytest.raises(RuntimeError, match="Failed to download"):
                     manager._download_whispercpp_model()
 
-    def test_download_whispercpp_appends_download_true(self, tmp_path):
+    def test_download_whispercpp_appends_download_true(self, tmp_path, skip_checksum):
         """Hugging Face URLs get ?download=true for reliable binary responses."""
         manager = _make_manager(engine="whisper_cpp")
         model_file = str(tmp_path / "ggml-small.bin")
@@ -285,10 +350,91 @@ class TestDownloadWhispercppModel:
         assert any("m " in s or "ETA" in s for s in progress_calls)
 
 
+class TestDownloadWhisperModel:
+    """OpenAI Whisper downloads run through the shared streaming helper.
+
+    Vocalinux fetches the checkpoint only to give the UI progress and a working
+    cancel; whisper.load_model() is what verifies it. Both were briefly lost when
+    the downloader was removed altogether, so they are pinned here.
+    """
+
+    @staticmethod
+    def _fake_stream(url, dest_path):
+        with open(dest_path, "wb") as handle:
+            handle.write(b"checkpoint")
+
+    def test_writes_the_name_whisper_expects(self, tmp_path):
+        manager = _make_manager(engine="whisper")
+        manager.model_size = "large"
+
+        with patch.object(manager, "_stream_model_download", side_effect=self._fake_stream):
+            manager._download_whisper_model(str(tmp_path))
+
+        # large is stored as large-v3.pt; "large.pt" here would mean load_model
+        # downloads the 2.9GB checkpoint a second time.
+        assert (tmp_path / "large-v3.pt").exists()
+        assert not (tmp_path / "large.pt").exists()
+
+    def test_reports_progress(self, tmp_path):
+        manager = _make_manager(engine="whisper")
+        progress_calls = []
+        manager._download_progress_callback = lambda f, s, st: progress_calls.append(st)
+
+        with patch.object(manager, "_stream_model_download", side_effect=self._fake_stream):
+            manager._download_whisper_model(str(tmp_path))
+
+        assert progress_calls, "the download dialog would sit at zero"
+
+    def test_cancel_propagates_and_cleans_up(self, tmp_path):
+        """Cancel raised by the stream helper must reach the caller."""
+        manager = _make_manager(engine="whisper")
+
+        def cancel(url, dest_path):
+            with open(dest_path, "wb") as handle:
+                handle.write(b"partial")
+            raise RuntimeError("Download cancelled")
+
+        # A leaked requests mock from another module makes
+        # `except requests.exceptions.RequestException` a TypeError, so pin a
+        # real exception class here as the other download tests do.
+        mock_requests = MagicMock()
+        mock_requests.exceptions.RequestException = Exception
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with patch.object(manager, "_stream_model_download", side_effect=cancel):
+                with pytest.raises(RuntimeError, match="cancelled"):
+                    manager._download_whisper_model(str(tmp_path))
+
+        assert not list(tmp_path.glob("*"))
+
+
 class TestDownloadVoskModel:
     """Test _download_vosk_model() with runtime import mocking."""
 
-    def test_download_vosk_progress_callback(self, tmp_path):
+    @staticmethod
+    def _serve_zip(manager, tmp_path, payload=None):
+        """Run a full download+extract of an archive into tmp_path."""
+        payload = VOSK_ZIP_BYTES if payload is None else payload
+        mock_requests = MagicMock()
+        mock_response = MagicMock()
+        mock_response.headers = {"content-length": str(len(payload))}
+        mock_response.iter_content.return_value = [payload]
+        mock_requests.get.return_value = mock_response
+        mock_requests.exceptions.RequestException = FakeRequestError
+
+        # Extraction has to really happen here — the stamp lands in the tree it
+        # creates — and other modules leave a MagicMock in sys.modules["zipfile"].
+        real_zipfile = getattr(sys, "_vocalinux_real_zipfile", None) or __import__("zipfile")
+
+        with patch.dict("sys.modules", {"requests": mock_requests, "zipfile": real_zipfile}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.MODELS_DIR", str(tmp_path)
+            ):
+                with patch("time.time", side_effect=_fake_clock()):
+                    manager._download_vosk_model()
+        return mock_requests
+
+    def test_download_vosk_progress_callback(self, tmp_path, skip_checksum):
         """Test progress callback during Vosk download."""
         manager = _make_manager(engine="vosk")
         progress_calls = []
@@ -298,30 +444,92 @@ class TestDownloadVoskModel:
 
         manager._download_progress_callback = track_progress
 
-        zip_data = BytesIO()
-        with REAL_ZIPFILE.ZipFile(zip_data, "w") as zf:
-            zf.writestr("model-en-us-0.22-lgraph/am/model.pkl", "x" * 5000)
-        zip_bytes = zip_data.getvalue()
-
-        mock_requests = MagicMock()
-        mock_response = MagicMock()
-        mock_response.headers = {"content-length": str(len(zip_bytes))}
-        mock_response.iter_content.return_value = [zip_bytes]
-        mock_requests.get.return_value = mock_response
-        mock_requests.exceptions.RequestException = Exception
-
-        with patch.dict("sys.modules", {"requests": mock_requests}):
-            with patch(
-                "vocalinux.speech_recognition.recognition_manager.MODELS_DIR", str(tmp_path)
-            ):
-                with patch("time.time", side_effect=[0, 0.2, 0.4, 0.6]):
-                    manager._download_vosk_model()
+        mock_requests = self._serve_zip(manager, tmp_path)
 
         mock_requests.get.assert_called_once()
         call_args = mock_requests.get.call_args
         assert call_args is not None
         assert len(call_args[0]) > 0 or "url" in call_args[1]
         assert len(progress_calls) >= 1
+        # Otherwise the digest check could be deleted and this stay green.
+        skip_checksum.assert_called_once()
+
+    def test_download_vosk_stamps_the_extracted_tree(self, tmp_path, skip_checksum):
+        """A directory has no digest; install.sh reads this stamp instead.
+
+        Leave it out and every model fetched at first run or from Settings looks
+        unverified to the next ./install.sh, which downloads it again.
+        """
+        manager = _make_manager(engine="vosk")
+
+        self._serve_zip(manager, tmp_path)
+
+        stamp = tmp_path / "vosk-model-small-en-us-0.15" / VERIFICATION_STAMP_NAME
+        pinned = expected_for("vosk-model-small-en-us-0.15.zip")
+        assert pinned is not None, "the fixture model must be in the manifest"
+        assert stamp.read_text().strip() == pinned.digest
+
+    @staticmethod
+    def _leftovers(tmp_path):
+        """Everything in MODELS_DIR that is not the finished model tree."""
+        return sorted(p.name for p in tmp_path.iterdir() if p.name != MODEL_NAME)
+
+    def test_download_vosk_fails_when_the_stamp_cannot_be_written(self, tmp_path, skip_checksum):
+        """An unstampable tree is one we would silently refetch; say so instead."""
+        manager = _make_manager(engine="vosk")
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.write_verification_stamp",
+            side_effect=OSError("read-only models directory"),
+        ):
+            with pytest.raises(OSError):
+                self._serve_zip(manager, tmp_path)
+
+        # And it must not leave the tree behind: _init_vosk would call that
+        # installed while install.sh, finding no stamp, refetched it every run.
+        assert not (tmp_path / MODEL_NAME).exists()
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_failed_unpack_keeps_the_model_that_was_already_there(self, tmp_path, skip_checksum):
+        """Replacing is a swap: a broken download must not cost the old model."""
+        old = tmp_path / MODEL_NAME / "am"
+        old.mkdir(parents=True)
+        (old / "final.mdl").write_bytes(b"the model that was already installed")
+
+        manager = _make_manager(engine="vosk")
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.write_verification_stamp",
+            side_effect=OSError("read-only models directory"),
+        ):
+            with pytest.raises(OSError):
+                self._serve_zip(manager, tmp_path)
+
+        assert (old / "final.mdl").read_bytes() == b"the model that was already installed"
+        assert self._leftovers(tmp_path) == []
+
+    def test_an_archive_with_the_wrong_layout_is_refused(self, tmp_path, skip_checksum):
+        """A zip that unpacks somewhere else must not look like a success."""
+        manager = _make_manager(engine="vosk")
+
+        with pytest.raises(RuntimeError, match="does not contain"):
+            self._serve_zip(manager, tmp_path, payload=WRONG_LAYOUT_ZIP_BYTES)
+
+        assert not (tmp_path / MODEL_NAME).exists()
+        assert self._leftovers(tmp_path) == []
+
+    def test_a_verified_download_replaces_an_older_tree(self, tmp_path, skip_checksum):
+        old = tmp_path / MODEL_NAME
+        (old / "am").mkdir(parents=True)
+        (old / "am" / "final.mdl").write_bytes(b"stale")
+        (old / "stale-file").write_text("must not survive the swap")
+
+        manager = _make_manager(engine="vosk")
+        self._serve_zip(manager, tmp_path)
+
+        assert (old / "am" / "final.mdl").read_bytes() != b"stale"
+        assert not (old / "stale-file").exists(), "the swap must replace, not merge"
+        assert (old / VERIFICATION_STAMP_NAME).exists()
+        assert self._leftovers(tmp_path) == []
 
     def test_download_vosk_request_error(self, tmp_path):
         """Test Vosk download request error handling."""
@@ -338,6 +546,89 @@ class TestDownloadVoskModel:
             ):
                 with pytest.raises(RuntimeError, match="Failed to download"):
                     manager._download_vosk_model()
+
+
+class TestWhispercppRejectsAnUnverifiedModelOnDisk:
+    """Wiring test: the hash has to happen where the model is picked up.
+
+    _download_whispercpp_model verifies before its rename, so the exposure is a
+    file that never came through it: releases before verification fetched ggml
+    models from `resolve/main` unchecked, and install.sh re-hashes only
+    ggml-tiny.bin. Without this the file goes to pywhispercpp/ctypes as-is.
+    """
+
+    def test_a_model_that_fails_its_pin_is_removed_and_not_loaded(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"not the model that is pinned")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = True
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch.object(manager, "_load_whispercpp_model") as load:
+                    manager._init_whispercpp()
+
+        assert not model.exists(), "an unverifiable model must not stay on disk"
+        load.assert_not_called()
+        assert manager._model_initialized is False
+
+    def test_a_model_that_cannot_be_deleted_is_still_not_loaded(self, tmp_path):
+        model = tmp_path / "ggml-tiny.bin"
+        model.write_bytes(b"not the model that is pinned")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = False
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.os.remove",
+                    side_effect=OSError("read-only"),
+                ):
+                    with patch.object(manager, "_load_whispercpp_model") as load:
+                        with pytest.raises(RuntimeError, match="failed verification"):
+                            manager._init_whispercpp()
+
+        assert model.exists()
+        load.assert_not_called()
+
+    def test_an_unpinned_model_is_refused_not_deleted(self, tmp_path):
+        model = tmp_path / "ggml-not-in-manifest.bin"
+        model.write_bytes(b"bytes")
+
+        manager = _make_manager(engine="whisper_cpp")
+        manager._defer_download = True
+
+        mock_pywhispercpp = MagicMock()
+        with patch.dict(
+            "sys.modules",
+            {"pywhispercpp": mock_pywhispercpp, "pywhispercpp.model": mock_pywhispercpp},
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.get_model_path",
+                return_value=str(model),
+            ):
+                with patch.object(manager, "_load_whispercpp_model") as load:
+                    manager._init_whispercpp()
+
+        assert model.exists(), "a missing pin is not a reason to delete the file"
+        load.assert_not_called()
+        assert manager._model_initialized is False
 
 
 class TestAudioReconnection:

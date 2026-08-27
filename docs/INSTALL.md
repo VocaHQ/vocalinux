@@ -7,10 +7,10 @@ This guide provides detailed instructions for installing Vocalinux on Linux syst
 ### One-liner Installation (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
-> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases).
+> **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
 
 That's it! The installer handles everything automatically:
 - ✅ Installs whisper.cpp (~1-2 minutes, no heavy dependencies!)
@@ -24,13 +24,13 @@ That's it! The installer handles everything automatically:
 ### From Source
 
 ```bash
-git clone https://github.com/jatinkrmalik/vocalinux.git && cd vocalinux && ./install.sh
+git clone https://github.com/VocaHQ/vocalinux.git && cd vocalinux && ./install.sh
 ```
 
 ### AppImage (no install, no root)
 
 Download the `.AppImage` for your CPU (`x86_64` or `aarch64`) from
-[GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases), then:
+[GitHub Releases](https://github.com/VocaHQ/vocalinux/releases), then:
 
 ```bash
 chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
@@ -38,8 +38,11 @@ chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
 ```
 
 AppImage still needs host text-injection tools (`xdotool` on X11; `wtype` /
-`ydotool` / clipboard tools on Wayland), same as the PyPI path. Prefer the
-one-liner installer above when you want system deps and models set up for you.
+`ydotool` / clipboard tools on Wayland), same as the PyPI path. Current
+AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver; you
+still need working Vulkan on the machine (`vulkaninfo --summary`). Prefer the
+one-liner installer above when you want system deps, a CUDA build, and models
+set up for you.
 
 ### From PyPI
 
@@ -61,6 +64,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -76,6 +80,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -96,6 +101,7 @@ python -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -115,6 +121,7 @@ python3 -m venv ~/.local/share/vocalinux-pypi/venv --system-site-packages
 source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
+# vosk engine: pip install "vocalinux[vosk]"
 vocalinux
 ```
 
@@ -129,12 +136,23 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 | Requirement | Details |
 |-------------|---------|
-| **Operating System** | Ubuntu 22.04+ (recommended), Debian 11+, Fedora 38+, Arch Linux |
-| **Python** | 3.9 or newer |
+| **Operating System** | Debian 12+, Ubuntu 24.04+, Fedora 39+, Arch Linux |
+| **Python** | 3.11 or newer |
 | **Display Server** | X11 or Wayland |
 | **Hardware** | Microphone for speech input |
 | **Disk Space** | ~200MB (including whisper.cpp model) |
 | **RAM** | 4GB minimum, works great with 8GB |
+
+The distribution has to ship Python 3.11 or newer, because Vocalinux uses the
+distro's own PyGObject (`python3-gi`), which is built for that interpreter and
+no other. That rules out Ubuntu 22.04 (Python 3.10) and Debian 11 (3.9): a 3.11
+virtualenv on them cannot import the distro `gi`, and their `python3` is below
+the floor.
+
+Derivatives are judged by the interpreter they ship, not by their own version
+number, which rarely tracks the base release. Linux Mint 22 and elementary OS 8
+are built on Ubuntu 24.04 and qualify; Linux Mint 21 and Zorin OS 17 sit on
+Ubuntu 22.04 and do not.
 
 ### GPU Support (Optional)
 
@@ -325,7 +343,7 @@ sudo apt install -y xdotool
 sudo apt install -y wtype wl-clipboard xclip xsel
 ```
 
-**Debian 11/12:**
+**Debian 12+:**
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -405,9 +423,14 @@ is unavailable on your snapshot, try `${PYVER}-venv`.
 
 ### 2. Create Virtual Environment
 
+Use the **system** Python: PyGObject (`gi`) comes from your distro package and is
+compiled for that interpreter only, so a venv created from pyenv/conda/uv Python
+cannot import it even with `--system-site-packages`. Deactivate any active
+virtualenv first.
+
 ```bash
 cd vocalinux
-python3 -m venv venv --system-site-packages
+/usr/bin/python3 -m venv venv --system-site-packages
 source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 ```
@@ -428,7 +451,8 @@ pip install ".[vad]"
 pip install -e ".[dev,vad]"
 ```
 
-For PyPI instead of a local checkout, use `pip install vocalinux` after installing
+For PyPI instead of a local checkout, use `pip install vocalinux` (or
+`pip install "vocalinux[vosk]"` for the vosk engine) after installing
 the same system packages and creating the virtual environment with
 `--system-site-packages`.
 
@@ -501,6 +525,11 @@ vulkaninfo --summary | grep -i "deviceName"
 # In Vocalinux, look for these log messages:
 # [INFO] whisper.cpp backend selection priority: Vulkan -> CUDA -> CPU
 # [INFO] whisper.cpp using Vulkan GPU backend: AMD Radeon RX 6800
+# [INFO] whisper.cpp configured with n_threads=4 (GPU backend: vulkan)
+
+# If you instead see "CPU-only; pywhispercpp lacks GPU libraries", the
+# bundled pywhispercpp was built without GPU libs (older AppImage, or a
+# CPU pip wheel). install.sh rebuilds it with Vulkan/CUDA when possible.
 ```
 
 ### Reusing Existing whisper.cpp Builds
@@ -573,14 +602,33 @@ sudo apt install python3-gi python3-gi-cairo
 # For appindicator (system tray icon) - try one of these:
 sudo apt install gir1.2-appindicator3-0.1  # For older Debian/Ubuntu
 # OR
-sudo apt install gir1.2-ayatanaappindicator3-0.1  # For Debian 11+ or newer Ubuntu
+sudo apt install gir1.2-ayatanaappindicator3-0.1  # For Debian 12+ or newer Ubuntu
 
-# Recreate venv with system packages
+# Recreate venv with system packages, from the system Python
+deactivate 2>/dev/null || true
 rm -rf venv
-python3 -m venv venv --system-site-packages
+/usr/bin/python3 -m venv venv --system-site-packages
 source venv/bin/activate
 pip install -e .
 ```
+
+**Symptom:** the installer stops with "Distro PyGObject (python3-gi /
+python3-gobject) is not importable in the venv"
+
+The distro package is installed, but `venv/` was built by a different Python than
+the one it targets (a pyenv/conda/uv interpreter, or a virtualenv that was active
+when you started the installer). Current versions of `install.sh` detect and fix
+this on their own — ignoring an activated virtualenv and rebuilding a mismatched
+`venv/`. Otherwise:
+
+```bash
+deactivate 2>/dev/null || true
+rm -rf venv
+./install.sh
+```
+
+On systems shipping several system interpreters, point the installer at the one
+your distro built `gi` for: `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh`.
 
 ### Text Injection Not Working
 
@@ -704,12 +752,12 @@ Already have Vocalinux installed? See the [Update Guide](UPDATE.md) for instruct
 
 Quick update command:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
 ```
 
 ## Getting Help
 
 - 📖 [User Guide](USER_GUIDE.md)
 - 📖 [Update Guide](UPDATE.md)
-- 🐛 [Report Issues](https://github.com/jatinkrmalik/vocalinux/issues)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report Issues](https://github.com/VocaHQ/vocalinux/issues)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)

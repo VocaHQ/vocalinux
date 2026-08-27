@@ -26,8 +26,31 @@ mock_ibus = MagicMock()
 mock_glib = MagicMock()
 mock_gobject = MagicMock()
 
-# Set up IBus mock - Engine should be the actual MagicMock class, not an instance
-mock_ibus.Engine = MagicMock
+
+class _FakeIBusEngine:
+    """Stand-in base class for ``IBus.Engine``.
+
+    ``VocalinuxEngine`` inherits from whatever ``IBus.Engine`` resolves to, so
+    this must be a real class: on Python 3.14 ``unittest.mock`` re-instantiates
+    the user subclass when it builds child mocks (``klass(name=...)``), which
+    raises ``TypeError`` as soon as a MagicMock is used as a base class.
+    Unknown IBus API surface still records calls, per instance.
+    """
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __getattr__(self, name):
+        mock = MagicMock(name=name)
+        object.__setattr__(self, name, mock)
+        return mock
+
+    def do_destroy(self):
+        """Parent implementation invoked through ``super().do_destroy``."""
+
+
+# Set up IBus mock - Engine is a plain class so the engine can subclass it
+mock_ibus.Engine = _FakeIBusEngine
 mock_ibus.Bus = MagicMock
 mock_ibus.Factory = MagicMock
 mock_ibus.Factory.new = MagicMock(return_value=MagicMock())

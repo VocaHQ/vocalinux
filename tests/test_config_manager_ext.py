@@ -233,6 +233,39 @@ class TestConfigManagerSoundEffects:
                 assert "sound_effects" in manager.config
                 assert manager.config["sound_effects"]["enabled"] is False
 
+    def test_missing_tone_key_lands_on_voca(self):
+        from vocalinux.ui.config_manager import ConfigManager
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager.config = {"sound_effects": {"enabled": True}}
+        assert manager.get_sound_effects_tone() == "voca"
+
+    def test_unknown_tone_lands_on_voca(self):
+        from vocalinux.ui.config_manager import ConfigManager
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager.config = {"sound_effects": {"enabled": True, "tone": "fifth"}}
+        assert manager.get_sound_effects_tone() == "voca"
+        assert manager.config["sound_effects"]["tone"] == "fifth"
+
+    def test_explicit_saved_tone_is_left_alone(self):
+        from vocalinux.ui.config_manager import SOUND_EFFECT_TONE_IDS, ConfigManager
+
+        manager = ConfigManager.__new__(ConfigManager)
+        for tone_id in SOUND_EFFECT_TONE_IDS:
+            manager.config = {"sound_effects": {"enabled": True, "tone": tone_id}}
+            assert manager.get_sound_effects_tone() == tone_id
+
+    def test_set_sound_effects_tone_persists(self):
+        from vocalinux.ui.config_manager import ConfigManager
+
+        manager = ConfigManager.__new__(ConfigManager)
+        manager.config = {}
+        manager.set_sound_effects_tone("off")
+        assert manager.get_sound_effects_tone() == "off"
+        manager.set_sound_effects_tone("lift")
+        assert manager.get_sound_effects_tone() == "lift"
+
 
 class TestConfigManagerUpdateDictRecursive:
     """Tests for _update_dict_recursive method."""

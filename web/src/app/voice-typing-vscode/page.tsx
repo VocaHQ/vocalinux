@@ -228,7 +228,7 @@ export default function VoiceTypingVsCodePage() {
         </ul>
       </section>
 
-      <section className="mb-12 rounded-[12px] border border-border bg-muted p-6 dark:border-border">
+      <section className="mb-12 rounded-[12px] border border-border bg-muted p-6">
         <h2 className="mb-4 flex items-center gap-2 font-display text-2xl font-semibold text-muted-foreground">
           <Bug className="h-5 w-5" />
           Troubleshooting

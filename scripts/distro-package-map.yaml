@@ -57,7 +57,7 @@ system_packages:
     # Tumbleweed package names follow the active Python minor version, e.g. python313-devel.
     # NOTE: "python3XY" is a placeholder — see gtk3.opensuse comment above for details.
     opensuse: ["python3XY-devel", "python3XY-virtualenv", "python3XY-venv", "python3XY-pip"]
-    gentoo: ["dev-lang/python:3.9"]
+    gentoo: ["dev-lang/python:3.11"]
     alpine: ["py3-virtualenv"]
     void: ["python3-devel"]
     solus: ["python3-virtualenv"]
@@ -217,7 +217,7 @@ distribution_notes:
 
   gentoo:
     general: "Gentoo compiles packages from source. Installation will take longer."
-    python: "Ensure Python 3.9+ is set as the active version"
+    python: "Ensure Python 3.11+ is set as the active version"
 
   alpine:
     general: "Alpine uses musl libc. Some Python packages may not have pre-built wheels."

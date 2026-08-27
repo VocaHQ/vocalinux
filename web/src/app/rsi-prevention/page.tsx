@@ -24,7 +24,7 @@ const benefits = [
   {
     title: "Privacy for Health",
     description:
-      "Your health data stays private. All voice processing happens locally - no cloud uploads, no third parties.",
+      "Local engines process speech on your machine. Remote API is optional and only talks to a server you configure.",
     icon: Shield,
     iconColor: "text-primary",
     iconBg: "bg-primary/10",
@@ -85,13 +85,13 @@ const statistics = [
   { value: "8+", label: "Hours per day average computer use for office workers" },
   { value: "50%", label: "Of computer users experience RSI symptoms" },
   { value: "100+", label: "Words per minute achievable with voice dictation" },
-  { value: "100%", label: "Offline - no data ever leaves your computer" },
+  { value: "Local", label: "Engines run on your machine unless you enable Remote API" },
 ];
 
 export const metadata: Metadata = buildPageMetadata({
   title: "Voice Dictation for RSI & Carpal Tunnel Prevention | Vocalinux",
   description:
-    "Prevent and manage RSI, carpal tunnel, and repetitive strain injuries with voice dictation. Hands-free typing for Linux users with 100% offline privacy.",
+    "Prevent and manage RSI, carpal tunnel, and repetitive strain injuries with voice dictation. Hands-free typing for Linux users with local engines or an optional Remote API.",
   path: "/rsi-prevention",
   keywords: [
     "RSI voice dictation",
@@ -146,8 +146,8 @@ export default function RsiPreventionPage() {
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
           Suffering from carpal tunnel, wrist pain, or repetitive strain? Voice dictation lets you
-          keep working without the physical toll. All processing happens locally on your Linux
-          machine.
+          keep working without the physical toll. Local engines run on your Linux machine. Remote
+          API is optional.
         </p>
       </section>
 
@@ -196,8 +196,8 @@ export default function RsiPreventionPage() {
             >
               <h3 className="mb-2 font-semibold">{condition.name}</h3>
               <p className="mb-3 text-sm text-muted-foreground">{condition.description}</p>
-              <div className="rounded-lg bg-primary/10 p-3 dark:bg-primary/10">
-                <p className="text-sm text-primary dark:text-[color:var(--terminal-fg)]">
+              <div className="rounded-lg bg-primary/10 p-3">
+                <p className="text-sm text-primary">
                   <strong>How dictation helps:</strong> {condition.howDictationHelps}
                 </p>
               </div>
@@ -254,7 +254,7 @@ export default function RsiPreventionPage() {
         </div>
       </section>
 
-      <section className="rounded-[12px] border border-border bg-primary/10 p-8 dark:border-border">
+      <section className="rounded-[12px] border border-border bg-primary/10 p-8">
         <h2 className="mb-4 font-display text-2xl font-semibold text-primary">
           Take Care of Your Hands
         </h2>
@@ -273,7 +273,7 @@ export default function RsiPreventionPage() {
           </Link>
           <Link
             href="/use-cases/"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10 dark:bg-primary/10 dark:hover:bg-primary/10"
+            className="inline-flex items-center gap-2 rounded-lg border border-border bg-background px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10"
           >
             See Other Use Cases
           </Link>

@@ -9,23 +9,26 @@
 <!-- Badge rows ordered narrowest → widest (steps out into the hero) -->
 
 <!-- Values + packaging (narrow) -->
-[![Privacy: 100% offline](https://img.shields.io/badge/privacy-100%25%20offline-success)](https://github.com/jatinkrmalik/vocalinux#features)
-[![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/jatinkrmalik/vocalinux#features)
+[![Privacy: on-device](https://img.shields.io/badge/privacy-on--device%20after%20model%20download-success)](https://github.com/VocaHQ/vocalinux#features)
+[![X11 & Wayland](https://img.shields.io/badge/display-X11%20%7C%20Wayland-lightgrey)](https://github.com/VocaHQ/vocalinux#features)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Discord](https://img.shields.io/discord/1538633755877580810?logo=discord&logoColor=white&label=Discord)](https://discord.gg/t6muquAJbm)
+[![Email](https://img.shields.io/badge/hello%40vocahq.com-1a7f4e)](mailto:hello@vocahq.com)
+[![VocaHQ](https://img.shields.io/badge/VocaHQ-vocahq.com-1a7f4e)](https://vocahq.com)
 
 <!-- Identity + quality (medium) -->
-[![GitHub release](https://img.shields.io/github/v/release/jatinkrmalik/vocalinux)](https://github.com/jatinkrmalik/vocalinux/releases)
+[![GitHub release](https://img.shields.io/github/v/release/VocaHQ/vocalinux)](https://github.com/VocaHQ/vocalinux/releases)
 [![PyPI](https://img.shields.io/pypi/v/vocalinux)](https://pypi.org/project/vocalinux/)
 [![AUR](https://img.shields.io/aur/version/vocalinux)](https://aur.archlinux.org/packages/vocalinux)
-[![Vocalinux CI](https://github.com/jatinkrmalik/vocalinux/actions/workflows/unified-pipeline.yml/badge.svg?branch=main)](https://github.com/jatinkrmalik/vocalinux/actions/workflows/unified-pipeline.yml?query=branch%3Amain)
-[![codecov](https://codecov.io/gh/jatinkrmalik/vocalinux/branch/main/graph/badge.svg)](https://codecov.io/gh/jatinkrmalik/vocalinux)
-[![Follow on X](https://img.shields.io/badge/Follow%20%40jatinkrmalik-000000?style=flat&logo=x&logoColor=white)](https://x.com/intent/user?screen_name=jatinkrmalik)
+[![Vocalinux CI](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml/badge.svg?branch=main)](https://github.com/VocaHQ/vocalinux/actions/workflows/unified-pipeline.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/VocaHQ/vocalinux/branch/main/graph/badge.svg)](https://codecov.io/gh/VocaHQ/vocalinux)
+[![Follow on X](https://img.shields.io/badge/Follow%20%40vocahq-000000?style=flat&logo=x&logoColor=white)](https://x.com/vocahq)
 
 <!-- Distros (widest; base plate above the hero) -->
-[![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04+-E95420?logo=ubuntu&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
-[![Debian](https://img.shields.io/badge/Debian-11+-A81D33?logo=debian&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04+-E95420?logo=ubuntu&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
+[![Debian](https://img.shields.io/badge/Debian-12+-A81D33?logo=debian&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
 [![Fedora](https://img.shields.io/badge/Fedora-39+-51A2DA?logo=fedora&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
 [![Arch](https://img.shields.io/badge/Arch-rolling-1793D1?logo=archlinux&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
 [![openSUSE](https://img.shields.io/badge/openSUSE-Tumbleweed-73BA25?logo=opensuse&logoColor=white)](docs/DISTRO_COMPATIBILITY.md)
@@ -34,39 +37,40 @@
 
 Linux has always punched above its weight, except when it comes to voice typing. Vocalinux fixes that.
 
-It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using fully offline speech recognition. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
+It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any* application, on X11 or Wayland, using on-device speech recognition after you download a model. Pick from three engines (whisper.cpp, OpenAI Whisper, or VOSK), get automatic GPU acceleration via Vulkan, and control it all with customizable keyboard shortcuts: toggle or push-to-talk.
 
-No internet required. No data leaves your machine. Just speak and type.
+Models are downloaded once. After that, speech-to-text stays on your machine. No Voca account is required. Just speak and type.
 
-## 📚 What's New in v0.15.0
+## 📚 What's New in v0.16.0
 
-> **0.15.0** adds searchable sidebar settings, AppImage packages, a much larger speech-language catalog (including Hungarian), cleaner continuous dictation (capitalization + trailing spaces), power-saving model unload, smarter Vulkan GPU selection, and Wayland IBus improvements on top of the 0.14 packaging line.
+> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The project license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
 
 ### Highlights
 
 | Feature | Description |
 |---------|-------------|
-| **Searchable settings** | Sidebar navigation with search replaces the seven-tab notebook (#601) |
-| **AppImage** | Self-contained x86_64 and aarch64 builds on GitHub Releases (#573, #602) |
-| **More languages** | ~33 selectable speech languages (plus Auto-detect), including Hungarian; VOSK only lists languages with official models (#616, fixes #565) |
-| **Dictation polish** | Auto-capitalize after sentence punctuation; trailing space so the next utterance does not glue on (#554, #608) |
-| **Auto-pause + keep-alive** | Pause/unload while configured apps run; unload after idle timeout (#592) |
-| **Vulkan GPU selection** | Prefer discrete GPUs automatically; pick a device in Advanced settings (#590) |
-| **ibus-wayland** | Use IBus on “unbridged” compositors when `ibus-wayland` is running (#614) |
+| **Update checker** | Settings → About checks stable/nightly channels; tray shows Update Available when GitHub has a newer release (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
 ### Also in this release
 
-- Settings: dictation status / mic level / Test Dictation / Close live in the sidebar footer (#618)
-- Settings: Custom Shortcut Record/Set controls show again (#619)
-- Languages: English (India) maps to Whisper code `en` (#617)
-- CLI `--version` (#563)
-- Bluetooth mic probing no longer corrupts the heap / crashes on SCO capture devices (#599)
-- IBus engine teardown when parent destroy fails (#613)
-- Settings info notices flattened to match the rest of the dialog (#615)
-- KDE Plasma Wayland unbridged-IBus skip when ibus-wayland is absent (#577)
-- xdotool focus preserve; installer / uninstall / AUR reliability fixes (#564, #583, #569, #597, #579, #586)
+- IBus: safer scoped injection, engine restore after teardown, XKB layout restore on X11 (#623, #643, #665)
+- Audio: filter unsafe virtual capture devices; open stereo mics at native channel count; catalog tones are the family preview WAVs, not the synthesized #707 files (#629, #673, #708)
+- Clipboard: restore after ydotool paste; text-only reads and safer overlapping restore (#588, #646)
+- GPU / AppImage: honor bundled GPU libs and skip software Vulkan; ship transitive GI typelibs (AppImage fix already hotfixed onto the v0.15.0 AppImages) (#674, #637)
+- Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE; optional missing-tray warning toggle (#670, #669, #621, #628)
+- Test Dictation: no longer reports no speech when recognition never started (#702)
+- Settings: About page groups this app, the VocaHQ family, and talk-to-us links (#718)
+- Installer / downloads / tests: gate `util-linux-extra` to Ubuntu 24.04+; report failed model downloads; stop tests from overwriting real `config.json` (#635, #690, #694)
+- Website: vocalinux.com restyled to the Voca family workbench; Discord and X links point at VocaHQ (#728, #729, #722, #717)
 
-See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/jatinkrmalik/vocalinux/releases/tag/v0.15.0).
+See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
 
 ---
 
@@ -75,7 +79,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 - 🎤 **Toggle or Push-to-Talk** activation modes
 - ⚡ **Real-time transcription** with minimal latency
 - 🌎 **Universal compatibility** across all Linux applications
-- 🔒 **100% Offline operation** for privacy and reliability
+- 🔒 **On-device after model download** — speech-to-text stays on your machine
 - 🤖 **whisper.cpp by default** - High-performance C++ speech recognition
 - 🎮 **Universal GPU support** - Vulkan acceleration for AMD, Intel, and NVIDIA
 - 🎨 **System tray integration** with visual status indicators
@@ -86,7 +90,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 
 ## 📸 Screenshots
 
-Vocalinux in action. Settings gallery shots may lag the searchable sidebar UI from v0.15.0 — full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
+Vocalinux in action. Settings gallery shots may lag the newest UI. Full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
 
 ### Product
 
@@ -153,7 +157,7 @@ Vocalinux in action. Settings gallery shots may lag the searchable sidebar UI fr
 Our new interactive installer guides you through setup with intelligent hardware detection:
 
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
 ```
 
 **Choose your engine:**
@@ -168,25 +172,25 @@ The installer will:
 - **Install neural VAD support** when ONNX Runtime is available
 - **Install in ~1-2 minutes** (vs 5-10 min with old Whisper)
 
-> **Note**: Always installs the latest release. For a specific version, check [GitHub Releases](https://github.com/jatinkrmalik/vocalinux/releases).
+> **Note**: Always installs the latest release. For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
 
 ### Installation Options
 
 **Default (whisper.cpp - recommended):**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh
 ```
 Fastest installation (~1-2 min), universal GPU support via Vulkan.
 
 **Whisper (OpenAI) - if you prefer PyTorch:**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=whisper
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=whisper
 ```
 NVIDIA GPU only (~5-10 min, downloads PyTorch + CUDA).
 
 **VOSK only - for low-RAM systems:**
 ```bash
-curl -fsSL raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=vosk
+curl -fsSL raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --engine=vosk
 ```
 Lightweight option (~40MB), works on systems with 4GB RAM.
 
@@ -219,21 +223,22 @@ is in progress.
 
 ```bash
 # Clone the repository
-git clone https://github.com/jatinkrmalik/vocalinux.git
+git clone https://github.com/VocaHQ/vocalinux.git
 cd vocalinux
 
-# Run the installer (will prompt for Whisper)
+# Run the interactive installer (engine picker + GPU detection)
 ./install.sh
 
-# Or with Whisper support
-./install.sh --with-whisper
+# Or pick the engine up front
+./install.sh --engine=whisper_cpp   # whisper.cpp (default, GPU-accelerated)
+./install.sh --engine=vosk          # lightweight VOSK
 ```
 
 The installer handles everything: system dependencies, Python environment, speech models, and desktop integration.
 
 ### 🌙 Nightly Releases (Bleeding Edge)
 
-For developers and early adopters who want to test the latest features, check out our [GitHub Releases page](https://github.com/jatinkrmalik/vocalinux/releases) which includes both beta and nightly builds.
+For developers and early adopters who want to test the latest features, check out our [GitHub Releases page](https://github.com/VocaHQ/vocalinux/releases) which includes both beta and nightly builds.
 
 > **⚠️ Warning**: Nightly releases contain the absolute latest code and may be unstable. For production use, we recommend using the latest beta release.
 
@@ -261,8 +266,8 @@ Or launch it from your application menu!
 
 ## 📋 Requirements
 
-- **OS**: Linux (tested on Ubuntu 22.04+, Debian 11+, Fedora 39+, Arch Linux, openSUSE Tumbleweed)
-- **Python**: 3.9 or newer
+- **OS**: Linux (tested on Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch Linux, openSUSE Tumbleweed)
+- **Python**: 3.11 or newer
 - **Display**: X11 or Wayland
 - **Hardware**: Microphone for voice input
 
@@ -362,7 +367,7 @@ Restart Vocalinux after install. The Recognition tab in Settings shows which bac
 
 ```bash
 # Clone and install in dev mode
-git clone https://github.com/jatinkrmalik/vocalinux.git
+git clone https://github.com/VocaHQ/vocalinux.git
 cd vocalinux
 ./install.sh --dev
 
@@ -410,7 +415,7 @@ GitHub is the **primary** forge for issues, pull requests, CI, and releases.
 
 | Role | URL |
 |------|-----|
-| Primary | https://github.com/jatinkrmalik/vocalinux |
+| Primary | https://github.com/VocaHQ/vocalinux |
 | Read-only mirror (Codeberg) | https://codeberg.org/jatinkrmalik/vocalinux |
 
 The Codeberg copy is a read-only source backup. Open issues and PRs on GitHub only.
@@ -452,15 +457,21 @@ This script generates all three sounds using the same smooth glide algorithm. Yo
 
 ## 🌐 The Voca Ecosystem
 
-Vocalinux is part of a family of privacy-first, offline voice dictation tools. Same mission, every operating system.
+Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text first, one app per platform. Optional [VocaGateway](https://vocagateway.vocahq.com) is self-hosted and not on-device.
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [jatinkrmalik/vocalinux](https://github.com/jatinkrmalik/vocalinux) | ✅ Stable v0.15.0 |
-| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [jatinkrmalik/vocamac](https://github.com/jatinkrmalik/vocamac) | 🚀 Beta |
-| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [jatinkrmalik/vocawin](https://github.com/jatinkrmalik/vocawin) | 📋 Planned |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.0`) |
+| 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta (`v0.9.0`) |
+| 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Unsigned beta (`v0.1.0-beta.1`) |
+| 📱 Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | 🚀 Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |
+| 🖧 Gateway | **VocaGateway** | [vocagateway.vocahq.com](https://vocagateway.vocahq.com) | [VocaHQ/vocagateway](https://github.com/VocaHQ/vocagateway) | 🧪 Early · optional · not on-device |
 
-> Each platform uses native technologies for the best possible integration, while sharing the same privacy-first philosophy and offline-only architecture.
+> VocaWin is unsigned. SmartScreen may warn about an unknown publisher. It is not a Microsoft Store ship.
+>
+> Each platform uses native technologies. The shared bar is on-device first; [VocaGateway](https://vocagateway.vocahq.com) is optional self-hosted compute and is not on-device.
+>
+> Talk to us: [Discord](https://discord.gg/t6muquAJbm) · [X @vocahq](https://x.com/vocahq) · [hello@vocahq.com](mailto:hello@vocahq.com)
 
 ## 🤝 Contributing
 
@@ -470,15 +481,15 @@ We welcome contributions! Whether it's bug reports, feature requests, or code co
 
 Thanks to everyone who has contributed to Vocalinux! 🙌
 
-<a href="https://github.com/jatinkrmalik/vocalinux/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=jatinkrmalik/vocalinux" />
+<a href="https://github.com/VocaHQ/vocalinux/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=VocaHQ/vocalinux" />
 </a>
 
 ### Quick Links
 
-- 🐛 [Report a Bug](https://github.com/jatinkrmalik/vocalinux/issues/new?template=bug_report.md)
-- 💡 [Request a Feature](https://github.com/jatinkrmalik/vocalinux/issues/new?template=feature_request.md)
-- 💬 [Discussions](https://github.com/jatinkrmalik/vocalinux/discussions)
+- 🐛 [Report a Bug](https://github.com/VocaHQ/vocalinux/issues/new?template=bug_report.md)
+- 💡 [Request a Feature](https://github.com/VocaHQ/vocalinux/issues/new?template=feature_request.md)
+- 💬 [Discussions](https://github.com/VocaHQ/vocalinux/discussions)
 
 
 ## ⭐ Support
@@ -495,7 +506,7 @@ This project is licensed under the **GNU Affero General Public License v3.0**
 ([AGPL-3.0](LICENSE)), aligning with the other [VocaHQ](https://github.com/VocaHQ)
 distribution projects ([VocaMac](https://github.com/VocaHQ/vocamac),
 [VocaPhone](https://github.com/VocaHQ/vocaphone),
-[VocaServer](https://github.com/VocaHQ/vocaserver)).
+[VocaGateway](https://github.com/VocaHQ/vocagateway)).
 
 You may use, study, modify, and redistribute the software under AGPL-3.0. If you
 run a modified version as a network service, AGPL also requires that you make the
@@ -503,7 +514,7 @@ corresponding source available.
 
 ## Star Chart
 
-[![Star History Chart](https://api.star-history.com/chart?repos=jatinkrmalik/vocalinux&type=date&legend=top-left&sealed_token=ZWyQQLhSORoR4mKf6UXMGFSCBXRxM_yEZgc8MFCH_ysBjaFUm_OCH-bI3TD7OivczEzm-ADRIpF9xCWFOMHvBPW95eQBxzfRMpNksChz7rN_eiqL7AIMDw)](https://www.star-history.com/?type=date&repos=jatinkrmalik%2Fvocalinux)
+[![Star History Chart](https://api.star-history.com/chart?repos=VocaHQ/vocalinux&type=date&legend=top-left&sealed_token=ZWyQQLhSORoR4mKf6UXMGFSCBXRxM_yEZgc8MFCH_ysBjaFUm_OCH-bI3TD7OivczEzm-ADRIpF9xCWFOMHvBPW95eQBxzfRMpNksChz7rN_eiqL7AIMDw)](https://www.star-history.com/?type=date&repos=VocaHQ%2Fvocalinux)
 
 ---
 

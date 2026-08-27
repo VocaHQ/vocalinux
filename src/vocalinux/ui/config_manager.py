@@ -18,6 +18,32 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = config_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
+# Family dictation-tone catalog. Ids and display names are shared with VocaWin.
+# The former "fifth" pair is voca / Voca. Off is a real choice (no start/stop).
+SOUND_EFFECT_TONES: tuple[tuple[str, str], ...] = (
+    ("lift", "Lift"),
+    ("flick", "Flick"),
+    ("ember", "Ember"),
+    ("step", "Step"),
+    ("voca", "Voca"),
+    ("soft", "Soft"),
+    ("chirp", "Chirp"),
+    ("scale", "Scale"),
+    ("drop", "Drop"),
+    ("glass", "Glass"),
+    ("off", "Off"),
+)
+SOUND_EFFECT_TONE_IDS = frozenset(tone_id for tone_id, _label in SOUND_EFFECT_TONES)
+DEFAULT_SOUND_EFFECT_TONE = "voca"
+
+
+def normalize_sound_effect_tone(tone: Any) -> str:
+    """Return a catalog id. Missing, blank, or unknown values become voca."""
+    if isinstance(tone, str) and tone in SOUND_EFFECT_TONE_IDS:
+        return tone
+    return DEFAULT_SOUND_EFFECT_TONE
+
+
 # Default configuration
 DEFAULT_CONFIG = {
     "speech_recognition": {  # Changed section name
@@ -41,7 +67,8 @@ DEFAULT_CONFIG = {
         "device_name": None,  # Saved device name for display/reference
     },
     "sound_effects": {
-        "enabled": True,  # Play sounds for recording start/stop/error
+        "enabled": True,  # Master mute for start/stop/error cues
+        "tone": "voca",  # Family catalog id; missing/unknown also resolve to voca
     },
     "shortcuts": {
         "toggle_recognition": "right_alt+right_alt",
@@ -422,6 +449,16 @@ class ConfigManager:
         if "sound_effects" not in self.config:
             self.config["sound_effects"] = {}
         self.config["sound_effects"]["enabled"] = enabled
+
+    def get_sound_effects_tone(self) -> str:
+        """Return the selected dictation tone id (voca when unset or unknown)."""
+        return normalize_sound_effect_tone(self.config.get("sound_effects", {}).get("tone"))
+
+    def set_sound_effects_tone(self, tone: str):
+        """Save a catalog tone id. Unknown ids are stored as voca."""
+        if "sound_effects" not in self.config:
+            self.config["sound_effects"] = {}
+        self.config["sound_effects"]["tone"] = normalize_sound_effect_tone(tone)
 
     def _update_dict_recursive(self, target: dict, source: dict):
         """

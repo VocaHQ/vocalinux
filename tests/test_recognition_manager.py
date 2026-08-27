@@ -65,9 +65,11 @@ class TestSpeechRecognition(unittest.TestCase):
         mock_audio_feedback.play_stop_sound.reset_mock()
         mock_audio_feedback.play_error_sound.reset_mock()
 
-        # Patch os.makedirs to avoid creating directories
-        self.patcher_makedirs = patch("os.makedirs")
-        self.mock_makedirs = self.patcher_makedirs.start()
+        # os.makedirs is already patched above as mockMakeDirs. Patching it a
+        # second time here and then stopping the two out of order (this one last)
+        # restored the *first* mock into the os module, leaking a fake makedirs
+        # into every test that ran after this class.
+        self.mock_makedirs = self.makeDirsMock
 
         # Patch os.path.exists to return True for any path
         self.patcher_exists = patch("os.path.exists", return_value=True)
@@ -105,7 +107,6 @@ class TestSpeechRecognition(unittest.TestCase):
         self.mockDownload.stop()
         self.mockCmdProcessor.stop()
 
-        self.patcher_makedirs.stop()
         self.patcher_exists.stop()
         self.patcher_unlink.stop()
         self.patcher_temp.stop()
@@ -475,7 +476,7 @@ class TestSpeechRecognition(unittest.TestCase):
         manager.model = None
 
         # Should not start and should play error sound
-        manager.start_recognition()
+        self.assertFalse(manager.start_recognition())
         self.assertEqual(manager.state, RecognitionState.IDLE)
         mock_audio_feedback.play_error_sound.assert_called()
 

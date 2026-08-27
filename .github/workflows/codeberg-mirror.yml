@@ -15,7 +15,7 @@ jobs:
   mirror:
     name: Push to Codeberg
     runs-on: ubuntu-latest
-    if: github.repository == 'jatinkrmalik/vocalinux'
+    if: github.repository == 'VocaHQ/vocalinux'
     steps:
       - uses: actions/checkout@v5
         with:

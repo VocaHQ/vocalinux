@@ -54,7 +54,7 @@ const benefits = [
 const vsProprietary = [
   { feature: "Cost", vocalinux: "Free forever", proprietary: "$10-500/month or $500+ license" },
   { feature: "Source Code", vocalinux: "Fully open", proprietary: "Closed, proprietary" },
-  { feature: "Data Privacy", vocalinux: "100% offline", proprietary: "Often cloud-based" },
+  { feature: "Data Privacy", vocalinux: "Local engines by default", proprietary: "Often cloud-based" },
   { feature: "Linux Support", vocalinux: "Native", proprietary: "Limited or none" },
   { feature: "Customization", vocalinux: "Unlimited", proprietary: "Limited to vendor options" },
   { feature: "Vendor Dependency", vocalinux: "None", proprietary: "High" },
@@ -141,9 +141,17 @@ export default function OpenSourcePage() {
           Free & Open Source Voice Dictation
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Vocalinux is 100% open source under the AGPL-3.0 license, aligned with the other
-          VocaHQ distribution projects. No subscriptions, no vendor lock-in, no hidden costs.
-          Your voice data never leaves your machine.
+          Vocalinux is 100% open source under the AGPL-3.0 license, and part of{" "}
+          <a
+            href="https://vocahq.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary hover:underline"
+          >
+            VocaHQ
+          </a>
+          . No subscriptions, no vendor lock-in, no hidden costs. Local engines keep
+          audio on the machine. Remote API is optional.
         </p>
       </section>
 
@@ -211,7 +219,7 @@ export default function OpenSourcePage() {
               {vsProprietary.map((row) => (
                 <tr key={row.feature} className="border-b border-border">
                   <td className="py-3 pr-4 font-medium">{row.feature}</td>
-                  <td className="py-3 pr-4 text-primary dark:text-[color:var(--terminal-fg)]">{row.vocalinux}</td>
+                  <td className="py-3 pr-4 text-primary">{row.vocalinux}</td>
                   <td className="py-3 text-muted-foreground">{row.proprietary}</td>
                 </tr>
               ))}
@@ -249,12 +257,12 @@ export default function OpenSourcePage() {
           <div>
             <h2 className="mb-3 text-xl font-semibold">Privacy by Design</h2>
             <p className="mb-4 text-muted-foreground">
-              Because Vocalinux is open source and runs entirely offline, you can verify that your
-              voice data never leaves your computer. No telemetry, no analytics, no cloud
-              processing.
+              Because Vocalinux is open source, you can verify what local engines do on your
+              machine. The installed app has no usage telemetry. Remote API is optional and only
+              talks to a server you configure.
             </p>
             <div className="flex flex-wrap gap-2">
-              {["No account required", "No internet needed", "No data collection", "Full transparency"].map(
+              {["No account required", "Local engines need no network after download", "No usage telemetry", "Full transparency"].map(
                 (item) => (
                   <span
                     key={item}
@@ -281,7 +289,7 @@ export default function OpenSourcePage() {
               translations - join the community.
             </p>
             <a
-              href="https://github.com/jatinkrmalik/vocalinux"
+              href="https://github.com/VocaHQ/vocalinux"
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-4 py-2 text-sm font-semibold text-foreground hover:bg-muted"

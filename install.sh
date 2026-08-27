@@ -2,7 +2,16 @@
 # Vocalinux Installer
 # This script installs the Vocalinux application and its dependencies
 
-set -e  # Exit on error
+# -E: ERR trap propagates into functions/subshells
+# -e: exit on unhandled command failure   -u: error on unset variables
+# -o pipefail: a pipeline fails if any stage fails
+set -Eeuo pipefail
+
+# Exit codes (see --help). 1 remains the generic/unclassified failure.
+EXIT_OK=0
+EXIT_MISSING_DEPS=2   # required system tools/packages could not be installed
+EXIT_NETWORK=3        # connectivity failure or download/clone failure
+EXIT_USER_ABORT=4     # user declined a prompt
 
 # Keep the venv isolated from ~/.local site packages while still allowing
 # --system-site-packages to expose distro-provided GTK/PyGObject bindings.
@@ -17,16 +26,70 @@ print_success() {
     echo -e "\e[1;32m[SUCCESS]\e[0m $1"
 }
 
+# Diagnostics go to stderr, not stdout: `exec > >(tee ...) 2>&1` keeps them in the
+# log and on screen either way, but stdout is what every $( ) captures. Writing
+# them there let the ERR trap's own message land inside a captured value.
 print_error() {
-    echo -e "\e[1;31m[ERROR]\e[0m $1"
+    echo -e "\e[1;31m[ERROR]\e[0m $1" >&2
 }
 
 print_warning() {
-    echo -e "\e[1;33m[WARNING]\e[0m $1"
+    echo -e "\e[1;33m[WARNING]\e[0m $1" >&2
 }
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
+}
+
+# The installer must build its venv from the *system* Python: distro PyGObject
+# (python3-gi / python3-gobject) is compiled for that interpreter only. When the
+# script starts inside an activated virtualenv — a shell left in uv's .venv
+# after `just deps`, for instance — a bare `python3` resolves to that venv's
+# interpreter instead, and a venv created from it cannot import gi even with
+# --system-site-packages. Undo the activation for the installer's own process
+# before anything looks up an interpreter.
+deactivate_inherited_virtualenv() {
+    local venv_bin cleaned entry
+
+    [ -z "${VIRTUAL_ENV:-}" ] && return 0
+
+    print_warning "Running inside an activated virtualenv ($VIRTUAL_ENV)."
+    print_info "Ignoring it so the installation uses the system Python."
+
+    venv_bin="${VIRTUAL_ENV%/}/bin"
+    cleaned=""
+    while IFS= read -r entry; do
+        [ "$entry" = "$venv_bin" ] && continue
+        cleaned="${cleaned:+$cleaned:}$entry"
+    done < <(printf '%s\n' "${PATH//:/$'\n'}")
+
+    PATH="$cleaned"
+    export PATH
+    unset VIRTUAL_ENV
+    unset PYTHONHOME
+}
+
+deactivate_inherited_virtualenv
+
+# HTTP-level connectivity check. ICMP ping is blocked on many networks
+# (corporate firewalls, public Wi-Fi, CI runners), so probe the actual
+# endpoints the installer depends on. Returns 0 if any probe succeeds.
+check_connectivity() {
+    local url
+    for url in https://pypi.org/simple/ https://api.github.com/ https://huggingface.co/; do
+        if command_exists curl; then
+            if curl -fsI --connect-timeout 5 --max-time 10 -o /dev/null "$url" 2>/dev/null; then
+                return 0
+            fi
+        elif command_exists wget; then
+            if wget -q --spider --timeout=10 "$url" 2>/dev/null; then
+                return 0
+            fi
+        else
+            return 1
+        fi
+    done
+    return 1
 }
 
 is_kde_plasma_session() {
@@ -162,7 +225,7 @@ check_running_processes() {
             if [[ $REPLY =~ ^[Nn]$ ]]; then
                 print_error "Cannot proceed with installation while Vocalinux is running."
                 print_info "Please stop Vocalinux manually and run the installer again."
-                exit 1
+                exit "$EXIT_USER_ABORT"
             fi
         fi
 
@@ -186,7 +249,7 @@ check_running_processes() {
         if [ -n "$FINAL_PIDS" ]; then
             print_error "Could not terminate all Vocalinux processes: $FINAL_PIDS"
             print_error "Please manually kill these processes and run the installer again."
-            exit 1
+            exit "$EXIT_USER_ABORT"
         else
             print_success "All Vocalinux processes stopped"
         fi
@@ -200,18 +263,26 @@ DEV_MODE="no"
 VENV_DIR="venv"
 SKIP_MODELS="no"
 SKIP_SYSTEM_DEPS="no"
-WITH_WHISPER="no"
-WHISPER_CPU="no"
-NO_WHISPER_EXPLICIT="no"
 NON_INTERACTIVE="no"
 INTERACTIVE_MODE="yes"  # Default to interactive mode
 AUTO_MODE="no"
 REBUILD_WHISPERCPP="ask"
+# Pinned pywhispercpp release (sdist, built from source). Keep in sync with
+# uv.lock and the requirements/ exports.
+PYWHISPERCPP_VERSION="1.5.0"
 HAS_NVIDIA_GPU="unknown"
 GPU_NAME=""
 GPU_MEMORY=""
 HAS_VULKAN="no"
 VULKAN_DEVICE=""
+VULKAN_SOFTWARE_DEVICE=""
+# Initialize mode/state variables that are set later by flags or prompts so
+# that every read under `set -u` is well-defined in every code path.
+INSTALL_TAG=""
+SELECTED_ENGINE=""
+WHISPERCPP_BACKEND=""
+WHISPERCPP_ALREADY_INSTALLED="false"
+REMOTE_API_URL=""
 
 # Detect if running non-interactively (e.g., via curl | bash)
 # If stdin is a pipe but /dev/tty exists, redirect stdin so user input works normally.
@@ -311,6 +382,16 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --auto                    # Auto-install with whisper.cpp"
             echo "  $0 --auto --engine=vosk      # Auto-install VOSK only"
             echo "  $0 --dev --test              # Dev mode with tests"
+            echo ""
+            echo "During installation a full transcript is saved to"
+            echo "  ~/.local/state/vocalinux/install-<timestamp>.log"
+            echo ""
+            echo "Exit codes:"
+            echo "  0  success"
+            echo "  1  generic failure"
+            echo "  2  required system dependencies could not be installed"
+            echo "  3  network / download failure"
+            echo "  4  user aborted at a prompt"
             exit 0
             ;;
         *)
@@ -325,6 +406,39 @@ done
 if [[ "$DEV_MODE" == "yes" ]]; then
     RUN_TESTS="yes"
 fi
+
+# ---------------------------------------------------------------------------
+# Global install log: everything (stdout + stderr) is teed to this file so
+# failures can be debugged after the fact. The path is printed at exit.
+# ---------------------------------------------------------------------------
+INSTALL_LOG_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/vocalinux"
+if ! mkdir -p "$INSTALL_LOG_DIR" 2>/dev/null; then
+    INSTALL_LOG_DIR="${TMPDIR:-/tmp}"
+fi
+INSTALL_LOG_FILE="$INSTALL_LOG_DIR/install-$(date +%Y%m%d-%H%M%S).log"
+exec > >(tee -a "$INSTALL_LOG_FILE") 2>&1
+
+# Scratch directory for pip logs, model downloads, and other temps.
+# Removed on success; kept for inspection (with a notice) when the install fails.
+# Exporting TMPDIR routes pip/wget/curl scratch files into this directory.
+VOCALINUX_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vocalinux-install.XXXXXXXX")"
+export TMPDIR="$VOCALINUX_TMP_DIR"
+
+cleanup_on_exit() {
+    local rc=$?
+    if [ "$rc" -eq "$EXIT_OK" ]; then
+        rm -rf "$VOCALINUX_TMP_DIR"
+    else
+        print_error ""
+        print_error "Installation did not complete (exit code $rc)."
+        print_error "Full install log: $INSTALL_LOG_FILE"
+        print_error "Scratch files kept for inspection: $VOCALINUX_TMP_DIR"
+    fi
+}
+trap cleanup_on_exit EXIT
+trap 'print_error "Unexpected error near line $LINENO (exit code $?); see $INSTALL_LOG_FILE"' ERR
+trap 'print_warning "Interrupted by user"; exit 130' INT
+trap 'print_warning "Terminated by signal"; exit 143' TERM
 
 # Display ASCII art banner
 cat << "EOF"
@@ -346,25 +460,31 @@ check_running_processes
 
 resolve_install_tag() {
     if [ -n "$INSTALL_TAG" ]; then
-        return
+        return 0
     fi
     if command_exists curl; then
         local latest
-        latest=$(curl -fsSL --connect-timeout 5 \
-            "https://api.github.com/repos/jatinkrmalik/vocalinux/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+        # (|| true: pipefail would otherwise abort when head closes the pipe
+        # early or the API is unreachable; empty means "not resolved")
+        latest=$(curl -fsSL --connect-timeout 5 --retry 2 \
+            "https://api.github.com/repos/VocaHQ/vocalinux/releases/latest" \
+            2>/dev/null | grep '"tag_name"' | head -1 | cut -d'"' -f4 || true)
         if [ -n "$latest" ]; then
             INSTALL_TAG="$latest"
-            return
+            return 0
         fi
     fi
-    INSTALL_TAG="v0.10.1-beta"
+    # No hardcoded fallback tag: silently installing a stale release is worse
+    # than failing. The remote-install path below aborts with a --tag hint if
+    # INSTALL_TAG is still empty; in-repo installs do not need a tag at all.
+    print_warning "Could not determine the latest release tag (GitHub API unreachable?)."
+    return 0
 }
 
 resolve_install_tag
 
 # Check if running from within the vocalinux repo or remotely (via curl)
-REPO_URL="https://github.com/jatinkrmalik/vocalinux.git"
+REPO_URL="https://github.com/VocaHQ/vocalinux.git"
 INSTALL_DIR=""
 CLEANUP_ON_EXIT="no"
 
@@ -380,15 +500,15 @@ ensure_git_installed() {
     local DISTRO_FAMILY="unknown"
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
+        if [[ "$ID" == "ubuntu" || "${ID_LIKE:-}" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
             DISTRO_FAMILY="ubuntu"
-        elif [[ "$ID" == "debian" || "$ID_LIKE" == *"debian"* ]]; then
+        elif [[ "$ID" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]; then
             DISTRO_FAMILY="debian"
-        elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
+        elif [[ "$ID" == "fedora" || "${ID_LIKE:-}" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
             DISTRO_FAMILY="fedora"
-        elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
+        elif [[ "$ID" == "arch" || "${ID_LIKE:-}" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
             DISTRO_FAMILY="arch"
-        elif [[ "$ID" == "opensuse" || "$ID_LIKE" == *"suse"* ]]; then
+        elif [[ "$ID" == "opensuse" || "${ID_LIKE:-}" == *"suse"* ]]; then
             DISTRO_FAMILY="suse"
         elif [[ "$ID" == "gentoo" ]]; then
             DISTRO_FAMILY="gentoo"
@@ -408,68 +528,68 @@ ensure_git_installed() {
             sudo apt update && sudo apt install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Ubuntu/Debian: sudo apt install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         fedora)
             sudo dnf install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Fedora: sudo dnf install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         arch)
             sudo pacman -S --noconfirm git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Arch: sudo pacman -S git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         suse)
             sudo zypper install -y git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  openSUSE: sudo zypper install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         gentoo)
             sudo emerge git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Gentoo: sudo emerge git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         alpine)
             sudo apk add git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Alpine: sudo apk add git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         void)
             sudo xbps-install -Sy git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Void: sudo xbps-install -Sy git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         solus)
             sudo eopkg install git || {
                 print_error "Failed to install git. Please install git manually and run the installer again."
                 print_error "  Solus: sudo eopkg install git"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             }
             ;;
         mageia)
             if command -v dnf >/dev/null 2>&1; then
                 sudo dnf install -y git || {
                     print_error "Failed to install git. Please install git manually and run the installer again."
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             else
                 sudo urpmi --force git || {
                     print_error "Failed to install git. Please install git manually and run the installer again."
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             fi
             ;;
@@ -480,7 +600,7 @@ ensure_git_installed() {
             print_error "  Fedora/RHEL: sudo dnf install git"
             print_error "  Arch: sudo pacman -S git"
             print_error "  openSUSE: sudo zypper install git"
-            exit 1
+            exit "$EXIT_MISSING_DEPS"
             ;;
     esac
 
@@ -508,6 +628,11 @@ if [ "$IS_VOCALINUX_LOCAL" = true ]; then
     esac
 else
     # Running remotely (e.g., via curl | bash)
+    if [ -z "$INSTALL_TAG" ]; then
+        print_error "No release tag available: the GitHub API was unreachable and no --tag was given."
+        print_error "Re-run with an explicit release tag, e.g.: --tag=<release>"
+        exit "$EXIT_NETWORK"
+    fi
     print_info "Installing Vocalinux version: ${INSTALL_TAG}"
 
     # Ensure git is installed before attempting to clone
@@ -519,13 +644,16 @@ else
     if [ -d "$INSTALL_DIR/.git" ]; then
         print_info "Updating existing clone..."
         cd "$INSTALL_DIR"
-        git fetch origin tag "$INSTALL_TAG"
-        git reset --hard "$INSTALL_TAG"
+        if ! git fetch origin tag "$INSTALL_TAG" || ! git reset --hard "$INSTALL_TAG"; then
+            print_error "Failed to update the Vocalinux clone to $INSTALL_TAG."
+            print_error "Check the install log and your network connection: $INSTALL_LOG_FILE"
+            exit "$EXIT_NETWORK"
+        fi
     else
         rm -rf "$INSTALL_DIR"
         git clone --depth 1 --branch "$INSTALL_TAG" "$REPO_URL" "$INSTALL_DIR" || {
             print_error "Failed to clone Vocalinux repository"
-            exit 1
+            exit "$EXIT_NETWORK"
         }
         cd "$INSTALL_DIR"
     fi
@@ -554,21 +682,21 @@ fi
 detect_distro() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
-        DISTRO_NAME="$NAME"
-        DISTRO_ID="$ID"
-        DISTRO_VERSION="$VERSION_ID"
+        DISTRO_NAME="${NAME:-unknown}"
+        DISTRO_ID="${ID:-unknown}"
+        DISTRO_VERSION="${VERSION_ID:-}"
         DISTRO_FAMILY="unknown"
 
         # Determine distribution family
-        if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
+        if [[ "$ID" == "ubuntu" || "${ID_LIKE:-}" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
             DISTRO_FAMILY="ubuntu"
-        elif [[ "$ID" == "debian" || "$ID_LIKE" == *"debian"* ]]; then
+        elif [[ "$ID" == "debian" || "${ID_LIKE:-}" == *"debian"* ]]; then
             DISTRO_FAMILY="debian"
-        elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
+        elif [[ "$ID" == "fedora" || "${ID_LIKE:-}" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
             DISTRO_FAMILY="fedora"
-        elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
+        elif [[ "$ID" == "arch" || "${ID_LIKE:-}" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
             DISTRO_FAMILY="arch"
-        elif [[ "$ID" == "opensuse" || "$ID_LIKE" == *"suse"* ]]; then
+        elif [[ "$ID" == "opensuse" || "${ID_LIKE:-}" == *"suse"* ]]; then
             DISTRO_FAMILY="suse"
         elif [[ "$ID" == "gentoo" ]]; then
             DISTRO_FAMILY="gentoo"
@@ -590,27 +718,14 @@ detect_distro() {
     fi
 }
 
-# Check minimum required version for Ubuntu-based systems
-check_ubuntu_version() {
-    local MIN_VERSION="18.04"
-    if [[ "$DISTRO_FAMILY" == "ubuntu" ]]; then
-        if [[ $(echo -e "$DISTRO_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$DISTRO_VERSION" == "$MIN_VERSION" ]]; then
-            return 0
-        else
-            print_error "This application requires Ubuntu $MIN_VERSION or newer. Detected: $DISTRO_VERSION"
-            return 1
-        fi
-    fi
-    return 0
-}
-
 # Detect NVIDIA GPU presence
 detect_nvidia_gpu() {
     # Check if nvidia-smi command exists and can successfully query GPU
     if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
         # Extract GPU information for user feedback
-        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1)
-        GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -n1)
+        # (|| true: nvidia-smi may fail mid-pipeline; pipefail must not abort)
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -n1 || true)
+        GPU_MEMORY=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader 2>/dev/null | head -n1 || true)
         HAS_NVIDIA_GPU="yes"
         return 0
     else
@@ -754,29 +869,59 @@ get_cuda_cmake_args() {
     printf '%s\n' "$CUDA_ARGS"
 }
 
-# Detect Vulkan support for whisper.cpp
-detect_vulkan() {
-    # Check for vulkaninfo command
-    if command -v vulkaninfo >/dev/null 2>&1; then
-        local vulkan_output=$(vulkaninfo --summary 2>/dev/null | head -20)
-        if [ -n "$vulkan_output" ]; then
-            HAS_VULKAN="yes"
-            # Try to extract GPU name
-            VULKAN_DEVICE=$(echo "$vulkan_output" | grep -i "deviceName" | head -1 | cut -d'=' -f2 | xargs)
-            if [ -z "$VULKAN_DEVICE" ]; then
-                VULKAN_DEVICE="Vulkan-compatible GPU"
-            fi
+# CPU implementations of Vulkan. whisper.cpp on these is slower than its own CPU
+# backend, so they must never be reported as a GPU. One list, read by both
+# detect_vulkan and check_vulkan_gpu_compatibility.
+VULKAN_SOFTWARE_PATTERNS=(llvmpipe swiftshader lavapipe zink virtio venus)
+
+is_software_renderer() {
+    local name="$1" pattern
+    for pattern in "${VULKAN_SOFTWARE_PATTERNS[@]}"; do
+        if printf '%s' "$name" | grep -iq "$pattern"; then
             return 0
         fi
-    fi
+    done
+    return 1
+}
+
+# List the Vulkan devices vulkaninfo reports, one per line.
+vulkan_device_names() {
+    command -v vulkaninfo >/dev/null 2>&1 || return 1
+    # (|| true: no match must not abort pipefail.)
+    vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}' || true
+}
+
+# Detect Vulkan support for whisper.cpp
+detect_vulkan() {
+    # Only a hardware deviceName counts. The loader prints a header even when no
+    # ICD resolves, and a software renderer is not a GPU -- reporting either as
+    # one is what made Step 1 promise Vulkan performance the machine cannot give.
     HAS_VULKAN="no"
+    VULKAN_DEVICE=""
+    VULKAN_SOFTWARE_DEVICE=""
+
+    local devices name
+    devices=$(vulkan_device_names) || return 1
+    [ -n "$devices" ] || return 1
+
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        if is_software_renderer "$name"; then
+            [ -n "$VULKAN_SOFTWARE_DEVICE" ] || VULKAN_SOFTWARE_DEVICE="$name"
+            continue
+        fi
+        HAS_VULKAN="yes"
+        VULKAN_DEVICE="$name"
+        return 0
+    done <<< "$devices"
+
     return 1
 }
 
 # Check for incompatible Intel GPUs that don't support VK_KHR_16bit_storage
 # These GPUs will fail with "device does not support 16-bit storage" error
 # Affected: Intel Gen7 and older (Ivy Bridge, Haswell, Sandy Bridge)
-# See: https://github.com/jatinkrmalik/vocalinux/issues/238
+# See: https://github.com/VocaHQ/vocalinux/issues/238
 #
 # IMPORTANT: This check filters out software renderers (llvmpipe, etc.) and only
 # evaluates real hardware GPUs. Modern AMD, Intel (Gen8+), and NVIDIA GPUs all
@@ -798,17 +943,6 @@ check_vulkan_gpu_compatibility() {
         "SNB"
     )
 
-    # Software renderers and virtual devices to skip (not real hardware GPUs)
-    # These are CPU-based implementations that shouldn't affect compatibility detection
-    local SOFTWARE_RENDERER_PATTERNS=(
-        "llvmpipe"
-        "swiftshader"
-        "lavapipe"
-        "zink"
-        "virtio"
-        "venus"
-    )
-
     # Check if vulkaninfo is available
     if ! command -v vulkaninfo >/dev/null 2>&1; then
         echo "unknown:vulkaninfo not available"
@@ -817,29 +951,19 @@ check_vulkan_gpu_compatibility() {
 
     # Get all device names from vulkaninfo
     local DEVICE_NAMES_RAW
-    DEVICE_NAMES_RAW=$(vulkaninfo --summary 2>/dev/null | awk -F'=' '/deviceName/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); if ($2 != "") print $2}')
+    DEVICE_NAMES_RAW=$(vulkan_device_names || true)
 
     # Separate hardware GPUs from software renderers
     local HARDWARE_GPUS=""
-    local HARDWARE_GPU_COUNT=0
     while IFS= read -r device_name; do
         [ -z "$device_name" ] && continue
-
-        local is_software=false
-        for pattern in "${SOFTWARE_RENDERER_PATTERNS[@]}"; do
-            if echo "$device_name" | grep -iq "$pattern"; then
-                is_software=true
-                break
-            fi
-        done
-
-        if [ "$is_software" = false ]; then
-            if [ -n "$HARDWARE_GPUS" ]; then
-                HARDWARE_GPUS="${HARDWARE_GPUS}, ${device_name}"
-            else
-                HARDWARE_GPUS="$device_name"
-            fi
-            ((HARDWARE_GPU_COUNT++))
+        if is_software_renderer "$device_name"; then
+            continue
+        fi
+        if [ -n "$HARDWARE_GPUS" ]; then
+            HARDWARE_GPUS="${HARDWARE_GPUS}, ${device_name}"
+        else
+            HARDWARE_GPUS="$device_name"
         fi
     done <<< "$DEVICE_NAMES_RAW"
 
@@ -852,7 +976,8 @@ check_vulkan_gpu_compatibility() {
     # Get Vulkan features and check for VK_KHR_16bit_storage
     # Modern GPUs (AMD, Intel Gen8+, NVIDIA) all support this extension
     local FEATURES_OUTPUT
-    FEATURES_OUTPUT=$(vulkaninfo --features 2>/dev/null)
+    # Exits non-zero on drivers that still print usable output; the text is what matters.
+    FEATURES_OUTPUT=$(vulkaninfo --features 2>/dev/null) || true
 
     if [ -n "$FEATURES_OUTPUT" ]; then
         # Check for VK_KHR_16bit_storage extension or equivalent features
@@ -876,15 +1001,9 @@ check_vulkan_gpu_compatibility() {
     while IFS= read -r device_name; do
         [ -z "$device_name" ] && continue
 
-        # Skip software renderers
-        local is_software=false
-        for pattern in "${SOFTWARE_RENDERER_PATTERNS[@]}"; do
-            if echo "$device_name" | grep -iq "$pattern"; then
-                is_software=true
-                break
-            fi
-        done
-        [ "$is_software" = true ] && continue
+        if is_software_renderer "$device_name"; then
+            continue
+        fi
 
         # Check against known incompatible patterns
         local is_incompatible=false
@@ -944,7 +1063,8 @@ detect_whispercpp_backends() {
     local VULKAN_COMPAT_REASON=""
     if [[ "$HAS_VULKAN" == "yes" && "$HAS_NVIDIA_GPU" != "yes" ]]; then
         local COMPAT_RESULT
-        COMPAT_RESULT=$(check_vulkan_gpu_compatibility)
+        # Returns non-zero for "unknown"/"incompatible", which are answers, not errors.
+        COMPAT_RESULT=$(check_vulkan_gpu_compatibility) || true
         VULKAN_COMPATIBLE=$(echo "$COMPAT_RESULT" | cut -d':' -f1)
         VULKAN_COMPAT_REASON=$(echo "$COMPAT_RESULT" | cut -d':' -f2-)
     elif [[ "$HAS_NVIDIA_GPU" == "yes" ]]; then
@@ -1011,6 +1131,8 @@ get_engine_recommendation() {
     elif [[ "$HAS_VULKAN" == "yes" ]]; then
         # Non-NVIDIA GPU with Vulkan support
         echo "whisper_cpp:✓:$VULKAN_DEVICE detected - Great performance with whisper.cpp Vulkan"
+    elif [ -n "$VULKAN_SOFTWARE_DEVICE" ]; then
+        echo "whisper_cpp:✓:Software Vulkan only ($VULKAN_SOFTWARE_DEVICE) - whisper.cpp CPU mode"
     elif [ "$TOTAL_RAM_GB" -ge 8 ]; then
         # No GPU but decent RAM
         echo "whisper_cpp:✓:No GPU detected, but ${TOTAL_RAM_GB}GB RAM - whisper.cpp CPU mode"
@@ -1356,35 +1478,36 @@ EOF
 # Detect distribution
 detect_distro
 
-# Check compatibility
-if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-    print_info "Detected Debian — fully supported. Continuing with Debian-specific configuration."
-elif [[ "$DISTRO_FAMILY" != "ubuntu" ]]; then
-    print_warning "This installer is primarily designed for Ubuntu/Debian-based systems. Your system: $DISTRO_NAME"
-    print_warning "The application may still work, but you might need to install dependencies manually."
-    if [[ "$NON_INTERACTIVE" == "yes" ]]; then
-        print_info "Non-interactive mode: continuing anyway..."
-    else
-        read -p "Do you want to continue anyway? (y/n) " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
-    fi
-else
-    # Check version for Ubuntu-based systems
-    if ! check_ubuntu_version; then
+# Check compatibility. These tiers mirror docs/DISTRO_COMPATIBILITY.md, and the
+# distro matrix builds on ubuntu, debian and fedora. Nothing here decides whether
+# the install can proceed: what Vocalinux needs is an interpreter at the floor
+# and that interpreter's distro PyGObject, checked by check_python_version()
+# (fatal) and require_distro_gi() further down. This block only says how much
+# help the package step is likely to be, so it must not turn away a distro the
+# project documents as supported, and it must not key off a release label:
+# derivatives carry their own numbering, so Linux Mint 22 and elementary OS 8
+# report "22" and "8" while being built on Ubuntu 24.04 with Python 3.12.
+case "$DISTRO_FAMILY" in
+    debian)
+        print_info "Detected Debian — fully supported. Continuing with Debian-specific configuration."
+        ;;
+    ubuntu|fedora|arch|suse)
+        print_info "Detected $DISTRO_NAME ($DISTRO_FAMILY family) — supported."
+        ;;
+    *)
+        print_warning "This installer has not been tested on $DISTRO_NAME; you may need to install dependencies manually."
+        print_warning "Vocalinux itself does not care which distribution it runs on, only that Python and PyGObject are new enough."
         if [[ "$NON_INTERACTIVE" == "yes" ]]; then
             print_info "Non-interactive mode: continuing anyway..."
         else
             read -p "Do you want to continue anyway? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                exit 1
+                exit "$EXIT_USER_ABORT"
             fi
         fi
-    fi
-fi
+        ;;
+esac
 
 # Handle installation mode selection
 if [[ "$INTERACTIVE_MODE" == "ask" ]]; then
@@ -1414,7 +1537,7 @@ if [[ "$INTERACTIVE_MODE" == "yes" ]]; then
     if [ ! -t 0 ]; then
         print_error "Interactive mode requires a terminal (TTY)."
         print_error "Download and run the installer directly from a terminal:"
-        print_error "  curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh"
+        print_error "  curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh"
         exit 1
     fi
 
@@ -1629,7 +1752,7 @@ install_system_dependencies() {
     local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers glslang xclip xsel wl-clipboard"
     local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4"
     # Gentoo uses Portage and different package naming convention
-    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.9 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
+    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
     # Alpine Linux uses apk and has musl libc
     local APK_PACKAGES="py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf cmake wget curl unzip glslang vulkan-tools xclip xsel wl-clipboard"
     # Void Linux uses xbps
@@ -1670,7 +1793,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
-                sudo apt update || { print_error "Failed to update package lists"; exit 1; }
+                sudo apt update || { print_error "Failed to update package lists"; exit "$EXIT_NETWORK"; }
 
                 # Handle appindicator package for Ubuntu (old package deprecated in newer releases)
                 if echo "$MISSING_PACKAGES" | grep -q "gir1.2-appindicator3-0.1"; then
@@ -1680,16 +1803,16 @@ install_system_dependencies() {
                         print_info "gir1.2-appindicator3-0.1 not available, trying gir1.2-ayatanaappindicator3-0.1..."
                         if ! DEBIAN_FRONTEND=noninteractive sudo apt install -y gir1.2-ayatanaappindicator3-0.1; then
                             print_error "Failed to install appindicator package (tried both gir1.2-appindicator3-0.1 and gir1.2-ayatanaappindicator3-0.1)"
-                            exit 1
+                            exit "$EXIT_MISSING_DEPS"
                         fi
                         print_info "Successfully installed gir1.2-ayatanaappindicator3-0.1 (modern replacement)"
                     fi
 
                     if [ -n "$FILTERED_PACKAGES" ]; then
-                        DEBIAN_FRONTEND=noninteractive sudo apt install -y $FILTERED_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                        DEBIAN_FRONTEND=noninteractive sudo apt install -y $FILTERED_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
                     fi
                 else
-                    DEBIAN_FRONTEND=noninteractive sudo apt install -y $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                    DEBIAN_FRONTEND=noninteractive sudo apt install -y $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
                 fi
             else
                 print_info "All required packages are already installed."
@@ -1706,7 +1829,7 @@ install_system_dependencies() {
                 UPDATE_CMD="sudo yum check-update"
             else
                 print_error "No supported package manager found (dnf/yum)"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Check for missing packages
@@ -1719,19 +1842,19 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 $UPDATE_CMD || true  # dnf check-update returns 100 if updates available
-                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
 
-            install_preferred_appindicator "$INSTALL_CMD" "libayatana-appindicator-gtk3" "libappindicator-gtk3" dnf_package_installed || exit 1
+            install_preferred_appindicator "$INSTALL_CMD" "libayatana-appindicator-gtk3" "libappindicator-gtk3" dnf_package_installed || exit "$EXIT_MISSING_DEPS"
             ;;
 
         arch)
             # For Arch-based systems
             if ! command_exists pacman; then
                 print_error "Pacman package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Check for missing packages
@@ -1744,19 +1867,19 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 sudo pacman -Sy
-                sudo pacman -S --noconfirm $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo pacman -S --noconfirm $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
 
-            install_preferred_appindicator "sudo pacman -S --noconfirm" "libayatana-appindicator" "libappindicator-gtk3" pacman_package_installed || exit 1
+            install_preferred_appindicator "sudo pacman -S --noconfirm" "libayatana-appindicator" "libappindicator-gtk3" pacman_package_installed || exit "$EXIT_MISSING_DEPS"
             ;;
 
         suse)
             # For openSUSE
             if ! command_exists zypper; then
                 print_error "Zypper package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             sudo zypper refresh || true
@@ -1776,7 +1899,7 @@ install_system_dependencies() {
                 print_info "Installing missing packages: ${MISSING_ZYPPER_PACKAGES[*]}"
                 sudo zypper install -y "${MISSING_ZYPPER_PACKAGES[@]}" || {
                     print_error "Failed to install openSUSE base dependencies"
-                    exit 1
+                    exit "$EXIT_MISSING_DEPS"
                 }
             else
                 print_info "All base openSUSE packages are already installed."
@@ -1800,22 +1923,22 @@ install_system_dependencies() {
 
             if ! suse_install_first_available "Python pip" "${PY_PIP_CANDIDATES[@]}"; then
                 print_error "Failed to install Python pip package (tried: ${PY_PIP_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "PyGObject bindings" "${PY_GOBJECT_CANDIDATES[@]}"; then
                 print_error "Failed to install PyGObject package (tried: ${PY_GOBJECT_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "PyGObject Cairo bindings" "${PY_GOBJECT_CAIRO_CANDIDATES[@]}"; then
                 print_error "Failed to install PyGObject Cairo package (tried: ${PY_GOBJECT_CAIRO_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "Python development headers" "${PY_DEVEL_CANDIDATES[@]}"; then
                 print_error "Failed to install Python development headers (tried: ${PY_DEVEL_CANDIDATES[*]})"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if ! suse_install_first_available "Python virtualenv/venv" "${PY_VIRTUALENV_CANDIDATES[@]}" "${PY_VENV_CANDIDATES[@]}"; then
@@ -1826,7 +1949,7 @@ install_system_dependencies() {
             if ! suse_install_appindicator_runtime; then
                 print_error "Failed to install a working AppIndicator/Ayatana GI runtime on openSUSE."
                 print_error "Try manually: sudo zypper install typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             if [[ "${SELECTED_ENGINE:-whisper_cpp}" == "whisper_cpp" && "${WHISPERCPP_BACKEND:-}" != "cpu" ]]; then
@@ -1847,7 +1970,7 @@ install_system_dependencies() {
             # For Gentoo Linux
             if ! command_exists emerge; then
                 print_error "Emerge package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Gentoo detected. Installing dependencies..."
@@ -1865,9 +1988,9 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
                 # Update Portage tree first
-                sudo emerge --sync || { print_error "Failed to sync Portage tree"; exit 1; }
+                sudo emerge --sync || { print_error "Failed to sync Portage tree"; exit "$EXIT_NETWORK"; }
                 # Install missing packages
-                sudo emerge $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo emerge $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1877,7 +2000,7 @@ install_system_dependencies() {
             # For Alpine Linux
             if ! command_exists apk; then
                 print_error "Apk package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Alpine Linux detected."
@@ -1893,8 +2016,8 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo apk update || { print_error "Failed to update package indexes"; exit 1; }
-                sudo apk add $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo apk update || { print_error "Failed to update package indexes"; exit "$EXIT_NETWORK"; }
+                sudo apk add $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1904,7 +2027,7 @@ install_system_dependencies() {
             # For Void Linux
             if ! command_exists xbps; then
                 print_error "Xbps package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Void Linux detected."
@@ -1919,7 +2042,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo xbps-install -Sy $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo xbps-install -Sy $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1929,7 +2052,7 @@ install_system_dependencies() {
             # For Solus
             if ! command_exists eopkg; then
                 print_error "Eopkg package manager not found"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             print_info "Solus detected."
@@ -1944,7 +2067,7 @@ install_system_dependencies() {
 
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing packages:$MISSING_PACKAGES"
-                sudo eopkg install $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                sudo eopkg install $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1960,7 +2083,7 @@ install_system_dependencies() {
                 UPDATE_CMD="sudo urpmi.update -a"
             else
                 print_error "No supported package manager found (dnf/urpmi)"
-                exit 1
+                exit "$EXIT_MISSING_DEPS"
             fi
 
             # Use similar packages to Fedora/RHEL
@@ -1974,7 +2097,7 @@ install_system_dependencies() {
             if [ -n "$MISSING_PACKAGES" ]; then
                 print_info "Installing missing packages:$MISSING_PACKAGES"
                 $UPDATE_CMD 2>/dev/null || true
-                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit 1; }
+                $INSTALL_CMD $MISSING_PACKAGES || { print_error "Failed to install dependencies"; exit "$EXIT_MISSING_DEPS"; }
             else
                 print_info "All required packages are already installed."
             fi
@@ -1995,18 +2118,18 @@ install_system_dependencies() {
             print_info "   ./install.sh --skip-system-deps"
             print_info ""
             print_info "4. Or install from source in a virtual environment:"
-            print_info "   python3 -m venv venv"
+            print_info "   /usr/bin/python3 -m venv --system-site-packages venv"
             print_info "   source venv/bin/activate"
             print_info "   pip install -e .[whisper,vad]"
             print_info ""
             print_info "For more information, see the project wiki:"
-            print_info "  https://github.com/jatinkrmalik/vocalinux/wiki"
+            print_info "  https://github.com/VocaHQ/vocalinux/wiki"
             print_info ""
             if [[ "$NON_INTERACTIVE" != "yes" ]]; then
                 read -p "Continue anyway? (y/n) " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    exit 1
+                    exit "$EXIT_USER_ABORT"
                 fi
             else
                 print_info "Non-interactive mode: continuing (dependencies may be missing)..."
@@ -2039,18 +2162,19 @@ install_text_input_tools() {
     # Detect session type more robustly
     local SESSION_TYPE="unknown"
 
-    # Check XDG_SESSION_TYPE first
-    if [ -n "$XDG_SESSION_TYPE" ]; then
-        SESSION_TYPE="$XDG_SESSION_TYPE"
+    # Check XDG_SESSION_TYPE first. These are often unset without a login
+    # session even when DISPLAY is set; ${var:-} keeps set -u from aborting.
+    if [ -n "${XDG_SESSION_TYPE:-}" ]; then
+        SESSION_TYPE="${XDG_SESSION_TYPE:-}"
     # Check for Wayland-specific environment variables
-    elif [ -n "$WAYLAND_DISPLAY" ]; then
+    elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
         SESSION_TYPE="wayland"
     # Check if X server is running
-    elif [ -n "$DISPLAY" ] && command_exists xset && xset q &>/dev/null; then
+    elif [ -n "${DISPLAY:-}" ] && command_exists xset && xset q &>/dev/null; then
         SESSION_TYPE="x11"
     # Check loginctl if available
     elif command_exists loginctl; then
-        SESSION_TYPE=$(loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type | cut -d= -f2)
+        SESSION_TYPE=$(loginctl show-session $(loginctl | grep $(whoami) | awk '{print $1}') -p Type | cut -d= -f2 || true)
     fi
 
     print_info "Detected session type: $SESSION_TYPE"
@@ -2312,33 +2436,129 @@ mkdir -p "$DATA_DIR/models"
 mkdir -p "$DESKTOP_DIR"
 mkdir -p "$ICON_DIR"
 
+# Interpreter the venv is built from. Resolved by select_python_interpreter();
+# nothing below may fall back to a bare `python3` for venv creation.
+PYTHON_CMD="python3"
+
+# The distro interpreter its GTK/PyGObject packages are built for. Overridable
+# (SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh) for systems that ship several.
+SYSTEM_PYTHON="${SYSTEM_PYTHON:-/usr/bin/python3}"
+
+python_version_of() {
+    "$1" -c "import sys; print('%d.%d' % sys.version_info[:2])" 2>/dev/null
+}
+
+python_version_at_least() {
+    local version
+    version=$(python_version_of "$1") || return 1
+    [ -n "$version" ] || return 1
+    [[ $(printf '%s\n%s\n' "$version" "$2" | sort -V | head -n1) == "$2" ]]
+}
+
+python_has_gi() {
+    "$1" -c "import gi" >/dev/null 2>&1
+}
+
+# Pick the interpreter to build the venv from. Distro PyGObject is compiled for
+# exactly one Python, so prefer a candidate that can already import gi:
+# $SYSTEM_PYTHON is probed explicitly because PATH may expose a different
+# interpreter (pyenv, uv, /usr/local) that the distro packages were never built
+# for. Falls back to the newest-enough candidate when none of them has gi yet —
+# require_distro_gi() reports that case with a proper message later on.
+select_python_interpreter() {
+    local min_version="$1"
+    local candidates=() candidate seen="" first="" ok_version="" ok_system=""
+
+    if command_exists python3; then
+        candidates+=("$(command -v python3)")
+    fi
+    if [ -x "$SYSTEM_PYTHON" ]; then
+        candidates+=("$SYSTEM_PYTHON")
+    fi
+
+    for candidate in ${candidates[@]+"${candidates[@]}"}; do
+        case ":$seen:" in
+            *":$candidate:"*) continue ;;
+        esac
+        seen="${seen:+$seen:}$candidate"
+
+        [ -n "$first" ] || first="$candidate"
+        python_version_at_least "$candidate" "$min_version" || continue
+        [ -n "$ok_version" ] || ok_version="$candidate"
+        if [ "$candidate" = "$SYSTEM_PYTHON" ]; then
+            ok_system="$candidate"
+        fi
+
+        if python_has_gi "$candidate"; then
+            PYTHON_CMD="$candidate"
+            return 0
+        fi
+    done
+
+    # No candidate has gi yet; it may be installed later in this run. Prefer the
+    # distro interpreter, because its PyGObject is the one that will show up.
+    PYTHON_CMD="${ok_system:-${ok_version:-$first}}"
+    [ -n "$PYTHON_CMD" ]
+}
+
 # Check Python version
 check_python_version() {
-    local MIN_VERSION="3.9"
-    local PYTHON_CMD="python3"
+    # Keep in sync with requires-python in pyproject.toml.
+    local MIN_VERSION="3.11"
 
-    # Check if python3 command exists
-    if ! command_exists python3; then
+    if ! select_python_interpreter "$MIN_VERSION"; then
         print_error "Python 3 is not installed or not in PATH"
         return 1
     fi
 
-    # Get Python version
-    local PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-    print_info "Detected Python version: $PY_VERSION"
+    local PY_VERSION
+    PY_VERSION=$(python_version_of "$PYTHON_CMD" || true)
+    print_info "Detected Python version: ${PY_VERSION:-unknown} ($PYTHON_CMD)"
 
-    # Compare versions
-    if [[ $(echo -e "$PY_VERSION\n$MIN_VERSION" | sort -V | head -n1) == "$MIN_VERSION" || "$PY_VERSION" == "$MIN_VERSION" ]]; then
+    if python_version_at_least "$PYTHON_CMD" "$MIN_VERSION"; then
         return 0
-    else
-        print_error "This application requires Python $MIN_VERSION or newer. Detected: $PY_VERSION"
-        return 1
     fi
+
+    print_error "This application requires Python $MIN_VERSION or newer. Detected: ${PY_VERSION:-unknown}"
+    return 1
+}
+
+# An existing venv built by a different interpreter than the selected one is the
+# classic cause of "distro PyGObject is not importable": PyGObject lives in the
+# system Python's site-packages and --system-site-packages only exposes it to a
+# venv of the *same* version. Such a venv otherwise survives every re-run,
+# because the installer reuses whatever it finds.
+# Where an interpreter's installation lives. For a venv this is the interpreter
+# it was built from, which is what decides whether distro gi is visible.
+python_base_prefix() {
+    "$1" -c "import sys; print(sys.base_prefix)" 2>/dev/null
+}
+
+venv_matches_selected_python() {
+    local venv_python="$VENV_DIR/bin/python"
+    local venv_base selected_base
+
+    [ -x "$venv_python" ] || return 1
+
+    # Compare installations, not the X.Y string: a distro 3.12 and a pyenv/uv
+    # 3.12 are not interchangeable, because distro PyGObject is importable only
+    # from the one it was built for.
+    venv_base=$(python_base_prefix "$venv_python") || return 1
+    selected_base=$(python_base_prefix "$PYTHON_CMD") || return 1
+    [ -n "$venv_base" ] && [ "$venv_base" = "$selected_base" ]
 }
 
 # Set up virtual environment with error handling
 setup_virtual_environment() {
     print_info "Setting up Python virtual environment in $VENV_DIR..."
+
+    # Discard a venv left behind by another interpreter before the reuse logic
+    # below can adopt it.
+    if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ] && ! venv_matches_selected_python; then
+        print_warning "Existing virtual environment in $VENV_DIR was built by a different Python than $PYTHON_CMD."
+        print_warning "Recreating it — distro PyGObject would stay invisible inside it otherwise."
+        rm -rf "$VENV_DIR"
+    fi
 
     # Check if virtual environment already exists
     if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
@@ -2346,7 +2566,7 @@ setup_virtual_environment() {
         if [[ "$NON_INTERACTIVE" == "yes" ]]; then
             # In non-interactive mode, reuse existing venv
             print_info "Non-interactive mode: using existing virtual environment."
-            source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+            source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
             return 0
         else
             read -p "Do you want to recreate it? (y/n) " -n 1 -r
@@ -2356,7 +2576,7 @@ setup_virtual_environment() {
                 rm -rf "$VENV_DIR"
             else
                 print_info "Using existing virtual environment."
-                source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+                source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
                 return 0
             fi
         fi
@@ -2365,27 +2585,31 @@ setup_virtual_environment() {
     # Create virtual environment
     # Use --system-site-packages to access pre-compiled system packages like PyGObject
     # This avoids build failures with Python 3.13+ where PyGObject may not build from source
-    python3 -m venv --system-site-packages "$VENV_DIR" || {
-        print_warning "python3 -m venv failed, trying python3 -m virtualenv..."
-        python3 -m virtualenv --system-site-packages "$VENV_DIR" || {
+    "$PYTHON_CMD" -m venv --system-site-packages "$VENV_DIR" || {
+        print_warning "$PYTHON_CMD -m venv failed, trying $PYTHON_CMD -m virtualenv..."
+        "$PYTHON_CMD" -m virtualenv --system-site-packages "$VENV_DIR" || {
             print_error "Failed to create virtual environment. Please check your Python installation."
-            exit 1
+            exit "$EXIT_MISSING_DEPS"
         }
     }
 
     # Activate virtual environment
-    source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit 1; }
+    source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
 
     # Update pip and setuptools
     print_info "Updating pip, setuptools, and wheel..."
-    pip install --upgrade pip setuptools wheel || { print_error "Failed to update pip, setuptools, and wheel"; exit 1; }
+    pip install --upgrade pip setuptools wheel || { print_error "Failed to update pip, setuptools, and wheel"; exit "$EXIT_NETWORK"; }
 
     print_info "Virtual environment activated successfully."
 }
 
-# Check Python version
+# Check Python version. Not advisory: distro PyGObject is built for the system
+# interpreter, so a venv below the floor cannot import gi, and the install would
+# fail later somewhere less obvious.
 if ! check_python_version; then
-    print_warning "Continuing with unsupported Python version. Some features may not work correctly."
+    print_error "Point SYSTEM_PYTHON at a newer interpreter if one is installed:"
+    print_error "  SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh"
+    exit "$EXIT_MISSING_DEPS"
 fi
 
 # Set up virtual environment
@@ -2619,7 +2843,7 @@ install_cpu_pywhispercpp() {
     PYWHISPERCPP_CMAKE_ARGS=$(get_pywhispercpp_cmake_args)
 
     CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
-        pip install --verbose --force-reinstall --no-cache-dir pywhispercpp --log "$PIP_LOG_FILE"
+        pip install --verbose --force-reinstall --no-cache-dir "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE"
 }
 
 is_pywhispercpp_installed() {
@@ -2681,6 +2905,48 @@ should_rebuild_whispercpp() {
     return 1
 }
 
+# Module each engine needs, and the pip name that provides it. Defined here so
+# the whisper.cpp -> vosk fallback can rewrite an existing config.json; the
+# writers above used to skip a file that already existed.
+engine_import_module() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "whisper" ;;
+        whisper_cpp) echo "pywhispercpp.model" ;;
+        *) echo "" ;;
+    esac
+}
+
+engine_pip_name() {
+    case "$1" in
+        vosk) echo "vosk" ;;
+        whisper) echo "openai-whisper" ;;
+        whisper_cpp) echo "pywhispercpp" ;;
+        *) echo "" ;;
+    esac
+}
+
+venv_can_import() {
+    [ -x "$VENV_DIR/bin/python" ] || return 1
+    "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
+}
+
+# Point config.json at engine $2. Non-zero if it could not be rewritten.
+set_configured_engine() {
+    "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
+import json
+import sys
+
+path, engine = sys.argv[1], sys.argv[2]
+with open(path) as handle:
+    config = json.load(handle)
+config.setdefault("speech_recognition", {})["engine"] = engine
+with open(path, "w") as handle:
+    json.dump(config, handle, indent=2)
+    handle.write("\n")
+PY
+}
+
 install_whispercpp_with_gpu_support() {
     local PIP_LOG_FILE="$1"
 
@@ -2729,7 +2995,7 @@ install_whispercpp_with_gpu_support() {
             print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
             if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
                 GGML_VULKAN=1 \
-                pip install --verbose --force-reinstall --no-cache-dir git+https://github.com/absadiki/pywhispercpp --log "$PIP_LOG_FILE" 2>&1; then
+                pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
                 if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                     GPU_INSTALL_SUCCESS=true
                 else
@@ -2755,7 +3021,7 @@ install_whispercpp_with_gpu_support() {
                     print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
                     if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS $CUDA_CMAKE_ARGS" \
                         GGML_CUDA=1 \
-                        pip install --verbose --force-reinstall --no-cache-dir git+https://github.com/absadiki/pywhispercpp --log "$PIP_LOG_FILE" 2>&1; then
+                        pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
                         if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                             GPU_INSTALL_SUCCESS=true
                         else
@@ -2832,8 +3098,30 @@ install_whispercpp_with_gpu_support() {
         print_warning "You can switch back to whisper.cpp from Settings after reinstalling pywhispercpp."
         SELECTED_ENGINE="vosk"
 
+        # vosk is an optional extra; make sure it is importable before
+        # falling back to it
+        if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
+            pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vosk || \
+                print_warning "Could not install vosk; install it manually or pick another engine in Settings."
+        fi
+
+        # Writing engine=vosk when the import still fails only moves the failure
+        # to startup, where it surfaces as ModuleNotFoundError: No module named
+        # 'vosk' and the app never comes up.
+        if ! "$VENV_DIR/bin/python" -c "import vosk" 2>/dev/null; then
+            print_warning "vosk is still not importable; leaving the engine configuration untouched."
+            SELECTED_ENGINE=""
+            return 0
+        fi
+
         local FALLBACK_VOSK_CONFIG="$CONFIG_DIR/config.json"
-        if [ ! -f "$FALLBACK_VOSK_CONFIG" ]; then
+        if [ -f "$FALLBACK_VOSK_CONFIG" ]; then
+            if set_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"; then
+                print_success "Switched $FALLBACK_VOSK_CONFIG to the vosk engine."
+            else
+                print_warning "Could not rewrite $FALLBACK_VOSK_CONFIG to vosk."
+            fi
+        else
             mkdir -p "$CONFIG_DIR"
             cat > "$FALLBACK_VOSK_CONFIG" << 'FALLBACK_VOSK_CONFIG'
 {
@@ -2870,16 +3158,95 @@ FALLBACK_VOSK_CONFIG
     echo ""
 }
 
+# Distro python3-gi provides `gi`, but apt does not drop pip-visible
+# PyGObject dist-info. `pip install .` then tries to build pygobject from
+# sdist and dies (needs girepository-2.0). Same skip as uv export's
+# --no-emit-package pygobject: install the other deps, then the project
+# with --no-deps. Do not use requirements/*.txt hashes here (Phase 2).
+write_pip_reqs_skip_pygobject() {
+    local dest="$1"
+    shift
+    "$VENV_DIR/bin/python" - "$dest" "$@" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+dest = Path(sys.argv[1])
+extras = sys.argv[2:]
+text = Path("pyproject.toml").read_text()
+
+
+def quoted_strings(block: str):
+    return re.findall(r'"([^"]+)"', block)
+
+
+reqs = []
+if not extras:
+    match = re.search(r"^dependencies = \[(.*?)\]", text, re.M | re.S)
+    for req in quoted_strings(match.group(1) if match else ""):
+        pkg = re.split(r"[<>=!~;\[]", req, 1)[0].strip()
+        if pkg.lower() == "pygobject":
+            continue
+        reqs.append(req)
+else:
+    opt = re.search(
+        r"^\[project\.optional-dependencies\](.*?)(\n\[|\Z)", text, re.M | re.S
+    )
+    opt_text = opt.group(1) if opt else ""
+    for extra in extras:
+        match = re.search(rf"^{re.escape(extra)} = \[(.*?)\]", opt_text, re.M | re.S)
+        if match:
+            reqs.extend(quoted_strings(match.group(1)))
+
+dest.write_text("\n".join(reqs) + ("\n" if reqs else ""))
+PY
+}
+
+require_distro_gi() {
+    if ! "$VENV_DIR/bin/python" -c "import gi" 2>/dev/null; then
+        print_error "Distro PyGObject (python3-gi / python3-gobject) is not importable in the venv."
+        print_error "The venv was built from $PYTHON_CMD (Python $(python_version_of "$PYTHON_CMD" || echo unknown))."
+        print_error "Install it with your package manager. Pip cannot build PyGObject here."
+        exit "$EXIT_MISSING_DEPS"
+    fi
+}
+
+pip_install_reqs_file() {
+    local pip_log="$1"
+    local reqs_file="$2"
+    if [ ! -s "$reqs_file" ]; then
+        return 0
+    fi
+    pip install -r "$reqs_file" --log "$pip_log"
+}
+
+pip_install_project_skip_pygobject() {
+    local pip_log="$1"
+    shift
+    require_distro_gi
+    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/runtime-deps.txt"
+    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/runtime-deps.txt" || return 1
+    pip install --no-deps --log "$pip_log" "$@"
+}
+
+pip_install_extras_skip_pygobject() {
+    local pip_log="$1"
+    shift
+    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/extra-deps.txt" "$@"
+    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/extra-deps.txt"
+}
+
 # Function to install Python package with error handling and verification
 install_python_package() {
-    # Create a temporary directory for pip logs
-    local PIP_LOG_DIR=$(mktemp -d)
+    # Pip logs live in the install scratch dir so a failed run can keep them.
+    local PIP_LOG_DIR="$VOCALINUX_TMP_DIR/pip"
+    mkdir -p "$PIP_LOG_DIR"
     local PIP_LOG_FILE="$PIP_LOG_DIR/pip_log.txt"
 
     # Detect GI_TYPELIB_PATH early for cross-distro compatibility
     # This ensures the path is available for both verification and wrapper scripts
-    local GI_TYPELIB_DETECTED
-    GI_TYPELIB_DETECTED=$(detect_typelib_path)
+    # NOTE: global on purpose — install_desktop_entry (top level) reuses it.
+    GI_TYPELIB_DETECTED=$(detect_typelib_path || true)
     print_info "Detected GI_TYPELIB_PATH: $GI_TYPELIB_DETECTED"
 
     local WHISPERCPP_ALREADY_INSTALLED=false
@@ -2906,10 +3273,8 @@ install_python_package() {
 
         print_info "Installing neural VAD support (Silero / ONNX Runtime)..."
         local VAD_INSTALL_SUCCESS=false
-        if [[ "$EDITABLE_MODE" == "yes" ]]; then
-            pip install -e ".[vad]" --log "$PIP_LOG_FILE" && VAD_INSTALL_SUCCESS=true
-        else
-            pip install ".[vad]" --log "$PIP_LOG_FILE" && VAD_INSTALL_SUCCESS=true
+        if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vad; then
+            VAD_INSTALL_SUCCESS=true
         fi
 
         if [[ "$VAD_INSTALL_SUCCESS" == "true" ]]; then
@@ -2934,7 +3299,7 @@ PY
         print_info "Installing Vocalinux in development mode..."
 
         # Install in development mode with logging
-        pip install -e . --log "$PIP_LOG_FILE" || {
+        pip_install_project_skip_pygobject "$PIP_LOG_FILE" -e . || {
             print_error "Failed to install Vocalinux in development mode."
             print_error "Check the pip log for details: $PIP_LOG_FILE"
             return 1
@@ -2948,7 +3313,7 @@ PY
 
         # Install all optional dependencies for development
         print_info "Installing all optional dependencies for development..."
-        pip install -e ".[whisper,dev]" --log "$PIP_LOG_FILE" || {
+        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" whisper dev || {
             print_warning "Failed to install some optional dependencies."
             print_warning "Some features may not work correctly."
         }
@@ -2962,7 +3327,7 @@ PY
         print_info "Installing Vocalinux..."
 
         # Install the package with logging (includes pywhispercpp by default)
-        pip install . --log "$PIP_LOG_FILE" || {
+        pip_install_project_skip_pygobject "$PIP_LOG_FILE" . || {
             print_error "Failed to install Vocalinux."
             print_error "Check the pip log for details: $PIP_LOG_FILE"
             return 1
@@ -3104,6 +3469,12 @@ FALLBACK_CONFIG
                 print_info "Installing VOSK (lightweight option)..."
                 print_info "VOSK is fast and works well on older systems."
 
+                # vosk is an optional extra; install it alongside the base package
+                pip_install_extras_skip_pygobject "$PIP_LOG_FILE" vosk || {
+                    print_error "Failed to install the vosk engine"
+                    return 1
+                }
+
                 # Create config with vosk as default
                 local VOSK_CONFIG_FILE="$CONFIG_DIR/config.json"
                 if [ ! -f "$VOSK_CONFIG_FILE" ]; then
@@ -3216,8 +3587,8 @@ REMOTE_CONFIG
     # Verify installation
     if verify_package_installed; then
         print_success "Vocalinux package installed successfully!"
-        # Clean up log file if installation was successful
-        rm -rf "$PIP_LOG_DIR"
+        # Pip logs stay under VOCALINUX_TMP_DIR; the EXIT trap removes that
+        # directory on success and keeps it when a later step fails.
 
         # GI_TYPELIB_PATH was already detected at the start of install_python_package
 
@@ -3332,8 +3703,158 @@ WRAPPER_EOF
 # Install Python package
 if ! install_python_package; then
     print_error "Failed to install Vocalinux package. Installation cannot continue."
-    exit 1
+    exit "$EXIT_NETWORK"
 fi
+
+# ---------------------------------------------------------------------------
+# Model integrity verification
+#
+# Models are 40MB-2GB downloads that end up being loaded by native code, so no
+# model is installed without matching a digest pinned in this repository.
+# src/vocalinux/utils/model_checksums.txt is the same manifest the application
+# uses at runtime; it is regenerated by scripts/generate-model-checksums.py.
+#
+# A model that cannot be verified is deleted and the function returns 1, which
+# callers already treat as "leave it for first run" rather than aborting the
+# install. The app re-downloads and re-verifies it later.
+# ---------------------------------------------------------------------------
+MODEL_CHECKSUMS_FILE="$INSTALL_DIR/src/vocalinux/utils/model_checksums.txt"
+
+# Print the digest of $1 using algorithm $2, trying the tools most likely present.
+compute_file_digest() {
+    local file="$1" algo="$2"
+
+    case "$algo" in
+        sha256)
+            if command_exists sha256sum; then sha256sum "$file" | cut -d' ' -f1
+            elif command_exists shasum; then shasum -a 256 "$file" | cut -d' ' -f1
+            elif command_exists openssl; then openssl dgst -sha256 "$file" | awk '{print $NF}'
+            else return 1; fi
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# Compare $1 against algorithm $2 and digest $3. $4 labels the file in messages.
+verify_digest() {
+    local file="$1" algo="$2" expected="$3" label="$4" actual
+
+    if ! actual=$(compute_file_digest "$file" "$algo") || [ -z "$actual" ]; then
+        print_error "Cannot compute the $algo digest of $label: no sha256sum, shasum or openssl found."
+        return 1
+    fi
+
+    if [ "$actual" != "$expected" ]; then
+        print_error "$label failed $algo verification."
+        print_error "  expected: $expected"
+        print_error "  actual:   $actual"
+        print_error "The file does not match the digest pinned in this release."
+        return 1
+    fi
+
+    print_success "$label verified ($algo)"
+    return 0
+}
+
+# Verify $1 against the manifest entry named $2 (defaults to $1's basename).
+verify_model_checksum() {
+    local file="$1"
+    local key="${2:-$(basename "$file")}"
+    local algo expected size actual_size
+
+    if [ ! -f "$MODEL_CHECKSUMS_FILE" ]; then
+        print_error "Checksum manifest not found at $MODEL_CHECKSUMS_FILE."
+        print_error "Cannot verify $key; refusing to install an unverified model."
+        return 1
+    fi
+
+    # Manifest columns: filename  algorithm  digest  size-in-bytes
+    algo=$(awk -v k="$key" '$1==k {print $2; exit}' "$MODEL_CHECKSUMS_FILE")
+    expected=$(awk -v k="$key" '$1==k {print $3; exit}' "$MODEL_CHECKSUMS_FILE")
+    size=$(awk -v k="$key" '$1==k {print $4; exit}' "$MODEL_CHECKSUMS_FILE")
+
+    if [ -z "$algo" ] || [ -z "$expected" ]; then
+        print_error "No checksum is pinned for $key in $MODEL_CHECKSUMS_FILE."
+        print_error "Regenerate it with scripts/generate-model-checksums.py."
+        return 1
+    fi
+
+    # Size first: it is free, and it reports a truncated download as truncation
+    # rather than as a digest mismatch that reads like tampering.
+    if [ -n "$size" ] && [ "$size" != "0" ]; then
+        actual_size=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file" 2>/dev/null || echo "")
+        if [ -n "$actual_size" ] && [ "$actual_size" != "$size" ]; then
+            print_error "$key is $actual_size bytes, expected $size (truncated download?)."
+            return 1
+        fi
+    fi
+
+    verify_digest "$file" "$algo" "$expected" "$key"
+}
+
+# Verify an OpenAI Whisper checkpoint against the sha256 embedded in its own URL
+# (they publish each file under a path segment that is its digest).
+verify_openai_model_checksum() {
+    local file="$1" url="$2" label="$3" expected
+
+    expected=$(printf '%s\n' "$url" | grep -oE '/[0-9a-f]{64}/' | tr -d '/' | head -n1)
+    if [ -z "$expected" ]; then
+        print_error "$url carries no sha256 path segment; refusing to install an unverified model."
+        return 1
+    fi
+
+    verify_digest "$file" "sha256" "$expected" "$label"
+}
+
+# Download $1 to $2, preferring wget and falling back to curl. $3 labels the
+# model in error messages. Leaves no partial file behind on failure.
+download_model_file() {
+    local url="$1" dest="$2" label="$3"
+
+    if command_exists wget; then
+        if ! wget --progress=bar:force:noscroll --tries=3 --timeout=60 -O "$dest" "$url" 2>&1; then
+            print_error "Failed to download $label with wget"
+            rm -f "$dest"
+            return 1
+        fi
+    elif command_exists curl; then
+        # -f: fail on HTTP errors instead of saving the error page as the model
+        if ! curl -fL --progress-bar --retry 3 --retry-delay 2 -o "$dest" "$url"; then
+            print_error "Failed to download $label with curl"
+            rm -f "$dest"
+            return 1
+        fi
+    else
+        print_error "Neither wget nor curl is available to download $label"
+        return 1
+    fi
+
+    if [ ! -s "$dest" ]; then
+        print_error "Downloaded $label is empty or missing"
+        rm -f "$dest"
+        return 1
+    fi
+}
+
+# Print the digest pinned for manifest entry $1, or nothing when unpinned.
+pinned_digest_for() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
+    awk -v k="$1" '$1==k {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
+}
+
+# The Hugging Face commit the whisper.cpp digests were taken at.
+whispercpp_pinned_revision() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ] || return 1
+    awk '/^#[[:space:]]*whispercpp-revision:/ {print $3; exit}' "$MODEL_CHECKSUMS_FILE"
+}
+
+# False when the cloned release predates the manifest. That app has no runtime
+# verification either, so refusing to pre-download would protect nothing.
+model_verification_available() {
+    [ -f "$MODEL_CHECKSUMS_FILE" ]
+}
 
 # Function to download and install Whisper tiny model
 install_whisper_model() {
@@ -3347,10 +3868,16 @@ install_whisper_model() {
     local TINY_MODEL_URL="https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
     local TINY_MODEL_PATH="$WHISPER_DIR/tiny.pt"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_openai_model_checksum "$TINY_MODEL_PATH" "$TINY_MODEL_URL" "Whisper tiny model"; then
+            print_info "Whisper tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing Whisper tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3360,9 +3887,9 @@ install_whisper_model() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "Whisper model will be downloaded on first application run."
         return 1
     fi
@@ -3370,27 +3897,17 @@ install_whisper_model() {
     print_info "Downloading Whisper tiny model..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_FILE="$TINY_MODEL_PATH.tmp"
+    local TEMP_FILE="$VOCALINUX_TMP_DIR/tiny.pt"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download Whisper model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download Whisper model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "Whisper model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
+    if ! verify_openai_model_checksum "$TEMP_FILE" "$TINY_MODEL_URL" "Whisper tiny model"; then
         rm -f "$TEMP_FILE"
+        print_warning "Whisper model will be downloaded and verified on first application run."
         return 1
     fi
 
@@ -3425,10 +3942,33 @@ install_vosk_models() {
     local SMALL_MODEL_NAME="vosk-model-small-en-us-0.15"
     local SMALL_MODEL_PATH="$MODELS_DIR/$SMALL_MODEL_NAME"
 
-    # Check if small model already exists
+    local SMALL_MODEL_ARCHIVE="$SMALL_MODEL_NAME.zip"
+    # The extracted tree has no digest of its own — the pin covers the zip, which
+    # is deleted after unpacking. So whoever unpacks it records the verified zip
+    # digest in a stamp (here, and in the app's own downloader), and the directory
+    # is trusted only while that stamp matches what we pin today.
+    local SMALL_MODEL_STAMP="$SMALL_MODEL_PATH/.vocalinux_verified"
+    local EXPECTED_ZIP_DIGEST
+    EXPECTED_ZIP_DIGEST=$(pinned_digest_for "$SMALL_MODEL_ARCHIVE" || true)
     if [ -d "$SMALL_MODEL_PATH" ]; then
-        print_info "Small VOSK model already exists at $SMALL_MODEL_PATH"
-        return 0
+        if [ -n "$EXPECTED_ZIP_DIGEST" ] && [ -f "$SMALL_MODEL_STAMP" ] &&
+           [ "$(cat "$SMALL_MODEL_STAMP" 2>/dev/null)" = "$EXPECTED_ZIP_DIGEST" ]; then
+            print_info "Small VOSK model already exists at $SMALL_MODEL_PATH (verified)"
+            return 0
+        fi
+        # Unverified is not the same as known-bad, and this runs on every install:
+        # a tree unpacked before stamps existed, or by the app itself, simply has
+        # no stamp. Deleting it here would trade a working model for no model
+        # whenever the download, unzip or network that follows fails. Fetch and
+        # verify the replacement first; the swap below is what removes this tree.
+        print_warning "The existing VOSK model carries no matching verification stamp; re-downloading it."
+    fi
+
+    # Refuse before spending the download, not after verification rejects it.
+    if [ -z "$EXPECTED_ZIP_DIGEST" ]; then
+        print_error "No checksum is pinned for $SMALL_MODEL_ARCHIVE in $MODEL_CHECKSUMS_FILE."
+        print_warning "VOSK model will be downloaded and verified on first application run."
+        return 1
     fi
 
     # Check internet connectivity
@@ -3438,9 +3978,9 @@ install_vosk_models() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "VOSK models will be downloaded on first application run."
         return 1
     fi
@@ -3448,63 +3988,90 @@ install_vosk_models() {
     print_info "Downloading small VOSK model (approximately 40MB)..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_ZIP="$MODELS_DIR/$(basename $SMALL_MODEL_URL)"
+    local TEMP_ZIP="$VOCALINUX_TMP_DIR/$(basename $SMALL_MODEL_URL)"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_ZIP" "$SMALL_MODEL_URL" 2>&1; then
-            print_error "Failed to download VOSK model with wget"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_ZIP" "$SMALL_MODEL_URL"; then
-            print_error "Failed to download VOSK model with curl"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
+    if ! download_model_file "$SMALL_MODEL_URL" "$TEMP_ZIP" "VOSK model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_ZIP" ] || [ ! -s "$TEMP_ZIP" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before extracting: a zip that fails its pinned digest must not get
+    # as far as writing files into the models directory.
+    if ! verify_model_checksum "$TEMP_ZIP"; then
         rm -f "$TEMP_ZIP"
+        print_warning "VOSK model will be downloaded and verified on first application run."
         return 1
     fi
 
     print_info "Extracting VOSK model..."
 
-    # Extract the model
-    if command -v unzip >/dev/null 2>&1; then
-        if ! unzip -q "$TEMP_ZIP" -d "$MODELS_DIR"; then
-            print_error "Failed to extract VOSK model"
-            rm -f "$TEMP_ZIP"
-            return 1
-        fi
-    else
+    if ! command -v unzip >/dev/null 2>&1; then
         print_error "unzip command not found. Cannot extract VOSK model."
         rm -f "$TEMP_ZIP"
         return 1
     fi
 
-    # Clean up zip file
-    rm -f "$TEMP_ZIP"
-
-    # Verify extraction
-    if [ -d "$SMALL_MODEL_PATH" ]; then
-        print_success "VOSK small model installed successfully at $SMALL_MODEL_PATH"
-
-        # Set proper permissions
-        chmod -R 755 "$SMALL_MODEL_PATH"
-
-        # Create a marker file to indicate this model was pre-installed
-        echo "$(date)" > "$SMALL_MODEL_PATH/.vocalinux_preinstalled"
-
-        return 0
-    else
-        print_error "VOSK model extraction failed - directory not found"
+    # Unpack beside the model rather than over it: any model already installed
+    # stays usable until a complete, verified replacement exists, and staging in
+    # MODELS_DIR keeps the swap a same-filesystem rename.
+    local STAGING_DIR="$MODELS_DIR/.vosk-staging.$$"
+    # A run killed mid-swap leaves its scratch directories behind; they are named
+    # so they can be recognised and are of no use to a later run.
+    find "$MODELS_DIR" -maxdepth 1 -type d \
+        \( -name '.vosk-staging.*' -o -name '.*.replaced.*' \) \
+        -exec rm -rf {} + 2>/dev/null || true
+    if ! mkdir -p "$STAGING_DIR"; then
+        print_error "Failed to create a staging directory under $MODELS_DIR"
+        rm -f "$TEMP_ZIP"
         return 1
     fi
+
+    if ! unzip -q "$TEMP_ZIP" -d "$STAGING_DIR"; then
+        print_error "Failed to extract VOSK model"
+        rm -f "$TEMP_ZIP"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    rm -f "$TEMP_ZIP"
+
+    if [ ! -d "$STAGING_DIR/$SMALL_MODEL_NAME" ]; then
+        print_error "VOSK model extraction failed - $SMALL_MODEL_NAME not found in the archive"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+
+    chmod -R 755 "$STAGING_DIR/$SMALL_MODEL_NAME"
+    echo "$(date)" > "$STAGING_DIR/$SMALL_MODEL_NAME/.vocalinux_preinstalled"
+
+    # Record the digest this tree was extracted from, so a later run can tell a
+    # verified model from one that merely exists. Written before the swap: an
+    # unstamped tree is one this function would download all over again.
+    if [ -z "$EXPECTED_ZIP_DIGEST" ] ||
+       ! printf '%s\n' "$EXPECTED_ZIP_DIGEST" > "$STAGING_DIR/$SMALL_MODEL_NAME/.vocalinux_verified"; then
+        print_error "Could not record the verified digest for $SMALL_MODEL_NAME"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+
+    # Swap. The old tree is moved aside rather than deleted, so a failed rename
+    # can put it back.
+    local REPLACED_DIR="$MODELS_DIR/.$SMALL_MODEL_NAME.replaced.$$"
+    if [ -d "$SMALL_MODEL_PATH" ] && ! mv "$SMALL_MODEL_PATH" "$REPLACED_DIR"; then
+        print_error "Could not move the existing VOSK model aside; keeping it"
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    if ! mv "$STAGING_DIR/$SMALL_MODEL_NAME" "$SMALL_MODEL_PATH"; then
+        print_error "Failed to install the verified VOSK model"
+        if [ -d "$REPLACED_DIR" ]; then
+            mv "$REPLACED_DIR" "$SMALL_MODEL_PATH"
+        fi
+        rm -rf "$STAGING_DIR"
+        return 1
+    fi
+    rm -rf "$REPLACED_DIR" "$STAGING_DIR"
+
+    print_success "VOSK small model installed successfully at $SMALL_MODEL_PATH"
+    return 0
 }
 
 # Function to download and install whisper.cpp tiny model
@@ -3515,14 +4082,29 @@ install_whispercpp_model() {
     local WHISPERCPP_DIR="$DATA_DIR/models/whispercpp"
     mkdir -p "$WHISPERCPP_DIR"
 
-    # whisper.cpp tiny model URL and path
-    local TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin"
+    # whisper.cpp tiny model URL and path. The Hugging Face revision is pinned to
+    # the one the digests in model_checksums.txt were taken at, so upstream
+    # replacing ggml-tiny.bin cannot turn every install into a checksum failure.
+    local WHISPERCPP_REVISION
+    WHISPERCPP_REVISION=$(whispercpp_pinned_revision)
+    if [ -z "$WHISPERCPP_REVISION" ]; then
+        print_error "No whisper.cpp revision is pinned in $MODEL_CHECKSUMS_FILE."
+        print_warning "whisper.cpp model will be downloaded and verified on first application run."
+        return 1
+    fi
+    local TINY_MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/$WHISPERCPP_REVISION/ggml-tiny.bin"
     local TINY_MODEL_PATH="$WHISPERCPP_DIR/ggml-tiny.bin"
 
-    # Check if model already exists
+    # An existing file is not a verified file: it may predate checksum
+    # verification, or have been replaced since. Hash it before trusting it,
+    # and re-download rather than keep something that does not match.
     if [ -f "$TINY_MODEL_PATH" ]; then
-        print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
-        return 0
+        if verify_model_checksum "$TINY_MODEL_PATH" "ggml-tiny.bin"; then
+            print_info "whisper.cpp tiny model already exists at $TINY_MODEL_PATH"
+            return 0
+        fi
+        print_warning "The existing whisper.cpp tiny model does not match its pinned digest; replacing it."
+        rm -f "$TINY_MODEL_PATH"
     fi
 
     # Check internet connectivity
@@ -3532,9 +4114,9 @@ install_whispercpp_model() {
         return 1
     fi
 
-    # Test internet connectivity
-    if ! ping -c 1 google.com >/dev/null 2>&1; then
-        print_warning "No internet connection detected."
+    # Test internet connectivity (HTTP probes; ICMP ping is often blocked)
+    if ! check_connectivity; then
+        print_warning "No internet connection detected (HTTP probes to pypi.org/api.github.com/huggingface.co failed)."
         print_warning "whisper.cpp model will be downloaded on first application run."
         return 1
     fi
@@ -3542,27 +4124,17 @@ install_whispercpp_model() {
     print_info "Downloading whisper.cpp tiny model..."
     print_info "This may take a few minutes depending on your internet connection."
 
-    local TEMP_FILE="$TINY_MODEL_PATH.tmp"
+    local TEMP_FILE="$VOCALINUX_TMP_DIR/ggml-tiny.bin"
 
-    # Download the model
-    if command -v wget >/dev/null 2>&1; then
-        if ! wget --progress=bar:force:noscroll -O "$TEMP_FILE" "$TINY_MODEL_URL" 2>&1; then
-            print_error "Failed to download whisper.cpp model with wget"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
-    elif command -v curl >/dev/null 2>&1; then
-        if ! curl -L --progress-bar -o "$TEMP_FILE" "$TINY_MODEL_URL"; then
-            print_error "Failed to download whisper.cpp model with curl"
-            rm -f "$TEMP_FILE"
-            return 1
-        fi
+    if ! download_model_file "$TINY_MODEL_URL" "$TEMP_FILE" "whisper.cpp model"; then
+        return 1
     fi
 
-    # Verify download
-    if [ ! -f "$TEMP_FILE" ] || [ ! -s "$TEMP_FILE" ]; then
-        print_error "Downloaded model file is empty or missing"
+    # Verify before the file reaches its final location, so a failed download is
+    # never installed. (The "already exists" path above hashes what it finds.)
+    if ! verify_model_checksum "$TEMP_FILE" "ggml-tiny.bin"; then
         rm -f "$TEMP_FILE"
+        print_warning "whisper.cpp model will be downloaded and verified on first application run."
         return 1
     fi
 
@@ -3757,15 +4329,27 @@ install_resources_to_venv || print_warning "Venv resource installation failed"
 # Install models based on selected engine
 # whisper.cpp is now the default engine
 if [ "$SKIP_MODELS" = "no" ]; then
+    # Once, rather than once per engine.
+    if ! model_verification_available; then
+        print_warning "This release pins no model checksums, so the installer cannot verify"
+        print_warning "model downloads. The application will download and verify them on"
+        print_warning "first run instead."
+        print_warning "(The installer is newer than ${INSTALL_TAG:-the checked-out revision}.)"
+    fi
+
     # Check which engines are installed and download appropriate models
 
     # Install whisper.cpp model (default engine)
     if is_pywhispercpp_installed; then
-        print_info "whisper.cpp is installed - downloading tiny model (default engine)..."
-        install_whispercpp_model || print_warning "whisper.cpp model download failed - model will be downloaded on first run"
+        if model_verification_available; then
+            print_info "whisper.cpp is installed - downloading tiny model (default engine)..."
+            install_whispercpp_model || print_warning "whisper.cpp model download failed - model will be downloaded on first run"
+        else
+            print_info "Leaving the whisper.cpp model to the first application run."
+        fi
     fi
 
-    # Install OpenAI Whisper model if whisper engine is installed
+    # Needs no manifest: the sha256 is a path segment of its own URL.
     if "$VENV_DIR/bin/python" -c "import whisper" 2>/dev/null; then
         print_info "Whisper (OpenAI) is installed - downloading tiny model..."
         install_whisper_model || print_warning "Whisper model download failed - model will be downloaded on first run"
@@ -3777,10 +4361,73 @@ fi
 
 # Install VOSK models (always useful as fallback)
 if [ "$SKIP_MODELS" = "no" ]; then
-    install_vosk_models || print_warning "VOSK model installation failed - models will be downloaded on first run"
+    if model_verification_available; then
+        install_vosk_models || print_warning "VOSK model installation failed - models will be downloaded on first run"
+    else
+        print_info "Leaving the VOSK model to the first application run."
+    fi
 else
     print_info "Skipping VOSK model installation (--skip-models specified)"
     print_info "Models will be downloaded automatically on first application run"
+fi
+
+# config.json survives reinstalls, so an engine picked by an earlier attempt
+# can outlive the venv that supported it. Repair it here instead of letting the
+# app die at startup with ModuleNotFoundError. Prefer SELECTED_ENGINE when that
+# extra is importable (the whisper.cpp -> vosk fallback), then any working extra.
+verify_configured_engine() {
+    local CONFIG_FILE="$CONFIG_DIR/config.json"
+    [ -f "$CONFIG_FILE" ] || return 0
+
+    local CONFIGURED_ENGINE
+    CONFIGURED_ENGINE=$("$VENV_DIR/bin/python" - "$CONFIG_FILE" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("speech_recognition", {}).get("engine", ""))
+except Exception:
+    pass
+PY
+)
+
+    local MODULE
+    MODULE=$(engine_import_module "$CONFIGURED_ENGINE")
+    # remote_api and anything unrecognised need no extra module.
+    [ -n "$MODULE" ] || return 0
+    venv_can_import "$MODULE" && return 0
+
+    print_warning "$CONFIG_FILE selects the $CONFIGURED_ENGINE engine, but it is not importable in $VENV_DIR."
+
+    # Leaving it means the app dies at startup with ModuleNotFoundError. Prefer
+    # SELECTED_ENGINE (set by the whisper.cpp -> vosk fallback), then any extra
+    # the venv can actually import.
+    local CANDIDATE MODULE_FOR_CANDIDATE TRIED=""
+    for CANDIDATE in ${SELECTED_ENGINE:+$SELECTED_ENGINE} whisper_cpp vosk whisper; do
+        [ "$CANDIDATE" != "$CONFIGURED_ENGINE" ] || continue
+        case " $TRIED " in
+            *" $CANDIDATE "*) continue ;;
+        esac
+        TRIED="$TRIED $CANDIDATE"
+        MODULE_FOR_CANDIDATE=$(engine_import_module "$CANDIDATE")
+        [ -n "$MODULE_FOR_CANDIDATE" ] || continue
+        venv_can_import "$MODULE_FOR_CANDIDATE" || continue
+        if set_configured_engine "$CONFIG_FILE" "$CANDIDATE"; then
+            print_success "Switched $CONFIG_FILE to the $CANDIDATE engine."
+            print_info "Reinstall $(engine_pip_name "$CONFIGURED_ENGINE") and switch back in Settings if you want it."
+            return 0
+        fi
+    done
+
+    print_error "Vocalinux cannot start with this configuration and no working engine is available."
+    print_error "Install the engine:  $VENV_DIR/bin/pip install $(engine_pip_name "$CONFIGURED_ENGINE")"
+    print_error "or edit $CONFIG_FILE and set speech_recognition.engine to an installed engine."
+    return 1
+}
+
+if ! verify_configured_engine; then
+    exit "$EXIT_MISSING_DEPS"
 fi
 
 # Update icon cache
@@ -3980,7 +4627,8 @@ EOF
     echo "   • Right-click for menu options"
     echo ""
     echo "3. Start dictating!"
-    echo -e "   \e[1mDouble-tap Ctrl\e[0m anywhere to toggle recording"
+    echo -e "   \e[1mHold Right Alt\e[0m while you speak, then release to transcribe"
+    echo -e "   (push-to-talk default; double-tap \e[1mRight Alt\e[0m in toggle mode)"
     echo ""
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -3988,10 +4636,8 @@ EOF
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     echo "1. Open any text editor (gedit, VS Code, LibreOffice, etc.)"
-    echo "2. Double-tap Ctrl to start recording"
-    echo "3. Say: 'Hello world period'"
-    echo "4. Double-tap Ctrl to stop"
-    echo "5. You should see: 'Hello world.'"
+    echo "2. Hold Right Alt, say: 'Hello world period', then release"
+    echo "3. You should see: 'Hello world.'"
     echo ""
     echo "💡 Voice commands: 'period' 'comma' 'new line' 'delete that'"
     echo ""
@@ -4016,9 +4662,9 @@ EOF
     echo "  📚 Need Help?"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    echo "• Issues & Bugs:  https://github.com/jatinkrmalik/vocalinux/issues"
-    echo "• Documentation:  https://github.com/jatinkrmalik/vocalinux"
-    echo "• Star on GitHub: ⭐ https://github.com/jatinkrmalik/vocalinux"
+    echo "• Issues & Bugs:  https://github.com/VocaHQ/vocalinux/issues"
+    echo "• Documentation:  https://github.com/VocaHQ/vocalinux"
+    echo "• Star on GitHub: ⭐ https://github.com/VocaHQ/vocalinux"
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
@@ -4026,7 +4672,7 @@ EOF
     echo ""
 
     # Installation details (optional, for debugging)
-    if [[ "$VERBOSE" == "yes" ]]; then
+    if [[ "${VERBOSE:-no}" == "yes" ]]; then
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "  🔍 Installation Details (Debug Mode)"
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -4041,8 +4687,10 @@ EOF
 }
 
 # Verify the installation
-verify_installation
-INSTALL_ISSUES=$?
+# (guarded: verify_installation returns the number of issues found, which
+# would otherwise abort the script under set -e before the summary prints)
+INSTALL_ISSUES=0
+verify_installation || INSTALL_ISSUES=$?
 
 # Print welcome message
 print_welcome_message $INSTALL_ISSUES

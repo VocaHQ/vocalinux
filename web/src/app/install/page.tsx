@@ -2,17 +2,22 @@ import Link from "next/link";
 import { type Metadata } from "next";
 import { ChevronRight, Cpu, Laptop, Terminal } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
+import { TerminalBlock } from "@/components/terminal-block";
 import { buildPageMetadata } from "@/lib/seo";
 
 const installCommand =
-  "curl -fsSL https://raw.githubusercontent.com/jatinkrmalik/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive";
+  "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh --interactive";
+const installDisplayCommand = `curl -fsSL \\
+  https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh \\
+  -o /tmp/vl.sh && \\
+bash /tmp/vl.sh --interactive`;
 
 const distroGuides = [
   {
     name: "Ubuntu",
     href: "/install/ubuntu/",
     description:
-      "Install offline voice dictation on Ubuntu 22.04+ with GNOME, KDE, X11, or Wayland.",
+      "Install offline voice dictation on Ubuntu 24.04+ with GNOME, KDE, X11, or Wayland.",
     icon: Laptop,
   },
   {
@@ -56,26 +61,42 @@ export default function InstallGuidesPage() {
           speech-to-text on Linux. Every guide is written for real desktop usage.
         </p>
 
-        <div className="subpage-terminal mt-8 p-5 sm:p-6">
-          <p className="mb-3 inline-flex items-center gap-2 font-mono text-[11px] uppercase tracking-wider text-zinc-500">
-            <Terminal className="h-3.5 w-3.5 text-[color:var(--terminal-fg)]" />
-            install.sh --interactive
-          </p>
-          <code className="block overflow-x-auto break-all text-sm sm:text-base">
-            {installCommand}
-          </code>
+        <div className="mt-8">
+          <TerminalBlock
+            command={installCommand}
+            displayCommand={installDisplayCommand}
+            label="install.sh --interactive"
+          />
         </div>
         <p className="mt-4 text-sm text-muted-foreground">
-          Prefer no installer? Download an{" "}
-          <a
-            href="https://github.com/jatinkrmalik/vocalinux/releases"
-            className="font-semibold text-primary hover:underline"
-          >
-            AppImage
-          </a>{" "}
-          for x86_64 or aarch64 from GitHub Releases (host text-injection tools
-          still required).
+          Then launch <code>vocalinux</code>.
         </p>
+        <div className="install-alts">
+          <a
+            className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/releases"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">No installer</p>
+            <h3>AppImage</h3>
+            <p>
+              x86_64 or aarch64 from GitHub Releases. No root. Host
+              text-injection tools are still required.
+            </p>
+          </a>
+          <a
+            className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#from-source"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">From source</p>
+            <h3>Build it yourself</h3>
+            <p>
+              Clone the repo and run <code>./install.sh</code>. The install
+              guide has the full source path.
+            </p>
+          </a>
+        </div>
       </section>
 
       <section className="mt-12 grid gap-4 md:grid-cols-3">
