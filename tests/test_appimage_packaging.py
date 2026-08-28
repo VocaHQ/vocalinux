@@ -71,6 +71,35 @@ def test_appimage_build_ships_transitive_typelibs():
     assert "Need at least one of:" in text
 
 
+def test_every_typelib_the_app_requires_is_seeded():
+    """A required typelib the bundle does not seed sends GI to the host's search
+    path — the openSUSE/Fedora breakage from #585."""
+    seeded = BUILD_SH.read_text(encoding="utf-8")
+    required = set()
+    for path in (REPO_ROOT / "src" / "vocalinux").rglob("*.py"):
+        for namespace, version in re.findall(
+            r"require_version\(\s*[\"']([\w]+)[\"']\s*,\s*[\"']([\d.]+)[\"']", path.read_text()
+        ):
+            required.add(f"{namespace}-{version}")
+    assert required, "no gi.require_version calls found; has the app stopped using GI?"
+    missing = sorted(name for name in required if name not in seeded)
+    assert not missing, f"the app requires these typelibs; TYPELIBS does not seed them: {missing}"
+
+
+def test_bundled_typelibs_come_with_the_library_they_load():
+    """Ship a typelib without the library it dlopens and GI loads the host's
+    copy against the bundle's older GLib. IBus did: on any host with GLib 2.76+
+    the app died on `undefined symbol: g_task_set_static_name`. The build host
+    cannot see it — its libraries match what it bundled."""
+    text = BUILD_SH.read_text(encoding="utf-8")
+    assert "libibus-1.0.so.5" in text, "the IBus typelib is seeded but its library is not bundled"
+    assert "verify_typelib_libraries" in text
+    assert "HOST_PROVIDED_LIBS" in text, (
+        "the check needs its list of libraries the excludelist keeps on the host, "
+        "or harfbuzz fails the build"
+    )
+
+
 def test_appimage_build_bundles_gi_runtime_libs():
     text = BUILD_SH.read_text()
     for lib in (
@@ -101,13 +130,9 @@ def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():
 
 
 def test_pywhispercpp_is_pinned_once_and_the_pins_agree():
-    """An unpinned source build takes whatever PyPI published that day.
-
-    pywhispercpp 1.5.1 landed mid-review and failed to compile with Vulkan on
-    the runner, breaking both AppImage jobs while nothing in the repo changed.
-    The bundle now installs it from the lock export and the Vulkan rebuild
-    reinstalls that same sdist, so the two pins have to say the same thing.
-    """
+    """1.5.1 landed mid-review and broke both AppImage jobs with nothing in the
+    repo changed. The bundle and the Vulkan rebuild install the same sdist, so
+    install.sh and the lock export have to agree on which one."""
     installer = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     declared = re.search(r'^PYWHISPERCPP_VERSION="([^"]+)"', installer, re.M)
     assert declared, "install.sh no longer declares the version build.sh reads"
@@ -162,12 +187,9 @@ def test_the_pins_are_digests_rather_than_names():
 
 
 def test_the_appimage_is_built_in_the_pinned_base_image():
-    """An AppImage cannot run on a glibc older than the one that built it.
-
-    Built on ubuntu-latest (glibc 2.39) it starts on none of Debian 12, Ubuntu
-    22.04 or RHEL 9 — which is exactly what we shipped and documented as the
-    universal option. docker-build.sh puts the build back in the pinned image.
-    """
+    """An AppImage cannot run on a glibc older than the one that built it, and
+    ubuntu-latest (2.39) rules out Debian 12, Ubuntu 22.04 and RHEL 9 — which is
+    what we shipped as the universal option."""
     for workflow in APPIMAGE_WORKFLOWS:
         text = (WORKFLOWS / workflow).read_text(encoding="utf-8")
         assert (
@@ -201,24 +223,17 @@ def test_the_vad_export_still_covers_the_runtime_export():
 
 
 def test_pygobject_stays_on_the_line_the_base_image_can_build():
-    """PyGObject 3.52 moved to girepository-2.0, which needs glib 2.80.
-
-    The base image ships 2.72, so bumping this to the lock's version fails the
-    build. It is pinned separately on purpose — see requirements/appimage.in.
-    """
+    """3.52 moved to girepository-2.0 (glib 2.80+) and the base image has 2.72,
+    so bumping this to the lock's version fails the build."""
     version = _exported_versions(REQUIREMENTS / "appimage.txt").get("pygobject")
     assert version, "requirements/appimage.txt no longer pins PyGObject"
     assert tuple(int(part) for part in version.split(".")[:2]) <= (3, 50), version
 
 
 def test_vulkan_builds_against_pinned_headers_not_the_base_image_ones():
-    """Ubuntu 22.04 ships Vulkan headers 1.3.204, from February 2022.
-
-    ggml-vulkan.cpp does not compile against them: PipelineRobustnessCreateInfoEXT,
-    VkPhysicalDeviceCooperativeMatrixFeaturesKHR and vk::LayerSettingEXT are all
-    younger than that. Only the compile sees these headers — the AppImage bundles
-    no Vulkan loader and uses the host's, whose ABI is stable.
-    """
+    """ggml-vulkan.cpp does not compile against the base image's headers
+    (1.3.204): PipelineRobustnessCreateInfoEXT and friends are younger. Only the
+    compile sees them — the bundle carries no loader."""
     assert "vulkan-headers" in _pins(), "the Vulkan headers are not pinned"
     assert "-DVulkan_INCLUDE_DIR=" in BUILD_SH.read_text(
         encoding="utf-8"

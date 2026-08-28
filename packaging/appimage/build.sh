@@ -11,14 +11,12 @@
 # does not bundle them (it targets native C GTK apps, which don't need
 # introspection data).
 #
-# Every download is pinned and verified against
-# packaging/appimage/tool_checksums.txt, and every Python package comes from the
-# hash-pinned requirements/*.txt exports of uv.lock.
+# Downloads are pinned in packaging/appimage/tool_checksums.txt; packages come
+# from the hash-pinned requirements/*.txt exports.
 #
-# Run this inside the base image that file pins - container-build.sh does - or
-# the AppImage inherits the glibc and GTK of whatever built it. That is not a
-# detail: an AppImage built on Ubuntu 24.04 (glibc 2.39) does not start on
-# Debian 12, Ubuntu 22.04 or RHEL 9, which is what we shipped until now.
+# Run it inside the base image those pins name (container-build.sh does), or the
+# AppImage inherits this host's glibc and GTK: built on Ubuntu 24.04 it starts on
+# neither Debian 12, Ubuntu 22.04 nor RHEL 9.
 #
 # ponytail: text-injection CLI tools (xdotool/wtype/ydotool) are not
 # bundled, same runtime prerequisite as the PyPI install path documented
@@ -46,9 +44,8 @@ if [ -z "$PYWHISPERCPP_VERSION" ]; then
     echo "Could not read PYWHISPERCPP_VERSION from install.sh" >&2
     exit 1
 fi
-# The bundle installs pywhispercpp from the lock export and the Vulkan rebuild
-# reinstalls that same pinned sdist. Two sources of truth that disagree would
-# ship one whisper build and link against another, so stop while it is cheap.
+# The bundle and the Vulkan rebuild install the same pinned sdist. Two pins that
+# disagree would ship one whisper build and link against another.
 LOCKED_PYWHISPERCPP="$(awk -F'==' '/^pywhispercpp==/ {print $2; exit}' \
   "$REPO_ROOT/requirements/vad.txt" | tr -d ' \\')"
 if [ "$LOCKED_PYWHISPERCPP" != "$PYWHISPERCPP_VERSION" ]; then
@@ -131,12 +128,21 @@ INDICATOR_TYPELIBS=(
 
 # Shared libs loaded via GI at runtime (not linked into python3), so
 # linuxdeploy will not discover them from -e python3 alone.
+# verify_typelib_libraries below fails the build when one is missing.
 GI_RUNTIME_LIBS=(
   libappindicator3.so.1
   libayatana-appindicator3.so.1
   libdbusmenu-glib.so.4
   libdbusmenu-gtk3.so.4
   libnotify.so.4
+  libibus-1.0.so.5
+)
+
+# Named by a bundled typelib but on the AppImage excludelist, so the host's copy
+# is the right one. Anything else missing is a bug, not a policy.
+HOST_PROVIDED_LIBS=(
+  libharfbuzz.so.0
+  libharfbuzz-gobject.so.0
 )
 
 WORKDIR="$(mktemp -d)"
@@ -148,9 +154,7 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$TOOLDIR" "$OUTDIR"
 # Nested AppImages need extract-and-run on hosts without usable FUSE.
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 
-# Building outside the pinned image inherits that host's glibc and GTK, which is
-# the whole bug this pinning exists to stop. Warn rather than refuse: the script
-# still has to be runnable by hand when someone is debugging it.
+# Warn rather than refuse: the script still has to run by hand when debugging.
 expected_base="$(pin_field base-image 4)"
 actual_base="$(. /etc/os-release 2>/dev/null && echo "$ID:$VERSION_ID")"
 if [ "$actual_base" != "$expected_base" ]; then
@@ -165,9 +169,8 @@ fetch_pinned "appimagetool-$ARCH" "$TOOLDIR/appimagetool"
 chmod +x "$TOOLDIR/linuxdeploy" "$TOOLDIR/linuxdeploy-plugin-gtk.sh" "$TOOLDIR/appimagetool"
 
 echo "== Fetching pinned uv =="
-# Reuse the host's uv only when it is the pinned version: uv decides which
-# python-build-standalone build the bundle gets and how the wheels resolve, so a
-# different one is a different AppImage.
+# Only if it is the pinned version: uv picks the interpreter build and resolves
+# the wheels, so a different uv is a different AppImage.
 UV_VERSION="$(pin_field "uv-$ARCH" 4 | sed 's|.*/download/\([^/]*\)/.*|\1|')"
 if command -v uv >/dev/null 2>&1 && [ "$(uv --version | awk '{print $2}')" = "$UV_VERSION" ]; then
   UV="$(command -v uv)"
@@ -179,10 +182,8 @@ fi
 echo "  uv $UV_VERSION ($UV)"
 
 echo "== Bundling managed CPython =="
-# python-build-standalone rather than the build host's interpreter: the host's
-# is whatever the image or the developer happens to have, and its stdlib layout
-# varies by distro. These builds need glibc 2.17, well under the base image's
-# floor, so the interpreter never decides which distros the AppImage runs on.
+# python-build-standalone, not the host's interpreter: deterministic, and it
+# needs glibc 2.17, so the base image alone decides the floor.
 CPYTHON_VERSION="$(pin_field cpython 3)"
 export UV_PYTHON_INSTALL_DIR="$WORKDIR/pyroot"
 "$UV" python install "$CPYTHON_VERSION"
@@ -191,10 +192,8 @@ PY_PREFIX="$(cd "$(dirname "$PY_BIN")/.." && pwd)"
 PY_VER="${CPYTHON_VERSION%.*}"
 echo "  CPython $CPYTHON_VERSION from $PY_PREFIX"
 cp -a "$PY_PREFIX/bin" "$PY_PREFIX/lib" "$APPDIR/usr/"
-# Drop what only a build or a desktop IDE would want. tkinter goes with its
-# extension module and the whole Tcl/Tk runtime behind it: nothing imports it,
-# and leaving _tkinter.so without its libraries stops linuxdeploy dead
-# ("Could not find dependency: libtcl9.0.so") rather than being ignored.
+# Drop what nothing imports. tkinter goes with its extension module and the
+# Tcl/Tk runtime: a stray _tkinter.so stops linuxdeploy dead on libtcl9.0.so.
 rm -rf "$APPDIR/usr/lib/python${PY_VER}/test" \
        "$APPDIR/usr/lib/python${PY_VER}/idlelib" \
        "$APPDIR/usr/lib/python${PY_VER}/tkinter" \
@@ -214,17 +213,13 @@ uv_install() {
 }
 
 echo "== Installing Vocalinux + runtime deps into the bundle =="
-# From the lock rather than from whatever PyPI serves today. vad.txt is the
-# hash-pinned export of the runtime set plus the VAD extra, and is a superset of
-# runtime.txt (tests/test_appimage_packaging.py keeps it that way, so this stays
-# one resolution instead of two that can disagree). appimage.txt adds the
-# PyGObject the exports deliberately leave out. The wheel goes last with
-# --no-deps: its dependencies are resolved above, and letting it re-resolve them
-# would walk straight back out of the lock.
+# From the lock, not from whatever PyPI serves today. vad.txt is a superset of
+# runtime.txt (a test keeps it that way, so this is one resolution rather than
+# two); appimage.txt adds the PyGObject the exports leave out. The wheel is last
+# with --no-deps: re-resolving its deps would walk back out of the lock.
 uv_install --require-hashes -r "$REPO_ROOT/requirements/vad.txt"
-# --no-deps: PyGObject declares pycairo, which vad.txt already pinned and
-# installed. Without it --require-hashes stops on a requirement appimage.txt
-# deliberately does not carry.
+# --no-deps: PyGObject declares pycairo, which vad.txt already installed, and
+# --require-hashes would stop on a requirement appimage.txt does not carry.
 uv_install --require-hashes --no-deps -r "$REPO_ROOT/requirements/appimage.txt"
 uv_install --no-deps "$WHEEL"
 
@@ -316,17 +311,15 @@ has_vulkan_build_deps() {
   return 0
 }
 
-# cmake and ninja come from pinned wheels, not from the image: the base image
-# ships cmake 3.22.1, which is exactly shaderc's floor and below what newer ggml
-# releases ask for. Stay on cmake 3.x - 4.0 dropped support for the
-# `cmake_minimum_required(VERSION 3.4...3.18)` pywhispercpp still declares.
+# Pinned wheels, not the image's cmake 3.22.1 — exactly shaderc's floor. Stay on
+# cmake 3.x: 4.0 rejects the `VERSION 3.4...3.18` pywhispercpp declares.
 ensure_build_tools() {
   if [ -n "${BUILD_TOOLS_READY:-}" ]; then
     return 0
   fi
   echo "== Installing pinned build tools (cmake, ninja) =="
-  # In a venv, not a --prefix: the wheels ship console scripts that import their
-  # own package, and a prefix install leaves them on no interpreter's path.
+  # A venv, not --prefix: the console scripts import their own package, which a
+  # prefix install leaves on no interpreter's path.
   "$UV" venv --python "$PY_BIN" "$TOOLDIR/buildtools" >/dev/null
   "$UV" pip install --python "$TOOLDIR/buildtools" \
     --require-hashes -r "$REPO_ROOT/requirements/appimage-tools.txt"
@@ -335,12 +328,10 @@ ensure_build_tools() {
   echo "  $(cmake --version | head -1), ninja $(ninja --version)"
 }
 
-# ggml compiles its Vulkan shaders with glslc and accepts no substitute
-# (`find_package(Vulkan COMPONENTS glslc REQUIRED)`), but Ubuntu 22.04 - old
-# enough to give the AppImage a usable glibc floor - does not package it at all.
-# So build it from the pinned shaderc commit. It takes ~4 minutes on a 4-core
-# runner and its only input is that commit, so CI caches the result;
-# VOCALINUX_APPIMAGE_CACHE points at the directory to keep it in.
+# ggml demands glslc (`find_package(Vulkan COMPONENTS glslc REQUIRED)`) and the
+# base image packages none, so build it from the pinned shaderc commit — ~4 min
+# on a runner, and CI caches it in VOCALINUX_APPIMAGE_CACHE since the commit is
+# its only input.
 ensure_glslc() {
   if command -v glslc >/dev/null 2>&1; then
     echo "  glslc: $(command -v glslc)"
@@ -372,9 +363,8 @@ ensure_glslc() {
   echo "  glslc: $("$cache_dir/glslc" --version | head -1)"
 }
 
-# ggml needs Vulkan headers the base image is a decade of releases short of;
-# see the pin. Only the compile sees these: the AppImage bundles no loader
-# (linuxdeploy's excludelist keeps libvulkan.so.1 out) and uses the host's.
+# The base image's headers are too old for ggml (see the pin). Only the compile
+# sees these: the bundle carries no loader, the host's is used.
 ensure_vulkan_headers() {
   VULKAN_INCLUDE_DIR="$WORKDIR/vulkan-headers/include"
   if [ ! -d "$VULKAN_INCLUDE_DIR" ]; then
@@ -449,9 +439,8 @@ rebuild_pywhispercpp_vulkan() {
       uv_install --verbose --require-hashes --no-deps \
         --reinstall-package pywhispercpp --no-binary pywhispercpp \
         -r "$WORKDIR/pywhispercpp.txt" >"$pip_log" 2>&1; then
-    # The tail of this log is the Python traceback that wraps the build, which
-    # says nothing about why the compile failed. Lead with the compiler's own
-    # errors, then the tail for context.
+    # The tail is the Python traceback wrapping the build and says nothing about
+    # the compile, so lead with the compiler's own errors.
     echo "pywhispercpp Vulkan rebuild failed." >&2
     grep -E "error:|FAILED:|CMake Error" "$pip_log" 2>/dev/null \
       | head -n 20 | sed 's/^/    /' >&2 || true
@@ -515,6 +504,63 @@ export DEPLOY_GTK_VERSION=3
 # GIR deps vary by distro) and re-assert our required seed on top.
 echo "== Ensuring required typelibs are present (keeping linuxdeploy extras) =="
 copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 1
+
+# GI loads a typelib's library by name, so a typelib bundled without it pulls in
+# the host's copy against the bundled GLib. IBus shipped that way and died on
+# hosts with GLib 2.76+ (`undefined symbol: g_task_set_static_name`). The build
+# host cannot notice — its libraries match what it bundled.
+echo "== Checking every bundled typelib has its library =="
+verify_typelib_libraries() {
+  "$APPDIR/usr/bin/python3" - "$APPDIR" "${HOST_PROVIDED_LIBS[*]}" "${TYPELIBS[@]}" <<'PY'
+import pathlib
+import struct
+import sys
+
+appdir = pathlib.Path(sys.argv[1])
+host_provided = set(sys.argv[2].split())
+typelib_dir = appdir / "usr" / "lib" / "girepository-1.0"
+lib_dir = appdir / "usr" / "lib"
+
+# Typelib header layout: 16-byte magic, then fixed fields; shared_library is a
+# uint32 offset at byte 52 into a comma-separated, NUL-terminated string.
+MAGIC = b"GOBJ\nMETADATA\r\n\x1a"
+SHARED_LIBRARY_OFFSET = 52
+
+
+def shared_libraries(path):
+    blob = path.read_bytes()
+    if not blob.startswith(MAGIC):
+        return []
+    offset = struct.unpack_from("<I", blob, SHARED_LIBRARY_OFFSET)[0]
+    if not offset:
+        return []
+    return [name for name in blob[offset : blob.index(b"\x00", offset)].decode().split(",") if name]
+
+
+checked, missing = 0, []
+for namespace in sys.argv[3:]:
+    typelib = typelib_dir / f"{namespace}.typelib"
+    if not typelib.exists():
+        continue
+    checked += 1
+    for library in shared_libraries(typelib):
+        if library in host_provided or (lib_dir / library).exists():
+            continue
+        missing.append(f"{namespace}.typelib needs {library}")
+
+if missing:
+    print("Typelibs bundled without the library they load:", file=sys.stderr)
+    for line in missing:
+        print(f"  - {line}", file=sys.stderr)
+    print("GI would load the host's copy against the bundled GLib.", file=sys.stderr)
+    print("Add it to GI_RUNTIME_LIBS, or to HOST_PROVIDED_LIBS if the", file=sys.stderr)
+    print("AppImage excludelist says it has to come from the host.", file=sys.stderr)
+    raise SystemExit(1)
+
+print(f"  {checked} typelibs checked, every library present")
+PY
+}
+verify_typelib_libraries
 
 echo "== Patching linuxdeploy GTK AppRun hook (Wayland-friendly GDK backend) =="
 GTK_HOOK="$APPDIR/apprun-hooks/linuxdeploy-plugin-gtk.sh"
@@ -586,6 +632,12 @@ except (ImportError, ValueError):
     except (ImportError, ValueError):
         gi.require_version('AppIndicator3', '0.1')
         from gi.repository import AppIndicator3  # noqa: F401
+# ibus_engine.py subclasses IBus.Engine at import time; a failed libibus load
+# leaves a stub whose GType is 'void', so check the type, not just the import.
+gi.require_version('IBus', '1.0')
+from gi.repository import IBus
+if IBus.Engine.__gtype__.name in ('void', 'invalid'):
+    raise SystemExit('IBus typelib loaded but libibus did not')
 print('GI smoke OK')
 PY
   "
