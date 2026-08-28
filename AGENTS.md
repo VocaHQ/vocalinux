@@ -160,6 +160,7 @@ Also: `tests/`, `docs/`, `packaging/` (AppImage, AUR, Flatpak), `scripts/`, `ins
 - `logger = logging.getLogger(__name__)` per module
 - Triple-quoted docstrings on modules, classes, and public functions
 - Specific exceptions; log errors with context
+- Every `subprocess` call passes `env=host_env()` (`utils/host_process.py`): nothing we spawn is ours, and a host binary that inherits the AppImage's library paths dies on the wrong GLib. `tests/test_host_process.py` walks the AST and fails on a call that does not
 - Tests: `tests/test_*.py`, `test_*` functions, `unittest.TestCase` or pytest; `pytest-mock` via `mocker`
 - Markers: `@pytest.mark.slow`, `integration`, `audio` (hardware). Default timeout 10s (`pytest-timeout`)
 
