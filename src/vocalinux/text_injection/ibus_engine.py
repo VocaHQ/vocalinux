@@ -622,6 +622,63 @@ def restore_xkb_layout(layout: str, variant: str = "", option: str = "") -> bool
     return False
 
 
+def _x11_display_available() -> bool:
+    """True when an X11 display is advertised (XWayland or native X)."""
+    display = os.environ.get("DISPLAY")
+    return bool(display and display.strip())
+
+
+def sync_xwayland_layout_from_gnome() -> bool:
+    """Push GNOME's current XKB source onto XWayland after scoped IBus inject.
+
+    On GNOME Wayland, Super+Space updates Mutter and IBus immediately, but
+    XWayland can keep the previous map after the Vocalinux engine round-trip
+    (issue #738). ``restore_xkb_layout()`` stays a no-op on Wayland (#474);
+    this helper reads the live GNOME source instead of a captured layout.
+
+    Native Wayland sessions with no X DISPLAY are left alone.
+    """
+    if not _is_wayland_session():
+        return False
+    if not _x11_display_available():
+        logger.debug("No X DISPLAY; skipping XWayland layout sync (see #738)")
+        return False
+
+    source = _get_gnome_current_source()
+    if not source:
+        return False
+
+    source_type, source_id = source
+    if source_type != "xkb" or not source_id:
+        logger.debug(
+            f"GNOME current source is {source_type}:{source_id}; "
+            "not an XKB map, skipping XWayland sync"
+        )
+        return False
+
+    layout, _, variant = source_id.partition("+")
+    if not layout:
+        return False
+
+    try:
+        cmd = ["setxkbmap", "-layout", layout]
+        if variant:
+            cmd.extend(["-variant", variant])
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            logger.debug(f"Synced XWayland layout to GNOME source '{source_id}' (see #738)")
+            return True
+        logger.debug(f"setxkbmap failed while syncing XWayland: {result.stderr}")
+    except (subprocess.SubprocessError, FileNotFoundError, OSError) as e:
+        logger.debug(f"Could not sync XWayland layout: {e}")
+    return False
+
+
 def _invoke_parent_destroy(parent_destroy: Callable[[], None], instance: object) -> None:
     """Call the parent engine destroy, working around PyGObject's GType binding.
 
@@ -1545,10 +1602,16 @@ class IBusTextInjector:
 
             # Engine switch can leave XKB on us even after restoring the IBus
             # engine (setxkbmap vs IBus). Re-apply the pre-switch map on X11;
-            # Wayland capture is empty so this is a no-op (#474, #664).
+            # Wayland capture is empty so restore_xkb_layout is a no-op (#474, #664).
             layout, variant, option = captured_xkb
             if layout:
                 restore_xkb_layout(layout, variant, option)
+            else:
+                # Compositor is source of truth. Copy GNOME's live XKB source
+                # onto XWayland so Super+Space during recording cannot leave
+                # X apps on the previous map (#738). Do not replay the empty
+                # capture and do not go through restore_xkb_layout.
+                sync_xwayland_layout_from_gnome()
 
         return False
 
