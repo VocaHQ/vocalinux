@@ -269,6 +269,44 @@ jobs:
           path: dist/*.AppImage
           retention-days: 7
 
+  # The build host cannot see what breaks here: its libraries match what it
+  # bundled. Two regressions reached a user that way (#743) — one loading a GI
+  # library, one spawning a host binary — and both die on the new distros below.
+  # Old ones prove the glibc floor the build image sets.
+  appimage-boot-test:
+    name: 🐧 Boot AppImage (${{ matrix.distro }})
+    runs-on: ubuntu-latest
+    needs: [changes, appimage-smoke-test]
+    if: needs.changes.outputs.python == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        distro:
+          - debian:12
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - fedora:42
+          - archlinux:latest
+          - opensuse/tumbleweed
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download the AppImage built above
+        uses: actions/download-artifact@v4
+        with:
+          name: vocalinux-appimage-x86_64
+          path: dist
+
+      - name: Boot it on ${{ matrix.distro }}
+        run: |
+          APPIMAGE=$(ls dist/*.AppImage)
+          chmod +x "$APPIMAGE"
+          docker run --rm \
+            -v "$PWD/dist:/dist:ro" \
+            -v "$PWD/packaging/appimage:/pk:ro" \
+            "${{ matrix.distro }}" \
+            bash /pk/boot-test.sh "/dist/$(basename "$APPIMAGE")"
+
   web-build:
     name: 🌐 Build Website
     runs-on: ubuntu-latest

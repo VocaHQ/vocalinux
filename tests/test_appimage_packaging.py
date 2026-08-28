@@ -6,6 +6,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APPIMAGE = REPO_ROOT / "packaging" / "appimage"
 BUILD_SH = APPIMAGE / "build.sh"
+BOOT_TEST_SH = APPIMAGE / "boot-test.sh"
+#: Image name prefix -> the token boot-test.sh matches on ($ID / $ID_LIKE).
+BOOT_FAMILIES = {
+    "debian": "debian",
+    "ubuntu": "ubuntu",
+    "fedora": "fedora",
+    "archlinux": "arch",
+    "opensuse": "suse",
+}
 PINS = APPIMAGE / "tool_checksums.txt"
 REQUIREMENTS = REPO_ROOT / "requirements"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
@@ -250,3 +259,44 @@ def test_vulkan_shaders_get_the_compiler_the_base_image_lacks():
         assert (
             "vocalinux-appimage" in content
         ), f"{workflow} does not cache the built glslc; every run rebuilds it"
+
+
+def _boot_matrix() -> list:
+    """The distros the boot job runs the finished AppImage on."""
+    workflow = (WORKFLOWS / "unified-pipeline.yml").read_text(encoding="utf-8")
+    block = re.search(r"\n        distro:\n((?:\s+- \S+\n)+)", workflow)
+    assert block, "unified-pipeline.yml has no boot-test distro matrix"
+    return re.findall(r"- (\S+)", block.group(1))
+
+
+def test_the_boot_matrix_covers_both_ends_of_the_range():
+    """Built on 22.04, the AppImage can fail in either direction.
+
+    Too new a glibc and the old distros cannot start it; too old a GLib and the
+    new distros' own binaries break when the app spawns them. Both #743
+    regressions were the second kind, and only a new distro shows them.
+    """
+    distros = _boot_matrix()
+    assert any(
+        distro.startswith(("debian:12", "ubuntu:22.04")) for distro in distros
+    ), f"nothing older than the build image in {distros}"
+    assert any(
+        distro.startswith(("archlinux", "opensuse", "fedora")) for distro in distros
+    ), f"nothing newer than the build image in {distros}"
+
+
+def test_boot_test_has_a_package_recipe_for_every_distro_it_runs_on():
+    """A matrix entry the script cannot install prerequisites for fails late."""
+    script = BOOT_TEST_SH.read_text(encoding="utf-8")
+    case_block = re.search(r"case \"\$\{ID\}.*?esac", script, re.S)
+    assert case_block, "boot-test.sh no longer dispatches on the distro"
+
+    missing = []
+    for distro in _boot_matrix():
+        family = next(
+            (token for prefix, token in BOOT_FAMILIES.items() if distro.startswith(prefix)),
+            None,
+        )
+        if family is None or family not in case_block.group(0):
+            missing.append(distro)
+    assert not missing, f"boot-test.sh installs nothing for: {missing}"

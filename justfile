@@ -97,6 +97,14 @@ build:
 appimage: build
     bash packaging/appimage/docker-build.sh dist/*.whl "$(grep -oP '__version__\s*=\s*"\K[^"]+' src/vocalinux/version.py)" dist
 
+# Start the built AppImage in a distro container, as the CI matrix does. Pick a
+# distro older than the build image to test the glibc floor, or newer to test
+# that the bundle does not break the host binaries it spawns.
+#
+# Boot the built AppImage on a distro, e.g. `just appimage-boot fedora:42`
+appimage-boot distro="debian:12":
+    docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/appimage:/pk:ro" {{distro}} bash /pk/boot-test.sh "/dist/$(basename "$(ls dist/*.AppImage)")"
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
 # when you want newer CPU builds (torchaudio on the CPU index lags torch).
