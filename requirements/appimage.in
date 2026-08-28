@@ -1,0 +1,10 @@
+# Python packages bundled into the AppImage on top of requirements/vad.txt.
+#
+# PyGObject is excluded from the lock exports (--no-emit-package pygobject)
+# because every other install path takes it from the distro. The AppImage has no
+# distro to take it from: it bundles a managed CPython, so it builds PyGObject
+# against the base image's girepository, which caps it at the 3.50 line —
+# uv.lock's 3.56 needs girepository-2.0 (glib 2.80+), and the base image the
+# AppImage builds in ships glib 2.72. Compiled with --no-deps: pycairo is
+# already pinned in requirements/runtime.txt and must not be resolved twice.
+pygobject==3.50.2

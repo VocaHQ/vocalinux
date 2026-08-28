@@ -1,0 +1,47 @@
+# Pinned build inputs for packaging/appimage/build.sh.
+#
+# Everything the AppImage build downloads is pinned and verified here. Before
+# this file the build pulled linuxdeploy and appimagetool from their
+# `continuous` tags and the GTK plugin from `master`, so two builds of the same
+# commit could differ, and nothing would notice a replaced asset.
+#
+# Columns: name, kind, value, source — parseable by awk, like
+# src/vocalinux/utils/model_checksums.txt.
+#
+#   sha256   the file downloaded from <source> must hash to <value>
+#   git      clone <source>, check out commit <value> (a commit is its own digest)
+#   docker   build inside image <value>; <source> records the tag it came from
+#   version  handed to uv, which pins and verifies the download itself
+#
+# To bump one: change the version in its <source> URL, download it, and replace
+# <value> with `sha256sum` of what you got. The base image digest comes from
+# `docker buildx imagetools inspect ubuntu:22.04` (use the index digest, not a
+# per-architecture one — the same line has to work on x86_64 and aarch64).
+#
+# The base image is old on purpose: the AppImage inherits the glibc of whatever
+# built it, and Ubuntu 22.04's 2.35 is below Debian 12, Fedora, Arch and
+# Tumbleweed. Raising it silently drops distros. See docs/INSTALL.md.
+
+base-image              docker  docker.io/library/ubuntu@sha256:2edbbc5dc405e9612ba3584ce95480277e3eb374407b5505fe26f17df77c7dbc  ubuntu:22.04
+cpython                 version 3.12.14                                                                                            python-build-standalone, installed by uv
+
+uv-x86_64               sha256  68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b17b6b2  https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-unknown-linux-gnu.tar.gz
+uv-aarch64              sha256  9bf43b4d1a07665bf64d4c4e710930b382321a785e0eb10aac07f46471f86a31  https://github.com/astral-sh/uv/releases/download/0.12.5/uv-aarch64-unknown-linux-gnu.tar.gz
+
+linuxdeploy-x86_64      sha256  c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+linuxdeploy-aarch64     sha256  620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff  https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-aarch64.AppImage
+appimagetool-x86_64     sha256  ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+appimagetool-aarch64    sha256  f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158  https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage
+linuxdeploy-plugin-gtk  sha256  b0f4cbc684a0103a9651f0955b635eaea0096b3a66c0f5a2c2aa337960375171  https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/7a3fbc31a9e5075073ff8790f26effbac5f84453/linuxdeploy-plugin-gtk.sh
+
+# ggml compiles its Vulkan shaders with glslc, which Ubuntu 22.04 does not
+# package at all (24.04 does). Built from source when the build host has none;
+# see ensure_glslc in build.sh.
+shaderc                 git     2c8cae778eec0283b44acbe7ed1a386865d78799  https://github.com/google/shaderc.git
+
+# The base image's Vulkan headers are 1.3.204, from February 2022. ggml wants
+# VK_KHR_cooperative_matrix, VK_KHR_shader_bfloat16 and VK_NV_cooperative_matrix2,
+# so it does not compile against them. Headers decide only what the build sees:
+# at run time the AppImage uses the host's loader and driver, and that ABI is
+# stable. Tag vulkan-sdk-1.4.357.0.
+vulkan-headers          git     e3b1eec08173d6b825cd3ac88c885a63b621504a  https://github.com/KhronosGroup/Vulkan-Headers.git

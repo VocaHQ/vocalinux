@@ -1,0 +1,10 @@
+# Build tools for packaging/appimage/build.sh — installed on the build host,
+# never into the AppImage.
+#
+# Taken from PyPI rather than the base image so the toolchain is pinned instead
+# of inherited: the base image's cmake is 3.22.1, exactly shaderc's floor and
+# below what newer ggml releases ask for. Stay on the 3.x line — CMake 4 removed
+# compatibility with the `cmake_minimum_required(VERSION 3.4...3.18)` that
+# pywhispercpp still declares.
+cmake==3.31.10
+ninja==1.13.0

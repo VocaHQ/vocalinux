@@ -4,12 +4,21 @@
 #
 # Usage: build.sh <path-to-wheel> <version> [output-dir]
 #
-# Bundles a full copy of the active Python interpreter (relocated via
-# PYTHONHOME, not a venv, since venvs hard-code absolute paths) plus
+# Bundles a managed CPython (python-build-standalone, fetched by uv, relocated
+# via PYTHONHOME rather than a venv since venvs hard-code absolute paths) plus
 # PyGObject/GTK3/AppIndicator/IBus GObject-Introspection typelibs, since
 # those are needed by `gi.repository` at runtime and linuxdeploy-plugin-gtk
 # does not bundle them (it targets native C GTK apps, which don't need
 # introspection data).
+#
+# Every download is pinned and verified against
+# packaging/appimage/tool_checksums.txt, and every Python package comes from the
+# hash-pinned requirements/*.txt exports of uv.lock.
+#
+# Run this inside the base image that file pins - container-build.sh does - or
+# the AppImage inherits the glibc and GTK of whatever built it. That is not a
+# detail: an AppImage built on Ubuntu 24.04 (glibc 2.39) does not start on
+# Debian 12, Ubuntu 22.04 or RHEL 9, which is what we shipped until now.
 #
 # ponytail: text-injection CLI tools (xdotool/wtype/ydotool) are not
 # bundled, same runtime prerequisite as the PyPI install path documented
@@ -37,13 +46,70 @@ if [ -z "$PYWHISPERCPP_VERSION" ]; then
     echo "Could not read PYWHISPERCPP_VERSION from install.sh" >&2
     exit 1
 fi
+# The bundle installs pywhispercpp from the lock export and the Vulkan rebuild
+# reinstalls that same pinned sdist. Two sources of truth that disagree would
+# ship one whisper build and link against another, so stop while it is cheap.
+LOCKED_PYWHISPERCPP="$(awk -F'==' '/^pywhispercpp==/ {print $2; exit}' \
+  "$REPO_ROOT/requirements/vad.txt" | tr -d ' \\')"
+if [ "$LOCKED_PYWHISPERCPP" != "$PYWHISPERCPP_VERSION" ]; then
+    echo "pywhispercpp is pinned twice and the pins disagree:" >&2
+    echo "  install.sh:            $PYWHISPERCPP_VERSION" >&2
+    echo "  requirements/vad.txt:  $LOCKED_PYWHISPERCPP" >&2
+    echo "Change pyproject.toml and run 'just lock', or fix install.sh." >&2
+    exit 1
+fi
 ARCH="$(uname -m)"
-PYTHON="${PYTHON:-python3}"
 
 case "$ARCH" in
   x86_64|aarch64) ;;
   *) echo "Unsupported architecture: $ARCH (need x86_64 or aarch64)" >&2; exit 1 ;;
 esac
+
+# Every download below is looked up here first, so a moved upstream asset fails
+# the build instead of quietly changing what ships.
+PINS="$REPO_ROOT/packaging/appimage/tool_checksums.txt"
+
+pin_field() {
+  local name="$1" field="$2" value
+  value="$(awk -v k="$name" -v f="$field" '$1==k {print $f; exit}' "$PINS")"
+  if [ -z "$value" ]; then
+    echo "No pin named '$name' in $PINS" >&2
+    exit 1
+  fi
+  printf '%s\n' "$value"
+}
+
+# Default --retry skips TLS RST (curl 35). GitHub release assets flake that way.
+curl_retry() {
+  curl --retry 5 --retry-all-errors --retry-delay 2 --fail --silent --show-error --location "$@"
+}
+
+# Download the pin named $1 to $2, and refuse to go on unless it hashes right.
+fetch_pinned() {
+  local name="$1" dest="$2" url expected actual
+  url="$(pin_field "$name" 4)"
+  expected="$(pin_field "$name" 3)"
+  curl_retry -o "$dest" "$url"
+  actual="$(sha256sum "$dest" | cut -d' ' -f1)"
+  if [ "$actual" != "$expected" ]; then
+    echo "Checksum mismatch for $name" >&2
+    echo "  url:      $url" >&2
+    echo "  expected: $expected" >&2
+    echo "  actual:   $actual" >&2
+    exit 1
+  fi
+}
+
+# Checkout of a pinned git tree, shared by the two things that need one.
+checkout_pinned() {
+  local name="$1" dest="$2" commit
+  commit="$(pin_field "$name" 3)"
+  mkdir -p "$dest"
+  git -C "$dest" init -q
+  git -C "$dest" remote add origin "$(pin_field "$name" 4)"
+  git -C "$dest" fetch -q --depth 1 origin "$commit"
+  git -C "$dest" checkout -q FETCH_HEAD
+}
 
 # Seed typelibs Vocalinux imports directly, plus transitive GIR deps that Gtk
 # and AppIndicator require (xlib, Dbusmenu, …). Without those, GI falls back to
@@ -82,43 +148,85 @@ mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$TOOLDIR" "$OUTDIR"
 # Nested AppImages need extract-and-run on hosts without usable FUSE.
 export APPIMAGE_EXTRACT_AND_RUN="${APPIMAGE_EXTRACT_AND_RUN:-1}"
 
-echo "== Fetching AppImage tooling ($ARCH) =="
-# Default --retry skips TLS RST (curl 35). GitHub continuous AppImages flake that way.
-curl_retry() {
-  curl --retry 5 --retry-all-errors --retry-delay 2 --fail --silent --show-error --location "$@"
-}
-curl_retry -o "$TOOLDIR/linuxdeploy" \
-  "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
-curl_retry -o "$TOOLDIR/linuxdeploy-plugin-gtk.sh" \
-  https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gtk/master/linuxdeploy-plugin-gtk.sh
-curl_retry -o "$TOOLDIR/appimagetool" \
-  "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
+# Building outside the pinned image inherits that host's glibc and GTK, which is
+# the whole bug this pinning exists to stop. Warn rather than refuse: the script
+# still has to be runnable by hand when someone is debugging it.
+expected_base="$(pin_field base-image 4)"
+actual_base="$(. /etc/os-release 2>/dev/null && echo "$ID:$VERSION_ID")"
+if [ "$actual_base" != "$expected_base" ]; then
+  echo "Warning: building on ${actual_base:-an unknown host}, not the pinned $expected_base." >&2
+  echo "         This AppImage will inherit this host's glibc and GTK. Use docker-build.sh." >&2
+fi
+
+echo "== Fetching pinned AppImage tooling ($ARCH) =="
+fetch_pinned "linuxdeploy-$ARCH" "$TOOLDIR/linuxdeploy"
+fetch_pinned "linuxdeploy-plugin-gtk" "$TOOLDIR/linuxdeploy-plugin-gtk.sh"
+fetch_pinned "appimagetool-$ARCH" "$TOOLDIR/appimagetool"
 chmod +x "$TOOLDIR/linuxdeploy" "$TOOLDIR/linuxdeploy-plugin-gtk.sh" "$TOOLDIR/appimagetool"
 
-echo "== Bundling Python runtime ($PYTHON) =="
-# Use base_prefix so a venv builder still ships a full stdlib (encodings, etc.).
-PY_PREFIX="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')"
-PY_VER="$("$PYTHON" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-PY_BIN="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')/bin/python${PY_VER}"
-if [ ! -x "$PY_BIN" ]; then
-  PY_BIN="$("$PYTHON" -c 'import sys; print(sys.base_prefix)')/bin/python3"
+echo "== Fetching pinned uv =="
+# Reuse the host's uv only when it is the pinned version: uv decides which
+# python-build-standalone build the bundle gets and how the wheels resolve, so a
+# different one is a different AppImage.
+UV_VERSION="$(pin_field "uv-$ARCH" 4 | sed 's|.*/download/\([^/]*\)/.*|\1|')"
+if command -v uv >/dev/null 2>&1 && [ "$(uv --version | awk '{print $2}')" = "$UV_VERSION" ]; then
+  UV="$(command -v uv)"
+else
+  fetch_pinned "uv-$ARCH" "$TOOLDIR/uv.tar.gz"
+  tar xzf "$TOOLDIR/uv.tar.gz" -C "$TOOLDIR"
+  UV="$TOOLDIR/uv-${ARCH}-unknown-linux-gnu/uv"
 fi
-if [ ! -x "$PY_BIN" ]; then
-  PY_BIN="$("$PYTHON" -c 'import sys; print(sys.executable)')"
-fi
-cp -L "$PY_BIN" "$APPDIR/usr/bin/python3"
-cp -r "$PY_PREFIX/lib/python${PY_VER}" "$APPDIR/usr/lib/python${PY_VER}"
-rm -rf "$APPDIR/usr/lib/python${PY_VER}/site-packages"
+echo "  uv $UV_VERSION ($UV)"
+
+echo "== Bundling managed CPython =="
+# python-build-standalone rather than the build host's interpreter: the host's
+# is whatever the image or the developer happens to have, and its stdlib layout
+# varies by distro. These builds need glibc 2.17, well under the base image's
+# floor, so the interpreter never decides which distros the AppImage runs on.
+CPYTHON_VERSION="$(pin_field cpython 3)"
+export UV_PYTHON_INSTALL_DIR="$WORKDIR/pyroot"
+"$UV" python install "$CPYTHON_VERSION"
+PY_BIN="$("$UV" python find "$CPYTHON_VERSION")"
+PY_PREFIX="$(cd "$(dirname "$PY_BIN")/.." && pwd)"
+PY_VER="${CPYTHON_VERSION%.*}"
+echo "  CPython $CPYTHON_VERSION from $PY_PREFIX"
+cp -a "$PY_PREFIX/bin" "$PY_PREFIX/lib" "$APPDIR/usr/"
+# Drop what only a build or a desktop IDE would want. tkinter goes with its
+# extension module and the whole Tcl/Tk runtime behind it: nothing imports it,
+# and leaving _tkinter.so without its libraries stops linuxdeploy dead
+# ("Could not find dependency: libtcl9.0.so") rather than being ignored.
+rm -rf "$APPDIR/usr/lib/python${PY_VER}/test" \
+       "$APPDIR/usr/lib/python${PY_VER}/idlelib" \
+       "$APPDIR/usr/lib/python${PY_VER}/tkinter" \
+       "$APPDIR/usr/lib/python${PY_VER}/lib2to3" \
+       "$APPDIR/usr/lib/python${PY_VER}/lib-dynload/_tkinter"*.so \
+       "$APPDIR/usr/lib/python${PY_VER}/config-${PY_VER}"*
+rm -rf "$APPDIR/usr/lib"/libtcl*.so "$APPDIR/usr/lib"/tcl9* "$APPDIR/usr/lib"/tk9* \
+       "$APPDIR/usr/lib"/itcl* "$APPDIR/usr/lib"/thread3*
+rm -f "$APPDIR/usr/lib"/libpython*.a
+find "$APPDIR/usr/lib/python${PY_VER}" -name '__pycache__' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+rm -rf "${APPDIR:?}/usr/lib/python${PY_VER}/site-packages"/*
+
+# Everything lands in the bundle prefix, built against the managed interpreter
+# so the extension modules match the one that will run them.
+uv_install() {
+  "$UV" pip install --python "$PY_BIN" --prefix "$APPDIR/usr" "$@"
+}
 
 echo "== Installing Vocalinux + runtime deps into the bundle =="
-# --ignore-installed: pip otherwise treats the builder env's packages as
-# satisfying deps and skips copying vosk/pywhispercpp/etc. into AppDir.
-# pywhispercpp is named explicitly so this resolves to the pinned release rather
-# than the newest inside the wheel's >=1.5.0,<2 range: the Vulkan rebuild below
-# installs the pinned one, and two versions' libggml*.so in one AppDir leave
-# linuxdeploy chasing a dependency that is not there.
-"$PYTHON" -m pip install --no-cache-dir --ignore-installed --prefix "$APPDIR/usr" \
-  "$WHEEL" "pywhispercpp==$PYWHISPERCPP_VERSION" PyGObject pycairo onnxruntime
+# From the lock rather than from whatever PyPI serves today. vad.txt is the
+# hash-pinned export of the runtime set plus the VAD extra, and is a superset of
+# runtime.txt (tests/test_appimage_packaging.py keeps it that way, so this stays
+# one resolution instead of two that can disagree). appimage.txt adds the
+# PyGObject the exports deliberately leave out. The wheel goes last with
+# --no-deps: its dependencies are resolved above, and letting it re-resolve them
+# would walk straight back out of the lock.
+uv_install --require-hashes -r "$REPO_ROOT/requirements/vad.txt"
+# --no-deps: PyGObject declares pycairo, which vad.txt already pinned and
+# installed. Without it --require-hashes stops on a requirement appimage.txt
+# deliberately does not carry.
+uv_install --require-hashes --no-deps -r "$REPO_ROOT/requirements/appimage.txt"
+uv_install --no-deps "$WHEEL"
 
 echo "== Adding desktop entry + icon =="
 install -Dm644 "$REPO_ROOT/vocalinux.desktop" "$APPDIR/usr/share/applications/vocalinux.desktop"
@@ -204,10 +312,77 @@ has_vulkan_build_deps() {
   else
     return 1
   fi
-  command -v cmake >/dev/null 2>&1 || return 1
   command -v g++ >/dev/null 2>&1 || command -v clang++ >/dev/null 2>&1 || return 1
-  command -v glslc >/dev/null 2>&1 || command -v glslangValidator >/dev/null 2>&1 || return 1
   return 0
+}
+
+# cmake and ninja come from pinned wheels, not from the image: the base image
+# ships cmake 3.22.1, which is exactly shaderc's floor and below what newer ggml
+# releases ask for. Stay on cmake 3.x - 4.0 dropped support for the
+# `cmake_minimum_required(VERSION 3.4...3.18)` pywhispercpp still declares.
+ensure_build_tools() {
+  if [ -n "${BUILD_TOOLS_READY:-}" ]; then
+    return 0
+  fi
+  echo "== Installing pinned build tools (cmake, ninja) =="
+  # In a venv, not a --prefix: the wheels ship console scripts that import their
+  # own package, and a prefix install leaves them on no interpreter's path.
+  "$UV" venv --python "$PY_BIN" "$TOOLDIR/buildtools" >/dev/null
+  "$UV" pip install --python "$TOOLDIR/buildtools" \
+    --require-hashes -r "$REPO_ROOT/requirements/appimage-tools.txt"
+  export PATH="$TOOLDIR/buildtools/bin:$PATH"
+  BUILD_TOOLS_READY=1
+  echo "  $(cmake --version | head -1), ninja $(ninja --version)"
+}
+
+# ggml compiles its Vulkan shaders with glslc and accepts no substitute
+# (`find_package(Vulkan COMPONENTS glslc REQUIRED)`), but Ubuntu 22.04 - old
+# enough to give the AppImage a usable glibc floor - does not package it at all.
+# So build it from the pinned shaderc commit. It takes ~4 minutes on a 4-core
+# runner and its only input is that commit, so CI caches the result;
+# VOCALINUX_APPIMAGE_CACHE points at the directory to keep it in.
+ensure_glslc() {
+  if command -v glslc >/dev/null 2>&1; then
+    echo "  glslc: $(command -v glslc)"
+    return 0
+  fi
+  local commit cache_dir src
+  commit="$(pin_field shaderc 3)"
+  cache_dir="${VOCALINUX_APPIMAGE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/vocalinux-appimage}/glslc-${commit}-${ARCH}"
+  if [ ! -x "$cache_dir/glslc" ]; then
+    echo "== Building glslc from shaderc ${commit:0:12} (this image packages none) =="
+    ensure_build_tools
+    src="$WORKDIR/shaderc"
+    checkout_pinned shaderc "$src"
+    # DEPS pins glslang, SPIRV-Tools and SPIRV-Headers by commit; git-sync-deps
+    # checks out exactly those, so the pinned commit fixes the whole tree.
+    (cd "$src" && ./utils/git-sync-deps)
+    cmake -S "$src" -B "$src/build" -G Ninja -DCMAKE_BUILD_TYPE=Release \
+      -DSHADERC_SKIP_TESTS=ON -DSHADERC_SKIP_EXAMPLES=ON \
+      -DSHADERC_SKIP_COPYRIGHT_CHECK=ON -DSPIRV_SKIP_TESTS=ON \
+      -DSPIRV_SKIP_EXECUTABLES=ON >"$WORKDIR/shaderc-cmake.log" 2>&1 || {
+        tail -n 30 "$WORKDIR/shaderc-cmake.log" >&2; return 1; }
+    cmake --build "$src/build" --target glslc_exe \
+      -j"${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}" >"$WORKDIR/shaderc-build.log" 2>&1 || {
+        tail -n 30 "$WORKDIR/shaderc-build.log" >&2; return 1; }
+    mkdir -p "$cache_dir"
+    install -m755 "$src/build/glslc/glslc" "$cache_dir/glslc"
+  fi
+  export PATH="$cache_dir:$PATH"
+  echo "  glslc: $("$cache_dir/glslc" --version | head -1)"
+}
+
+# ggml needs Vulkan headers the base image is a decade of releases short of;
+# see the pin. Only the compile sees these: the AppImage bundles no loader
+# (linuxdeploy's excludelist keeps libvulkan.so.1 out) and uses the host's.
+ensure_vulkan_headers() {
+  VULKAN_INCLUDE_DIR="$WORKDIR/vulkan-headers/include"
+  if [ ! -d "$VULKAN_INCLUDE_DIR" ]; then
+    echo "== Fetching pinned Vulkan headers =="
+    checkout_pinned vulkan-headers "$WORKDIR/vulkan-headers"
+  fi
+  echo "  $(sed -n 's/.*VK_HEADER_VERSION \([0-9]*\).*/vulkan headers 1.x.\1/p' \
+    "$VULKAN_INCLUDE_DIR/vulkan/vulkan_core.h" | head -1)"
 }
 
 remove_appdir_pywhispercpp() {
@@ -237,7 +412,7 @@ rebuild_pywhispercpp_vulkan() {
   fi
 
   if ! has_vulkan_build_deps; then
-    echo "Vulkan build deps missing (libvulkan-dev, cmake, g++, glslc/glslangValidator, spirv-headers)." >&2
+    echo "Vulkan build deps missing (libvulkan-dev plus a C++ compiler)." >&2
     if [ "$require_vulkan" = "1" ]; then
       echo "VOCALINUX_APPIMAGE_REQUIRE_VULKAN=1: refusing to ship a CPU-only AppImage." >&2
       exit 1
@@ -246,20 +421,42 @@ rebuild_pywhispercpp_vulkan() {
     return 0
   fi
 
+  ensure_build_tools
+  ensure_vulkan_headers
+  if ! ensure_glslc; then
+    echo "Could not provide glslc; ggml cannot compile its Vulkan shaders." >&2
+    if [ "$require_vulkan" = "1" ]; then
+      exit 1
+    fi
+    echo "Warning: continuing with the CPU-only pywhispercpp wheel." >&2
+    return 0
+  fi
+
   echo "== Rebuilding pywhispercpp with Vulkan =="
   remove_appdir_pywhispercpp
   local pip_log="$WORKDIR/pywhispercpp-vulkan.log"
   export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+  # Reinstall the same pinned sdist the bundle already carries, hashes and all:
+  # a source build is still a download, and this one ends up in ctypes.cdll.
+  awk '/^pywhispercpp==/ {found=1; print; next}
+       found && /^[[:space:]]/ {print; next}
+       found {exit}' "$REPO_ROOT/requirements/vad.txt" > "$WORKDIR/pywhispercpp.txt"
   # Hosts that default cc/c++ to clang (this Cloud Agent image) fail the
   # CMAKE C++ compiler test: clang does not search gcc's libstdc++ path.
   if ! CC="${CC:-gcc}" CXX="${CXX:-g++}" \
       GGML_VULKAN=1 \
-      CMAKE_ARGS='-DCMAKE_INSTALL_RPATH=$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON' \
-      "$PYTHON" -m pip install --verbose --no-cache-dir --force-reinstall \
-        --no-binary pywhispercpp --ignore-installed --prefix "$APPDIR/usr" \
-        --log "$pip_log" "pywhispercpp==$PYWHISPERCPP_VERSION"; then
-    echo "pywhispercpp Vulkan rebuild failed. Last 80 log lines:" >&2
-    tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
+      CMAKE_ARGS="-DCMAKE_INSTALL_RPATH=\$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DVulkan_INCLUDE_DIR=$VULKAN_INCLUDE_DIR" \
+      uv_install --verbose --require-hashes --no-deps \
+        --reinstall-package pywhispercpp --no-binary pywhispercpp \
+        -r "$WORKDIR/pywhispercpp.txt" >"$pip_log" 2>&1; then
+    # The tail of this log is the Python traceback that wraps the build, which
+    # says nothing about why the compile failed. Lead with the compiler's own
+    # errors, then the tail for context.
+    echo "pywhispercpp Vulkan rebuild failed." >&2
+    grep -E "error:|FAILED:|CMake Error" "$pip_log" 2>/dev/null \
+      | head -n 20 | sed 's/^/    /' >&2 || true
+    echo "  --- last 40 log lines ---" >&2
+    tail -n 40 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
     if [ "$require_vulkan" = "1" ]; then
       exit 1
     fi
@@ -325,7 +522,7 @@ if [ -f "$GTK_HOOK" ]; then
   # Upstream forces GDK_BACKEND=x11 even on Wayland, which breaks hover/focus
   # for GTK widgets under Plasma (XWayland). Prefer native Wayland unless the
   # user opts into X11 via VOCALINUX_FORCE_X11=1.
-  python3 - "$GTK_HOOK" <<'PY'
+  "$APPDIR/usr/bin/python3" - "$GTK_HOOK" <<'PY'
 import pathlib, re, sys
 path = pathlib.Path(sys.argv[1])
 text = path.read_text()

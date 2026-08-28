@@ -105,6 +105,13 @@ lock:
         --index-url https://pypi.org/simple \
         --extra-index-url https://download.pytorch.org/whl/cpu \
         --python-platform x86_64-unknown-linux-gnu -o requirements/whisper.txt
+    # Compiled rather than exported: what the AppImage bundles on top of the
+    # lock, and what builds it, are pinned away from uv.lock on purpose --
+    # see requirements/appimage.in. --universal so one file covers both arches.
+    uv pip compile requirements/appimage.in --universal --no-deps --generate-hashes \
+        -o requirements/appimage.txt
+    uv pip compile requirements/appimage-tools.in --universal --no-deps --generate-hashes \
+        -o requirements/appimage-tools.txt
 
 # Fail if uv.lock is stale relative to pyproject.toml
 lock-check:
