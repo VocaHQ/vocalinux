@@ -49,10 +49,13 @@ class _FakeIBusEngine:
         """Parent implementation invoked through ``super().do_destroy``."""
 
 
-# Set up IBus mock - Engine is a plain class so the engine can subclass it
+# Set up IBus mock - Engine is a plain class so the engine can subclass it.
+# Bus and Factory must be instances. Assigning the MagicMock class and then
+# setting Factory.new puts `new` on unittest.mock.MagicMock itself, so every
+# MagicMock() in the pytest session shares it (#747).
 mock_ibus.Engine = _FakeIBusEngine
-mock_ibus.Bus = MagicMock
-mock_ibus.Factory = MagicMock
+mock_ibus.Bus = MagicMock()
+mock_ibus.Factory = MagicMock()
 mock_ibus.Factory.new = MagicMock(return_value=MagicMock())
 mock_ibus.Text = MagicMock()
 mock_ibus.Text.new_from_string = MagicMock(return_value=MagicMock())
@@ -69,6 +72,32 @@ sys.modules["gi.repository"] = MagicMock()
 sys.modules["gi.repository"].IBus = mock_ibus
 sys.modules["gi.repository"].GLib = mock_glib
 sys.modules["gi.repository"].GObject = mock_gobject
+
+
+class TestIBusMockIsolation(unittest.TestCase):
+    """Module-level IBus stubs must not leak onto unittest.mock.MagicMock."""
+
+    def test_factory_new_is_not_on_the_magicmock_class(self):
+        """Factory.new must live on the Factory mock, not on MagicMock itself (#747)."""
+        self.assertNotIn("new", vars(MagicMock))
+        a, b = MagicMock(), MagicMock()
+        self.assertIsNot(a.Notification.new, b.Whatever.new)
+
+    def test_fresh_interpreter_does_not_put_new_on_magicmock(self):
+        """Same check in a subprocess so session order cannot hide a leak (#747)."""
+        probe = (
+            "from unittest.mock import MagicMock; import runpy; "
+            "runpy.run_path(%r, run_name='_747'); "
+            "print('new' in vars(MagicMock))"
+        ) % os.path.abspath(__file__)
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "False")
 
 
 class TestIBusEngineModuleFunctions(unittest.TestCase):
