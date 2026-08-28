@@ -136,6 +136,10 @@ GI_RUNTIME_LIBS=(
   libdbusmenu-gtk3.so.4
   libnotify.so.4
   libibus-1.0.so.5
+  # Nothing imports PangoXft, but linuxdeploy keeps its typelib, and a typelib
+  # without its library is the trap that cost us IBus. 30 KB is cheaper than an
+  # exception to the rule.
+  libpangoxft-1.0.so.0
 )
 
 # Named by a bundled typelib but on the AppImage excludelist, so the host's copy
@@ -521,7 +525,7 @@ copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 1
 # host cannot notice — its libraries match what it bundled.
 echo "== Checking every bundled typelib has its library =="
 verify_typelib_libraries() {
-  "$APPDIR/usr/bin/python3" - "$APPDIR" "${HOST_PROVIDED_LIBS[*]}" "${TYPELIBS[@]}" <<'PY'
+  "$APPDIR/usr/bin/python3" - "$APPDIR" "${HOST_PROVIDED_LIBS[*]}" <<'PY'
 import pathlib
 import struct
 import sys
@@ -547,11 +551,11 @@ def shared_libraries(path):
     return [name for name in blob[offset : blob.index(b"\x00", offset)].decode().split(",") if name]
 
 
+# Every typelib that ships, not only the seeded ones: linuxdeploy keeps the
+# host's extras, and an extra loads the host's library just as readily.
 checked, missing = 0, []
-for namespace in sys.argv[3:]:
-    typelib = typelib_dir / f"{namespace}.typelib"
-    if not typelib.exists():
-        continue
+for typelib in sorted(typelib_dir.glob("*.typelib")):
+    namespace = typelib.stem
     checked += 1
     for library in shared_libraries(typelib):
         if library in host_provided or (lib_dir / library).exists():
