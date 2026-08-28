@@ -2970,51 +2970,60 @@ class SpeechRecognitionManager:
     def _perform_recognition(self):
         """Perform speech recognition in real-time."""
         logger.debug("_perform_recognition thread started")
-        while True:
-            logger.debug(
-                f"Recognition loop - should_record={self.should_record}, queue_empty={self._segment_queue.empty()}"
-            )
-            try:
-                segment = self._segment_queue.get(timeout=0.1)
-            except queue.Empty:
-                # Only exit if we're not recording AND queue is empty
-                if not self.should_record and self._segment_queue.empty():
-                    logger.debug(
-                        "Recognition loop - not recording and queue empty, checking for final items..."
-                    )
-                    # Give a brief moment for any final items to be enqueued
-                    try:
-                        segment = self._segment_queue.get(timeout=0.5)
-                    except queue.Empty:
-                        logger.debug("Recognition loop - no more items, exiting")
-                        break
-                else:
-                    logger.debug("Recognition loop - queue timeout, continuing")
-                    continue
+        try:
+            while True:
+                logger.debug(
+                    f"Recognition loop - should_record={self.should_record}, queue_empty={self._segment_queue.empty()}"
+                )
+                try:
+                    segment = self._segment_queue.get(timeout=0.1)
+                except queue.Empty:
+                    # Only exit if we're not recording AND queue is empty
+                    if not self.should_record and self._segment_queue.empty():
+                        logger.debug(
+                            "Recognition loop - not recording and queue empty, checking for final items..."
+                        )
+                        # Give a brief moment for any final items to be enqueued
+                        try:
+                            segment = self._segment_queue.get(timeout=0.5)
+                        except queue.Empty:
+                            logger.debug("Recognition loop - no more items, exiting")
+                            break
+                    else:
+                        logger.debug("Recognition loop - queue timeout, continuing")
+                        continue
 
-            if segment is None:
-                logger.debug("Recognition loop - got None signal, draining remaining items...")
-                # Drain any remaining items before exiting
-                while not self._segment_queue.empty():
-                    try:
-                        remaining = self._segment_queue.get_nowait()
-                        if remaining is not None:
-                            logger.debug(
-                                f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
-                            )
-                            self._update_state(RecognitionState.PROCESSING)
-                            self._process_audio_buffer(remaining)
-                    except queue.Empty:
-                        break
-                logger.debug("Recognition loop - exiting after None signal")
-                break
+                if segment is None:
+                    logger.debug("Recognition loop - got None signal, draining remaining items...")
+                    # Drain any remaining items before exiting
+                    while not self._segment_queue.empty():
+                        try:
+                            remaining = self._segment_queue.get_nowait()
+                            if remaining is not None:
+                                logger.debug(
+                                    f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
+                                )
+                                if self.should_record:
+                                    self._update_state(RecognitionState.PROCESSING)
+                                self._process_audio_buffer(remaining)
+                        except queue.Empty:
+                            break
+                    logger.debug("Recognition loop - exiting after None signal")
+                    break
 
-            logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
-            self._update_state(RecognitionState.PROCESSING)
-            self._process_audio_buffer(segment)
-            if self.should_record:
-                self._update_state(RecognitionState.LISTENING)
-        logger.debug("_perform_recognition thread exiting")
+                logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
+                if self.should_record:
+                    self._update_state(RecognitionState.PROCESSING)
+                self._process_audio_buffer(segment)
+                if self.should_record:
+                    self._update_state(RecognitionState.LISTENING)
+        finally:
+            logger.debug("_perform_recognition thread exiting")
+            # stop_recognition() join can time out while leftover audio is
+            # still transcribing. Do not leave PROCESSING/LISTENING painted
+            # after the user already stopped (#739).
+            if not self.should_record:
+                self._update_state(RecognitionState.IDLE)
 
     def _enqueue_audio_segment(self, audio_buffer: list[bytes]):
         """Queue an audio segment for asynchronous transcription."""

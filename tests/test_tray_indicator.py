@@ -524,6 +524,7 @@ class TestTrayIndicator(unittest.TestCase):
         mock_menu_item.get_label.return_value = "Start Voice Typing"
         self.tray_indicator.menu = MagicMock()
         self.tray_indicator.menu.get_children.return_value = [mock_menu_item]
+        self.mock_speech_engine.state = self.RecognitionState.LISTENING
 
         with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
             # Make isinstance check pass for our mock
@@ -542,6 +543,7 @@ class TestTrayIndicator(unittest.TestCase):
         mock_menu_item.get_label.return_value = "Start Voice Typing"
         self.tray_indicator.menu = MagicMock()
         self.tray_indicator.menu.get_children.return_value = [mock_menu_item]
+        self.mock_speech_engine.state = self.RecognitionState.PROCESSING
 
         with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
             patched_gtk.MenuItem = type(mock_menu_item)
@@ -559,6 +561,7 @@ class TestTrayIndicator(unittest.TestCase):
         mock_menu_item.get_label.return_value = "Start Voice Typing"
         self.tray_indicator.menu = MagicMock()
         self.tray_indicator.menu.get_children.return_value = [mock_menu_item]
+        self.mock_speech_engine.state = self.RecognitionState.ERROR
 
         with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
             patched_gtk.MenuItem = type(mock_menu_item)
@@ -809,6 +812,24 @@ class TestTrayIndicator(unittest.TestCase):
             delattr(self.tray_indicator, "indicator")
 
         result = self.tray_indicator._update_ui(RecognitionState.IDLE)
+        self.assertEqual(result, False)
+
+    def test_update_ui_uses_engine_state_not_stale_arg(self):
+        """A delayed PROCESSING idle_add must not override a later IDLE engine state."""
+        self.tray_indicator.indicator = MagicMock()
+        mock_menu_item = MagicMock()
+        mock_menu_item.get_label.return_value = "Start Voice Typing"
+        self.tray_indicator.menu = MagicMock()
+        self.tray_indicator.menu.get_children.return_value = [mock_menu_item]
+        self.mock_speech_engine.state = self.RecognitionState.IDLE
+
+        with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
+            patched_gtk.MenuItem = type(mock_menu_item)
+            result = self.tray_indicator._update_ui(self.RecognitionState.PROCESSING)
+
+        self.tray_indicator.indicator.set_icon_full.assert_called_once_with(
+            self.tray_indicator._icon_keys["default"], "Microphone off"
+        )
         self.assertEqual(result, False)
 
     def test_set_menu_item_enabled_noop_when_menu_missing(self):

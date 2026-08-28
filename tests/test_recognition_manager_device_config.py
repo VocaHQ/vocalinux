@@ -2019,6 +2019,96 @@ class TestPerformRecognition(unittest.TestCase):
                 t.join(timeout=2)
                 assert not t.is_alive()
 
+    def _track_states(self, manager):
+        states = []
+        original = manager._update_state
+
+        def _tracked(new_state):
+            states.append(new_state)
+            original(new_state)
+
+        manager._update_state = _tracked
+        return states
+
+    def test_leftover_after_stop_does_not_stick_in_processing(self):
+        """After stop, leftover audio is transcribed but state returns to IDLE.
+
+        Reproduces #739: stop_recognition can time out while the recognition
+        thread still marks leftover drain as PROCESSING and never goes idle.
+        The tray then stays on the active/processing icon until another
+        Alt+F12 toggle.
+        """
+        manager = _make_manager()
+        manager._segment_queue = queue.Queue()
+        manager.should_record = False
+        manager.state = RecognitionState.IDLE
+        states = self._track_states(manager)
+
+        with patch.object(manager, "_process_audio_buffer") as mock_proc:
+            manager._segment_queue.put([b"leftover"])
+            manager._segment_queue.put(None)
+            t = threading.Thread(target=manager._perform_recognition)
+            t.start()
+            t.join(timeout=2)
+            assert not t.is_alive()
+            mock_proc.assert_called_once_with([b"leftover"])
+
+        assert RecognitionState.PROCESSING not in states
+        assert RecognitionState.LISTENING not in states
+        assert manager.state == RecognitionState.IDLE
+        assert states[-1] == RecognitionState.IDLE
+
+    def test_none_signal_drain_after_stop_returns_idle(self):
+        """Segments still queued behind the stop sentinel must not leave PROCESSING."""
+        manager = _make_manager()
+        manager._segment_queue = queue.Queue()
+        manager.should_record = False
+        manager.state = RecognitionState.IDLE
+        states = self._track_states(manager)
+
+        with patch.object(manager, "_process_audio_buffer") as mock_proc:
+            # None is consumed first; leftover is drained from the remaining queue.
+            manager._segment_queue.put(None)
+            manager._segment_queue.put([b"leftover"])
+            t = threading.Thread(target=manager._perform_recognition)
+            t.start()
+            t.join(timeout=2)
+            assert not t.is_alive()
+            mock_proc.assert_called_once_with([b"leftover"])
+
+        assert RecognitionState.PROCESSING not in states
+        assert manager.state == RecognitionState.IDLE
+        assert states[-1] == RecognitionState.IDLE
+
+    def test_processing_still_set_while_recording(self):
+        """Live dictation still flips PROCESSING then LISTENING."""
+        manager = _make_manager()
+        manager._segment_queue = queue.Queue()
+        manager.should_record = True
+        manager.state = RecognitionState.LISTENING
+        states = self._track_states(manager)
+        processed = threading.Event()
+
+        def _after_process(_segment):
+            processed.set()
+
+        with patch.object(manager, "_process_audio_buffer", side_effect=_after_process):
+            t = threading.Thread(target=manager._perform_recognition)
+            t.start()
+            manager._segment_queue.put([b"live"])
+            assert processed.wait(timeout=2)
+            deadline = time.time() + 1
+            while RecognitionState.LISTENING not in states and time.time() < deadline:
+                time.sleep(0.01)
+            manager.should_record = False
+            manager._segment_queue.put(None)
+            t.join(timeout=2)
+            assert not t.is_alive()
+
+        assert RecognitionState.PROCESSING in states
+        assert RecognitionState.LISTENING in states
+        assert manager.state == RecognitionState.IDLE
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

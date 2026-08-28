@@ -515,10 +515,16 @@ class TrayIndicator:
         Update the UI based on the recognition state.
 
         Args:
-            state: The current recognition state
+            state: Hint from the state-changed callback. The engine's current
+                state wins: GLib.idle_add can deliver a captured PROCESSING
+                argument after stop already went IDLE (#739).
         """
         if not hasattr(self, "indicator"):
             return False
+
+        engine_state = getattr(self.speech_engine, "state", None)
+        if isinstance(engine_state, RecognitionState):
+            state = engine_state
 
         if state == RecognitionState.IDLE:
             self.indicator.set_icon_full(self._icon_keys["default"], "Microphone off")
