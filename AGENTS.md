@@ -79,6 +79,7 @@ just lock          # regenerate uv.lock + requirements/*.txt
 just lock-check    # fail if uv.lock is stale vs pyproject.toml
 just model-checksums  # refresh pinned model digests after adding a model
 just appimage      # build the AppImage in its pinned base image (needs docker)
+just appimage-boot fedora:42   # boot that AppImage in a distro container
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug
@@ -108,6 +109,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | `[vad]` extra | `onnxruntime` for Silero VAD |
 | AppImage PyGObject | Pinned separately in `requirements/appimage.in`, and below 3.52: the AppImage bundles its own interpreter and builds PyGObject against the base image's girepository-1.0, while uv.lock's 3.56 needs girepository-2.0 (glib 2.80+) |
 | AppImage build inputs | Base image, tooling, interpreter, shaderc and the Vulkan headers are pinned in `packaging/appimage/tool_checksums.txt`. Build with `just appimage` (docker) — building on the host ships the host's glibc, which is what kept the AppImage off Debian 12 |
+| AppImage boot matrix | `packaging/appimage/boot-test.sh` runs the finished AppImage in distro containers, and the matrix in `unified-pipeline.yml` must keep distros both older and newer than the build image: the old ones prove the glibc floor, the new ones catch a bundle that breaks the host binaries it spawns. A distro added there needs its package recipe in the script — `tests/test_appimage_packaging.py` checks both |
 | Speech models | Verified against digests pinned in `src/vocalinux/utils/model_checksums.txt` before install, by both `install.sh` and the runtime downloaders. **Fails closed** — an unpinned model is refused. Regenerate with `just model-checksums` (never by hand); `tests/test_model_checksums.py` fails if it falls behind. whisper.cpp URLs use a pinned Hugging Face commit, never `main` |
 
 Optional extras: `vosk`, `whisper`, `vad`, `dev`.
