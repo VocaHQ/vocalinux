@@ -145,6 +145,14 @@ HOST_PROVIDED_LIBS=(
   libharfbuzz-gobject.so.0
 )
 
+# On the excludelist, but something we bundle links them, so the host cannot be
+# asked for them: libgcrypt is bundled and needs libgpg-error, and a host
+# without it — a Fedora container, any minimal system — cannot load our GTK at
+# all ("Failed to load shared library 'libgtk-3.so.0'").
+BUNDLED_DEPENDENCY_LIBS=(
+  libgpg-error.so.0
+)
+
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 APPDIR="$WORKDIR/AppDir"
@@ -283,9 +291,10 @@ copy_typelibs() {
 
 copy_gi_runtime_libs() {
   local dest="$1"
+  shift
   mkdir -p "$dest"
   local lib found
-  for lib in "${GI_RUNTIME_LIBS[@]}"; do
+  for lib in "$@"; do
     found="$(find /usr/lib /usr/lib64 -name "$lib" 2>/dev/null | head -1 || true)"
     if [ -n "$found" ]; then
       cp -aL "$found" "$dest/"
@@ -472,7 +481,8 @@ echo "== Copying GObject-Introspection typelibs (not handled by linuxdeploy-plug
 copy_typelibs "$APPDIR/usr/lib/girepository-1.0" 0
 
 echo "== Copying GI runtime shared libraries (AppIndicator/Notify) =="
-copy_gi_runtime_libs "$APPDIR/usr/lib"
+copy_gi_runtime_libs "$APPDIR/usr/lib" \
+  "${GI_RUNTIME_LIBS[@]}" "${BUNDLED_DEPENDENCY_LIBS[@]}"
 
 echo "== Writing AppRun =="
 cat > "$APPDIR/AppRun" << 'APPRUN'
