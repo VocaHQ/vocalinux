@@ -43,6 +43,12 @@ jobs:
               - 'requirements/**'
               - 'packaging/appimage/**'
               - 'uv.lock'
+              # These three end up inside the AppImage: build.sh reads the
+              # pywhispercpp pin out of install.sh and installs the desktop
+              # entry and the icon into the AppDir.
+              - 'install.sh'
+              - 'vocalinux.desktop'
+              - 'resources/**'
               - 'justfile'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
