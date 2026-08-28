@@ -25,7 +25,10 @@ mkdir -p "$CACHE"
 
 # The wheel and output dir are given as host paths; the repo is mounted at the
 # same place it lives, so relative arguments keep working inside.
+# seccomp=unconfined only to allow unshare: without it build.sh's isolated GI
+# smoke test silently skips, which is how #585 shipped.
 exec docker run --rm \
+    --security-opt seccomp=unconfined \
     -v "$REPO_ROOT:$REPO_ROOT" -w "$REPO_ROOT" \
     -v "$CACHE:/cache" \
     -e VOCALINUX_APPIMAGE_CACHE=/cache \
