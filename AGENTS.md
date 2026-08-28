@@ -78,6 +78,7 @@ just deps-all      # also whisper/vosk/docs; later recipes use --no-sync so they
 just lock          # regenerate uv.lock + requirements/*.txt
 just lock-check    # fail if uv.lock is stale vs pyproject.toml
 just model-checksums  # refresh pinned model digests after adding a model
+just appimage      # build the AppImage in its pinned base image (needs docker)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug
@@ -96,7 +97,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 
 ## Dependencies (uv)
 
-`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. Those exports exist for later packaging work (`install.sh`, AppImage, CI — phases 2, 3 and 5 of #701) and are unused until those phases land. **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine), run `just lock`, and commit the lock plus the exports with the manifest change.
+`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. The AppImage build installs from `runtime`/`vad` plus `appimage.txt`; `install.sh` still resolves at install time (phase 2 of #701). **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine, `requirements/appimage*.in` for the AppImage), run `just lock`, and commit the lock plus the exports with the manifest change.
 
 | Constraint | Rule |
 |---|---|
@@ -105,6 +106,8 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | Whisper CPU torch | `requirements/whisper.txt` is compiled from `requirements/whisper.in`. Pin `torch`/`torchaudio` together to `+cpu` local versions — PyPI CUDA wheels win resolution regardless of index order, and torchaudio lags torch on the CPU index |
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
+| AppImage PyGObject | Pinned separately in `requirements/appimage.in`, and below 3.52: the AppImage bundles its own interpreter and builds PyGObject against the base image's girepository-1.0, while uv.lock's 3.56 needs girepository-2.0 (glib 2.80+) |
+| AppImage build inputs | Base image, tooling, interpreter, shaderc and the Vulkan headers are pinned in `packaging/appimage/tool_checksums.txt`. Build with `just appimage` (docker) — building on the host ships the host's glibc, which is what kept the AppImage off Debian 12 |
 | Speech models | Verified against digests pinned in `src/vocalinux/utils/model_checksums.txt` before install, by both `install.sh` and the runtime downloaders. **Fails closed** — an unpinned model is refused. Regenerate with `just model-checksums` (never by hand); `tests/test_model_checksums.py` fails if it falls behind. whisper.cpp URLs use a pinned Hugging Face commit, never `main` |
 
 Optional extras: `vosk`, `whisper`, `vad`, `dev`.

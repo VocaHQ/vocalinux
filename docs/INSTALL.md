@@ -37,6 +37,10 @@ chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
 ./Vocalinux-*-x86_64.AppImage
 ```
 
+It is built against glibc 2.35, so it starts on Debian 12+, Ubuntu 22.04+,
+Fedora 36+, Arch and Tumbleweed. Older bases — RHEL 9, Debian 11, Ubuntu 20.04 —
+are below that floor; use the installer or the PyPI path there.
+
 AppImage still needs host text-injection tools (`xdotool` on X11; `wtype` /
 `ydotool` / clipboard tools on Wayland), same as the PyPI path. Current
 AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver; you
