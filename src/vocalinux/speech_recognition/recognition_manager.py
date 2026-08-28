@@ -3019,11 +3019,11 @@ class SpeechRecognitionManager:
                     self._update_state(RecognitionState.LISTENING)
         finally:
             logger.debug("_perform_recognition thread exiting")
-            # stop_recognition() join can time out while leftover audio is
-            # still transcribing. Do not leave PROCESSING/LISTENING painted
-            # after the user already stopped (#739).
-            if not self.should_record:
-                self._update_state(RecognitionState.IDLE)
+            # Do not force IDLE here. stop_recognition() already does that,
+            # and a leftover worker can finish after the user has started
+            # again (LISTENING, should_record still false during the start
+            # sound). Forcing IDLE would paint the tray idle and make the
+            # next Alt+F12 start a second session (#739).
 
     def _enqueue_audio_segment(self, audio_buffer: list[bytes]):
         """Queue an audio segment for asynchronous transcription."""

@@ -2056,7 +2056,6 @@ class TestPerformRecognition(unittest.TestCase):
         assert RecognitionState.PROCESSING not in states
         assert RecognitionState.LISTENING not in states
         assert manager.state == RecognitionState.IDLE
-        assert states[-1] == RecognitionState.IDLE
 
     def test_none_signal_drain_after_stop_returns_idle(self):
         """Segments still queued behind the stop sentinel must not leave PROCESSING."""
@@ -2078,7 +2077,6 @@ class TestPerformRecognition(unittest.TestCase):
 
         assert RecognitionState.PROCESSING not in states
         assert manager.state == RecognitionState.IDLE
-        assert states[-1] == RecognitionState.IDLE
 
     def test_processing_still_set_while_recording(self):
         """Live dictation still flips PROCESSING then LISTENING."""
@@ -2107,7 +2105,35 @@ class TestPerformRecognition(unittest.TestCase):
 
         assert RecognitionState.PROCESSING in states
         assert RecognitionState.LISTENING in states
-        assert manager.state == RecognitionState.IDLE
+        assert manager.state == RecognitionState.LISTENING
+
+    def test_leftover_exit_does_not_clobber_new_listening_session(self):
+        """Leftover drain finishing after a new start must not force IDLE.
+
+        stop_recognition() join can time out, then Alt+F12 starts again.
+        start_recognition() sets LISTENING before should_record. If the
+        leftover worker forced IDLE on exit, the tray would go idle and
+        the next hotkey would start a second session.
+        """
+        manager = _make_manager()
+        manager._segment_queue = queue.Queue()
+        manager.should_record = False
+        manager.state = RecognitionState.IDLE
+        states = self._track_states(manager)
+
+        def _start_new_session(_segment):
+            manager.state = RecognitionState.LISTENING
+
+        with patch.object(manager, "_process_audio_buffer", side_effect=_start_new_session):
+            manager._segment_queue.put([b"leftover"])
+            manager._segment_queue.put(None)
+            t = threading.Thread(target=manager._perform_recognition)
+            t.start()
+            t.join(timeout=2)
+            assert not t.is_alive()
+
+        assert manager.state == RecognitionState.LISTENING
+        assert RecognitionState.IDLE not in states
 
 
 if __name__ == "__main__":
