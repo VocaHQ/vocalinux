@@ -29,35 +29,6 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            portaudio19-dev \
-            python3-dev \
-            libgirepository1.0-dev \
-            libgirepository-2.0-dev \
-            pkg-config \
-            libcairo2-dev \
-            gobject-introspection \
-            gir1.2-gtk-3.0 \
-            gir1.2-appindicator3-0.1 \
-            gir1.2-ayatanaappindicator3-0.1 \
-            gir1.2-notify-0.7 \
-            gir1.2-dbusmenu-glib-0.4 \
-            gir1.2-ibus-1.0 \
-            gir1.2-rsvg-2.0 \
-            librsvg2-common \
-            libdbusmenu-gtk3-4 \
-            libnotify4 \
-            cmake \
-            ninja-build \
-            build-essential \
-            libvulkan-dev \
-            glslc \
-            spirv-headers \
-            spirv-tools
-
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build twine
@@ -103,11 +74,19 @@ jobs:
           done
           ls -la dist/
 
+      # glslc is built from the pinned shaderc commit inside the container -
+      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      - name: Cache AppImage build tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vocalinux-appimage
+          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+
       - name: Build AppImage (x86_64)
         env:
           VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
-          bash packaging/appimage/build.sh dist/*.whl "${{ steps.version.outputs.version }}" dist
+          bash packaging/appimage/docker-build.sh dist/*.whl "${{ steps.version.outputs.version }}" dist
           ls -la dist/*.AppImage
 
       - name: Cleanup old nightly releases
@@ -287,35 +266,6 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            portaudio19-dev \
-            python3-dev \
-            libgirepository1.0-dev \
-            libgirepository-2.0-dev \
-            pkg-config \
-            libcairo2-dev \
-            gobject-introspection \
-            gir1.2-gtk-3.0 \
-            gir1.2-appindicator3-0.1 \
-            gir1.2-ayatanaappindicator3-0.1 \
-            gir1.2-notify-0.7 \
-            gir1.2-dbusmenu-glib-0.4 \
-            gir1.2-ibus-1.0 \
-            gir1.2-rsvg-2.0 \
-            librsvg2-common \
-            libdbusmenu-gtk3-4 \
-            libnotify4 \
-            cmake \
-            ninja-build \
-            build-essential \
-            libvulkan-dev \
-            glslc \
-            spirv-headers \
-            spirv-tools
-
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
@@ -325,11 +275,19 @@ jobs:
           python -m build
           ls -la dist/
 
+      # glslc is built from the pinned shaderc commit inside the container -
+      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      - name: Cache AppImage build tools
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/vocalinux-appimage
+          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+
       - name: Build AppImage (aarch64)
         env:
           VOCALINUX_APPIMAGE_REQUIRE_VULKAN: "1"
         run: |
-          bash packaging/appimage/build.sh dist/*.whl "${{ needs.nightly.outputs.version }}" dist
+          bash packaging/appimage/docker-build.sh dist/*.whl "${{ needs.nightly.outputs.version }}" dist
           ls -la dist/*.AppImage
 
       - name: Attach to nightly release

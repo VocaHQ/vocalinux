@@ -90,6 +90,13 @@ build:
     uv build
     @echo "Built packages in dist/"
 
+# Building on the host instead ships the host's glibc and GTK, which is how the
+# published AppImage ended up unable to start on Debian 12 or Ubuntu 22.04.
+#
+# Build the AppImage as CI does, in the pinned base image (needs docker)
+appimage: build
+    bash packaging/appimage/docker-build.sh dist/*.whl "$(grep -oP '__version__\s*=\s*"\K[^"]+' src/vocalinux/version.py)" dist
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
 # when you want newer CPU builds (torchaudio on the CPU index lags torch).
