@@ -977,6 +977,10 @@ class SpeechRecognitionManager:
         # Set by the UI layer to offer the download when a model is missing
         self._model_missing_handler: Optional[Callable[[str], bool]] = None
         self._download_cancelled = False
+        # Held by whichever UI is downloading a model. The tray and the settings
+        # dialog both download in the background, and there is only one progress
+        # callback and one engine configuration between them.
+        self._download_claim = threading.Lock()
         self._defer_download = defer_download
         self._model_initialized = False
         # True while auto-pause has unloaded the model for a configured app/game
@@ -2209,6 +2213,33 @@ class SpeechRecognitionManager:
         except Exception as e:
             logger.error(f"Model-missing handler failed: {e}", exc_info=True)
             return False
+
+    def try_begin_download(self) -> bool:
+        """
+        Claim the engine for a model download.
+
+        The tray and the settings dialog can each start one, and they would
+        otherwise overwrite each other's progress callback and reconfigure the
+        engine underneath one another. Whoever claims first downloads; the
+        other is told to wait.
+
+        Returns:
+            True if the claim was taken, False if a download is already running
+        """
+        return self._download_claim.acquire(blocking=False)
+
+    def end_download(self):
+        """Release the claim taken by try_begin_download()."""
+        try:
+            self._download_claim.release()
+        except RuntimeError:
+            # Never claimed; nothing to release
+            pass
+
+    @property
+    def download_in_progress(self) -> bool:
+        """Whether some UI currently holds the download claim."""
+        return self._download_claim.locked()
 
     def cancel_download(self):
         """Request cancellation of the current download."""

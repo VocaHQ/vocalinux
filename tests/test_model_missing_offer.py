@@ -181,6 +181,12 @@ class _RestartGatedEngine:
     def set_download_progress_callback(self, callback):
         pass
 
+    def try_begin_download(self):
+        return True
+
+    def end_download(self):
+        pass
+
     def reconfigure(
         self,
         engine=None,
@@ -411,3 +417,70 @@ def test_an_unchanged_reconfigure_still_does_nothing_by_default():
     )
 
     manager._init_whispercpp.assert_not_called()
+
+
+class TestOneDownloadAtATime:
+    """The tray and Settings share one engine, so only one of them downloads."""
+
+    def _run(self, tray_indicator, tray, rec):
+        with patch.object(tray_indicator, "notifications"):
+            with patch.object(tray_indicator, "GLib") as glib:
+                glib.idle_add.side_effect = lambda func, *args: func(*args)
+                tray_indicator.TrayIndicator._run_recommended_model_download(
+                    tray, "whisper_cpp", rec, object()
+                )
+
+    def test_tray_refuses_when_another_download_holds_the_engine(self, tray_indicator):
+        tray = _tray_stub()
+        tray.speech_engine.try_begin_download.return_value = False
+
+        with patch.object(tray_indicator, "notifications") as mock_notifications:
+            with patch.object(tray_indicator.threading, "Thread") as thread:
+                tray_indicator.TrayIndicator._download_recommended_model(tray, "vosk", Mock())
+
+        thread.assert_not_called()
+        assert tray._model_download_active is False
+        assert mock_notifications.notify.call_args.args[0] == "Download already in progress"
+
+    def test_tray_releases_the_engine_when_the_download_ends(
+        self, tray_indicator, tray, recommendation
+    ):
+        self._run(tray_indicator, tray, recommendation)
+
+        tray.speech_engine.end_download.assert_called_once_with()
+
+    def test_tray_releases_the_engine_when_the_download_fails(
+        self, tray_indicator, tray, recommendation
+    ):
+        tray.speech_engine.reconfigure.side_effect = RuntimeError("boom")
+
+        self._run(tray_indicator, tray, recommendation)
+
+        tray.speech_engine.end_download.assert_called_once_with()
+
+    def test_download_claim_is_exclusive_until_released(self):
+        import threading
+
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        manager = MagicMock()
+        manager._download_claim = threading.Lock()
+
+        assert SpeechRecognitionManager.try_begin_download(manager) is True
+        assert SpeechRecognitionManager.try_begin_download(manager) is False
+        assert SpeechRecognitionManager.download_in_progress.fget(manager) is True
+
+        SpeechRecognitionManager.end_download(manager)
+
+        assert SpeechRecognitionManager.download_in_progress.fget(manager) is False
+        assert SpeechRecognitionManager.try_begin_download(manager) is True
+
+    def test_releasing_an_unclaimed_engine_is_harmless(self):
+        import threading
+
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        manager = MagicMock()
+        manager._download_claim = threading.Lock()
+
+        SpeechRecognitionManager.end_download(manager)  # must not raise

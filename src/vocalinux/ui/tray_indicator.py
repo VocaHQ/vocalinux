@@ -599,6 +599,17 @@ class TrayIndicator:
         """
         if self._model_download_active:
             return
+        if not self.speech_engine.try_begin_download():
+            # Settings is already downloading a model. A second download would
+            # fight it over the engine's single progress callback and leave
+            # whichever finished last as the configured model.
+            notifications.notify(
+                "Download already in progress",
+                "Another speech model is being downloaded. Wait for it to finish, "
+                "then try again.",
+                "dialog-information",
+            )
+            return
         self._model_download_active = True
         # libnotify and GObject are not thread-safe, so the notification is
         # created here and only its handle travels to the worker, which routes
@@ -676,6 +687,7 @@ class TrayIndicator:
             )
         finally:
             self.speech_engine.set_download_progress_callback(None)
+            self.speech_engine.end_download()
             self._model_download_active = False
 
     def _update_ui(self, state: RecognitionState):

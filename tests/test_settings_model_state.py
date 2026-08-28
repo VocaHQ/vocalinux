@@ -286,3 +286,57 @@ def test_closing_the_dialog_resyncs_an_engine_that_was_never_applied(settings_di
     dialog_class._on_settings_dialog_response(dialog, dialog, gtk.ResponseType.CLOSE)
 
     dialog._resync_engine_ui_if_unapplied.assert_called_once()
+
+
+def _download_setup(dialog):
+    """A model that is not on disk, so the apply goes down the download path."""
+    dialog.get_selected_settings.return_value = {
+        "engine": "whisper_cpp",
+        "model_size": "small",
+        "language": "auto",
+    }
+    dialog._apply_settings_internal.return_value = True
+
+
+@pytest.mark.parametrize("entry", ["_auto_apply_settings", "apply_settings"])
+def test_settings_refuses_a_download_while_the_tray_holds_the_engine(
+    settings_dialog, dialog_class, entry
+):
+    """Both ways into a download stop at the engine's claim.
+
+    The tray downloads in the background too; a second download would fight it
+    over the one progress callback and the one engine configuration.
+    """
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+    dialog.speech_engine.try_begin_download.return_value = False
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog") as modal_class,
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        getattr(dialog_class, entry)(dialog)
+
+    modal_class.assert_not_called()
+    dialog._apply_settings_internal.assert_not_called()
+    dialog._show_download_busy_dialog.assert_called_once_with()
+    dialog._resync_model_ui_from_config.assert_called_once_with()
+
+
+@pytest.mark.parametrize("entry", ["_auto_apply_settings", "apply_settings"])
+def test_settings_releases_the_engine_once_the_download_is_over(
+    settings_dialog, dialog_class, entry
+):
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog"),
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        getattr(dialog_class, entry)(dialog)
+
+    dialog.speech_engine.try_begin_download.assert_called_once_with()
+    dialog.speech_engine.end_download.assert_called_once_with()

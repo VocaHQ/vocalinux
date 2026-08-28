@@ -5174,6 +5174,13 @@ class SettingsDialog(Gtk.Dialog):
                 model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
 
             if needs_download:
+                if not self.speech_engine.try_begin_download():
+                    # The tray is already downloading a model; a second download
+                    # would fight it over the engine's progress callback and
+                    # configuration. Put the picker back on the saved model.
+                    self._show_download_busy_dialog()
+                    self._resync_model_ui_from_config()
+                    return
                 logger.info(f"Model {model_name} needs download, showing progress dialog")
                 download_dialog = ModelDownloadDialog(
                     self,
@@ -5216,6 +5223,7 @@ class SettingsDialog(Gtk.Dialog):
                         finally:
                             GLib.source_remove(cancel_check_id)
                             self.speech_engine.set_download_progress_callback(None)
+                            self.speech_engine.end_download()
 
                     except Exception as e:
                         error_msg = str(e)
@@ -5561,6 +5569,11 @@ For now, the engine has been reverted to VOSK."""
             model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
 
         if needs_download:
+            if not self.speech_engine.try_begin_download():
+                # Same guard as in _auto_apply_settings: one download at a time.
+                self._show_download_busy_dialog()
+                self._resync_model_ui_from_config()
+                return
             download_dialog = ModelDownloadDialog(
                 self,
                 model_name,
@@ -5597,6 +5610,7 @@ For now, the engine has been reverted to VOSK."""
                     finally:
                         GLib.source_remove(cancel_check_id)
                         self.speech_engine.set_download_progress_callback(None)
+                        self.speech_engine.end_download()
 
                 except Exception as e:
                     error_msg = str(e)
@@ -5620,6 +5634,19 @@ For now, the engine has been reverted to VOSK."""
             return True
 
         return self._apply_settings_internal(settings)
+
+    def _show_download_busy_dialog(self):
+        """Tell the user a model download is already running elsewhere."""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=0,
+            message_type=Gtk.MessageType.INFO,
+            buttons=Gtk.ButtonsType.OK,
+            text="A model download is already running",
+        )
+        dialog.format_secondary_text("Wait for it to finish, then pick the model again.")
+        dialog.run()
+        dialog.destroy()
 
     def _apply_settings_internal(self, settings: dict, raise_errors: bool = False) -> bool:
         """Internal method to apply settings.
