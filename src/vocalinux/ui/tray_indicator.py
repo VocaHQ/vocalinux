@@ -39,6 +39,7 @@ from ..auto_pause_monitor import DEFAULT_POLL_INTERVAL_SECONDS, AutoPauseMonitor
 from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, TextInjectorProtocol
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
 from ..suspend_handler import SuspendHandler
+from ..utils.host_process import host_env
 from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
@@ -857,6 +858,7 @@ class TrayIndicator:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         except (FileNotFoundError, OSError) as exc:
             logger.debug("Could not show update notification: %s", exc)

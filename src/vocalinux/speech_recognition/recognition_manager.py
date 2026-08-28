@@ -21,6 +21,7 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
     expected_for,
@@ -843,6 +844,7 @@ def _show_notification(title: str, message: str, icon: str = "dialog-warning"):
             ["notify-send", "-i", icon, "-a", "Vocalinux", title, message],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=host_env(),
         )
     except (FileNotFoundError, OSError) as e:
         logger.debug(f"Could not show notification: {e}")

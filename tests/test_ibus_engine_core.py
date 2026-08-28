@@ -15,6 +15,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 from unittest.mock import MagicMock, Mock, call, patch
 
 # Add src to path for imports
@@ -130,9 +131,7 @@ class TestIBusEngineModuleFunctions(unittest.TestCase):
         result = is_ibus_daemon_running()
         self.assertTrue(result)
         mock_run.assert_called_once_with(
-            ["pgrep", "-x", "ibus-daemon"],
-            capture_output=True,
-            timeout=2,
+            ["pgrep", "-x", "ibus-daemon"], capture_output=True, timeout=2, env=mock.ANY
         )
 
     @patch("subprocess.run")

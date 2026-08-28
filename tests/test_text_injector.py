@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import unittest
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 # Update import path to use the new package structure
@@ -123,6 +124,7 @@ class TestTextInjector(unittest.TestCase):
                 text=True,
                 check=False,
                 timeout=2,
+                env=mock.ANY,
             )
             wtype_calls = [
                 call.args[0]
@@ -218,7 +220,11 @@ class TestTextInjector(unittest.TestCase):
 
             # Verify wtype was called correctly
             self.mock_subprocess.assert_any_call(
-                ["wtype", "Hello world"], check=True, stderr=subprocess.PIPE, text=True
+                ["wtype", "Hello world"],
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=mock.ANY,
             )
 
     def test_wayland_with_ydotool(self):
@@ -243,6 +249,7 @@ class TestTextInjector(unittest.TestCase):
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
+                env=mock.ANY,
             )
 
     def test_inject_special_characters(self):
@@ -1720,7 +1727,7 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
         self.assertEqual(injector.wayland_tool, "ydotool")
         self.mock_subprocess.assert_any_call(
-            ["ydotool", "type", ""], check=True, stderr=subprocess.PIPE, timeout=2
+            ["ydotool", "type", ""], check=True, stderr=subprocess.PIPE, timeout=2, env=mock.ANY
         )
 
     def test_switch_from_wayland_ibus_falls_back_when_ydotool_daemon_down(self):

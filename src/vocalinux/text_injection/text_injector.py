@@ -16,6 +16,7 @@ import time
 from enum import Enum
 from typing import Optional  # noqa: F401
 
+from ..utils.host_process import host_env
 from ..utils.paths import config_dir
 from .focused_window import is_focused_window_terminal
 from .ibus_engine import (
@@ -183,11 +184,7 @@ class TextInjector:
     def _probe_wtype_support(self) -> subprocess.CompletedProcess:
         """Probe wtype support without typing visible text."""
         return subprocess.run(
-            ["wtype", ""],
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=2,
+            ["wtype", ""], stderr=subprocess.PIPE, text=True, check=False, timeout=2, env=host_env()
         )
 
     def _detect_environment(self) -> DesktopEnvironment:
@@ -269,6 +266,7 @@ class TextInjector:
                 capture_output=True,
                 text=True,
                 timeout=2,
+                env=host_env(),
             )
         except (subprocess.SubprocessError, FileNotFoundError) as e:
             logger.info(
@@ -311,9 +309,7 @@ class TextInjector:
         """
         try:
             result = subprocess.run(
-                ["pgrep", "-x", "ibus-wayland"],
-                capture_output=True,
-                timeout=2,
+                ["pgrep", "-x", "ibus-wayland"], capture_output=True, timeout=2, env=host_env()
             )
             return result.returncode == 0
         except (subprocess.SubprocessError, FileNotFoundError):
@@ -452,6 +448,7 @@ class TextInjector:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 start_new_session=True,
+                env=host_env(),
             )
         except OSError as e:
             logger.warning(f"Could not start ydotoold: {e}")
@@ -697,6 +694,7 @@ class TextInjector:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=self._clipboard_timeout,
+                env=host_env(),
             )
             return True
 
@@ -709,6 +707,7 @@ class TextInjector:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=self._clipboard_timeout,
+                env=host_env(),
             )
             return True
 
@@ -721,6 +720,7 @@ class TextInjector:
                 stderr=subprocess.DEVNULL,
                 text=True,
                 timeout=self._clipboard_timeout,
+                env=host_env(),
             )
             return True
 
@@ -750,6 +750,7 @@ class TextInjector:
                         check=True,
                         stderr=subprocess.PIPE,
                         timeout=2,
+                        env=host_env(),
                     )
                     with self._state_lock:
                         self.wayland_tool = "ydotool"
@@ -798,7 +799,7 @@ class TextInjector:
             # Check if we can get active window (less intrusive test)
             window_id = subprocess.run(
                 ["xdotool", "getwindowfocus"],
-                env=test_env,
+                env=host_env(test_env),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -837,6 +838,7 @@ class TextInjector:
                     check=True,
                     stderr=subprocess.PIPE,
                     timeout=2,
+                    env=host_env(),
                 )
                 self.wayland_tool = "ydotool"
                 self.environment = DesktopEnvironment.WAYLAND
@@ -922,6 +924,7 @@ class TextInjector:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         timeout=self._clipboard_timeout,
+                        env=host_env(),
                     )
                     return True
                 if tool == "xsel":
@@ -931,6 +934,7 @@ class TextInjector:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         timeout=self._clipboard_timeout,
+                        env=host_env(),
                     )
                     return True
                 if tool == "xclip":
@@ -942,6 +946,7 @@ class TextInjector:
                         stderr=subprocess.DEVNULL,
                         text=True,
                         timeout=self._clipboard_timeout,
+                        env=host_env(),
                     )
                     return True
             except (
@@ -981,6 +986,7 @@ class TextInjector:
                 ],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         except Exception as e:
             logger.debug(f"Could not show clipboard notification: {e}")
@@ -1144,7 +1150,7 @@ class TextInjector:
                 # Get current active window
                 active_window = subprocess.run(
                     ["xdotool", "getactivewindow"],
-                    env=env,
+                    env=host_env(env),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -1156,7 +1162,7 @@ class TextInjector:
                     # Focus explicitly on that window
                     subprocess.run(
                         ["xdotool", "windowactivate", "--sync", window_id],
-                        env=env,
+                        env=host_env(env),
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
@@ -1190,7 +1196,7 @@ class TextInjector:
 
                         subprocess.run(
                             cmd,
-                            env=env,
+                            env=host_env(env),
                             check=True,
                             stderr=subprocess.PIPE,
                             text=True,
@@ -1242,7 +1248,7 @@ class TextInjector:
                         "Super_L",
                         "Super_R",
                     ],
-                    env=env,
+                    env=host_env(env),
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
@@ -1297,6 +1303,7 @@ class TextInjector:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    env=host_env(),
                 )
                 if result.returncode == 0:
                     return result.stdout
@@ -1394,11 +1401,7 @@ class TextInjector:
                 cmd,
             )
             subprocess.run(
-                cmd,
-                check=True,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=3,
+                cmd, check=True, stderr=subprocess.PIPE, text=True, timeout=3, env=host_env()
             )
             logger.info(f"Text injected via clipboard paste: '{text[:20]}...' ({len(text)} chars)")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
@@ -1473,6 +1476,7 @@ class TextInjector:
                 capture_output=True,
                 text=True,
                 timeout=2,
+                env=host_env(),
             )
             help_text = f"{result.stdout or ''}{result.stderr or ''}"
         except (OSError, subprocess.SubprocessError) as e:
@@ -1651,7 +1655,7 @@ class TextInjector:
             cmd = ["ydotool", "type", "--key-delay", key_delay, text]
 
         try:
-            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
+            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=host_env())
         except subprocess.CalledProcessError as e:
             # Re-raise with stderr preserved for better diagnostics
             raise subprocess.CalledProcessError(
@@ -1707,7 +1711,7 @@ class TextInjector:
 
         try:
             cmd = ["xdotool", "key", "--clearmodifiers", shortcut]
-            subprocess.run(cmd, env=env, check=True, stderr=subprocess.PIPE, text=True)
+            subprocess.run(cmd, env=host_env(env), check=True, stderr=subprocess.PIPE, text=True)
             logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
             return True
         except subprocess.CalledProcessError as e:
@@ -1731,7 +1735,7 @@ class TextInjector:
         elif self.wayland_tool == "ydotool":
             try:
                 cmd = ["ydotool", "key", shortcut]
-                subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True)
+                subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=host_env())
                 logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
                 return True
             except subprocess.CalledProcessError as e:
@@ -1768,7 +1772,7 @@ class TextInjector:
             # Get active window ID
             result = subprocess.run(
                 ["xdotool", "getactivewindow"],
-                env=env,
+                env=host_env(env),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1781,7 +1785,7 @@ class TextInjector:
             # Get window name
             result = subprocess.run(
                 ["xdotool", "getwindowname", window_id],
-                env=env,
+                env=host_env(env),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1794,7 +1798,7 @@ class TextInjector:
             # Get window class
             result = subprocess.run(
                 ["xdotool", "getwindowclassname", window_id],
-                env=env,
+                env=host_env(env),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -1807,7 +1811,7 @@ class TextInjector:
             # Get window PID
             result = subprocess.run(
                 ["xdotool", "getwindowpid", window_id],
-                env=env,
+                env=host_env(env),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,

@@ -6,6 +6,7 @@ import sys
 import threading
 import unittest
 from typing import Any, cast
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -520,11 +521,7 @@ class TestRecoverFromFallback(unittest.TestCase):
                 self.assertTrue(obj._try_recover_from_fallback())
 
         mock_run.assert_called_once_with(
-            ["wtype", ""],
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=2,
+            ["wtype", ""], stderr=subprocess.PIPE, text=True, check=False, timeout=2, env=mock.ANY
         )
 
 

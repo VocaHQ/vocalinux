@@ -45,6 +45,8 @@ def _is_ci_mode():
     return not running_pytest
 
 
+from ..utils.host_process import host_env
+
 # Import the centralized resource manager
 from ..utils.resource_manager import ResourceManager  # noqa: E402
 
@@ -162,24 +164,28 @@ def _play_sound_file(sound_path):
                 [player, sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "aplay":
             subprocess.Popen(
                 [player, "-q", sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "mplayer":
             subprocess.Popen(
                 [player, "-really-quiet", sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "play":
             subprocess.Popen(
                 [player, "-q", sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "ci_test_player":
             # This is a placeholder for CI tests - the subprocess call will be mocked
@@ -187,6 +193,7 @@ def _play_sound_file(sound_path):
                 ["ci_test_player", sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         return True
     except Exception as e:

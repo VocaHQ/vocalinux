@@ -12,6 +12,7 @@ import subprocess
 from functools import lru_cache
 from typing import Optional
 
+from .host_process import host_env
 from .model_checksums import whispercpp_revision
 from .paths import is_within_directory, models_dir
 
@@ -225,12 +226,7 @@ def _run_vulkaninfo_stdout() -> str:
     commands = (["vulkaninfo", "--summary"], ["vulkaninfo"])
     for args in commands:
         try:
-            result = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                timeout=8,
-            )
+            result = subprocess.run(args, capture_output=True, text=True, timeout=8, env=host_env())
         except FileNotFoundError:
             return ""
         except (subprocess.TimeoutExpired, OSError) as exc:
@@ -341,6 +337,7 @@ def detect_cuda_support() -> tuple[bool, Optional[str]]:
             capture_output=True,
             text=True,
             timeout=5,
+            env=host_env(),
         )
         if result.returncode == 0:
             gpu_info = result.stdout.strip().split(",")
@@ -401,10 +398,7 @@ def detect_cpu_info() -> str:
     # Fallback to nproc
     try:
         result = subprocess.run(
-            ["nproc"],
-            capture_output=True,
-            text=True,
-            timeout=2,
+            ["nproc"], capture_output=True, text=True, timeout=2, env=host_env()
         )
         if result.returncode == 0:
             cpu_count = result.stdout.strip()

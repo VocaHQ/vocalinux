@@ -2,6 +2,7 @@
 
 import subprocess
 import unittest
+from unittest import mock
 from unittest.mock import MagicMock, patch
 
 
@@ -27,10 +28,7 @@ class TestXkbLayoutFunctions(unittest.TestCase):
 
         self.assertEqual(result, ("us", "", "compose:menu,grp:caps_toggle"))
         mock_run.assert_called_once_with(
-            ["setxkbmap", "-query"],
-            capture_output=True,
-            text=True,
-            timeout=2,
+            ["setxkbmap", "-query"], capture_output=True, text=True, timeout=2, env=mock.ANY
         )
 
     @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
@@ -135,10 +133,7 @@ class TestXkbLayoutFunctions(unittest.TestCase):
 
         self.assertTrue(result)
         mock_run.assert_called_once_with(
-            ["setxkbmap", "-layout", "de"],
-            capture_output=True,
-            text=True,
-            timeout=2,
+            ["setxkbmap", "-layout", "de"], capture_output=True, text=True, timeout=2, env=mock.ANY
         )
 
     @patch("vocalinux.text_injection.ibus_engine.subprocess.run")

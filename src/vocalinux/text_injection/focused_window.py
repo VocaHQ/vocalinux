@@ -17,6 +17,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from ..utils.host_process import host_env
+
 logger = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT = 1.0
@@ -170,7 +172,7 @@ def _run_text(cmd: list[str], env: Optional[dict[str, str]] = None) -> str:
             text=True,
             timeout=_PROBE_TIMEOUT,
             check=False,
-            env=env,
+            env=host_env(env),
         )
     except (OSError, subprocess.SubprocessError):
         return ""

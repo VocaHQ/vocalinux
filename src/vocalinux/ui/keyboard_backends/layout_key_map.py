@@ -14,6 +14,8 @@ from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_int, c_uint32, c
 from functools import lru_cache
 from typing import Optional
 
+from ...utils.host_process import host_env
+
 logger = logging.getLogger(__name__)
 
 _XKB_EVDEV_OFFSET = 8
@@ -129,6 +131,7 @@ def _detect_gnome_layout() -> tuple[str, str]:
                 text=True,
                 timeout=2,
                 check=False,
+                env=host_env(),
             )
             if result.returncode != 0 or not result.stdout.strip():
                 continue
