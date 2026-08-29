@@ -7,7 +7,9 @@ symbol: g_free_sized``, the engine never switches, and dictated text goes
 nowhere. The same applies to ``GI_TYPELIB_PATH``, ``PYTHONHOME`` and the GTK
 module paths the AppImage exports.
 
-Nothing we spawn is ours, so strip the bundle out of the environment first.
+Almost nothing we spawn is ours, so strip the bundle out first. The exception is
+the IBus engine -- this same interpreter re-executed -- which needs the bundle, so
+``start_engine_process`` hands it the environment untouched.
 """
 
 import os

@@ -815,8 +815,9 @@ def start_engine_process() -> bool:
     logger.info(f"Starting IBus engine process: {engine_script}")
 
     try:
-        # Start the engine process using the same Python interpreter
-        # and inherit the current environment (for venv compatibility)
+        # Same interpreter, environment untouched: this child is ours, and in an
+        # AppImage host_env() would strip the very paths it needs to find its
+        # stdlib, packages and GI stack.
         env = os.environ.copy()
         # Ensure PYTHONPATH includes current site-packages if in a venv
         if hasattr(sys, "prefix") and sys.prefix != sys.base_prefix:
@@ -835,7 +836,7 @@ def start_engine_process() -> bool:
                 stdout=subprocess.DEVNULL,
                 stderr=stderr_fh,
                 start_new_session=True,
-                env=host_env(env),
+                env=env,
             )
 
         PID_FILE.write_text(str(process.pid))

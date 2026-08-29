@@ -1017,6 +1017,35 @@ class TestStartEngineProcess(unittest.TestCase):
             self.assertEqual(env.get("VIRTUAL_ENV"), "/venv")
             mock_pid.write_text.assert_called_with("4242")
 
+    def test_the_engine_keeps_the_bundle_environment(self):
+        """The engine is our own interpreter: host_env() would leave the
+        AppImage's Python without its stdlib, packages or GI stack."""
+        from vocalinux.text_injection import ibus_engine
+
+        bundle = {
+            "APPDIR": "/tmp/.mount_Vocali1234",
+            "PYTHONHOME": "/tmp/.mount_Vocali1234/usr",
+            "GI_TYPELIB_PATH": "/tmp/.mount_Vocali1234/usr/lib/girepository-1.0",
+            "LD_LIBRARY_PATH": "/tmp/.mount_Vocali1234/usr/lib",
+        }
+        mock_proc = MagicMock()
+        mock_proc.pid = 4242
+
+        with (
+            patch.dict(os.environ, bundle, clear=False),
+            patch.object(ibus_engine, "is_engine_process_running", side_effect=iter([False, True])),
+            patch.object(ibus_engine, "ensure_ibus_dir"),
+            patch.object(ibus_engine, "PID_FILE"),
+            patch.object(ibus_engine, "VOCALINUX_IBUS_DIR", Path(tempfile.mkdtemp())),
+            patch.object(ibus_engine.subprocess, "Popen", return_value=mock_proc) as mock_popen,
+            patch.object(ibus_engine.time, "sleep"),
+        ):
+            self.assertTrue(ibus_engine.start_engine_process())
+
+        env = mock_popen.call_args.kwargs["env"]
+        for name, value in bundle.items():
+            self.assertEqual(env.get(name), value, f"{name} was stripped from the engine spawn")
+
     def test_failure_logs_stderr_and_clears_pid(self):
         from vocalinux.text_injection import ibus_engine
 

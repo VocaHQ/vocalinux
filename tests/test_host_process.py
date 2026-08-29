@@ -41,22 +41,56 @@ def test_bundle_paths_are_stripped_and_host_ones_survive():
     assert cleaned["APPDIR"] == env["APPDIR"], "a child may still need to know it came from one"
 
 
-def test_every_subprocess_call_hands_over_a_host_environment():
-    """Nothing we spawn is ours, so no call may inherit the bundle's paths."""
-    offenders = []
+def _is_subprocess_call(node) -> bool:
+    func = getattr(node, "func", None)
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(func, ast.Attribute)
+        and func.attr in SUBPROCESS_FUNCS
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "subprocess"
+    )
+
+
+def _spawns_our_interpreter(node) -> bool:
+    """True when the command starts with `sys.executable` — our own Python."""
+    if not node.args or not isinstance(node.args[0], ast.List) or not node.args[0].elts:
+        return False
+    first = node.args[0].elts[0]
+    return (
+        isinstance(first, ast.Attribute)
+        and first.attr == "executable"
+        and isinstance(first.value, ast.Name)
+        and first.value.id == "sys"
+    )
+
+
+def _env_argument(node):
+    return next((kw.value for kw in node.keywords if kw.arg == "env"), None)
+
+
+def _is_host_env_call(value) -> bool:
+    return isinstance(value, ast.Call) and getattr(value.func, "id", None) == "host_env"
+
+
+def test_host_binaries_get_a_stripped_environment_and_our_own_python_does_not():
+    """Two mistakes, opposite directions: a host binary that inherits the bundle
+    dies on the wrong GLib, and our own interpreter stripped of it cannot find
+    its stdlib or GI stack."""
+    inherit, stripped = [], []
     for path in sorted(SOURCE.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if not isinstance(node, ast.Call):
+            if not _is_subprocess_call(node):
                 continue
-            func = node.func
-            if not (
-                isinstance(func, ast.Attribute)
-                and func.attr in SUBPROCESS_FUNCS
-                and isinstance(func.value, ast.Name)
-                and func.value.id == "subprocess"
-            ):
-                continue
-            if not any(keyword.arg == "env" for keyword in node.keywords):
-                offenders.append(f"{path.relative_to(REPO_ROOT)}:{node.lineno}")
+            where = f"{path.relative_to(REPO_ROOT)}:{node.lineno}"
+            env = _env_argument(node)
+            if _spawns_our_interpreter(node):
+                if _is_host_env_call(env):
+                    stripped.append(where)
+            elif not _is_host_env_call(env):
+                inherit.append(where)
 
-    assert not offenders, "these inherit the bundle; pass env=host_env():\n" + "\n".join(offenders)
+    assert (
+        not inherit
+    ), "these hand the bundle to a host binary; pass env=host_env():\n" + "\n".join(inherit)
+    assert not stripped, "these strip the bundle from our own interpreter:\n" + "\n".join(stripped)
