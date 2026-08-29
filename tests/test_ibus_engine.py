@@ -1926,6 +1926,11 @@ class TestTextInjectorWithIBus(unittest.TestCase):
                         mock_injector_class,
                     ):
                         injector = TextInjector()
+                        # IBus environment promotion happens in a background
+                        # daemon thread (see _initialize_ibus_in_background), so
+                        # wait for it rather than race the scheduler.
+                        if injector._ibus_init_thread is not None:
+                            injector._ibus_init_thread.join(timeout=5)
 
                         # Should be using IBus
                         self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_IBUS)
@@ -1957,6 +1962,11 @@ class TestTextInjectorWithIBus(unittest.TestCase):
                         mock_injector_class,
                     ):
                         injector = TextInjector()
+                        # IBus environment promotion happens in a background
+                        # daemon thread (see _initialize_ibus_in_background), so
+                        # wait for it rather than race the scheduler.
+                        if injector._ibus_init_thread is not None:
+                            injector._ibus_init_thread.join(timeout=5)
 
                         self.assertEqual(injector.environment, DesktopEnvironment.X11_IBUS)
 
