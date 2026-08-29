@@ -283,7 +283,7 @@ VOCAPHONE_SITE_URL = "https://vocaphone.vocahq.com"
 VOCAGATEWAY_SITE_URL = "https://vocagateway.vocahq.com"
 GITHUB_REPO_URL = __url__
 GITHUB_ISSUES_URL = "https://github.com/VocaHQ/vocalinux/issues"
-VOCAHQ_DISCORD_URL = "https://discord.gg/UMJduhcqn"
+VOCAHQ_DISCORD_URL = "https://discord.gg/t6muquAJbm"
 VOCAHQ_X_URL = "https://x.com/vocahq"
 VOCAHQ_MAILTO_URL = "mailto:hello@vocahq.com"
 

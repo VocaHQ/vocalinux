@@ -1059,7 +1059,7 @@ class TestAboutPage(unittest.TestCase):
             "https://vocaphone.vocahq.com",
             "https://vocagateway.vocahq.com",
             "https://github.com/VocaHQ/vocalinux/issues",
-            "https://discord.gg/UMJduhcqn",
+            "https://discord.gg/t6muquAJbm",
             "https://x.com/vocahq",
             "mailto:hello@vocahq.com",
         ):
@@ -1069,7 +1069,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn('"X"', self.about)
         self.assertIn('"Email"', self.about)
         self.assertIn("https://github.com/VocaHQ/vocalinux/issues", self.about)
-        self.assertIn("https://discord.gg/UMJduhcqn", self.source)
+        self.assertIn("https://discord.gg/t6muquAJbm", self.source)
         self.assertIn("https://x.com/vocahq", self.source)
         self.assertIn("mailto:hello@vocahq.com", self.source)
 
