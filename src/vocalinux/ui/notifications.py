@@ -10,6 +10,8 @@ import logging
 import subprocess
 from typing import Callable, Optional
 
+from ..utils.host_process import host_env
+
 logger = logging.getLogger(__name__)
 
 APP_NAME = "Vocalinux"
@@ -67,6 +69,7 @@ def _notify_send(title: str, message: str, icon: str) -> None:
             ["notify-send", "-i", icon, "-a", APP_NAME, title, message],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            env=host_env(),
         )
     except (FileNotFoundError, OSError) as e:
         logger.debug(f"Could not show notification: {e}")

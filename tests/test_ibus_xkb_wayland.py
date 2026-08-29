@@ -12,7 +12,7 @@ set. That path must not go through ``restore_xkb_layout``.
 
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 # Mock GI so importing ibus_engine does not require a real IBus/GTK stack.
 _mock_gi = MagicMock()
@@ -153,6 +153,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=2,
+            env=ANY,
         )
 
     @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
@@ -173,6 +174,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=2,
+            env=ANY,
         )
 
     @patch("vocalinux.text_injection.ibus_engine.subprocess.run")

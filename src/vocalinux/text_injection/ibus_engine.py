@@ -662,6 +662,7 @@ def sync_xwayland_layout_from_gnome() -> bool:
             capture_output=True,
             text=True,
             timeout=2,
+            env=host_env(),
         )
         if result.returncode == 0:
             logger.debug(f"Synced XWayland layout to GNOME source '{source_id}' (see #738)")
