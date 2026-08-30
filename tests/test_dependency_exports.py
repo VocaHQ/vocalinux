@@ -36,6 +36,14 @@ def _exported_names(path: Path) -> set:
     return names
 
 
+def test_build_system_setuptools_accepts_arch_extra():
+    """AUR PKGBUILD uses python -m build --no-isolation against Arch extra setuptools 84."""
+    requires = _pyproject()["build-system"]["requires"]
+    setuptools_req = next(r for r in requires if r.lower().startswith("setuptools"))
+    assert "<82" not in setuptools_req
+    assert ">=77" in setuptools_req.replace(" ", "")
+
+
 def test_the_dev_export_requests_every_group_it_needs():
     """The export line has to name the lint group, not just the dev extra."""
     line = next(

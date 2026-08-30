@@ -41,6 +41,31 @@ from .command_processor import CommandProcessor
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
+def _pywhispercpp_distribution_version() -> Optional[tuple[int, ...]]:
+    """Installed pywhispercpp version, or None if it cannot be read.
+
+    AUR ``python-pywhispercpp-{cpu,cuda,rocm}`` are still 1.4.x. Those wheels
+    advertise ``context_params`` on ``Model.__init__`` then setattr it onto
+    ``whisper_full_params``, which raises AttributeError (AUR comments on
+    vocalinux, GitHub #625).
+    """
+    try:
+        from importlib.metadata import version as pkg_version
+    except ImportError:
+        return None
+    try:
+        raw = pkg_version("pywhispercpp")
+    except Exception:
+        return None
+    parts: list[int] = []
+    for token in raw.split("."):
+        if token.isdigit():
+            parts.append(int(token))
+        else:
+            break
+    return tuple(parts) if parts else None
+
+
 def resolve_whisper_language(language: str) -> Optional[str]:
     """Map a catalog language id to a Whisper / whisper.cpp language code.
 
@@ -1416,15 +1441,25 @@ class SpeechRecognitionManager:
 
         compatible_kwargs = self._filter_whispercpp_model_kwargs(model_kwargs)
         if gpu_device is not None and gpu_device >= 0:
+            dist_version = _pywhispercpp_distribution_version()
+            too_old_for_context_params = dist_version is not None and dist_version < (1, 5, 0)
             try:
                 supports_context_params = (
-                    "context_params" in inspect.signature(Model.__init__).parameters
+                    not too_old_for_context_params
+                    and "context_params" in inspect.signature(Model.__init__).parameters
                 )
             except (TypeError, ValueError) as exc:
                 supports_context_params = False
                 logger.debug(f"Could not inspect pywhispercpp Model signature: {exc}")
 
-            if supports_context_params:
+            if too_old_for_context_params:
+                version_label = ".".join(str(part) for part in (dist_version or ()))
+                logger.warning(
+                    "pywhispercpp %s does not support GPU context_params; "
+                    "upgrade to 1.5+ for device selection. Using the default GPU.",
+                    version_label,
+                )
+            elif supports_context_params:
                 compatible_kwargs["context_params"] = {"gpu_device": gpu_device}
             else:
                 logger.warning(

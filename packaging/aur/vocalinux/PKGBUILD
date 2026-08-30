@@ -32,6 +32,8 @@ depends=(
   'python-xlib'
   'hicolor-icon-theme'
 )
+# --no-isolation uses distro python-setuptools (Arch extra is 84+).
+# pyproject.toml build-system.requires must accept that version.
 makedepends=(
   'python-build'
   'python-installer'

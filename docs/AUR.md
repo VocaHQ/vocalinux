@@ -31,3 +31,15 @@ git clone ssh://aur@aur.archlinux.org/vocalinux.git
 ```
 
 Sources: `packaging/aur/vocalinux/PKGBUILD`. Community git package: https://aur.archlinux.org/packages/vocalinux-git
+
+## Troubleshooting
+
+**`ERROR Missing dependencies: setuptools<82`**
+
+The AUR package builds with `python -m build --wheel --no-isolation`, so it uses Arch extra `python-setuptools` (currently 84). Vocalinux 0.16.1 drops the `<82` cap in `pyproject.toml`. Rebuild 0.16.1 or later.
+
+**`'_pywhispercpp.whisper_full_params' object has no attribute 'context_params'`**
+
+AUR `python-pywhispercpp-cpu` / `-cuda` / `-rocm` are still 1.4.x. Those wheels accept `context_params` in Python and then crash in the native object. 0.16.1 skips that argument on pywhispercpp older than 1.5 and still loads the model (default GPU, no device picker). PyPI and `install.sh` already use 1.5.0.
+
+There is no AUR `python-pywhispercpp-vulkan` package. GPU Vulkan 1.5 is the `install.sh` / AppImage path, not the AUR python backends.

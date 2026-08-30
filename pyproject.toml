@@ -1,6 +1,7 @@
 [build-system]
-# >=77 for the SPDX license string below.
-requires = ["setuptools>=77,<82"]
+# >=77 for the SPDX license string below. No upper bound: Arch extra
+# python-setuptools is 84, and the AUR PKGBUILD builds with --no-isolation.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]

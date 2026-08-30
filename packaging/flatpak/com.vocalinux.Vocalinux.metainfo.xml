@@ -107,7 +107,7 @@
   <releases>
     <release version="0.16.1" date="2026-08-30">
       <description>
-        <p>Stability patch: per-engine model size at startup, save the model only after it loaded, leftover-download list shows every row, one ConfigManager so Settings writes stick, tray stays idle after leftover transcription and can download the recommended model from the missing-model notification, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified model downloads, AppImage glibc that boots on Debian 12, and Settings/About layout polish.</p>
+        <p>Stability patch: per-engine model size at startup, save the model only after it loaded, leftover-download list shows every row, one ConfigManager so Settings writes stick, tray stays idle after leftover transcription and can download the recommended model from the missing-model notification, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified model downloads, AppImage glibc that boots on Debian 12, AUR build against Arch extra setuptools 84, skip context_params on AUR pywhispercpp 1.4, and Settings/About layout polish.</p>
       </description>
     </release>
     <release version="0.16.0" date="2026-08-23">

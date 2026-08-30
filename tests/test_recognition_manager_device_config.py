@@ -1580,6 +1580,34 @@ class TestWhispercppGpuDeviceSelection(unittest.TestCase):
             }
             assert "context_params" not in self.AttributeErrorContextParamsModel.calls[1][1]
 
+    def test_gpu_device_skips_context_params_on_pywhispercpp_1_4(self):
+        """AUR 1.4 wheels advertise context_params then crash; skip them (#625)."""
+        manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=1)
+        manager.model_size = "tiny"
+
+        mock_pywhispercpp = MagicMock()
+        self.ContextParamsModel.calls = []
+        mock_pywhispercpp.Model = self.ContextParamsModel
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "pywhispercpp": mock_pywhispercpp,
+                "pywhispercpp.model": mock_pywhispercpp,
+            },
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager._pywhispercpp_distribution_version",
+                return_value=(1, 4, 0),
+            ):
+                result = manager._load_model_with_compatible_params(
+                    "/fake/model.bin", {}, gpu_device=1
+                )
+
+        assert isinstance(result, self.ContextParamsModel)
+        assert len(self.ContextParamsModel.calls) == 1
+        assert "context_params" not in self.ContextParamsModel.calls[0][1]
+
     def test_host_cuda_label_runtime_vulkan_selects_discrete(self):
         """Device selection follows bundled Vulkan libs, not a host CUDA label (#604)."""
         manager = _make_manager(engine="whisper_cpp", whispercpp_gpu_device=None)

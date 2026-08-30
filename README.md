@@ -65,6 +65,7 @@ Models are downloaded once. After that, speech-to-text stays on your machine. No
 - **Tray**: stay idle after leftover transcription on toggle stop; the missing-model notification can download the recommended model (#741, #687)
 - **Injection / IBus**: Ctrl+Shift+V paste in terminals; keep the GNOME XWayland layout after scoped inject (#734, #742)
 - **Installer / AppImage**: Python 3.11 floor, verified model downloads, no invented GPUs; AppImage glibc that boots on Debian 12 through current Fedora (#713, #736, #743, #744)
+- **AUR**: build against Arch extra setuptools 84; skip `context_params` on AUR pywhispercpp 1.4 so the app starts
 - **Settings**: even dropdowns and a quieter About page with family platform marks (#754)
 
 See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.1).

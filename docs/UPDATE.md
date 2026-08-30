@@ -34,6 +34,7 @@ This guide explains how to update Vocalinux to the latest version.
 - **AppImage**: build against a glibc floor Debian 12 can run; boot tests on six distros (#743, #744 by @sesav)
 - **Installer**: Python 3.11 floor, uv tooling, verified model downloads (epic #701 phases 2.5 and 5) (#713 by @sesav)
 - **Settings / About**: even dropdowns, quieter About, family platform marks (#754)
+- **AUR**: `python -m build --no-isolation` works with Arch extra setuptools 84 (was capped at `<82`, AUR comment by simona). Skip `context_params` on AUR pywhispercpp 1.4.x so startup no longer dies with `whisper_full_params` (AUR comments by avocadoboat, Masalababa; GitHub #625)
 - **Docs**: canonical VocaHQ Discord invite; VocaWin is unsigned beta; screenshots page says v0.16; README family/on-device copy (#749, #733, #735, #737)
 
 See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.1).

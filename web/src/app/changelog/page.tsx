@@ -25,6 +25,7 @@ const releases = [
       "Terminals get Ctrl+Shift+V paste; GNOME XWayland layout is restored after scoped IBus inject (PR #734, #742)",
       "Installer requires Python 3.11, verifies model downloads, and no longer invents GPUs (PR #713, #736)",
       "AppImage built against a glibc floor that boots on Debian 12 through current Fedora (PR #743, #744)",
+      "AUR: build against Arch extra setuptools 84, and skip context_params on AUR pywhispercpp 1.4 so the app starts",
       "Settings dropdowns share a width; About is quieter with family platform marks (PR #754)",
     ],
   },
