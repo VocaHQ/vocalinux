@@ -1130,6 +1130,9 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("platform-home", self.source)
         self.assertIn('("platform-android", "platform-apple")', self.source)
         self.assertIn("family_grid.attach", self.about)
+        self.assertIn("image.set_margin_end(8)", self.source)
+        helper = self.source.split("def _family_tile")[1].split("\n    def ")[0]
+        self.assertIn("spacing=16", helper)
 
     def test_can_open_about_urls(self):
         from vocalinux.ui.settings_dialog import (

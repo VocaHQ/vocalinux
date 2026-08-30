@@ -909,6 +909,10 @@ spinbutton {
     color: @theme_unfocused_fg_color;
 }
 
+.about-mark-button image {
+    margin-right: 8px;
+}
+
 /* Unused downloads: one collapsed row until expanded */
 .unused-downloads-expander {
     padding: 8px 12px;
@@ -3796,8 +3800,10 @@ class SettingsDialog(Gtk.Dialog):
         if icon_name:
             image = self._about_mark_image(icon_name)
             if image is not None:
+                image.set_margin_end(8)
                 button.set_image(image)
                 button.set_always_show_image(True)
+                button.get_style_context().add_class("about-mark-button")
         button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
         return button
 
@@ -3810,7 +3816,7 @@ class SettingsDialog(Gtk.Dialog):
         tooltip: str,
     ) -> Gtk.Button:
         """Compact icon + name tile that opens a family site."""
-        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
         marks = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         marks.set_valign(Gtk.Align.CENTER)
         for icon_name in icon_names:
