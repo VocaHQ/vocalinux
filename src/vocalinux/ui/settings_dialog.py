@@ -442,35 +442,35 @@ _VOCAHQ_FAMILY_LINKS = (
         VOCAHQ_SITE_URL,
         "VocaHQ",
         "Family site",
-        "platform-home",
+        ("platform-home",),
         "Open vocahq.com",
     ),
     (
         VOCALINUX_SITE_URL,
         "Vocalinux",
         "Linux, available now",
-        "platform-linux",
+        ("platform-linux",),
         "Open vocalinux.com",
     ),
     (
         VOCAMAC_SITE_URL,
         "VocaMac",
         "macOS, Beta",
-        "platform-apple",
+        ("platform-apple",),
         "Open vocamac.com",
     ),
     (
         VOCAPHONE_SITE_URL,
         "VocaPhone",
         "Android beta / iOS source build",
-        "platform-android",
+        ("platform-android", "platform-apple"),
         "Open vocaphone.vocahq.com",
     ),
     (
         VOCAGATEWAY_SITE_URL,
         "VocaGateway",
         "Optional self-hosted compute",
-        "platform-server",
+        ("platform-server",),
         "Open vocagateway.vocahq.com",
     ),
 )
@@ -3802,13 +3802,22 @@ class SettingsDialog(Gtk.Dialog):
         return button
 
     def _family_tile(
-        self, url: str, title: str, subtitle: str, icon_name: str, tooltip: str
+        self,
+        url: str,
+        title: str,
+        subtitle: str,
+        icon_names: tuple[str, ...],
+        tooltip: str,
     ) -> Gtk.Button:
         """Compact icon + name tile that opens a family site."""
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        icon = self._about_mark_image(icon_name, pixel_size=_FAMILY_ICON_PX)
-        if icon is not None:
-            inner.pack_start(icon, False, False, 0)
+        marks = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        marks.set_valign(Gtk.Align.CENTER)
+        for icon_name in icon_names:
+            icon = self._about_mark_image(icon_name, pixel_size=_FAMILY_ICON_PX)
+            if icon is not None:
+                marks.pack_start(icon, False, False, 0)
+        inner.pack_start(marks, False, False, 0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         name_label = Gtk.Label(label=title, xalign=0)
         name_label.get_style_context().add_class("family-tile-title")
@@ -4043,8 +4052,8 @@ class SettingsDialog(Gtk.Dialog):
         family_grid.set_margin_end(8)
         family_grid.set_margin_top(4)
         family_grid.set_margin_bottom(8)
-        for index, (url, title, subtitle, icon_name, open_name) in enumerate(_VOCAHQ_FAMILY_LINKS):
-            tile = self._family_tile(url, title, subtitle, icon_name, open_name)
+        for index, (url, title, subtitle, icon_names, open_name) in enumerate(_VOCAHQ_FAMILY_LINKS):
+            tile = self._family_tile(url, title, subtitle, icon_names, open_name)
             family_grid.attach(tile, index % 2, index // 2, 1, 1)
         family_row = Gtk.ListBoxRow()
         family_row.set_activatable(False)

@@ -1126,6 +1126,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("platform-android", self.source)
         self.assertIn("platform-server", self.source)
         self.assertIn("platform-home", self.source)
+        self.assertIn('("platform-android", "platform-apple")', self.source)
         self.assertIn("family_grid.attach", self.about)
 
     def test_can_open_about_urls(self):
