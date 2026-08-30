@@ -15,6 +15,20 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.16.1",
+    date: "2026-08-30",
+    type: "stable",
+    highlights: [
+      "Startup uses the engine's own model size instead of a leftover generic key; the model is saved only after it loaded (PR #684, #685, fixes #681)",
+      "Unused leftover-model list shows every row; one ConfigManager so Settings writes stick (PR #686, #691, fixes #683, #689)",
+      "Tray stays idle after leftover transcription on toggle stop, and the missing-model notification can download the recommended model (PR #741, #687)",
+      "Terminals get Ctrl+Shift+V paste; GNOME XWayland layout is restored after scoped IBus inject (PR #734, #742)",
+      "Installer requires Python 3.11, verifies model downloads, and no longer invents GPUs (PR #713, #736)",
+      "AppImage built against a glibc floor that boots on Debian 12 through current Fedora (PR #743, #744)",
+      "Settings dropdowns share a width; About is quieter with family platform marks (PR #754)",
+    ],
+  },
+  {
     version: "v0.16.0",
     date: "2026-08-23",
     type: "stable",

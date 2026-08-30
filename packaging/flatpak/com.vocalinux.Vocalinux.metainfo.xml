@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.16.1" date="2026-08-30">
+      <description>
+        <p>Stability patch: per-engine model size at startup, save the model only after it loaded, leftover-download list shows every row, one ConfigManager so Settings writes stick, tray stays idle after leftover transcription and can download the recommended model from the missing-model notification, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified model downloads, AppImage glibc that boots on Debian 12, and Settings/About layout polish.</p>
+      </description>
+    </release>
     <release version="0.16.0" date="2026-08-23">
       <description>
         <p>In-app update checker with tray notifications, hold Right Alt push-to-talk default for new installs, searchable language list, delete unused downloaded speech models, family dictation tone picker (default Voca, family preview WAVs), Settings About page for this app, VocaHQ, and talk to us, AGPL-3.0 relicensing, shared Voca family mic for app/tray/site icons, hardened installer with Justfile and uv lockfiles (distro python3-gi required), Test Dictation missing-model message, and desktop reliability fixes for IBus, audio capture, clipboard restore, GPU/Vulkan selection, and AppImage GI typelibs.</p>

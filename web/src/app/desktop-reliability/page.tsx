@@ -55,6 +55,11 @@ const reliabilityFeatures = [
 
 const releaseMap = [
   {
+    version: "v0.16.1",
+    highlights:
+      "Per-engine model at startup, leftover tray idle after toggle stop, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified downloads, and AppImage glibc that boots on Debian 12.",
+  },
+  {
     version: "v0.16.0",
     highlights:
       "Update checker with tray notifications, Right Alt PTT default for new installs, searchable language list, unused model deletion, Test Dictation missing-model message, IBus/XKB restore fixes, safer audio capture, clipboard restore, installer python3-gi requirement, and AppImage/GPU packaging hardening.",

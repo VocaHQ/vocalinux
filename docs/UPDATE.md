@@ -2,6 +2,44 @@
 
 This guide explains how to update Vocalinux to the latest version.
 
+## What's New in v0.16.1
+
+0.16.1 is a **stability patch** on the 0.16 series. The feature set is the same as 0.16.x. This release fixes wrong-model startup, leftover tray state after toggle stop, paste into terminals, GNOME XWayland layout after inject, and AppImages that needed a glibc newer than Debian 12. The installer now requires Python 3.11 and verifies model downloads.
+
+### 0.16 series highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Update checker** | Settings → About checks stable/nightly; tray shows Update Available for newer GitHub releases (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
+
+### Bug fixes in v0.16.1
+
+- **Startup**: resolve model size per engine instead of the leftover generic `model_size` key, so a VOSK save does not make whisper.cpp look for a missing medium model (#684 by @kacperpaczos, fixes #681)
+- **Settings**: save the model only after the engine loaded it, so a cancelled or failed download does not leave config pointing at a file that is not on disk (#685 by @kacperpaczos)
+- **Settings**: unused downloads list sized to its real rows so leftover models are not clipped (#686 by @kacperpaczos, fixes #683)
+- **Config**: one ConfigManager for the process so Settings writes are not overwritten by a stale cache (#691 by @kacperpaczos, fixes #689)
+- **Tray**: stay idle after leftover transcription on toggle stop (#741)
+- **Tray**: the missing-model notification can download the recommended model (#687 by @kacperpaczos)
+- **Injection**: Ctrl+Shift+V when pasting into terminals, so Ctrl+V is not treated as verbatim insert (#734)
+- **IBus**: sync the XWayland layout from GNOME after scoped inject (#742)
+- **Installer**: survive a release without a checksum manifest; stop inventing GPUs (#736 by @sesav)
+- **Installer**: leftover engine repair, just `--no-sync`, ggml verify from #713 (#732)
+- **AppImage**: build against a glibc floor Debian 12 can run; boot tests on six distros (#743, #744 by @sesav)
+- **Installer**: Python 3.11 floor, uv tooling, verified model downloads (epic #701 phases 2.5 and 5) (#713 by @sesav)
+- **Settings / About**: even dropdowns, quieter About, family platform marks (#754)
+- **Docs**: canonical VocaHQ Discord invite; VocaWin is unsigned beta; screenshots page says v0.16; README family/on-device copy (#749, #733, #735, #737)
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.1).
+
+---
+
 ## What's New in v0.16.0
 
 0.16.0 is a **minor** release on the stable line. It adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language picker searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
@@ -449,7 +487,7 @@ The installer will:
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.16.0
+git checkout v0.16.1
 ./install.sh
 ```
 

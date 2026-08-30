@@ -41,11 +41,11 @@ It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any*
 
 Models are downloaded once. After that, speech-to-text stays on your machine. No Voca account is required. Just speak and type.
 
-## 📚 What's New in v0.16.0
+## 📚 What's New in v0.16.1
 
-> **0.16.0** adds an in-app update checker with tray notifications, defaults new installs to hold Right Alt push-to-talk, makes the language list searchable, lets you delete unused downloaded models, and adds a family dictation tone picker. The project license is AGPL-3.0. The installer is hardened (Justfile, uv lockfiles, distro python3-gi). The app icon, tray states, and site favicons use the shared Voca family mic.
+> **0.16.1** is a stability patch on the 0.16 series. Startup uses the engine's own model instead of a leftover generic key, leftover transcription no longer leaves the tray stuck, terminals get Ctrl+Shift+V paste, and the AppImage is built against a glibc Debian 12 can run. The installer now requires Python 3.11 and verifies model downloads.
 
-### Highlights
+### 0.16 series highlights
 
 | Feature | Description |
 |---------|-------------|
@@ -58,19 +58,16 @@ Models are downloaded once. After that, speech-to-text stays on your machine. No
 | **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
 | **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
-### Also in this release
+### Bug fixes in v0.16.1
 
-- IBus: safer scoped injection, engine restore after teardown, XKB layout restore on X11 (#623, #643, #665)
-- Audio: filter unsafe virtual capture devices; open stereo mics at native channel count; catalog tones are the family preview WAVs, not the synthesized #707 files (#629, #673, #708)
-- Clipboard: restore after ydotool paste; text-only reads and safer overlapping restore (#588, #646)
-- GPU / AppImage: honor bundled GPU libs and skip software Vulkan; ship transitive GI typelibs (AppImage fix already hotfixed onto the v0.15.0 AppImages) (#674, #637)
-- Settings / tray: separate Close from Test Dictation; reuse Settings/Logs windows; prefer Ayatana AppIndicator on KDE; optional missing-tray warning toggle (#670, #669, #621, #628)
-- Test Dictation: no longer reports no speech when recognition never started (#702)
-- Settings: About page groups this app, the VocaHQ family, and talk-to-us links (#718)
-- Installer / downloads / tests: gate `util-linux-extra` to Ubuntu 24.04+; report failed model downloads; stop tests from overwriting real `config.json` (#635, #690, #694)
-- Website: vocalinux.com restyled to the Voca family workbench; Discord and X links point at VocaHQ (#728, #729, #722, #717)
+- **Speech models**: start on the engine's own model size; write the model to config only after it loaded; leftover-download list shows every row (#684, #685, #686, fixes #681, #683)
+- **Config**: one ConfigManager for the process, so Settings writes are not overwritten by a stale cache (#691, fixes #689)
+- **Tray**: stay idle after leftover transcription on toggle stop; the missing-model notification can download the recommended model (#741, #687)
+- **Injection / IBus**: Ctrl+Shift+V paste in terminals; keep the GNOME XWayland layout after scoped inject (#734, #742)
+- **Installer / AppImage**: Python 3.11 floor, verified model downloads, no invented GPUs; AppImage glibc that boots on Debian 12 through current Fedora (#713, #736, #743, #744)
+- **Settings**: even dropdowns and a quieter About page with family platform marks (#754)
 
-See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.0).
+See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.1).
 
 ---
 
@@ -461,7 +458,7 @@ Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text firs
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.0`) |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.1`) |
 | 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta (`v0.9.0`) |
 | 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Unsigned beta (`v0.1.0-beta.1`) |
 | 📱 Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | 🚀 Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |
