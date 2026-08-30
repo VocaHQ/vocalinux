@@ -194,11 +194,11 @@ class TestCheckDependencies(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     obj._check_dependencies()
 
-    def test_kde_wayland_uses_ibus_when_daemon_runs_with_xkb_engine(self):
+    def test_kde_wayland_skips_leftover_ibus_when_daemon_runs_with_xkb_engine(self):
+        """Leftover IBus on KDE is skipped so scoped inject cannot fake success (#752)."""
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.WAYLAND)
-        mock_ibus = MagicMock()
 
         with (
             patch.dict(
@@ -222,12 +222,7 @@ class TestCheckDependencies(unittest.TestCase):
                 "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
                 return_value=True,
             ),
-            patch(
-                "vocalinux.text_injection.text_injector.IBusTextInjector",
-                return_value=mock_ibus,
-            ),
-            # KDE Wayland also needs KWin VirtualKeyboard enabled (#574).
-            patch.object(obj, "_kde_virtual_keyboard_enabled", return_value=True),
+            patch("vocalinux.text_injection.text_injector.IBusTextInjector") as mock_ibus_class,
             patch.object(obj, "_start_ibus_initialization") as mock_start,
             patch(
                 "shutil.which",
@@ -236,8 +231,9 @@ class TestCheckDependencies(unittest.TestCase):
         ):
             obj._check_dependencies()
 
-        self.assertIs(obj._ibus_injector, mock_ibus)
-        mock_start.assert_called_once_with()
+        mock_ibus_class.assert_not_called()
+        self.assertIsNone(obj._ibus_injector)
+        mock_start.assert_not_called()
         self.assertEqual(obj.wayland_tool, "wtype")
 
     def test_gnome_wayland_uses_ibus_when_daemon_runs_with_xkb_engine(self):
