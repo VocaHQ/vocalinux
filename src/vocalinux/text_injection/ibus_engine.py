@@ -252,11 +252,20 @@ def is_ibus_active_input_method() -> bool:
         logger.debug(f"IBus detected as active input method on Wayland (engine: {engine})")
         return True
 
-    # X11 / XWayland: IBus reaches apps via XIM. An env-var signal, or a running
-    # daemon with any engine (KDE Plasma with legacy env vars unset), counts.
+    # X11 / XWayland: IBus reaches apps via XIM only if those apps actually
+    # talk to IBus. Env vars are the signal. A leftover or self-started daemon
+    # with a bare xkb engine on KDE is not the session IM; commit_text() then
+    # reports success while Kate/Qt/GTK get nothing (issue #752).
     if ibus_via_env:
         logger.debug("IBus detected as active input method via environment variables")
         return True
+
+    if _is_kde_session():
+        logger.debug(
+            "KDE session without IBus IM env; not treating a running ibus-daemon "
+            "as the session IM (see #752)"
+        )
+        return False
 
     engine = get_current_engine()
     if engine:
@@ -274,10 +283,13 @@ def start_ibus_daemon():
     """
     Start the IBus daemon if it's not already running.
 
-    X11 only. On Wayland we must not spawn ``ibus-daemon -x -d -r``: that XIM-mode
-    daemon is not bridged to the compositor, but still makes
-    ``is_ibus_daemon_running()`` return True and leads to silent no-op injection
-    (issue #574). The compositor/DE must own the Wayland-bridged IBus instance.
+    X11 only, and only when this session already opted into IBus via
+    GTK_IM_MODULE / QT_IM_MODULE / XMODIFIERS. On Wayland we must not spawn
+    ``ibus-daemon -x -d -r``: that XIM-mode daemon is not bridged to the
+    compositor, but still makes ``is_ibus_daemon_running()`` return True and
+    leads to silent no-op injection (issue #574). The same happens on KDE
+    (and other non-IBus X11 sessions) if we start a daemon the apps never
+    talk to (issue #752). The compositor/DE must own the IBus instance.
 
     Returns:
         True if daemon was started or already running, False on failure
@@ -288,6 +300,14 @@ def start_ibus_daemon():
     if _is_wayland_session():
         # XIM -x is not compositor-bridged; spawning it only fools the pgrep check (#574).
         logger.debug("Not starting ibus-daemon on Wayland (see #574)")
+        return False
+
+    if not _ibus_im_env_configured():
+        logger.debug(
+            "Not starting ibus-daemon: this session has no IBus IM env "
+            "(GTK_IM_MODULE / QT_IM_MODULE / XMODIFIERS). A self-started "
+            "daemon reports inject success while apps ignore it (#752, #574)."
+        )
         return False
 
     if not is_ibus_available():
@@ -514,9 +534,34 @@ def get_current_engine() -> Optional[str]:
     return None
 
 
+def _ibus_im_env_configured() -> bool:
+    """True if the process env says IBus is the session input method."""
+    gtk_im = os.environ.get("GTK_IM_MODULE", "").lower()
+    qt_im = os.environ.get("QT_IM_MODULE", "").lower()
+    xmodifiers = os.environ.get("XMODIFIERS", "").lower()
+    return ("ibus" in gtk_im) or ("ibus" in qt_im) or ("@im=ibus" in xmodifiers)
+
+
+def _is_kde_session() -> bool:
+    """Check if the current session is KDE Plasma."""
+    if os.environ.get("KDE_FULL_SESSION", "").lower() == "true":
+        return True
+    desktop = " ".join(
+        os.environ.get(var, "")
+        for var in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
+    ).lower()
+    return "kde" in desktop or "plasma" in desktop
+
+
 def _is_wayland_session() -> bool:
-    """Check if the current session is running under Wayland."""
-    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+    """Check if the current session is running under Wayland.
+
+    GTK/Qt apps on Plasma Wayland often keep XDG_SESSION_TYPE=x11. A live
+    WAYLAND_DISPLAY socket is the reliable hint (issue #752).
+    """
+    if os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland":
+        return True
+    return bool(os.environ.get("WAYLAND_DISPLAY"))
 
 
 def get_current_xkb_layout() -> tuple:

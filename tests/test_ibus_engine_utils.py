@@ -206,19 +206,63 @@ class TestStartIBusDaemon(unittest.TestCase):
     @patch("vocalinux.text_injection.ibus_engine.subprocess.Popen")
     @patch("vocalinux.text_injection.ibus_engine.is_ibus_available", return_value=True)
     def test_start_ibus_daemon_still_starts_on_x11(self, mock_available, mock_popen, mock_sleep):
-        """X11 sessions may still auto-start ibus-daemon with XIM flags."""
+        """X11 sessions that already opted into IBus may still auto-start the daemon."""
         from vocalinux.text_injection.ibus_engine import start_ibus_daemon
 
         with patch(
             "vocalinux.text_injection.ibus_engine.is_ibus_daemon_running",
             side_effect=[False, True],
         ):
-            with patch.dict("os.environ", {"XDG_SESSION_TYPE": "x11"}, clear=False):
+            with patch.dict(
+                "os.environ",
+                {"XDG_SESSION_TYPE": "x11", "GTK_IM_MODULE": "ibus"},
+                clear=True,
+            ):
                 result = start_ibus_daemon()
 
         self.assertTrue(result)
         mock_popen.assert_called_once()
         self.assertEqual(mock_popen.call_args[0][0], ["ibus-daemon", "-x", "-d", "-r"])
+
+    @patch("vocalinux.text_injection.ibus_engine.subprocess.Popen")
+    @patch("vocalinux.text_injection.ibus_engine.is_ibus_available", return_value=True)
+    @patch("vocalinux.text_injection.ibus_engine.is_ibus_daemon_running", return_value=False)
+    def test_start_ibus_daemon_noop_without_im_env(self, mock_is_running, mock_available, mock_popen):
+        """Do not spawn ibus-daemon when the session never opted into IBus (#752)."""
+        from vocalinux.text_injection.ibus_engine import start_ibus_daemon
+
+        with patch.dict(
+            "os.environ",
+            {"XDG_SESSION_TYPE": "x11", "XDG_CURRENT_DESKTOP": "KDE"},
+            clear=True,
+        ):
+            result = start_ibus_daemon()
+
+        self.assertFalse(result)
+        mock_popen.assert_not_called()
+
+    @patch("vocalinux.text_injection.ibus_engine.subprocess.Popen")
+    @patch("vocalinux.text_injection.ibus_engine.is_ibus_available", return_value=True)
+    @patch("vocalinux.text_injection.ibus_engine.is_ibus_daemon_running", return_value=False)
+    def test_start_ibus_daemon_noop_when_wayland_socket_present(
+        self, mock_is_running, mock_available, mock_popen
+    ):
+        """WAYLAND_DISPLAY means Wayland even if XDG_SESSION_TYPE says x11 (#752)."""
+        from vocalinux.text_injection.ibus_engine import start_ibus_daemon
+
+        with patch.dict(
+            "os.environ",
+            {
+                "XDG_SESSION_TYPE": "x11",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "GTK_IM_MODULE": "ibus",
+            },
+            clear=True,
+        ):
+            result = start_ibus_daemon()
+
+        self.assertFalse(result)
+        mock_popen.assert_not_called()
 
 
 class TestIsEngineActive(unittest.TestCase):
