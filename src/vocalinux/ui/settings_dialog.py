@@ -462,14 +462,14 @@ _VOCAHQ_FAMILY_LINKS = (
     (
         VOCAPHONE_SITE_URL,
         "VocaPhone",
-        "Android beta / iOS source build",
+        "Android beta / iOS TestFlight",
         ("platform-android", "platform-apple"),
         "Open vocaphone.vocahq.com",
     ),
     (
         VOCAGATEWAY_SITE_URL,
         "VocaGateway",
-        "Optional self-hosted compute",
+        "Self-hosted, headless",
         ("platform-server",),
         "Open vocagateway.vocahq.com",
     ),
@@ -3859,7 +3859,7 @@ class SettingsDialog(Gtk.Dialog):
             title="Vocalinux",
             description=(
                 "Available now on Linux (X11 and Wayland). After a model is downloaded, "
-                "speech is processed on this PC. Open source under GNU AGPL v3."
+                "speech is processed on this PC."
             ),
             keywords=("about", "version", "app"),
             header_icon=about_icon,
@@ -3901,9 +3901,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         links_row = PreferenceRow(
             title="Open source",
-            subtitle="GNU AGPL v3. Product site at vocalinux.com, source on GitHub.",
+            subtitle="Product site at vocalinux.com, source on GitHub.",
             widget=link_box,
-            keywords=("website", "vocalinux.com", "github", "source", "repo", "code"),
+            keywords=("website", "vocalinux.com", "github", "source", "repo", "code", "agpl"),
         )
         app_group.add_row(links_row)
 
@@ -4037,11 +4037,7 @@ class SettingsDialog(Gtk.Dialog):
 
         family_group = PreferencesGroup(
             title="Part of VocaHQ",
-            description=(
-                "Private dictation for Linux, Mac, Windows, and phone. VocaWin is an "
-                "unsigned beta, v0.1.0-beta.1. VocaPhone is Android beta / iOS source build. "
-                "VocaGateway is optional self-hosted compute. It is not on-device."
-            ),
+            description="Private dictation for Linux, Mac, Windows, and phone.",
             keywords=("vocahq", "vocamac", "vocawin", "vocaphone", "vocagateway", "family"),
         )
         family_grid = Gtk.Grid()

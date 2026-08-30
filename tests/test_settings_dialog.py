@@ -1044,15 +1044,17 @@ class TestAboutPage(unittest.TestCase):
     def test_product_status_and_honest_network_copy(self):
         self.assertIn("Available now on Linux (X11 and Wayland)", self.about)
         self.assertIn("After a model is downloaded", self.about)
-        self.assertIn("unsigned beta, v0.1.0-beta.1", self.about)
-        self.assertIn("Android beta / iOS source build", self.about)
-        self.assertIn("optional", self.about.lower())
-        self.assertIn("self-hosted compute", self.about)
+        self.assertIn("Private dictation for Linux, Mac, Windows, and phone.", self.about)
+        self.assertIn("Android beta / iOS TestFlight", self.source)
+        self.assertIn("Self-hosted, headless", self.source)
+        self.assertNotIn("iOS source build", self.source)
         self.assertNotIn("SmartScreen", self.about)
         self.assertNotIn("100% offline", self.about)
         self.assertNotIn("fully offline", self.about)
         self.assertNotIn("Coming soon", self.about)
         self.assertNotIn("releases/download", self.about)
+        # License is named once, on the License row, not in the intro or links.
+        self.assertEqual(self.about.count("GNU AGPL v3"), 1)
 
     def test_family_and_talk_urls(self):
         for url in (
