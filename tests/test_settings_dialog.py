@@ -1265,6 +1265,32 @@ class TestAboutPage(unittest.TestCase):
             self.assertIn('fill="currentColor"', packaged, name)
             self.assertIn(f"<title>{title}</title>", packaged, name)
 
+    def test_about_marks_use_theme_aware_ink(self):
+        self.assertIn("_ABOUT_INK_ON_DARK", self.source)
+        self.assertIn("def _about_ink_hex(", self.source)
+        self.assertIn("def _about_surface_is_dark(", self.source)
+        self.assertIn('replace("currentColor", ink)', self.source)
+        self.assertIn("_FAMILY_ICON_PX", self.source)
+
+
+class TestAboutInk(unittest.TestCase):
+    """Ink for About marks follows light vs dark surfaces."""
+
+    def test_dark_theme_pref_picks_light_ink(self):
+        from vocalinux.ui.settings_dialog import (
+            _ABOUT_INK,
+            _ABOUT_INK_ON_DARK,
+            _about_ink_hex,
+            _about_surface_is_dark,
+        )
+
+        self.assertNotEqual(_ABOUT_INK, _ABOUT_INK_ON_DARK)
+        self.assertTrue(_ABOUT_INK_ON_DARK.startswith("#"))
+        if _about_surface_is_dark():
+            self.assertEqual(_about_ink_hex(), _ABOUT_INK_ON_DARK)
+        else:
+            self.assertIn(_about_ink_hex(), {_ABOUT_INK, _ABOUT_INK_ON_DARK})
+
 
 class TestSettingsControlColumn(unittest.TestCase):
     """Dropdowns, steppers, and action buttons share one right-hand column."""

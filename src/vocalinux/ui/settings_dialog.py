@@ -20,9 +20,10 @@ UX Design Notes:
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, NamedTuple, Optional
 
 import gi
 
@@ -360,9 +361,78 @@ _ABOUT_OPEN_URLS = frozenset(
 )
 
 # Official Talk-to-us marks from VocaHQ/.github brand/vocahq/social (commit 61c8eee).
-# Do not redraw. fill is currentColor; paint iron-white ink at load time.
+# Do not redraw. fill is currentColor; paint to match the dialog foreground so
+# the marks stay visible on both light and dark surfaces.
 _ABOUT_INK = "#14231C"
-_ABOUT_ICON_TEXT_PX = 16
+_ABOUT_INK_ON_DARK = "#E6E1D8"
+_ABOUT_ICON_TEXT_PX = 18
+_FAMILY_ICON_PX = 22
+
+
+def _color_luminance(color: Any) -> float:
+    """Relative luminance of a Gdk.RGBA (0 = black, 1 = white)."""
+    return 0.2126 * color.red + 0.7152 * color.green + 0.0722 * color.blue
+
+
+def _rgba_to_hex(color: Any) -> str:
+    """Format a Gdk.RGBA as #rrggbb."""
+    r = max(0, min(255, int(round(color.red * 255))))
+    g = max(0, min(255, int(round(color.green * 255))))
+    b = max(0, min(255, int(round(color.blue * 255))))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _about_surface_is_dark() -> bool:
+    """Return True when GTK is using a dark theme."""
+    settings = Gtk.Settings.get_default()
+    if settings is not None:
+        try:
+            if bool(settings.get_property("gtk-application-prefer-dark-theme")):
+                return True
+        except Exception:
+            pass
+        try:
+            theme = str(settings.get_property("gtk-theme-name") or "").lower()
+            if "dark" in theme:
+                return True
+        except Exception:
+            pass
+    try:
+        from ..utils.host_process import host_env
+
+        result = subprocess.run(
+            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            env=host_env(),
+        )
+        if result.returncode == 0 and "prefer-dark" in (result.stdout or "").lower():
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _about_ink_hex(widget: Optional[Gtk.Widget] = None) -> str:
+    """Ink for currentColor marks: theme fg when known, else light/dark defaults."""
+    dark = _about_surface_is_dark()
+    if widget is not None:
+        ctx = widget.get_style_context()
+        for name in ("theme_fg_color", "theme_text_color", "fg_color"):
+            try:
+                found, color = ctx.lookup_color(name)
+            except Exception:
+                continue
+            if not found:
+                continue
+            lum = _color_luminance(color)
+            if dark and lum >= 0.45:
+                return _rgba_to_hex(color)
+            if not dark and lum <= 0.40:
+                return _ABOUT_INK
+    return _ABOUT_INK_ON_DARK if dark else _ABOUT_INK
+
 
 # Official platform marks from VocaHQ/.github brand/promo/cards/platform
 # (currentColor copies live in web/public/brand/platforms). Home is a simple
@@ -3676,8 +3746,10 @@ class SettingsDialog(Gtk.Dialog):
 
         self.power_user_switch.connect("state-set", self._on_power_user_toggled)
 
-    def _about_mark_image(self, icon_name: str) -> Optional[Gtk.Image]:
-        """Load a Design Talk-to-us SVG and paint currentColor as iron-white ink."""
+    def _about_mark_image(
+        self, icon_name: str, pixel_size: int = _ABOUT_ICON_TEXT_PX
+    ) -> Optional[Gtk.Image]:
+        """Load a currentColor SVG and paint it to match the dialog foreground."""
         from gi.repository import GdkPixbuf
 
         from ..utils.resource_manager import ResourceManager
@@ -3686,17 +3758,18 @@ class SettingsDialog(Gtk.Dialog):
         if not os.path.exists(path):
             return None
         try:
+            ink = _about_ink_hex(self)
             with open(path, encoding="utf-8") as handle:
-                svg = handle.read().replace("currentColor", _ABOUT_INK)
+                svg = handle.read().replace("currentColor", ink)
             loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-            loader.set_size(_ABOUT_ICON_TEXT_PX, _ABOUT_ICON_TEXT_PX)
+            loader.set_size(pixel_size, pixel_size)
             loader.write(svg.encode("utf-8"))
             loader.close()
             pixbuf = loader.get_pixbuf()
             if pixbuf is None:
                 return None
             image = Gtk.Image.new_from_pixbuf(pixbuf)
-            image.set_pixel_size(_ABOUT_ICON_TEXT_PX)
+            image.set_pixel_size(pixel_size)
             return image
         except Exception as exc:
             logger.warning("Failed to load About mark %s: %s", icon_name, exc)
@@ -3733,9 +3806,8 @@ class SettingsDialog(Gtk.Dialog):
     ) -> Gtk.Button:
         """Compact icon + name tile that opens a family site."""
         inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        icon = self._about_mark_image(icon_name)
+        icon = self._about_mark_image(icon_name, pixel_size=_FAMILY_ICON_PX)
         if icon is not None:
-            icon.set_pixel_size(20)
             inner.pack_start(icon, False, False, 0)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         name_label = Gtk.Label(label=title, xalign=0)
