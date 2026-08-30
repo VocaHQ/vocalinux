@@ -10,6 +10,33 @@ Vocalinux uses [Semantic Versioning](https://semver.org/) with pre-release suffi
 - **RC** (Release Candidate): Final testing before stable (e.g., `0.5.0-rc1`)
 - **Stable**: Production-ready (e.g., `1.0.0`)
 
+## Release Infrastructure (one-time setup)
+
+These are configured once per repository. A tag pushed before they exist will fail
+in the corresponding job.
+
+### PyPI trusted publishing (required)
+
+`publish-pypi` authenticates with a short-lived OIDC token instead of a stored API
+token, so there is no `PYPI_API_TOKEN` secret to leak or rotate. It only works once
+PyPI knows about this workflow. On https://pypi.org/manage/project/vocalinux/settings/publishing/
+add a GitHub publisher:
+
+| field | value |
+|---|---|
+| Owner | `VocaHQ` |
+| Repository | `vocalinux` |
+| Workflow name | `release.yml` |
+| Environment | `pypi` |
+
+Until that publisher exists, `publish-pypi` fails with `invalid-publisher`. The old
+`PYPI_API_TOKEN` secret can be deleted from the repository once the first trusted
+publish succeeds.
+
+### AUR (optional)
+
+`publish-aur` skips itself when `AUR_SSH_PRIVATE_KEY` is unset. See docs/AUR.md.
+
 ## Quick Release Checklist
 
 Use this checklist for every release:
@@ -350,20 +377,29 @@ git push origin v0.5.0-beta
 
 After pushing the tag, the GitHub Actions workflow will automatically:
 
-1. Build the Python package (wheel and sdist)
-2. Build and attach AppImages for x86_64 and aarch64
+1. Build the Python package (wheel and sdist) — **once**, with `SOURCE_DATE_EPOCH`
+   pinned to the tagged commit. Every later job downloads that artifact instead of
+   rebuilding, so the wheel on PyPI is byte-for-byte the wheel on the release
+2. Build and attach AppImages for x86_64 and aarch64, both from that same wheel
 3. Create a GitHub Release with auto-generated notes
-4. Publish to PyPI
-5. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
-6. Deploy the website to vocalinux.com
-7. Mark as pre-release if version contains alpha/beta/rc
+4. Attach `SHA256SUMS` covering all four artifacts, and generate build provenance
+   attestations from that manifest (runs after the aarch64 AppImage lands, so a
+   partial manifest never gets published)
+5. Publish to PyPI via trusted publishing
+6. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
+7. Deploy the website to vocalinux.com
+8. Mark as pre-release if version contains alpha/beta/rc
 
 Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 ### Step 9: Post-Release Tasks
 
 - [ ] Verify GitHub Release was created correctly
-- [ ] Verify PyPI package was published (if applicable)
+- [ ] Verify `SHA256SUMS` is attached and lists all four artifacts (wheel, sdist,
+      both AppImages) — the release notes tell users to run `sha256sum -c` against it
+- [ ] Verify provenance: `gh attestation verify <artifact> --repo VocaHQ/vocalinux`
+- [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
+      matches the line for that wheel in `SHA256SUMS`
 - [ ] Verify website was deployed (check vocalinux.com)
 - [ ] Announce on social media/communities
 - [ ] Update any pinned issues or discussions

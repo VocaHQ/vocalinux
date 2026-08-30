@@ -5,10 +5,11 @@ on:
     tags:
       - 'v*'
 
+# Least privilege, granted per job. `id-token: write` at the top level handed an
+# OIDC token to every job in the workflow, including publish-aur, which runs a
+# third-party action with our AUR signing key.
 permissions:
-  contents: write
-  packages: write
-  id-token: write  # Required for PyPI trusted publishing
+  contents: read
 
 env:
   # Build against the supported floor (requires-python in pyproject.toml).
@@ -18,6 +19,8 @@ jobs:
   build-and-release:
     name: Build and Create Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -33,7 +36,7 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install build twine wheel setuptools
+          pip install build wheel setuptools
 
       - name: Extract version from tag
         id: get_version
@@ -54,11 +57,32 @@ jobs:
             echo "Warning: Version mismatch between tag ($TAG_VERSION) and package ($PACKAGE_VERSION)"
           fi
 
+      # Archive timestamps are what made two builds of one tag differ. Pinned to
+      # the tagged commit, re-running this workflow reproduces the bytes we
+      # published, so a checksum stays true for the life of the release.
+      - name: Pin the build timestamp to the tagged commit
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+
+      # The only `python -m build` in this workflow. PyPI, the aarch64 AppImage
+      # and the checksums all consume the artifact below, so the wheel on PyPI
+      # is the wheel on the release. It used to be built three times, on three
+      # runners, and nothing guaranteed the three agreed.
       - name: Build package
         run: |
           python -m build
           echo "Built packages:"
           ls -la dist/
+
+      - name: Upload the built distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
       # glslc is built from the pinned shaderc commit inside the container -
       # Ubuntu 22.04 packages none - and depends on nothing but that commit.
@@ -74,6 +98,14 @@ jobs:
         run: |
           bash packaging/appimage/docker-build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
           ls -la dist/*.AppImage
+
+      - name: Upload the x86_64 AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-x86_64
+          path: dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Create Release
         id: create_release
@@ -129,6 +161,19 @@ jobs:
             ```
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
+            ### Verifying what you downloaded
+            `SHA256SUMS` covers every file here and is attached once the aarch64 build finishes,
+            a few minutes after this release appears. The wheel and sdist below are the same bytes
+            published to PyPI.
+            ```bash
+            sha256sum -c --ignore-missing SHA256SUMS
+            ```
+            Each artifact also carries GitHub build provenance, which ties it to this workflow run:
+            ```bash
+            gh attestation verify Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.AppImage \
+              --repo ${{ github.repository }}
+            ```
+
             ---
             See [CHANGELOG](https://github.com/VocaHQ/vocalinux/releases) for detailed changes.
 
@@ -136,20 +181,11 @@ jobs:
     name: Build and Attach AppImage (aarch64)
     needs: build-and-release
     runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build wheel setuptools
 
       - name: Extract version from tag
         id: get_version
@@ -157,10 +193,14 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Build package
-        run: |
-          python -m build
-          ls -la dist/
+      # The wheel is py3-none-any, so this is the wheel the release and PyPI
+      # carry. Building it again here made a third copy of the same version that
+      # no published checksum could describe.
+      - name: Download the built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
 
       # glslc is built from the pinned shaderc commit inside the container -
       # Ubuntu 22.04 packages none - and depends on nothing but that commit.
@@ -177,6 +217,14 @@ jobs:
           bash packaging/appimage/docker-build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
           ls -la dist/*.AppImage
 
+      - name: Upload the aarch64 AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage-aarch64
+          path: dist/*.AppImage
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Attach to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -186,49 +234,89 @@ jobs:
             --repo ${{ github.repository }} \
             --clobber
 
+  # Runs last because the aarch64 AppImage lands after the release is created:
+  # a checksum manifest that covers three of the four files is worse than none,
+  # since the missing one looks like the tampered one.
+  publish-checksums:
+    name: Checksums and Provenance
+    needs: [build-and-release, build-appimage-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Collect every artifact this run published
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ls -la
+          # Bare names, so `sha256sum -c` works in whatever directory the user
+          # downloaded the release into.
+          sha256sum -- *.whl *.tar.gz *.AppImage | tee SHA256SUMS
+
+      # Attesting from the manifest rather than a second glob: the file we
+      # publish and the set we attest cannot drift apart.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Attach SHA256SUMS to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist/SHA256SUMS \
+            --repo ${{ github.repository }} \
+            --clobber
+
   publish-pypi:
     name: Publish to PyPI
     needs: build-and-release
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write  # PyPI trusted publishing; there is no API token to leak
     environment:
       name: pypi
       url: https://pypi.org/project/vocalinux/
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      # Not a rebuild: the artifact attached to the GitHub release, so one
+      # checksum describes both.
+      - name: Download the built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build twine
-
-      - name: Build package
-        run: |
-          python -m build
-          echo "Built packages:"
-          ls -la dist/
 
       - name: Verify package
         run: |
+          python -m pip install --upgrade pip
+          pip install twine
           twine check dist/*
 
       - name: Publish to PyPI
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          twine upload dist/* --skip-existing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   publish-aur:
     name: Publish to AUR
     needs: build-and-release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     # Secrets: AUR_SSH_PRIVATE_KEY, AUR_USERNAME, AUR_EMAIL — see docs/AUR.md
     steps:
       - name: Check for AUR credentials
@@ -272,6 +360,8 @@ jobs:
     name: Deploy Website
     runs-on: ubuntu-latest
     needs: [build-and-release, publish-pypi]
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
