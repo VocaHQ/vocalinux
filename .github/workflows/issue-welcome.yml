@@ -13,4 +13,8 @@ permissions:
 
 jobs:
   welcome:
+    # Deliberately unpinned: this is our own org's shared workflow, inside the
+    # same trust boundary as this repository, and the point of it is that a
+    # change to the welcome text reaches every VocaHQ repo without 30 bumps.
+    # Everything third-party is pinned by SHA (tests/test_workflow_action_pins.py).
     uses: VocaHQ/.github/.github/workflows/issue-welcome.yml@main

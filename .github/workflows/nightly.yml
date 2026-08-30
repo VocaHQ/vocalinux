@@ -18,13 +18,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -77,7 +77,7 @@ jobs:
       # glslc is built from the pinned shaderc commit inside the container -
       # Ubuntu 22.04 packages none - and depends on nothing but that commit.
       - name: Cache AppImage build tools
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/vocalinux-appimage
           key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
@@ -242,7 +242,7 @@ jobs:
           echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifacts (backup)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vocalinux-nightly-${{ steps.version.outputs.version }}
           path: dist/
@@ -256,12 +256,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           ref: main
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -278,7 +278,7 @@ jobs:
       # glslc is built from the pinned shaderc commit inside the container -
       # Ubuntu 22.04 packages none - and depends on nothing but that commit.
       - name: Cache AppImage build tools
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/vocalinux-appimage
           key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}

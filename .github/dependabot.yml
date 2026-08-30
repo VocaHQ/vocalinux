@@ -1,0 +1,14 @@
+version: 2
+updates:
+  # Actions are pinned by commit SHA (tests/test_workflow_action_pins.py), which
+  # is only safe if something moves the pins: an action nobody bumps stops
+  # receiving its own security fixes, and the pin hides that it has gone stale.
+  # Grouped so this arrives as one pull request a week rather than fifteen.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
