@@ -227,7 +227,9 @@ class TestStartIBusDaemon(unittest.TestCase):
     @patch("vocalinux.text_injection.ibus_engine.subprocess.Popen")
     @patch("vocalinux.text_injection.ibus_engine.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.ibus_engine.is_ibus_daemon_running", return_value=False)
-    def test_start_ibus_daemon_noop_without_im_env(self, mock_is_running, mock_available, mock_popen):
+    def test_start_ibus_daemon_noop_without_im_env(
+        self, mock_is_running, mock_available, mock_popen
+    ):
         """Do not spawn ibus-daemon when the session never opted into IBus (#752)."""
         from vocalinux.text_injection.ibus_engine import start_ibus_daemon
 

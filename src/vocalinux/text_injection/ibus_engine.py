@@ -547,8 +547,7 @@ def _is_kde_session() -> bool:
     if os.environ.get("KDE_FULL_SESSION", "").lower() == "true":
         return True
     desktop = " ".join(
-        os.environ.get(var, "")
-        for var in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
+        os.environ.get(var, "") for var in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
     ).lower()
     return "kde" in desktop or "plasma" in desktop
 
