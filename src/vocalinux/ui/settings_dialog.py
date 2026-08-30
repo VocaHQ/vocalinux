@@ -1372,12 +1372,12 @@ class PreferenceRow(Gtk.ListBoxRow):
 
         self.add(hbox)
 
-    def set_title(self, title: str):
+    def set_title(self, title: str) -> None:
         """Update the title text."""
         self.title = title
         self.title_label.set_text(title)
 
-    def set_subtitle(self, subtitle: str):
+    def set_subtitle(self, subtitle: str) -> None:
         """Update the subtitle text."""
         self.subtitle = subtitle
         if self.subtitle_label:
@@ -2584,12 +2584,13 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.set_sound_effects_tone(tone_id)
         self.config_manager.save_settings()
 
-    def _on_preview_tone_clicked(self, _widget):
+    def _on_preview_tone_clicked(self, _widget) -> None:
         from .audio_feedback import preview_tone_cue
 
         tone_id = self.sound_tone_combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
         kind = self._tone_preview_kind
-        preview_tone_cue(tone_id, kind)
+        if not preview_tone_cue(tone_id, kind):
+            return
         self._tone_preview_kind = "stop" if kind == "start" else "start"
         self._sync_tone_preview_button(tone_id)
 

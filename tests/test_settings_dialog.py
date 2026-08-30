@@ -816,6 +816,7 @@ class TestLanguageComboSearch(unittest.TestCase):
         self.assertIn('title="Dictation Tone"', source_code)
         self.assertIn("def _on_preview_tone_clicked", source_code)
         self.assertIn("preview_tone_cue(tone_id, kind)", source_code)
+        self.assertIn("if not preview_tone_cue(tone_id, kind):", source_code)
         self.assertIn("self._tone_preview_kind", source_code)
         self.assertNotIn("fifth", source_code)
         self.assertNotIn("01-linux-glide", source_code)
