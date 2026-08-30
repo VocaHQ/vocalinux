@@ -43,7 +43,7 @@ class TestSettingsDialogShortcutsSection(unittest.TestCase):
 
     def test_shortcut_combo_size_request(self):
         """Test that shortcut combo uses the shared control width."""
-        self.assertIn("self.shortcut_combo.set_size_request(_CONTROL_WIDTH, -1)", self.source_code)
+        self.assertIn("_style_combo(self.shortcut_combo)", self.source_code)
 
     def test_shortcut_combo_tooltip(self):
         """Test that shortcut combo has a tooltip."""

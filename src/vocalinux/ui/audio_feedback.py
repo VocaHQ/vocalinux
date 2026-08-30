@@ -223,6 +223,15 @@ def play_error_sound():
     return _play_sound_file(ERROR_SOUND) if _is_sound_effects_enabled() else False
 
 
+def preview_tone_cue(tone_id: Optional[str], kind: str) -> bool:
+    """Play one catalog cue. ``kind`` is ``start`` or ``stop``. Off plays nothing."""
+    tone = normalize_sound_effect_tone(tone_id if tone_id is not None else _resolved_tone())
+    if tone == "off":
+        return False
+    cue = "stop" if kind == "stop" else "start"
+    return bool(_play_sound_file(tone_sound_path(tone, cue)))
+
+
 def preview_tone(tone_id: Optional[str] = None) -> bool:
     """Play start then stop for a catalog tone. Off plays nothing."""
     tone = normalize_sound_effect_tone(tone_id if tone_id is not None else _resolved_tone())

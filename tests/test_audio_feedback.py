@@ -537,3 +537,16 @@ class TestAudioFeedback(unittest.TestCase):
             mock_play.reset_mock()
             self.assertTrue(audio_feedback.preview_tone("not-a-tone"))
             self.assertTrue(mock_play.call_args_list[0].args[0].endswith("voca_start.wav"))
+
+    def test_preview_tone_cue_plays_one_side(self):
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with patch.object(audio_feedback, "_play_sound_file", return_value=True) as mock_play:
+            self.assertTrue(audio_feedback.preview_tone_cue("voca", "start"))
+            self.assertTrue(mock_play.call_args_list[0].args[0].endswith("voca_start.wav"))
+            mock_play.reset_mock()
+            self.assertTrue(audio_feedback.preview_tone_cue("voca", "stop"))
+            self.assertTrue(mock_play.call_args_list[0].args[0].endswith("voca_stop.wav"))
+            mock_play.reset_mock()
+            self.assertFalse(audio_feedback.preview_tone_cue("off", "start"))
+            mock_play.assert_not_called()

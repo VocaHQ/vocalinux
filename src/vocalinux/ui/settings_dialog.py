@@ -273,8 +273,64 @@ def _default_whispercpp_variant_for_size(model_size: str, language_id: str) -> O
     return variants[0]
 
 
-# Uniform width for right-hand row controls so they align down a page
-_CONTROL_WIDTH = 230
+# Uniform width for right-hand row controls so they align down a page.
+# ComboBoxText sizes itself to the longest item unless the cell is ellipsized,
+# which is why Shortcut Mode used to dwarf Shortcut Key.
+_CONTROL_WIDTH = 220
+_COMBO_CHARS = 18
+_ACTION_WIDTH = 96
+_SPIN_WIDTH = 88
+_ICON_BUTTON_WIDTH = 36
+_PAIRED_COMBO_WIDTH = _CONTROL_WIDTH - _ICON_BUTTON_WIDTH - 8
+
+
+def _style_combo(combo: Gtk.ComboBox, width: int = _CONTROL_WIDTH) -> Gtk.ComboBox:
+    """Pin a combo to the shared control column so long items cannot stretch it."""
+    combo.set_size_request(width, -1)
+    combo.set_halign(Gtk.Align.END)
+    combo.set_hexpand(False)
+    combo.set_popup_fixed_width(False)
+    for cell in combo.get_cells():
+        cell.set_property("ellipsize", Pango.EllipsizeMode.END)
+        cell.set_property("width-chars", _COMBO_CHARS)
+        cell.set_property("max-width-chars", _COMBO_CHARS)
+        # Pixel cap so the closed combo cannot grow with the longest item.
+        cell.set_fixed_size(max(width - 40, 80), -1)
+    child = combo.get_child()
+    if isinstance(child, Gtk.Entry):
+        child.set_width_chars(_COMBO_CHARS)
+        child.set_max_width_chars(_COMBO_CHARS)
+        child.set_hexpand(False)
+    return combo
+
+
+def _style_spin(spin: Gtk.SpinButton) -> Gtk.SpinButton:
+    """Keep plus/minus steppers compact and right-aligned."""
+    spin.set_size_request(_SPIN_WIDTH, -1)
+    spin.set_halign(Gtk.Align.END)
+    return spin
+
+
+def _style_action_button(button: Gtk.Button, width: int = _ACTION_WIDTH) -> Gtk.Button:
+    """Give compact action buttons a shared minimum width."""
+    button.set_size_request(width, -1)
+    button.set_halign(Gtk.Align.END)
+    return button
+
+
+def _combo_with_suffix(
+    combo: Gtk.ComboBox,
+    suffix: Gtk.Widget,
+    combo_width: int = _PAIRED_COMBO_WIDTH,
+) -> Gtk.Box:
+    """Right-align a combo and a sibling button as one control cluster."""
+    _style_combo(combo, combo_width)
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    box.set_halign(Gtk.Align.END)
+    box.pack_start(combo, False, False, 0)
+    box.pack_start(suffix, False, False, 0)
+    return box
+
 
 VOCALINUX_SITE_URL = "https://vocalinux.com"
 VOCAHQ_SITE_URL = "https://vocahq.com"
@@ -308,23 +364,53 @@ _ABOUT_OPEN_URLS = frozenset(
 _ABOUT_INK = "#14231C"
 _ABOUT_ICON_TEXT_PX = 16
 
+# Official platform marks from VocaHQ/.github brand/promo/cards/platform
+# (currentColor copies live in web/public/brand/platforms). Home is a simple
+# house so HQ does not reuse a product lockup.
 _VOCAHQ_FAMILY_LINKS = (
-    (VOCAHQ_SITE_URL, "vocahq.com", "Family site", "Open vocahq.com"),
-    (VOCALINUX_SITE_URL, "vocalinux.com", "Linux, Available now", "Open vocalinux.com"),
-    (VOCAMAC_SITE_URL, "vocamac.com", "macOS, Beta", "Open vocamac.com"),
+    (
+        VOCAHQ_SITE_URL,
+        "VocaHQ",
+        "Family site",
+        "platform-home",
+        "Open vocahq.com",
+    ),
+    (
+        VOCALINUX_SITE_URL,
+        "Vocalinux",
+        "Linux, available now",
+        "platform-linux",
+        "Open vocalinux.com",
+    ),
+    (
+        VOCAMAC_SITE_URL,
+        "VocaMac",
+        "macOS, Beta",
+        "platform-apple",
+        "Open vocamac.com",
+    ),
     (
         VOCAPHONE_SITE_URL,
-        "vocaphone.vocahq.com",
+        "VocaPhone",
         "Android beta / iOS source build",
+        "platform-android",
         "Open vocaphone.vocahq.com",
     ),
     (
         VOCAGATEWAY_SITE_URL,
-        "vocagateway.vocahq.com",
+        "VocaGateway",
         "Optional self-hosted compute",
+        "platform-server",
         "Open vocagateway.vocahq.com",
     ),
 )
+
+# Settings combo labels. The row subtitle already explains the behavior, so
+# these stay short enough to match Shortcut Key.
+_SHORTCUT_MODE_COMBO_LABELS = {
+    "toggle": "Toggle",
+    "push_to_talk": "Push-to-Talk",
+}
 
 
 def _can_open_url(url: str) -> bool:
@@ -638,10 +724,22 @@ levelbar block.empty {
 }
 
 /* Combo boxes and spin buttons */
+combobox {
+    min-width: 0;
+}
+
 combobox button,
 combobox entry,
 spinbutton {
     min-height: 32px;
+    min-width: 0;
+    border-radius: 6px;
+}
+
+.suffix-button {
+    min-height: 32px;
+    min-width: 36px;
+    padding: 0 8px;
     border-radius: 6px;
 }
 
@@ -709,17 +807,36 @@ spinbutton {
     background-color: transparent;
 }
 
-/* Model info card */
+/* Model status: caption under the engine group, not a second card */
 .model-info-card {
-    background-color: alpha(@theme_base_color, 0.8);
-    border-radius: 8px;
-    padding: 12px 16px;
-    margin: 8px 0;
+    background-color: transparent;
+    border-radius: 0;
+    padding: 2px 16px 8px 16px;
+    margin: 0;
 }
 
 .model-info-title {
-    font-weight: bold;
-    font-size: 1.0em;
+    font-weight: 500;
+    font-size: 0.95em;
+}
+
+.family-tile {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: transparent;
+}
+
+.family-tile:hover {
+    background-color: alpha(@theme_selected_bg_color, 0.1);
+}
+
+.family-tile-title {
+    font-weight: 500;
+}
+
+.family-tile-subtitle {
+    font-size: 0.85em;
+    color: @theme_unfocused_fg_color;
 }
 
 /* Unused downloads: one collapsed row until expanded */
@@ -1209,6 +1326,7 @@ class PreferenceRow(Gtk.ListBoxRow):
         widget: Gtk.Widget = None,
         activatable: bool = False,
         keywords=(),
+        leading: Optional[Gtk.Widget] = None,
     ):
         super().__init__()
         self.set_activatable(activatable)
@@ -1223,13 +1341,17 @@ class PreferenceRow(Gtk.ListBoxRow):
         hbox.set_margin_start(16)
         hbox.set_margin_end(16)
 
+        if leading is not None:
+            leading.set_valign(Gtk.Align.CENTER)
+            hbox.pack_start(leading, False, False, 0)
+
         # Text container (title + subtitle)
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         text_box.set_valign(Gtk.Align.CENTER)
 
-        title_label = Gtk.Label(label=title, xalign=0)
-        title_label.get_style_context().add_class("preference-row-title")
-        text_box.pack_start(title_label, False, False, 0)
+        self.title_label = Gtk.Label(label=title, xalign=0)
+        self.title_label.get_style_context().add_class("preference-row-title")
+        text_box.pack_start(self.title_label, False, False, 0)
 
         # Store subtitle label reference for later updates
         self.subtitle_label = None
@@ -1249,6 +1371,11 @@ class PreferenceRow(Gtk.ListBoxRow):
             hbox.pack_end(widget, False, False, 0)
 
         self.add(hbox)
+
+    def set_title(self, title: str):
+        """Update the title text."""
+        self.title = title
+        self.title_label.set_text(title)
 
     def set_subtitle(self, subtitle: str):
         """Update the subtitle text."""
@@ -1855,25 +1982,22 @@ class SettingsDialog(Gtk.Dialog):
         group = PreferencesGroup(title="Audio Input")
 
         # Device selection row
-        device_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.audio_device_combo = Gtk.ComboBoxText()
         self.audio_device_combo.set_tooltip_text(
             "Select the microphone to use for voice recognition"
         )
-        self.audio_device_combo.set_size_request(_CONTROL_WIDTH, -1)
         _prevent_scroll_on_hover(self.audio_device_combo)
-        device_box.pack_start(self.audio_device_combo, True, True, 0)
 
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
         refresh_btn.set_tooltip_text("Refresh device list")
-        refresh_btn.get_style_context().add_class("flat-button")
+        refresh_btn.get_style_context().add_class("suffix-button")
+        refresh_btn.set_size_request(_ICON_BUTTON_WIDTH, -1)
         refresh_btn.connect("clicked", self._on_refresh_audio_devices)
-        device_box.pack_start(refresh_btn, False, False, 0)
 
         device_row = PreferenceRow(
             title="Input Device",
-            subtitle="Select the microphone for voice recognition",
-            widget=device_box,
+            subtitle="Microphone used for voice recognition",
+            widget=_combo_with_suffix(self.audio_device_combo, refresh_btn),
             keywords=("microphone", "mic", "input"),
         )
         group.add_row(device_row)
@@ -1881,6 +2005,7 @@ class SettingsDialog(Gtk.Dialog):
         # Microphone test row; the live level shows in the status strip below.
         self.test_audio_btn = Gtk.Button(label="Test")
         self.test_audio_btn.set_tooltip_text("Record 2 seconds and check the level")
+        _style_action_button(self.test_audio_btn)
         self.test_audio_btn.connect("clicked", self._on_test_audio_clicked)
 
         level_row = PreferenceRow(
@@ -1897,7 +2022,8 @@ class SettingsDialog(Gtk.Dialog):
         sound_group = PreferencesGroup(
             title="Sound Effects",
             description=(
-                "The switch mutes every cue, including errors. Off only skips start and stop."
+                "Cues play when recording starts, stops, or hits an error. "
+                "Turn the switch off to mute all of them."
             ),
         )
         self.sound_effects_switch = Gtk.Switch()
@@ -1913,28 +2039,29 @@ class SettingsDialog(Gtk.Dialog):
         sound_group.add_row(sound_row)
 
         self.sound_tone_combo = Gtk.ComboBoxText()
-        self.sound_tone_combo.set_size_request(_CONTROL_WIDTH, -1)
         self.sound_tone_combo.set_tooltip_text("Start and stop sound used while dictating")
         _prevent_scroll_on_hover(self.sound_tone_combo)
         for tone_id, label in SOUND_EFFECT_TONES:
             self.sound_tone_combo.append(tone_id, label)
-        tone_row = PreferenceRow(
+
+        self._tone_preview_kind = "start"
+        self.preview_tone_btn = Gtk.Button(label="Start")
+        self.preview_tone_btn.get_style_context().add_class("suffix-button")
+        self.preview_tone_btn.set_size_request(_ICON_BUTTON_WIDTH + 28, -1)
+        self.preview_tone_btn.set_tooltip_text("Play the start cue. Click again for the stop cue.")
+        _set_accessible_name(self.preview_tone_btn, "Play start cue")
+
+        self.tone_row = PreferenceRow(
             title="Dictation Tone",
             subtitle="Start and stop cues. Off is silent for those two.",
-            widget=self.sound_tone_combo,
+            widget=_combo_with_suffix(
+                self.sound_tone_combo,
+                self.preview_tone_btn,
+                combo_width=_CONTROL_WIDTH - 72,
+            ),
             keywords=("tone", "chime", "voca", "lift", "preview"),
         )
-        sound_group.add_row(tone_row)
-
-        self.preview_tone_btn = Gtk.Button(label="Preview")
-        self.preview_tone_btn.set_tooltip_text("Play the start cue, then the stop cue")
-        self.preview_tone_row = PreferenceRow(
-            title="Preview Tone",
-            subtitle="Play the start cue, then the stop cue",
-            widget=self.preview_tone_btn,
-            keywords=("tone", "preview", "listen"),
-        )
-        sound_group.add_row(self.preview_tone_row)
+        sound_group.add_row(self.tone_row)
 
         self.audio_tab.pack_start(sound_group, False, False, 0)
         self.sound_effects_switch.connect("state-set", self._on_sound_effects_toggled)
@@ -1987,9 +2114,8 @@ class SettingsDialog(Gtk.Dialog):
         group = PreferencesGroup(
             title="Auto-Pause for Games & Apps",
             description=(
-                "While any app in the list is running, Vocalinux pauses dictation and "
-                "unloads the speech model to free CPU, GPU, and memory. Everything "
-                "resumes automatically when the app closes."
+                "Pauses dictation and unloads the speech model while any listed app "
+                "is running. Dictation comes back when the app closes."
             ),
             keywords=("process", "program", "game"),
         )
@@ -1999,8 +2125,8 @@ class SettingsDialog(Gtk.Dialog):
             "Pause dictation and unload the speech model while any listed app is running"
         )
         enable_row = PreferenceRow(
-            title="Pause for Listed Apps",
-            subtitle="Free resources while any app below is running",
+            title="Pause for listed apps",
+            subtitle="Unload the model while these apps are open",
             widget=self.auto_pause_switch,
         )
         group.add_row(enable_row)
@@ -2251,10 +2377,9 @@ class SettingsDialog(Gtk.Dialog):
         group = PreferencesGroup(
             title="Unload When Idle",
             description=(
-                "After a period of inactivity, unload the speech model to save memory "
-                "and battery — on hybrid-GPU laptops (NVIDIA Optimus) this lets the "
-                "GPU sleep. The next dictation reloads the model automatically, which "
-                "may take a moment on larger models."
+                "Unload the speech model after you stop dictating. That frees RAM and "
+                "lets hybrid-GPU laptops sleep the GPU. The next dictation loads it "
+                "again, which can take a few seconds on larger models."
             ),
         )
 
@@ -2263,14 +2388,14 @@ class SettingsDialog(Gtk.Dialog):
             "Unload the speech model after the idle timeout to save memory and battery"
         )
         enable_row = PreferenceRow(
-            title="Unload Model When Idle",
-            subtitle="Free memory and GPU power after a period of inactivity",
+            title="Unload model when idle",
+            subtitle="Free RAM and GPU after this much inactivity",
             widget=self.model_keepalive_switch,
         )
         group.add_row(enable_row)
 
         self.model_keepalive_timeout_combo = Gtk.ComboBoxText()
-        self.model_keepalive_timeout_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.model_keepalive_timeout_combo)
         # id = seconds as string
         for seconds, label in (
             (60, "1 minute"),
@@ -2286,7 +2411,7 @@ class SettingsDialog(Gtk.Dialog):
         _prevent_scroll_on_hover(self.model_keepalive_timeout_combo)
         timeout_row = PreferenceRow(
             title="Idle Timeout",
-            subtitle="Unload the model after this much inactivity",
+            subtitle="How long to wait after the last dictation",
             widget=self.model_keepalive_timeout_combo,
         )
         group.add_row(timeout_row)
@@ -2424,17 +2549,35 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
         return False
 
-    def _update_tone_preview_subtitle(self, tone_id: str) -> None:
+    def _sync_tone_preview_button(self, tone_id: str) -> None:
+        """Update the two-stage preview button next to the tone combo."""
         if tone_id == "off":
-            self.preview_tone_row.set_subtitle("Off has no start or stop cue")
+            self._tone_preview_kind = "start"
+            self.preview_tone_btn.set_sensitive(False)
+            self.preview_tone_btn.set_label("Start")
             self.preview_tone_btn.set_tooltip_text("Off has no start or stop cue")
+            _set_accessible_name(self.preview_tone_btn, "Play start cue")
+            self.tone_row.set_subtitle("Off skips the start and stop cues")
+            return
+
+        self.preview_tone_btn.set_sensitive(True)
+        if self._tone_preview_kind == "stop":
+            self.preview_tone_btn.set_label("Stop")
+            self.preview_tone_btn.set_tooltip_text("Play the stop cue")
+            _set_accessible_name(self.preview_tone_btn, "Play stop cue")
+            self.tone_row.set_subtitle("Next click plays the stop cue")
         else:
-            self.preview_tone_row.set_subtitle("Play the start cue, then the stop cue")
-            self.preview_tone_btn.set_tooltip_text("Play the start cue, then the stop cue")
+            self.preview_tone_btn.set_label("Start")
+            self.preview_tone_btn.set_tooltip_text(
+                "Play the start cue. Click again for the stop cue."
+            )
+            _set_accessible_name(self.preview_tone_btn, "Play start cue")
+            self.tone_row.set_subtitle("Start and stop cues. Off is silent for those two.")
 
     def _on_sound_tone_changed(self, combo):
         tone_id = combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
-        self._update_tone_preview_subtitle(tone_id)
+        self._tone_preview_kind = "start"
+        self._sync_tone_preview_button(tone_id)
         if self._initializing or self._applying_settings:
             return
         logger.info("Dictation tone selected: %s", tone_id)
@@ -2442,11 +2585,13 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
 
     def _on_preview_tone_clicked(self, _widget):
-        from .audio_feedback import preview_tone
+        from .audio_feedback import preview_tone_cue
 
         tone_id = self.sound_tone_combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
-        self._update_tone_preview_subtitle(tone_id)
-        preview_tone(tone_id)
+        kind = self._tone_preview_kind
+        preview_tone_cue(tone_id, kind)
+        self._tone_preview_kind = "stop" if kind == "start" else "start"
+        self._sync_tone_preview_button(tone_id)
 
     def _build_engine_section(self):
         """Build the Speech Engine section."""
@@ -2454,7 +2599,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Engine selection
         self.engine_combo = Gtk.ComboBoxText()
-        self.engine_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.engine_combo)
         _prevent_scroll_on_hover(self.engine_combo)
         engine_row = PreferenceRow(
             title="Engine",
@@ -2465,7 +2610,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Model size selection
         self.model_combo = Gtk.ComboBoxText()
-        self.model_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.model_combo)
         self.model_combo.set_tooltip_text(MODEL_SIZE_TOOLTIP)
         _prevent_scroll_on_hover(self.model_combo)
         self.model_row = PreferenceRow(
@@ -2478,7 +2623,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # whisper.cpp specialization selection
         self.model_variant_combo = Gtk.ComboBoxText()
-        self.model_variant_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.model_variant_combo)
         self.model_variant_combo.set_tooltip_text(MODEL_SPECIALIZATION_TOOLTIP)
         _prevent_scroll_on_hover(self.model_variant_combo)
         self.model_variant_row = PreferenceRow(
@@ -2491,7 +2636,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Language selection (searchable: type to filter the 30+ language list)
         self.language_combo = Gtk.ComboBoxText.new_with_entry()
-        self.language_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.language_combo)
         self.language_combo.set_tooltip_text(LANGUAGE_TOOLTIP)
         _prevent_scroll_on_hover(self.language_combo)
         _attach_language_combo_search(self.language_combo)
@@ -2524,7 +2669,8 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
         self.model_recommendation = Gtk.Label(xalign=0, wrap=True)
-        self.model_recommendation.get_style_context().add_class("tip-label")
+        self.model_recommendation.get_style_context().add_class("model-info-subtitle")
+        self.model_recommendation.set_no_show_all(True)
         self.model_info_card.pack_start(self.model_recommendation, False, False, 0)
 
         # Language warning (e.g. auto-detect, English-only models) lives in
@@ -2533,14 +2679,6 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.get_style_context().add_class("status-warning")
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
-
-        # Symbol legend as a muted caption inside the card
-        legend = Gtk.Label(
-            label="✓ Downloaded    ↓ Will download    ★ Recommended",
-            xalign=0,
-        )
-        legend.get_style_context().add_class("tip-label")
-        self.model_info_card.pack_start(legend, False, False, 0)
 
         self.content_box.pack_start(self.model_info_card, False, False, 0)
 
@@ -2685,6 +2823,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # VAD Sensitivity
         self.vad_spin = Gtk.SpinButton.new_with_range(1, 5, 1)
+        _style_spin(self.vad_spin)
         self.vad_spin.set_tooltip_text("Higher = more sensitive to quiet speech")
         _prevent_scroll_on_hover(self.vad_spin)
         silero_active = is_silero_available()
@@ -2704,6 +2843,7 @@ class SettingsDialog(Gtk.Dialog):
         # Silence Timeout
         self.silence_spin = Gtk.SpinButton.new_with_range(0.5, 5.0, 0.1)
         self.silence_spin.set_digits(1)
+        _style_spin(self.silence_spin)
         self.silence_spin.set_tooltip_text("Wait time after silence before processing speech")
         _prevent_scroll_on_hover(self.silence_spin)
         silence_row = PreferenceRow(
@@ -2774,7 +2914,7 @@ class SettingsDialog(Gtk.Dialog):
         output_group.add_row(append_trailing_space_row)
 
         self.paste_shortcut_combo = Gtk.ComboBoxText()
-        self.paste_shortcut_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.paste_shortcut_combo)
         self.paste_shortcut_combo.set_tooltip_text(
             "Clipboard injection uses Ctrl+V in ordinary fields and Ctrl+Shift+V "
             "in terminal windows. Override this when a nested terminal panel "
@@ -2841,15 +2981,17 @@ class SettingsDialog(Gtk.Dialog):
 
         # Mode selection (Toggle vs Push-to-Talk)
         self.shortcut_mode_combo = Gtk.ComboBoxText()
-        self.shortcut_mode_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.shortcut_mode_combo)
         self.shortcut_mode_combo.set_tooltip_text(
             "Choose between toggle (double-tap) or push-to-talk mode"
         )
         _prevent_scroll_on_hover(self.shortcut_mode_combo)
 
         # Populate mode options
-        for mode_id, display_name in SHORTCUT_MODES.items():
-            self.shortcut_mode_combo.append(mode_id, display_name)
+        for mode_id in SHORTCUT_MODES:
+            self.shortcut_mode_combo.append(
+                mode_id, _SHORTCUT_MODE_COMBO_LABELS.get(mode_id, SHORTCUT_MODES[mode_id])
+            )
 
         # Load current mode from config
         current_mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
@@ -2865,7 +3007,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Shortcut selection combo
         self.shortcut_combo = Gtk.ComboBoxText()
-        self.shortcut_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.shortcut_combo)
         self.shortcut_combo.set_tooltip_text("Select the keyboard shortcut for voice typing")
         _prevent_scroll_on_hover(self.shortcut_combo)
 
@@ -3569,7 +3711,7 @@ class SettingsDialog(Gtk.Dialog):
     ) -> Gtk.Button:
         """Button that opens a trusted About URL.
 
-        Unique labels (Report a bug or idea, Discord, X, Email) are the
+        Unique labels (Website, Source code, Report a bug or idea) are the
         accessible name. Shared "Open" labels use the tooltip instead.
         """
         button = Gtk.Button(label=label)
@@ -3582,6 +3724,35 @@ class SettingsDialog(Gtk.Dialog):
             if image is not None:
                 button.set_image(image)
                 button.set_always_show_image(True)
+        button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
+        return button
+
+    def _family_tile(
+        self, url: str, title: str, subtitle: str, icon_name: str, tooltip: str
+    ) -> Gtk.Button:
+        """Compact icon + name tile that opens a family site."""
+        inner = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        icon = self._about_mark_image(icon_name)
+        if icon is not None:
+            icon.set_pixel_size(20)
+            inner.pack_start(icon, False, False, 0)
+        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        name_label = Gtk.Label(label=title, xalign=0)
+        name_label.get_style_context().add_class("family-tile-title")
+        status_label = Gtk.Label(label=subtitle, xalign=0)
+        status_label.get_style_context().add_class("family-tile-subtitle")
+        status_label.set_line_wrap(True)
+        text.pack_start(name_label, False, False, 0)
+        text.pack_start(status_label, False, False, 0)
+        inner.pack_start(text, True, True, 0)
+
+        button = Gtk.Button()
+        button.add(inner)
+        button.get_style_context().add_class("family-tile")
+        button.set_tooltip_text(tooltip)
+        button.set_hexpand(True)
+        button.set_halign(Gtk.Align.FILL)
+        _set_accessible_name(button, tooltip)
         button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
         return button
 
@@ -3606,7 +3777,7 @@ class SettingsDialog(Gtk.Dialog):
             title="Vocalinux",
             description=(
                 "Available now on Linux (X11 and Wayland). After a model is downloaded, "
-                "speech is processed on this PC."
+                "speech is processed on this PC. Open source under GNU AGPL v3."
             ),
             keywords=("about", "version", "app"),
             header_icon=about_icon,
@@ -3623,29 +3794,36 @@ class SettingsDialog(Gtk.Dialog):
         )
         app_group.add_row(version_row)
 
-        website_btn = self._about_open_button(
-            VOCALINUX_SITE_URL,
-            "Open vocalinux.com website",
+        link_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        link_box.pack_start(
+            self._about_open_button(
+                VOCALINUX_SITE_URL,
+                "Open vocalinux.com website",
+                label="Website",
+                width=110,
+            ),
+            False,
+            False,
+            0,
         )
-        website_row = PreferenceRow(
-            title="Website",
-            subtitle="Product site at vocalinux.com",
-            widget=website_btn,
-            keywords=("website", "vocalinux.com"),
+        link_box.pack_start(
+            self._about_open_button(
+                GITHUB_REPO_URL,
+                "Open the Vocalinux GitHub repository",
+                label="Source code",
+                width=120,
+            ),
+            False,
+            False,
+            0,
         )
-        app_group.add_row(website_row)
-
-        source_btn = self._about_open_button(
-            GITHUB_REPO_URL,
-            "Open the Vocalinux GitHub repository",
+        links_row = PreferenceRow(
+            title="Open source",
+            subtitle="GNU AGPL v3. Product site at vocalinux.com, source on GitHub.",
+            widget=link_box,
+            keywords=("website", "vocalinux.com", "github", "source", "repo", "code"),
         )
-        source_row = PreferenceRow(
-            title="Source code",
-            subtitle=GITHUB_REPO_URL,
-            widget=source_btn,
-            keywords=("github", "source", "repo", "code"),
-        )
-        app_group.add_row(source_row)
+        app_group.add_row(links_row)
 
         license_row = PreferenceRow(
             title="License",
@@ -3654,105 +3832,6 @@ class SettingsDialog(Gtk.Dialog):
         )
         app_group.add_row(license_row)
         self.about_tab.pack_start(app_group, False, False, 0)
-
-        updates_group = PreferencesGroup(
-            title="Updates",
-            description="Choose a release channel, then check GitHub for a newer build.",
-            keywords=("update", "version", "release", "upgrade", "appimage", "nightly", "channel"),
-        )
-
-        self.update_channel_combo = Gtk.ComboBoxText()
-        self.update_channel_combo.set_size_request(_CONTROL_WIDTH, -1)
-        self.update_channel_combo.append("stable", "Stable")
-        self.update_channel_combo.append("nightly", "Nightly")
-        self.update_channel_combo.set_tooltip_text(
-            "Stable uses the latest numbered release. Nightly uses the newest nightly-YYYY-MM-DD build."
-        )
-        _prevent_scroll_on_hover(self.update_channel_combo)
-        saved_channel = normalize_channel(
-            self.config_manager.get_str("updates", "channel", DEFAULT_UPDATE_CHANNEL)
-        )
-        self.update_channel_combo.set_active_id(saved_channel)
-        channel_row = PreferenceRow(
-            title="Channel",
-            subtitle="Stable for releases, Nightly for dated development builds",
-            widget=self.update_channel_combo,
-            keywords=("channel", "stable", "nightly", "beta"),
-        )
-        updates_group.add_row(channel_row)
-
-        self.check_updates_btn = Gtk.Button(label="Check")
-        self.check_updates_btn.set_size_request(100, -1)
-        self.check_updates_btn.set_tooltip_text(
-            "Look up the latest release for this channel on GitHub"
-        )
-        self.check_updates_btn.connect("clicked", self._on_check_updates_clicked)
-        self.update_status_row = PreferenceRow(
-            title="Status",
-            subtitle="Not checked yet",
-            widget=self.check_updates_btn,
-            keywords=("status", "check"),
-        )
-        updates_group.add_row(self.update_status_row)
-
-        self.open_release_btn = Gtk.Button(label="Open")
-        self.open_release_btn.set_size_request(100, -1)
-        self.open_release_btn.set_sensitive(False)
-        self.open_release_btn.set_tooltip_text(
-            "Open the release page in your browser for download links and install steps"
-        )
-        _set_accessible_name(
-            self.open_release_btn,
-            "Open the latest release page",
-        )
-        self.open_release_btn.connect("clicked", self._on_open_release_clicked)
-        self.latest_release_row = PreferenceRow(
-            title="Latest Release",
-            subtitle="-",
-            widget=self.open_release_btn,
-            keywords=("latest", "download", "changelog"),
-        )
-        updates_group.add_row(self.latest_release_row)
-        self.about_tab.pack_start(updates_group, False, False, 0)
-
-        self.update_channel_combo.connect("changed", self._on_update_channel_changed)
-
-        self.release_notes_group = PreferencesGroup(
-            title="What's New",
-            keywords=("changelog", "what's new", "release notes"),
-        )
-        self.release_notes_row = PreferenceRow(
-            title="Release notes",
-            subtitle="Notes appear here after a successful update check.",
-            keywords=("notes", "changelog"),
-        )
-        # Allow a longer wrap than typical preference subtitles.
-        if self.release_notes_row.subtitle_label is not None:
-            self.release_notes_row.subtitle_label.set_max_width_chars(72)
-        self.release_notes_group.add_row(self.release_notes_row)
-        self.about_tab.pack_start(self.release_notes_group, False, False, 0)
-        self.release_notes_group.hide()
-
-        family_group = PreferencesGroup(
-            title="Part of VocaHQ",
-            description=(
-                "Vocalinux is part of VocaHQ. The same private dictation idea also ships "
-                "as VocaMac (macOS, beta), VocaWin (Windows, unsigned beta, v0.1.0-beta.1), "
-                "and VocaPhone (Android beta / iOS source build). VocaGateway is optional "
-                "self-hosted compute. It is not on-device."
-            ),
-            keywords=("vocahq", "vocamac", "vocawin", "vocaphone", "vocagateway", "family"),
-        )
-        for url, title, subtitle, open_name in _VOCAHQ_FAMILY_LINKS:
-            family_group.add_row(
-                PreferenceRow(
-                    title=title,
-                    subtitle=subtitle,
-                    widget=self._about_open_button(url, open_name),
-                    keywords=(title, subtitle.lower()),
-                )
-            )
-        self.about_tab.pack_start(family_group, False, False, 0)
 
         talk_group = PreferencesGroup(
             title="Talk to us",
@@ -3778,10 +3857,10 @@ class SettingsDialog(Gtk.Dialog):
             )
         )
         contact_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        for url, label, tooltip, icon_name in (
-            (VOCAHQ_DISCORD_URL, "Discord", "Open the VocaHQ Discord", "discord"),
-            (VOCAHQ_X_URL, "X", "Open X @vocahq", "x"),
-            (VOCAHQ_MAILTO_URL, "Email", "Email hello@vocahq.com", "mail"),
+        for url, label, tooltip, icon_name, width in (
+            (VOCAHQ_DISCORD_URL, "Join Discord", "Open the VocaHQ Discord", "discord", 140),
+            (VOCAHQ_X_URL, "Follow on X", "Open X @vocahq", "x", 130),
+            (VOCAHQ_MAILTO_URL, "Email us", "Email hello@vocahq.com", "mail", 120),
         ):
             contact_box.pack_start(
                 self._about_open_button(
@@ -3789,7 +3868,7 @@ class SettingsDialog(Gtk.Dialog):
                     tooltip,
                     label=label,
                     icon_name=icon_name,
-                    width=110,
+                    width=width,
                 ),
                 False,
                 False,
@@ -3804,6 +3883,101 @@ class SettingsDialog(Gtk.Dialog):
             )
         )
         self.about_tab.pack_start(talk_group, False, False, 0)
+
+        updates_group = PreferencesGroup(
+            title="Updates",
+            description="Stable for numbered releases. Nightly for dated development builds.",
+            keywords=("update", "version", "release", "upgrade", "appimage", "nightly", "channel"),
+        )
+
+        self.update_channel_combo = Gtk.ComboBoxText()
+        self.update_channel_combo.append("stable", "Stable")
+        self.update_channel_combo.append("nightly", "Nightly")
+        self.update_channel_combo.set_tooltip_text(
+            "Stable uses the latest numbered release. Nightly uses the newest nightly-YYYY-MM-DD build."
+        )
+        _prevent_scroll_on_hover(self.update_channel_combo)
+        saved_channel = normalize_channel(
+            self.config_manager.get_str("updates", "channel", DEFAULT_UPDATE_CHANNEL)
+        )
+        self.update_channel_combo.set_active_id(saved_channel)
+
+        self.check_updates_btn = Gtk.Button(label="Check")
+        self.check_updates_btn.get_style_context().add_class("suffix-button")
+        _style_action_button(self.check_updates_btn, width=80)
+        self.check_updates_btn.set_tooltip_text(
+            "Look up the latest release for this channel on GitHub"
+        )
+        self.check_updates_btn.connect("clicked", self._on_check_updates_clicked)
+
+        self.update_status_row = PreferenceRow(
+            title="Channel",
+            subtitle="Not checked yet",
+            widget=_combo_with_suffix(
+                self.update_channel_combo,
+                self.check_updates_btn,
+                combo_width=_CONTROL_WIDTH - 88,
+            ),
+            keywords=("channel", "stable", "nightly", "beta", "status", "check"),
+        )
+        updates_group.add_row(self.update_status_row)
+        self.about_tab.pack_start(updates_group, False, False, 0)
+
+        self.update_channel_combo.connect("changed", self._on_update_channel_changed)
+
+        self.release_notes_group = PreferencesGroup(
+            title="What's New",
+            keywords=("changelog", "what's new", "release notes", "latest", "download"),
+        )
+        self.open_release_btn = Gtk.Button(label="Open")
+        _style_action_button(self.open_release_btn)
+        self.open_release_btn.set_sensitive(False)
+        self.open_release_btn.set_tooltip_text(
+            "Open the release page in your browser for download links and install steps"
+        )
+        _set_accessible_name(
+            self.open_release_btn,
+            "Open the latest release page",
+        )
+        self.open_release_btn.connect("clicked", self._on_open_release_clicked)
+        self.release_notes_row = PreferenceRow(
+            title="Release notes",
+            subtitle="Notes appear here after a successful update check.",
+            widget=self.open_release_btn,
+            keywords=("notes", "changelog", "latest"),
+        )
+        self.latest_release_row = self.release_notes_row
+        if self.release_notes_row.subtitle_label is not None:
+            self.release_notes_row.subtitle_label.set_max_width_chars(72)
+        self.release_notes_group.add_row(self.release_notes_row)
+        self.about_tab.pack_start(self.release_notes_group, False, False, 0)
+        self.release_notes_group.hide()
+
+        family_group = PreferencesGroup(
+            title="Part of VocaHQ",
+            description=(
+                "Private dictation for Linux, Mac, Windows, and phone. VocaWin is an "
+                "unsigned beta, v0.1.0-beta.1. VocaPhone is Android beta / iOS source build. "
+                "VocaGateway is optional self-hosted compute. It is not on-device."
+            ),
+            keywords=("vocahq", "vocamac", "vocawin", "vocaphone", "vocagateway", "family"),
+        )
+        family_grid = Gtk.Grid()
+        family_grid.set_column_spacing(8)
+        family_grid.set_row_spacing(4)
+        family_grid.set_column_homogeneous(True)
+        family_grid.set_margin_start(8)
+        family_grid.set_margin_end(8)
+        family_grid.set_margin_top(4)
+        family_grid.set_margin_bottom(8)
+        for index, (url, title, subtitle, icon_name, open_name) in enumerate(_VOCAHQ_FAMILY_LINKS):
+            tile = self._family_tile(url, title, subtitle, icon_name, open_name)
+            family_grid.attach(tile, index % 2, index // 2, 1, 1)
+        family_row = Gtk.ListBoxRow()
+        family_row.set_activatable(False)
+        family_row.add(family_grid)
+        family_group.add_row(family_row)
+        self.about_tab.pack_start(family_group, False, False, 0)
 
     def _set_about_update_badge(self, visible: bool) -> None:
         """Show or hide the green New badge on the About sidebar row."""
@@ -3918,6 +4092,7 @@ class SettingsDialog(Gtk.Dialog):
             self.update_status_row.set_subtitle(
                 f"Could not find a {missing}. Check your connection, or try again later."
             )
+            self.latest_release_row.set_title("Release notes")
             self.latest_release_row.set_subtitle("Unavailable")
             self.open_release_btn.set_sensitive(True)
             self.open_release_btn.set_tooltip_text("Open the Vocalinux project page")
@@ -3961,7 +4136,6 @@ class SettingsDialog(Gtk.Dialog):
             except Exception:
                 logger.error("Update status callback failed", exc_info=True)
 
-        self.latest_release_row.set_subtitle(release_label)
         self.open_release_btn.set_sensitive(True)
         self.open_release_btn.set_tooltip_text(
             "Open the release page in your browser for download links and install steps"
@@ -3971,6 +4145,7 @@ class SettingsDialog(Gtk.Dialog):
         # Keep the card readable; full notes remain on the release page.
         if len(notes) > 900:
             notes = notes[:900].rstrip() + "…"
+        self.latest_release_row.set_title(release_label)
         self.release_notes_row.set_subtitle(notes)
         self.release_notes_group.show()
         return False
@@ -3982,12 +4157,12 @@ class SettingsDialog(Gtk.Dialog):
 
             bundled = detect_pywhispercpp_gpu_backend()
         except (ImportError, OSError, AttributeError):
-            return "Device used by the whisper.cpp engine"
+            return "GPU used by whisper.cpp"
         if bundled == "cpu":
-            return "This install has no GPU libraries; whisper.cpp will run on the CPU"
+            return "This install has no GPU libraries, so whisper.cpp runs on the CPU"
         if bundled == "cuda":
-            return "CUDA build uses NVIDIA device 0; this picker applies to Vulkan builds"
-        return "Device used by the whisper.cpp Vulkan engine"
+            return "CUDA uses NVIDIA device 0. This picker is for Vulkan builds."
+        return "GPU used by the whisper.cpp Vulkan engine"
 
     def _build_gpu_section(self):
         """Build the GPU device group on the Performance page.
@@ -3997,7 +4172,7 @@ class SettingsDialog(Gtk.Dialog):
         """
         gpu_group = PreferencesGroup(title="Hardware Acceleration")
         self.gpu_device_combo = Gtk.ComboBoxText()
-        self.gpu_device_combo.set_size_request(_CONTROL_WIDTH, -1)
+        _style_combo(self.gpu_device_combo)
         self.gpu_device_combo.set_tooltip_text(
             "Select which GPU to use for whisper.cpp Vulkan acceleration. "
             "Has no effect when pywhispercpp was built without GPU libraries."
@@ -4032,7 +4207,7 @@ class SettingsDialog(Gtk.Dialog):
             "URL of the remote speech recognition server\n"
             "Supports OpenAI compatible API and whisper.cpp server"
         )
-        self.remote_api_url_entry.set_size_request(280, -1)
+        self.remote_api_url_entry.set_size_request(_CONTROL_WIDTH, -1)
         remote_url_row = PreferenceRow(
             title="Server URL",
             subtitle="Remote speech recognition server address",
@@ -4045,7 +4220,7 @@ class SettingsDialog(Gtk.Dialog):
         self.remote_api_key_entry.set_placeholder_text("(optional)")
         self.remote_api_key_entry.set_visibility(False)
         self.remote_api_key_entry.set_tooltip_text("API Key for authentication (optional)")
-        self.remote_api_key_entry.set_size_request(280, -1)
+        self.remote_api_key_entry.set_size_request(_CONTROL_WIDTH, -1)
         remote_key_row = PreferenceRow(
             title="API Key",
             subtitle="Authentication key (optional)",
@@ -4055,7 +4230,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # API Endpoint
         self.remote_api_endpoint_combo = Gtk.ComboBoxText()
-        self.remote_api_endpoint_combo.set_size_request(280, -1)
+        _style_combo(self.remote_api_endpoint_combo)
         self.remote_api_endpoint_combo.set_tooltip_text(
             "Select the API format of the remote server (API Endpoint Format)"
         )
@@ -4077,7 +4252,7 @@ class SettingsDialog(Gtk.Dialog):
         self.remote_api_model_entry.set_tooltip_text(
             "Model identifier sent to OpenAI-compatible and FunASR servers"
         )
-        self.remote_api_model_entry.set_size_request(280, -1)
+        self.remote_api_model_entry.set_size_request(_CONTROL_WIDTH, -1)
         remote_model_row = PreferenceRow(
             title="Model",
             subtitle="Remote model name, for example whisper-1 or sensevoice",
@@ -4248,7 +4423,8 @@ class SettingsDialog(Gtk.Dialog):
         tone_id = self.config_manager.get_sound_effects_tone()
         if not self.sound_tone_combo.set_active_id(tone_id):
             self.sound_tone_combo.set_active_id(DEFAULT_SOUND_EFFECT_TONE)
-        self._update_tone_preview_subtitle(self.sound_tone_combo.get_active_id() or tone_id)
+        self._tone_preview_kind = "start"
+        self._sync_tone_preview_button(self.sound_tone_combo.get_active_id() or tone_id)
 
         auto_pause_settings = self.config_manager.get_settings().get("auto_pause", {})
         auto_pause_enabled = bool(auto_pause_settings.get("enabled", False))
@@ -5117,28 +5293,26 @@ class SettingsDialog(Gtk.Dialog):
         model_display_name = _model_display_name(model_name)
         recommended_display_name = _model_display_name(recommended)
 
-        # Update title
         self.model_info_title.set_markup(f"<b>{model_display_name}</b>: {info['desc']}")
 
-        # Update subtitle with status
         if is_downloaded:
-            status = "<span foreground='#26a269'>✓ Downloaded and ready</span>"
+            status = "<span foreground='#26a269'>Downloaded</span>"
         else:
-            status = f"<span foreground='#e5a50a'>↓ Will download ~{_format_size(info['size_mb'])}</span>"
-        self.model_info_subtitle.set_markup(f"{extra_info} • {status}")
+            status = f"<span foreground='#e5a50a'>Download ~{_format_size(info['size_mb'])}</span>"
+        self.model_info_subtitle.set_markup(f"{extra_info} · {status}")
 
-        # Update recommendation
         if model_name == recommended:
-            self.model_recommendation.set_markup(
-                f"<span foreground='#26a269'>★ Recommended for your system ({reason})</span>"
-            )
+            self.model_recommendation.hide()
         else:
-            self.model_recommendation.set_markup(
-                f"Tip: <b>{recommended_display_name}</b> is recommended for your system ({reason})"
+            self.model_recommendation.set_text(
+                f"Recommended: {recommended_display_name} ({reason})"
             )
+            self.model_recommendation.show()
 
         self._update_model_picker_tooltips()
-        self.model_info_card.show_all()
+        self.model_info_card.show()
+        self.model_info_title.show()
+        self.model_info_subtitle.show()
 
     def _auto_apply_settings(self):
         """Automatically apply settings when changed."""
@@ -5695,7 +5869,7 @@ For now, the engine has been reverted to VOSK."""
     def _populate_gpu_devices(self):
         """Populate the GPU device dropdown with available Vulkan devices."""
         self.gpu_device_combo.remove_all()
-        self.gpu_device_combo.append("-1", "Auto (prefer discrete GPU)")
+        self.gpu_device_combo.append("-1", "Auto (discrete GPU)")
 
         devices = detect_vulkan_devices()
         for device in devices:
