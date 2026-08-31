@@ -169,6 +169,12 @@ class TestCrossDistroCompatibility:
             "Arch: sudo pacman -S vulkan-headers vulkan-tools shaderc patchelf"
             in install_sh_content
         )
+        emerge_line = next(
+            line for line in install_sh_content.splitlines() if "local EMERGE_PACKAGES=" in line
+        )
+        assert "media-libs/shaderc" in emerge_line
+        assert "dev-util/patchelf" in emerge_line
+        assert "sys-devel/patchelf" not in emerge_line
 
     def test_skip_system_deps_option_is_implemented(self, install_sh_content):
         """Test that the documented --skip-system-deps option is parsed and honored."""

@@ -1752,7 +1752,7 @@ install_system_dependencies() {
     local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers shaderc patchelf xclip xsel wl-clipboard"
     local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4 patchelf"
     # Gentoo uses Portage and different package naming convention
-    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake media-libs/shaderc sys-devel/patchelf x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
+    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake media-libs/shaderc dev-util/patchelf x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
     # Alpine Linux uses apk and has musl libc
     local APK_PACKAGES="py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf cmake wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard"
     # Void Linux uses xbps
@@ -3052,7 +3052,7 @@ install_whispercpp_with_gpu_support() {
                 print_info "    Ubuntu/Debian: sudo apt install libvulkan-dev vulkan-tools glslc || glslang-tools"
                 print_info "    Fedora: sudo dnf install vulkan-loader-devel vulkan-tools glslc patchelf"
                 print_info "    Arch: sudo pacman -S vulkan-headers vulkan-tools shaderc patchelf"
-                print_info "    openSUSE: sudo zypper install vulkan-devel vulkan-tools shaderc"
+                print_info "    openSUSE: sudo zypper install vulkan-devel vulkan-tools shaderc patchelf"
             elif [[ "$GPU_BACKEND" == "CUDA" ]]; then
                 print_info "  To use CUDA GPU acceleration, please install CUDA toolkit:"
                 print_info "    Visit: https://developer.nvidia.com/cuda-downloads"
