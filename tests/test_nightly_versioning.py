@@ -26,6 +26,9 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 
 STAMP = '__version__ = \\"${'
 
+#: The jobs that build a distribution, and so must stamp before they do.
+BUILDING_JOBS = {"nightly", "nightly-appimage-arm64"}
+
 
 def _text() -> str:
     return NIGHTLY.read_text(encoding="utf-8")
@@ -71,7 +74,11 @@ def test_nightly_never_renames_a_built_artifact():
 
 def test_every_job_that_builds_stamps_the_version_first():
     jobs = _building_jobs()
-    assert len(jobs) == 2, f"expected both nightly jobs to build, found {sorted(jobs)}"
+    # A floor, not a fixed count. The guard is worthless if the parser quietly
+    # stops finding a job, but a third build job should not fail CI merely for
+    # existing: the loop below covers whatever is actually there.
+    missing = BUILDING_JOBS - set(jobs)
+    assert not missing, f"{sorted(missing)} no longer builds, or the parser stopped seeing it"
     for name, block in jobs.items():
         assert STAMP in block, f"{name} builds without stamping the version"
         assert block.index(STAMP) < block.index(
