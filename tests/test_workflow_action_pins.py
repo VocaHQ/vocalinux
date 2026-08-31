@@ -76,4 +76,9 @@ def test_something_moves_the_pins():
     fixes, with the pin hiding that it has gone stale."""
     assert DEPENDABOT.exists(), "actions are pinned but nothing updates them"
     config = DEPENDABOT.read_text(encoding="utf-8")
-    assert "github-actions" in config, "dependabot.yml does not cover the action pins"
+    # Anchored on the ecosystem declaration, not the bare word: "github-actions"
+    # is also the group name and appears in the comment, so a looser check passed
+    # while the ecosystem had been switched to pip.
+    assert re.search(
+        r"^\s*-\s*package-ecosystem:\s*[\"']?github-actions[\"']?\s*$", config, re.M
+    ), "dependabot.yml does not update the action pins"
