@@ -1003,7 +1003,7 @@ export default function HomePage() {
                   />
                   Infrastructure
                 </span>
-                <span className="chip">Early</span>
+                <span className="chip">Beta</span>
               </div>
               <h3>VocaGateway</h3>
               <p>

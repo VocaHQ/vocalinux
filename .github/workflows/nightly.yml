@@ -33,45 +33,35 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel build twine
 
-      - name: Build package
-        run: |
-          python -m build
-          ls -la dist/
-
-      - name: Generate nightly version
+      # Stamped before the build, not patched into the filename after it.
+      # pyproject.toml takes the version from `vocalinux.version.__version__`
+      # (tool.setuptools.dynamic), so renaming the wheel left its own metadata
+      # saying 0.16.1 while the filename claimed 0.16.1.dev<date>+<sha>. pip
+      # tolerated that; uv rejects it as a malformed wheel, and the AppImage
+      # build has installed with uv since #743 — which is what broke nightly.
+      # __version_info__ is deliberately left alone: a dev/local suffix has no
+      # meaningful place in a numeric tuple, and nothing builds from it.
+      - name: Stamp the nightly version
         id: version
         run: |
+          set -euo pipefail
           BASE_VERSION=$(grep -oP '__version__\s*=\s*"\K[^"]+' src/vocalinux/version.py)
           DATE=$(date +%Y%m%d)
           SHORT_SHA=$(git rev-parse --short HEAD)
           NIGHTLY_VERSION="${BASE_VERSION}.dev${DATE}+${SHORT_SHA}"
+
+          sed -i "s/^__version__ = \".*\"$/__version__ = \"${NIGHTLY_VERSION}\"/" src/vocalinux/version.py
+          grep -q "^__version__ = \"${NIGHTLY_VERSION}\"$" src/vocalinux/version.py
+
           echo "version=${NIGHTLY_VERSION}" >> $GITHUB_OUTPUT
           echo "base_version=${BASE_VERSION}" >> $GITHUB_OUTPUT
           echo "date=${DATE}" >> $GITHUB_OUTPUT
           echo "sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
-          echo "Built version: ${NIGHTLY_VERSION}"
+          echo "Building version: ${NIGHTLY_VERSION}"
 
-      - name: Rename artifacts for nightly
+      - name: Build package
         run: |
-          for file in dist/*; do
-            base=$(basename "$file")
-            if [[ "$base" == vocalinux-* ]]; then
-              # Extract the file extension
-              if [[ "$base" == *.whl ]]; then
-                # vocalinux-0.5.0b0-py3-none-any.whl -> vocalinux-0.5.0b0.dev20250211+g1234567-py3-none-any.whl
-                newname="vocalinux-${{ steps.version.outputs.version }}-py3-none-any.whl"
-              elif [[ "$base" == *.tar.gz ]]; then
-                # vocalinux-0.5.0b0.tar.gz -> vocalinux-0.5.0b0.dev20250211+g1234567.tar.gz
-                newname="vocalinux-${{ steps.version.outputs.version }}.tar.gz"
-              else
-                # Fallback: replace version in filename
-                newname=$(echo "$base" | sed 's/vocalinux-[^[:space:]]*/vocalinux-${{ steps.version.outputs.version }}/')
-              fi
-              if [[ "$base" != "$newname" ]]; then
-                mv "$file" "dist/$newname"
-              fi
-            fi
-          done
+          python -m build
           ls -la dist/
 
       # glslc is built from the pinned shaderc commit inside the container -
@@ -269,6 +259,16 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel build
+
+      # This job builds its own wheel, so it needs the same stamp: without it
+      # the aarch64 AppImage bundles a wheel calling itself 0.16.1 while the
+      # release it is attached to is 0.16.1.dev<date>+<sha>.
+      - name: Stamp the nightly version
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.nightly.outputs.version }}"
+          sed -i "s/^__version__ = \".*\"$/__version__ = \"${VERSION}\"/" src/vocalinux/version.py
+          grep -q "^__version__ = \"${VERSION}\"$" src/vocalinux/version.py
 
       - name: Build package
         run: |
