@@ -1748,17 +1748,17 @@ install_system_dependencies() {
     local APT_PACKAGES_DEBIAN_BASE="python3-pip python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-ibus-1.0 libcairo2-dev cmake python3-dev build-essential portaudio19-dev python3-venv pkg-config wget curl unzip vulkan-tools libvulkan-dev $VULKAN_SHADER_PKG xclip xsel wl-clipboard $PYWHISPERCPP_BUILD_DEPS"
     local APT_PACKAGES_DEBIAN_11_12="$APT_PACKAGES_DEBIAN_BASE libgirepository1.0-dev gir1.2-ayatanaappindicator3-0.1"
     local APT_PACKAGES_DEBIAN_13_PLUS="$APT_PACKAGES_DEBIAN_BASE libgirepository-2.0-dev gir1.2-ayatanaappindicator3-0.1"
-    local DNF_PACKAGES="python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslang xclip xsel wl-clipboard"
-    local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers glslang xclip xsel wl-clipboard"
-    local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4"
+    local DNF_PACKAGES="python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard"
+    local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers shaderc patchelf xclip xsel wl-clipboard"
+    local ZYPPER_PACKAGES="gtk3 ibus-devel gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4 patchelf"
     # Gentoo uses Portage and different package naming convention
-    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake dev-util/glslang x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
+    local EMERGE_PACKAGES="dev-python/pygobject:3 x11-libs/gtk+:3 dev-libs/libayatana-appindicator media-libs/portaudio dev-lang/python:3.11 pkgconf cmake media-libs/shaderc sys-devel/patchelf x11-misc/xclip x11-misc/xsel gui-apps/wl-clipboard"
     # Alpine Linux uses apk and has musl libc
-    local APK_PACKAGES="py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf cmake wget curl unzip glslang vulkan-tools xclip xsel wl-clipboard"
+    local APK_PACKAGES="py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev py3-virtualenv pkgconf cmake wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard"
     # Void Linux uses xbps
-    local XBPS_PACKAGES="python3-pip python3-gobject gtk+3 libappindicator-gtk3 gobject-introspection portaudio-devel python3-devel pkg-config cmake wget curl unzip glslang Vulkan-Tools xclip xsel wl-clipboard"
+    local XBPS_PACKAGES="python3-pip python3-gobject gtk+3 libappindicator-gtk3 gobject-introspection portaudio-devel python3-devel pkg-config cmake wget curl unzip shaderc patchelf Vulkan-Tools xclip xsel wl-clipboard"
     # Solus uses eopkg
-    local EOPKG_PACKAGES="python3-pip python3-gobject gtk3 libappindicator gobject-introspection-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip glslang vulkan-tools xclip xsel wl-clipboard"
+    local EOPKG_PACKAGES="python3-pip python3-gobject gtk3 libappindicator gobject-introspection-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard"
 
     local MISSING_PACKAGES=""
     local INSTALL_CMD=""
@@ -3050,8 +3050,8 @@ install_whispercpp_with_gpu_support() {
             if [[ "$GPU_BACKEND" == "Vulkan" ]]; then
                 print_info "  To use Vulkan GPU acceleration, please install Vulkan development libraries:"
                 print_info "    Ubuntu/Debian: sudo apt install libvulkan-dev vulkan-tools glslc || glslang-tools"
-                print_info "    Fedora: sudo dnf install vulkan-loader-devel vulkan-tools glslang"
-                print_info "    Arch: sudo pacman -S vulkan-headers vulkan-tools glslang"
+                print_info "    Fedora: sudo dnf install vulkan-loader-devel vulkan-tools glslc patchelf"
+                print_info "    Arch: sudo pacman -S vulkan-headers vulkan-tools shaderc patchelf"
                 print_info "    openSUSE: sudo zypper install vulkan-devel vulkan-tools shaderc"
             elif [[ "$GPU_BACKEND" == "CUDA" ]]; then
                 print_info "  To use CUDA GPU acceleration, please install CUDA toolkit:"

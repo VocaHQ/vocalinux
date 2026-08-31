@@ -147,6 +147,29 @@ class TestCrossDistroCompatibility:
         assert "libappindicator-gtk3" not in zypper_line
         assert "glslang" not in zypper_line
 
+    def test_rpm_arch_install_glslc_not_glslang(self, install_sh_content):
+        """ggml Vulkan needs glslc (shaderc). glslangValidator is not a substitute (#604)."""
+        dnf_line = next(
+            line for line in install_sh_content.splitlines() if "local DNF_PACKAGES=" in line
+        )
+        pacman_line = next(
+            line for line in install_sh_content.splitlines() if "local PACMAN_PACKAGES=" in line
+        )
+        assert "glslc" in dnf_line
+        assert "patchelf" in dnf_line
+        assert "glslang" not in dnf_line
+        assert "shaderc" in pacman_line
+        assert "patchelf" in pacman_line
+        assert "glslang" not in pacman_line
+        assert (
+            "Fedora: sudo dnf install vulkan-loader-devel vulkan-tools glslc patchelf"
+            in install_sh_content
+        )
+        assert (
+            "Arch: sudo pacman -S vulkan-headers vulkan-tools shaderc patchelf"
+            in install_sh_content
+        )
+
     def test_skip_system_deps_option_is_implemented(self, install_sh_content):
         """Test that the documented --skip-system-deps option is parsed and honored."""
         assert "SKIP_SYSTEM_DEPS" in install_sh_content
