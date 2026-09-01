@@ -1331,5 +1331,167 @@ class TestSettingsControlColumn(unittest.TestCase):
         self.assertNotIn("Tip: <b>", self.source)
 
 
+class _GtkShimMeta(type):
+    """Metaclass that fabricates any missing GTK symbol as a plain class.
+
+    With the usual MagicMock ``gi`` stub, ``class SettingsDialog(Gtk.Dialog)``
+    invokes the mock as a metaclass and the whole class silently becomes a
+    MagicMock — its methods cannot be called for real. A shim base class with
+    this metaclass keeps ``SettingsDialog`` a genuine class so its helper
+    methods can be exercised directly.
+    """
+
+    def __getattr__(cls, name):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        return type(name, (), {"__init__": lambda self, *a, **k: None})
+
+
+class TestCustomDictionaryUI(unittest.TestCase):
+    """Custom dictionary group lives on the dictation page and edits config."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.source = TestSettingsSearch._settings_source()
+
+        # Re-import settings_dialog with a Gtk shim so SettingsDialog is a
+        # real class whose helper methods we can call.
+        cls._saved_modules = {
+            name: sys.modules.get(name)
+            for name in ("gi.repository", "vocalinux.ui.settings_dialog")
+        }
+        shim_gtk = _GtkShimMeta("GtkShim", (), {})
+        repo_mock = MagicMock()
+        repo_mock.Gtk = shim_gtk
+        sys.modules["gi.repository"] = repo_mock
+        sys.modules.pop("vocalinux.ui.settings_dialog", None)
+        from vocalinux.ui.settings_dialog import SettingsDialog as _RealSettingsDialog
+
+        cls.SettingsDialog = _RealSettingsDialog
+
+    @classmethod
+    def tearDownClass(cls):
+        sys.modules.pop("vocalinux.ui.settings_dialog", None)
+        for name, module in cls._saved_modules.items():
+            if module is not None:
+                sys.modules[name] = module
+            else:
+                sys.modules.pop(name, None)
+
+    def test_dictionary_group_is_on_dictation_page(self):
+        """The group is built and packed into the recognition (dictation) tab."""
+        self.assertIn("def _build_custom_dictionary_group(", self.source)
+        self.assertIn("self.recognition_settings_tab.pack_start(dictionary_group", self.source)
+
+    def test_dictionary_group_has_add_fields_and_list(self):
+        """Two entry fields, an Add button, and a removal list exist."""
+        for snippet in (
+            "self.custom_dictionary_spoken_entry",
+            "self.custom_dictionary_replacement_entry",
+            "self.custom_dictionary_add_btn",
+            "self.custom_dictionary_listbox",
+            'set_placeholder_text("Heard as (e.g. super base)")',
+            "Remove",
+        ):
+            self.assertIn(snippet, self.source, snippet)
+
+    def test_dictionary_persists_to_text_injection_section(self):
+        """Entries are saved under text_injection.custom_dictionary."""
+        self.assertIn(
+            'self.config_manager.set("text_injection", "custom_dictionary", entries)',
+            self.source,
+        )
+
+    def test_dictionary_list_refreshed_on_load(self):
+        """The list is rebuilt from config when the dialog loads settings."""
+        self.assertIn("self._refresh_custom_dictionary_list()", self.source)
+
+    def _make_dialog_stub(self):
+        """Build a stub carrying the real dictionary helper methods."""
+        from types import SimpleNamespace
+
+        stub = SimpleNamespace(
+            config_manager=Mock(),
+            _initializing=False,
+            _applying_settings=False,
+            # The stub intentionally lacks custom_dictionary_listbox, which
+            # _refresh_custom_dictionary_list guards on, so refresh is a no-op
+            custom_dictionary_spoken_entry=Mock(),
+            custom_dictionary_replacement_entry=Mock(),
+        )
+        stub.custom_dictionary_spoken_entry.get_text = Mock(return_value="Super Base")
+        stub.custom_dictionary_replacement_entry.get_text = Mock(return_value="Supabase")
+        # Bind unbound methods so `self` is the stub
+        dialog_cls = self.SettingsDialog
+        stub._get_custom_dictionary = dialog_cls._get_custom_dictionary.__get__(stub)
+        stub._save_custom_dictionary = dialog_cls._save_custom_dictionary.__get__(stub)
+        stub._refresh_custom_dictionary_list = dialog_cls._refresh_custom_dictionary_list.__get__(
+            stub
+        )
+        return stub
+
+    def test_get_custom_dictionary_cleans_malformed_entries(self):
+        stub = self._make_dialog_stub()
+        stub.config_manager.get = Mock(
+            return_value=[
+                {"spoken": "super base", "replacement": "Supabase"},
+                {"spoken": ""},
+                {"replacement": "orphan"},
+                "garbage",
+                {"spoken": "  next door  ", "replacement": " Nextdoor "},
+            ]
+        )
+
+        cleaned = self.SettingsDialog._get_custom_dictionary(stub)
+        self.assertEqual(
+            cleaned,
+            [
+                {"spoken": "super base", "replacement": "Supabase"},
+                {"spoken": "next door", "replacement": "Nextdoor"},
+            ],
+        )
+
+    def test_add_correction_updates_existing_spoken_phrase(self):
+        """Re-adding the same spoken phrase replaces its replacement (last wins)."""
+        stub = self._make_dialog_stub()
+        stub.config_manager.get = Mock(
+            return_value=[{"spoken": "super base", "replacement": "Superb Ass"}]
+        )
+
+        self.SettingsDialog._on_custom_dictionary_add_clicked(stub, Mock())
+
+        stub.config_manager.set.assert_called_once_with(
+            "text_injection",
+            "custom_dictionary",
+            [{"spoken": "Super Base", "replacement": "Supabase"}],
+        )
+        stub.config_manager.save_config.assert_called_once()
+
+    def test_add_correction_ignores_empty_fields(self):
+        stub = self._make_dialog_stub()
+        stub.custom_dictionary_replacement_entry.get_text = Mock(return_value="")
+
+        self.SettingsDialog._on_custom_dictionary_add_clicked(stub, Mock())
+
+        stub.config_manager.set.assert_not_called()
+
+    def test_remove_correction_filters_case_insensitively(self):
+        stub = self._make_dialog_stub()
+        stub.config_manager.get = Mock(
+            return_value=[
+                {"spoken": "super base", "replacement": "Supabase"},
+                {"spoken": "next door", "replacement": "Nextdoor"},
+            ]
+        )
+
+        self.SettingsDialog._on_custom_dictionary_remove_clicked(stub, Mock(), "SUPER BASE")
+
+        stub.config_manager.set.assert_called_once_with(
+            "text_injection",
+            "custom_dictionary",
+            [{"spoken": "next door", "replacement": "Nextdoor"}],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
