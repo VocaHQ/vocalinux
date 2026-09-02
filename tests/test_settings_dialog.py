@@ -1395,6 +1395,15 @@ class TestCustomDictionaryUI(unittest.TestCase):
         ):
             self.assertIn(snippet, self.source, snippet)
 
+    def test_dictionary_list_has_no_inner_scrolled_window(self):
+        """The list grows freely: the dictation page already scrolls, so a
+        nested ScrolledWindow would hide entries behind its own scrollbar."""
+        start = self.source.index("def _build_custom_dictionary_group(")
+        end = self.source.index("def _get_custom_dictionary(")
+        group_source = self.source[start:end]
+        self.assertNotIn("Gtk.ScrolledWindow()", group_source)
+        self.assertIn("list_row.add(self.custom_dictionary_listbox)", group_source)
+
     def test_dictionary_persists_to_text_injection_section(self):
         """Entries are saved under text_injection.custom_dictionary."""
         self.assertIn(

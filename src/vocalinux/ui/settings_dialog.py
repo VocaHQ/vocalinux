@@ -2258,18 +2258,11 @@ class SettingsDialog(Gtk.Dialog):
         self.custom_dictionary_empty_label.show()
         self.custom_dictionary_listbox.set_placeholder(self.custom_dictionary_empty_label)
 
-        list_scrolled = Gtk.ScrolledWindow()
-        list_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        list_scrolled.set_min_content_height(48)
-        list_scrolled.set_max_content_height(160)
-        list_scrolled.set_margin_start(8)
-        list_scrolled.set_margin_end(8)
-        list_scrolled.set_margin_bottom(8)
-        list_scrolled.add(self.custom_dictionary_listbox)
-
+        # No inner ScrolledWindow: the dictation page already scrolls, and a
+        # nested scroller would hide entries behind its own scrollbar.
         list_row = Gtk.ListBoxRow()
         list_row.set_activatable(False)
-        list_row.add(list_scrolled)
+        list_row.add(self.custom_dictionary_listbox)
         group.add_row(list_row)
 
         return group
