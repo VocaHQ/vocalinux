@@ -53,10 +53,9 @@ class TestActionHandler(unittest.TestCase):
         result = self.handler.handle_action("delete_last")
 
         self.assertTrue(result)
-        self.mock_text_injector.inject_text.assert_called_once()
-        # Should send 5 backspaces for "hello"
-        call_args = self.mock_text_injector.inject_text.call_args[0][0]
-        self.assertEqual(len(call_args), 5)  # 5 backspaces
+        # Real BackSpace key events, not injected U+0008 text.
+        self.mock_text_injector.press_backspace.assert_called_once_with(5)
+        self.mock_text_injector.inject_text.assert_not_called()
         self.assertEqual(self.handler.last_injected_text, "")
 
     def test_handle_undo(self):
@@ -131,9 +130,9 @@ class TestActionHandler(unittest.TestCase):
         self.assertFalse(result)
 
     def test_delete_last_failure(self):
-        """Test delete_last when inject_text fails."""
+        """Test delete_last when the backspace presses fail."""
         self.handler.set_last_injected_text("test")
-        self.mock_text_injector.inject_text.return_value = False
+        self.mock_text_injector.press_backspace.return_value = False
 
         result = self.handler.handle_action("delete_last")
 

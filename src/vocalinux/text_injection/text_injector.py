@@ -1977,6 +1977,115 @@ class TextInjector:
             raise ValueError("no key found")
         return steps
 
+    def press_backspace(self, count: int) -> bool:
+        """Send ``count`` real BackSpace key events.
+
+        Deleting text cannot be done by injecting U+0008 characters: ydotool has
+        no keymap entry for it (so it types nothing) and IBus ``commit_text()``
+        commits it as a literal control character. Only actual key events delete.
+
+        Args:
+            count: Number of backspaces to send.
+
+        Returns:
+            True if the presses were delivered, False otherwise.
+        """
+        if count <= 0:
+            return True
+
+        logger.debug(f"Sending {count} backspace key event(s)")
+
+        if (
+            self.environment == DesktopEnvironment.X11
+            or self.environment == DesktopEnvironment.WAYLAND_XDOTOOL
+            or self.environment == DesktopEnvironment.X11_IBUS
+        ):
+            env = os.environ.copy()
+            if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
+                env["GDK_BACKEND"] = "x11"
+                env["QT_QPA_PLATFORM"] = "xcb"
+                if not env.get("DISPLAY"):
+                    env["DISPLAY"] = ":0"
+            try:
+                # --clearmodifiers already neutralises a held modifier here, so
+                # this path needs no _wait_for_modifiers_released().
+                subprocess.run(
+                    ["xdotool", "key", "--clearmodifiers", "--repeat", str(count), "BackSpace"],
+                    env=host_env(env),
+                    check=True,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=max(3, count * 0.05),
+                )
+                return True
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                FileNotFoundError,
+            ) as e:
+                logger.error(f"xdotool backspace error: {e}")
+                return False
+
+        # Wayland (including WAYLAND_IBUS -- IBus cannot send key events).
+        # A held PTT modifier would turn every BackSpace into Ctrl+BackSpace
+        # (delete-word), so wait it out before resolving and sending.
+        self._wait_for_modifiers_released()
+        tool = self._resolve_wayland_key_tool()
+        if not tool:
+            logger.error("No virtual-keyboard tool available to send backspaces")
+            return False
+
+        if tool == "ydotool" and not self._ensure_ydotoold():
+            # Checked on every call, not just when the tool is first resolved:
+            # wayland_tool is cached from startup, so a daemon that died since
+            # would otherwise never be restarted for this path alone. Both other
+            # ydotool call sites warn and continue the same way.
+            logger.warning("ydotoold not ready before backspace injection")
+
+        if tool == "wtype":
+            cmd = ["wtype"] + ["-k", "BackSpace"] * count
+            timeout = max(3, count * 0.01)
+        elif self._ydotool_uses_legacy_named_keys():
+            # 0.1.x: N named tokens in one call. Its per-call delay budget is
+            # spread across all events, so this stays flat regardless of count
+            # -- unlike --repeat, which re-runs the sequence at ~100ms each.
+            cmd = ["ydotool", "key"] + [self._ydotool_legacy_token([], "backspace")] * count
+            timeout = 5
+        else:
+            # 1.x sleeps --key-delay after EVERY token (12ms by default), so a
+            # 400-character deletion would otherwise take ~9.6s. Match the delay
+            # `ydotool type` already uses, and scale the budget with the count.
+            code = self._KEYCODES["backspace"]
+            delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
+            cmd = ["ydotool", "key", "--key-delay", delay] + [f"{code}:1", f"{code}:0"] * count
+            timeout = max(3, count * 2 * self._key_delay_seconds(delay) * 3)
+
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                env=host_env(),
+            )
+            return True
+        except (
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            FileNotFoundError,
+        ) as e:
+            logger.error(f"{tool} backspace error: {e}")
+            return False
+
+    @staticmethod
+    def _key_delay_seconds(raw: str) -> float:
+        """Parse a ydotool key-delay in ms, falling back to its 12ms default."""
+        try:
+            return max(0.0, int(raw)) / 1000
+        except (TypeError, ValueError):
+            return 0.012
+
     def _log_current_window_info(self):
         """Log information about the current window/application for debugging."""
         try:
