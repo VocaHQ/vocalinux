@@ -1731,22 +1731,209 @@ class TextInjector:
         Returns:
             True if successful, False otherwise
         """
-        if self.wayland_tool == "wtype":
-            # wtype doesn't support key combinations directly, so we can't implement this easily
-            logger.warning("Keyboard shortcuts not supported with wtype")
+        try:
+            steps = self._parse_shortcut(shortcut)
+        except ValueError as e:
+            logger.error(f"Cannot parse shortcut '{shortcut}': {e}")
             return False
+
+        # A held toggle/PTT modifier rewrites the chord we are about to send, so
+        # wait it out first -- same reason and placement as _inject_with_wayland_tool.
+        self._wait_for_modifiers_released()
+
+        if self.wayland_tool == "wtype":
+            # wtype does support combinations: -M presses a modifier, -k types a
+            # key, -m releases it. Modifiers must be released explicitly -- wtype
+            # only auto-releases them when the process exits.
+            cmd = ["wtype"]
+            for modifiers, key in steps:
+                for mod in modifiers:
+                    cmd += ["-M", self._WTYPE_MODIFIERS[mod]]
+                cmd += ["-k", key]
+                for mod in reversed(modifiers):
+                    cmd += ["-m", self._WTYPE_MODIFIERS[mod]]
         elif self.wayland_tool == "ydotool":
-            try:
-                cmd = ["ydotool", "key", shortcut]
-                subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=host_env())
-                logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
-                return True
-            except subprocess.CalledProcessError as e:
-                logger.error(f"ydotool shortcut error: {e.stderr}")
-                return False
+            if not self._ensure_ydotoold():
+                logger.warning("ydotoold not ready before shortcut injection")
+
+            if self._ydotool_uses_legacy_named_keys():
+                # 0.1.x: one named chord token per step, all in a single call --
+                # it accepts any number of key sequences as positional args.
+                tokens = []
+                for modifiers, key in steps:
+                    token = self._ydotool_legacy_token(modifiers, key)
+                    if token is None:
+                        logger.error(
+                            f"No ydotool 0.1.x key name for '{key}' in shortcut '{shortcut}'"
+                        )
+                        return False
+                    tokens.append(token)
+                cmd = ["ydotool", "key"] + tokens
+            else:
+                # 1.x takes RAW KEYCODES only ("29:1 44:1 44:0 29:0"), never
+                # "ctrl+z" -- it documents non-interpretable values as "only cause
+                # a delay", so the old string form was a silent no-op.
+                seq = []
+                for modifiers, key in steps:
+                    codes = []
+                    for name in modifiers + [key]:
+                        code = self._KEYCODES.get(name.lower())
+                        if code is None:
+                            logger.error(f"No keycode for '{name}' in shortcut '{shortcut}'")
+                            return False
+                        codes.append(code)
+                    seq += [f"{c}:1" for c in codes] + [f"{c}:0" for c in reversed(codes)]
+                cmd = ["ydotool", "key"] + seq
         else:
             logger.warning(f"Keyboard shortcuts not supported with {self.wayland_tool}")
             return False
+
+        try:
+            subprocess.run(
+                cmd,
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=max(3, len(steps) * 0.5),
+                env=host_env(),
+            )
+            logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
+            return True
+        except subprocess.CalledProcessError as e:
+            logger.error(f"{self.wayland_tool} shortcut error: {e.stderr}")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error(f"{self.wayland_tool} shortcut injection timed out for '{shortcut}'")
+            return False
+
+    # Modifier aliases -> wtype's names ("shift", "capslock", "ctrl", "logo",
+    # "win", "alt", "altgr" per wtype(1)).
+    _WTYPE_MODIFIERS = {
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "shift": "shift",
+        "alt": "alt",
+        "altgr": "altgr",
+        "super": "logo",
+        "meta": "logo",
+        "win": "logo",
+        "logo": "logo",
+    }
+
+    # Raw evdev keycodes from linux/input-event-codes.h, for ydotool. Covers the
+    # modifiers plus every key referenced by ActionHandler._SHORTCUT_ACTIONS.
+    _KEYCODES = {
+        "ctrl": 29,
+        "control": 29,
+        "shift": 42,
+        "alt": 56,
+        "altgr": 100,
+        "super": 125,
+        "meta": 125,
+        "win": 125,
+        "logo": 125,
+        "a": 30,
+        "c": 46,
+        "v": 47,
+        "x": 45,
+        "y": 21,
+        "z": 44,
+        "home": 102,
+        "end": 107,
+        "left": 105,
+        "right": 106,
+        "up": 103,
+        "down": 108,
+        "backspace": 14,
+        "delete": 111,
+        "return": 28,
+        "enter": 28,
+        "tab": 15,
+        "escape": 1,
+        "space": 57,
+    }
+
+    # ydotool 0.1.x resolves names through libevdevPlus' Table_ModifierKeys and
+    # Table_FunctionKeys (uppercased). A name it does not know silently falls back
+    # to that name's FIRST CHARACTER and still exits 0 -- "altgr" types "a" -- so
+    # only names confirmed present in those tables may ever be emitted.
+    # Deliberately absent: altgr, escape (0.1.x spells it ESC), space, return.
+    _YDOTOOL_LEGACY_NAMES = {
+        "ctrl": "ctrl",
+        "control": "ctrl",
+        "shift": "shift",
+        "alt": "alt",
+        "super": "super",
+        "meta": "meta",
+        "win": "super",
+        "logo": "super",
+        "a": "a",
+        "c": "c",
+        "v": "v",
+        "x": "x",
+        "y": "y",
+        "z": "z",
+        "home": "home",
+        "end": "end",
+        "left": "left",
+        "right": "right",
+        "up": "up",
+        "down": "down",
+        "backspace": "backspace",
+        "delete": "delete",
+        "enter": "enter",
+        "tab": "tab",
+    }
+
+    @classmethod
+    def _ydotool_legacy_token(cls, modifiers, key: str):
+        """Build one ydotool 0.1.x ``mod+mod+key`` chord token.
+
+        Returns:
+            The token, or None if any name has no 0.1.x spelling.
+        """
+        names = []
+        for name in list(modifiers) + [key]:
+            mapped = cls._YDOTOOL_LEGACY_NAMES.get(name.lower())
+            if mapped is None:
+                return None
+            names.append(mapped)
+        return "+".join(names)
+
+    @classmethod
+    def _parse_shortcut(cls, shortcut: str):
+        """Parse a shortcut string into a list of ``(modifiers, key)`` steps.
+
+        Tokens are classified by name rather than position, because the mappings
+        in ``ActionHandler._SHORTCUT_ACTIONS`` are not all "modifiers first" --
+        ``select_line`` is ``"Home+shift+End"``, which means *press Home, then
+        Shift+End*, i.e. two sequential steps rather than one chord. Each
+        non-modifier token closes a step, consuming the modifiers seen since the
+        previous one.
+
+        Returns:
+            e.g. "ctrl+shift+Right" -> [(["ctrl", "shift"], "Right")]
+                 "Home+shift+End"   -> [([], "Home"), (["shift"], "End")]
+
+        Raises:
+            ValueError: if the shortcut has no key, or ends with a dangling modifier.
+        """
+        steps = []
+        pending = []
+        for token in shortcut.split("+"):
+            token = token.strip()
+            if not token:
+                continue
+            if token.lower() in cls._WTYPE_MODIFIERS:
+                pending.append(token.lower())
+            else:
+                steps.append((pending, token))
+                pending = []
+        if pending:
+            raise ValueError(f"trailing modifier(s) with no key: {'+'.join(pending)}")
+        if not steps:
+            raise ValueError("no key found")
+        return steps
 
     def _log_current_window_info(self):
         """Log information about the current window/application for debugging."""
