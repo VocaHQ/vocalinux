@@ -371,6 +371,19 @@ class TestTextInjector(unittest.TestCase):
                 env = injector._detect_environment()
                 self.assertEqual(env, DesktopEnvironment.WAYLAND)
 
+    def test_detect_environment_wayland_socket_beats_x11_session_type(self):
+        """Plasma Wayland GTK apps often keep XDG_SESSION_TYPE=x11 (#752)."""
+        with patch.dict(
+            "os.environ",
+            {"XDG_SESSION_TYPE": "x11", "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"},
+            clear=True,
+        ):
+            with patch.object(TextInjector, "_check_dependencies"):
+                injector = TextInjector.__new__(TextInjector)
+                injector._state_lock = threading.Lock()
+                env = injector._detect_environment()
+                self.assertEqual(env, DesktopEnvironment.WAYLAND)
+
     def test_detect_environment_display_only(self):
         """Test environment detection via DISPLAY only."""
         with patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True):
@@ -2256,3 +2269,33 @@ class TestForcedBackend(unittest.TestCase):
     def test_missing_variable_means_auto(self):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(TextInjector._forced_backend(), "auto")
+
+
+class TestKdeSkipsInactiveIbus(unittest.TestCase):
+    """KDE without IBus as the session IM must not take the scoped IBus path (#752)."""
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
+    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
+    @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_wayland_does_not_construct_ibus_injector(
+        self,
+        mock_which,
+        mock_ibus_class,
+        *_args,
+    ):
+        mock_which.side_effect = lambda cmd: "/usr/bin/wtype" if cmd == "wtype" else None
+        with patch.dict(
+            "os.environ",
+            {
+                "XDG_SESSION_TYPE": "wayland",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XDG_CURRENT_DESKTOP": "KDE",
+                "KDE_FULL_SESSION": "true",
+            },
+            clear=True,
+        ):
+            injector = TextInjector()
+        mock_ibus_class.assert_not_called()
+        self.assertIsNone(injector._ibus_injector)

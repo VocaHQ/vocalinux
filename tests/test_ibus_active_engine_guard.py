@@ -87,5 +87,42 @@ class TestX11BehaviorUnchanged(unittest.TestCase):
         self.assertFalse(ibus_engine.is_ibus_active_input_method())
 
 
+class TestKdeDoesNotTreatLeftoverDaemonAsIm(unittest.TestCase):
+    @patch.object(ibus_engine, "get_current_engine", return_value="xkb:us::eng")
+    @patch.object(ibus_engine, "is_ibus_daemon_running", return_value=True)
+    @patch.dict(
+        "os.environ",
+        {"XDG_SESSION_TYPE": "x11", "XDG_CURRENT_DESKTOP": "KDE"},
+        clear=True,
+    )
+    def test_kde_x11_daemon_without_im_env_is_inactive(self, *_):
+        # CachyOS/KDE: we started (or found) ibus-daemon, but Qt/GTK never use it (#752).
+        self.assertFalse(ibus_engine.is_ibus_active_input_method())
+
+    @patch.object(ibus_engine, "get_current_engine", return_value="xkb:us::eng")
+    @patch.object(ibus_engine, "is_ibus_daemon_running", return_value=True)
+    @patch.dict(
+        "os.environ",
+        {
+            "XDG_SESSION_TYPE": "x11",
+            "XDG_CURRENT_DESKTOP": "KDE",
+            "GTK_IM_MODULE": "ibus",
+        },
+        clear=True,
+    )
+    def test_kde_x11_with_ibus_env_still_active(self, *_):
+        self.assertTrue(ibus_engine.is_ibus_active_input_method())
+
+    @patch.object(ibus_engine, "get_current_engine", return_value="xkb:us::eng")
+    @patch.object(ibus_engine, "is_ibus_daemon_running", return_value=True)
+    @patch.dict(
+        "os.environ",
+        {"XDG_SESSION_TYPE": "x11", "KDE_FULL_SESSION": "true"},
+        clear=True,
+    )
+    def test_kde_full_session_without_im_env_is_inactive(self, *_):
+        self.assertFalse(ibus_engine.is_ibus_active_input_method())
+
+
 if __name__ == "__main__":
     unittest.main()

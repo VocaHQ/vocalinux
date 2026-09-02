@@ -213,17 +213,15 @@ class TextInjector:
                 )
                 return DesktopEnvironment.WAYLAND_XDOTOOL
             return DesktopEnvironment.WAYLAND
-        elif session_type == "x11":
+        # A live Wayland socket beats a stale XDG_SESSION_TYPE=x11. Plasma
+        # Wayland GTK apps often keep session_type=x11, then we pick IBus/XIM
+        # and native Kate/Obsidian get nothing (issue #752).
+        if wayland_display:
+            return DesktopEnvironment.WAYLAND
+        if session_type == "x11" or x11_display:
             return DesktopEnvironment.X11
-        else:
-            # Try to detect based on other methods
-            if wayland_display:
-                return DesktopEnvironment.WAYLAND
-            elif x11_display:
-                return DesktopEnvironment.X11
-            else:
-                logger.warning("Could not detect desktop environment, defaulting to X11")
-                return DesktopEnvironment.X11
+        logger.warning("Could not detect desktop environment, defaulting to X11")
+        return DesktopEnvironment.X11
 
     # Wayland compositors that do NOT bridge IBus commits to native Wayland
     # clients. On these, an IBus engine's commit_text() reaches only XWayland and
@@ -508,11 +506,16 @@ class TextInjector:
                     and "@im=ibus" not in xmodifiers
                 )
             )
-            # Bridging Wayland DEs (GNOME/KDE): inject_text() switches to the
+            # Bridging Wayland DEs (GNOME): inject_text() switches to the
             # real vocalinux engine for each commit, so a bare xkb:* baseline is
-            # fine (#501, #504). Unbridged compositors still bail below.
+            # fine (#501, #504). KDE is not in that set unless IBus is already
+            # the session IM: a leftover daemon plus scoped activate reports
+            # success while Kate/Qt get nothing (#752). Unbridged compositors
+            # still bail below.
             wayland_scoped_ibus = (
-                self.environment == DesktopEnvironment.WAYLAND and not explicit_non_ibus_im
+                self.environment == DesktopEnvironment.WAYLAND
+                and not explicit_non_ibus_im
+                and not _is_kde_plasma_session()
             )
 
             # Check if IBus is the active input method (not just installed)
