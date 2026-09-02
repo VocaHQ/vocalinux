@@ -1,6 +1,8 @@
-"""Tests for live custom dictionary prompting."""
+"""Tests for live custom dictionary support."""
 
 import threading
+from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from vocalinux.dictionary_manager import DEFAULT_DICTIONARY_FILE, DictionaryManager
@@ -14,10 +16,10 @@ class MemoryConfig:
         self.values = {"dictionary": {"enabled": enabled, "file_path": path, "max_words": 200}}
         self.saved = False
 
-    def get(self, section: str, key: str, default=None):
+    def get(self, section: str, key: str, default: Any = None) -> Any:
         return self.values.get(section, {}).get(key, default)
 
-    def set(self, section: str, key: str, value) -> bool:
+    def set(self, section: str, key: str, value: Any) -> bool:
         self.values.setdefault(section, {})[key] = value
         return True
 
@@ -25,7 +27,9 @@ class MemoryConfig:
         self.saved = True
 
 
-def _manager(engine: str, dictionary: DictionaryManager, advanced_prompt: str = ""):
+def _manager(
+    engine: str, dictionary: DictionaryManager, advanced_prompt: str = ""
+) -> SpeechRecognitionManager:
     """Create a recognition manager without loading a speech model."""
     with patch.object(SpeechRecognitionManager, "_init_vosk"):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
@@ -52,7 +56,7 @@ def test_dictionary_uses_default_contract_for_empty_path() -> None:
     assert not dictionary.set_path("   ")
 
 
-def test_transient_dictionary_never_changes_saved_settings(tmp_path) -> None:
+def test_transient_dictionary_never_changes_saved_settings(tmp_path: Path) -> None:
     """A CLI manager must not persist state even if the Settings page calls it."""
     config = MemoryConfig("/saved/dictionary.txt", enabled=False)
     dictionary = DictionaryManager(config, transient_path=str(tmp_path / "session.txt"))
@@ -69,7 +73,9 @@ def test_transient_dictionary_never_changes_saved_settings(tmp_path) -> None:
     assert config.saved
 
 
-def test_unresolvable_or_unreadable_paths_are_safe_and_not_persisted(tmp_path) -> None:
+def test_unresolvable_or_unreadable_paths_are_safe_and_not_persisted(
+    tmp_path: Path,
+) -> None:
     unreadable = tmp_path / "unreadable.txt"
     unreadable.write_text("term\n", encoding="utf-8")
     config = MemoryConfig(str(unreadable))
@@ -89,7 +95,7 @@ def test_unresolvable_or_unreadable_paths_are_safe_and_not_persisted(tmp_path) -
     assert not config.saved
 
 
-def test_dictionary_ignores_missing_file_and_reloads_live_file(tmp_path) -> None:
+def test_dictionary_ignores_missing_file_and_reloads_live_file(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     dictionary = DictionaryManager(MemoryConfig(str(path)))
     assert dictionary.build_initial_prompt() is None
@@ -100,13 +106,23 @@ def test_dictionary_ignores_missing_file_and_reloads_live_file(tmp_path) -> None
     assert dictionary.build_initial_prompt() == "VocaHQ"
 
 
-def test_dictionary_disabled_returns_no_prompt(tmp_path) -> None:
+def test_invalid_utf8_has_safe_status_and_is_ignored(tmp_path: Path) -> None:
+    path = tmp_path / "dictionary.txt"
+    path.write_bytes(b"\xff\xfe\xfa")
+    dictionary = DictionaryManager(MemoryConfig(str(path)))
+    manager = _manager("whisper", dictionary)
+
+    assert dictionary.get_status() == "Dictionary file is not valid UTF-8."
+    assert manager._get_dictionary_prompt() is None
+
+
+def test_dictionary_disabled_returns_no_prompt(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("VocaLinux\n", encoding="utf-8")
     assert DictionaryManager(MemoryConfig(str(path), enabled=False)).build_initial_prompt() is None
 
 
-def test_dictionary_max_words_parses_and_caps_terms(tmp_path) -> None:
+def test_dictionary_max_words_parses_and_caps_terms(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("one\ntwo\nthree\n", encoding="utf-8")
     config = MemoryConfig(str(path))
@@ -120,7 +136,7 @@ def test_dictionary_max_words_parses_and_caps_terms(tmp_path) -> None:
     assert dictionary.build_initial_prompt() is None
 
 
-def test_whisper_receives_live_dictionary_prompt(tmp_path) -> None:
+def test_whisper_receives_live_dictionary_prompt(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("VocaLinux\n", encoding="utf-8")
     manager = _manager("whisper", DictionaryManager(MemoryConfig(str(path))))
@@ -133,7 +149,7 @@ def test_whisper_receives_live_dictionary_prompt(tmp_path) -> None:
     assert manager.model.transcribe.call_args.kwargs["initial_prompt"] == "VocaLinux"
 
 
-def test_whispercpp_composes_advanced_prompt_and_live_dictionary(tmp_path) -> None:
+def test_whispercpp_composes_advanced_prompt_and_live_dictionary(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("pywhispercpp\n", encoding="utf-8")
     manager = _manager(
@@ -154,7 +170,7 @@ def test_whispercpp_composes_advanced_prompt_and_live_dictionary(tmp_path) -> No
     )
 
 
-def test_whispercpp_clears_reused_prompt_after_dictionary_changes(tmp_path) -> None:
+def test_whispercpp_clears_reused_prompt_after_dictionary_changes(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("VocaLinux\n", encoding="utf-8")
     config = MemoryConfig(str(path))
@@ -175,14 +191,14 @@ def test_whispercpp_clears_reused_prompt_after_dictionary_changes(tmp_path) -> N
     assert prompts == ["VocaLinux", "", ""]
 
 
-def test_vosk_dictionary_prompt_is_a_noop(tmp_path) -> None:
+def test_vosk_dictionary_prompt_is_a_noop(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("VocaLinux\n", encoding="utf-8")
     manager = _manager("vosk", DictionaryManager(MemoryConfig(str(path))))
     assert manager._get_dictionary_prompt() == "VocaLinux"
 
 
-def test_vosk_logs_dictionary_noop_warning_once(tmp_path) -> None:
+def test_vosk_logs_dictionary_noop_warning_once(tmp_path: Path) -> None:
     path = tmp_path / "dictionary.txt"
     path.write_text("VocaLinux\n", encoding="utf-8")
     manager = _manager("vosk", DictionaryManager(MemoryConfig(str(path))))

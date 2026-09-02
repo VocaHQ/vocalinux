@@ -28,7 +28,7 @@ class DictionaryManager:
         self._transient_path = transient_path
 
     def is_enabled(self) -> bool:
-        """Return whether dictionary prompting is enabled."""
+        """Return whether custom dictionary support is enabled."""
         return self._transient_path is not None or bool(
             self.config.get("dictionary", "enabled", False)
         )
@@ -112,7 +112,10 @@ class DictionaryManager:
                 return "Dictionary path is not a readable file."
         except OSError:
             return "Dictionary path cannot be inspected."
-        return f"{len(self.get_words())} term(s) available from the live file."
+        try:
+            return f"{len(self.get_words())} term(s) available from the live file."
+        except UnicodeDecodeError:
+            return "Dictionary file is not valid UTF-8."
 
     @staticmethod
     def _is_readable(path: Path) -> bool:

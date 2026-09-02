@@ -4094,7 +4094,7 @@ class SettingsDialog(Gtk.Dialog):
         """Close the dialog through the normal response path (same as title-bar X)."""
         self.response(Gtk.ResponseType.CLOSE)
 
-    def _build_dictionary_section(self):
+    def _build_dictionary_section(self) -> None:
         """Build controls for the live custom dictionary file."""
         group = PreferencesGroup(title="Custom Dictionary")
         self.dictionary_enabled_switch = Gtk.Switch()
@@ -4138,28 +4138,28 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_path_entry.connect("focus-out-event", self._on_dictionary_path_changed)
         self.dictionary_file_button.connect("file-set", self._on_dictionary_file_chosen)
 
-    def _on_dictionary_enabled(self, widget, state):
+    def _on_dictionary_enabled(self, widget: Any, state: bool) -> bool:
         """Persist dictionary enablement immediately."""
         if not self._initializing and not self._applying_settings and self.dictionary_manager:
             self.dictionary_manager.set_enabled(bool(state))
             self._refresh_dictionary_ui()
         return False
 
-    def _on_dictionary_path_changed(self, widget, *args):
+    def _on_dictionary_path_changed(self, widget: Any, *args: Any) -> bool:
         """Persist a manually entered dictionary path."""
         if not self._initializing and not self._applying_settings and self.dictionary_manager:
             self.dictionary_manager.set_path(self.dictionary_path_entry.get_text())
             self._refresh_dictionary_ui()
         return False
 
-    def _on_dictionary_file_chosen(self, widget):
+    def _on_dictionary_file_chosen(self, widget: Any) -> None:
         """Persist a path selected through the GTK file chooser."""
         path = widget.get_filename()
         if path:
             self.dictionary_path_entry.set_text(path)
             self._on_dictionary_path_changed(self.dictionary_path_entry)
 
-    def _refresh_dictionary_ui(self):
+    def _refresh_dictionary_ui(self) -> None:
         """Refresh dictionary controls and engine-specific status text."""
         if self.dictionary_manager is None:
             self.dictionary_enabled_switch.set_sensitive(False)
