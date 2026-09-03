@@ -80,6 +80,7 @@ just lock-check    # fail if uv.lock is stale vs pyproject.toml
 just model-checksums  # refresh pinned model digests after adding a model
 just appimage      # build the AppImage in its pinned base image (needs docker)
 just appimage-boot fedora:42   # boot that AppImage in a distro container
+just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug

@@ -32,6 +32,12 @@ git clone ssh://aur@aur.archlinux.org/vocalinux.git
 
 Sources: `packaging/aur/vocalinux/PKGBUILD`. Community git package: https://aur.archlinux.org/packages/vocalinux-git
 
+## CI gate
+
+Every PR that changes the Python source or `packaging/aur/**` builds the PKGBUILD on `archlinux:latest` — the `Build AUR package (gate)` job in `unified-pipeline.yml`. Run it locally with `just aur-gate` (needs docker).
+
+The gate swaps the tag-archive `source=` for a `git archive` of the checkout, so it answers whether *this commit* builds on Arch — both production breakages (#736, #757) happened after the tag, when nothing could fail a build anymore. `python-pywhispercpp` (virtual, provided by the AUR backends) and `python-pynput` (AUR) cannot come from the repos, so the gate satisfies them with a stub for dependency resolution and pip-installs the pinned versions from `requirements/runtime.txt` for the import smoke. What AUR actually ships (python-pywhispercpp-cpu is still 1.4.x — see Troubleshooting) is a monitoring question, not the gate's.
+
 ## Troubleshooting
 
 **`ERROR Missing dependencies: setuptools<82`**
