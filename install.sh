@@ -3524,38 +3524,15 @@ VOSK_CONFIG
                     return 1
                 }
 
-                # Create config with parakeet as default
+                # Only the engine has to be written; ConfigManager merges the
+                # remaining defaults (including parakeet_model_size) on load.
                 local PARAKEET_CONFIG_FILE="$CONFIG_DIR/config.json"
                 if [ ! -f "$PARAKEET_CONFIG_FILE" ]; then
                     mkdir -p "$CONFIG_DIR"
                     cat > "$PARAKEET_CONFIG_FILE" << 'PARAKEET_CONFIG'
 {
     "speech_recognition": {
-        "engine": "parakeet",
-        "model_size": "v3-european",
-        "parakeet_model_size": "v3-european",
-        "vosk_model_size": "small",
-        "whisper_model_size": "tiny",
-        "whisper_cpp_model_size": "tiny",
-        "vad_sensitivity": 3,
-        "silence_timeout": 2.0
-    },
-    "audio": {
-        "device_index": null,
-        "device_name": null
-    },
-    "shortcuts": {
-        "toggle_recognition": "right_alt+right_alt",
-        "mode": "push_to_talk"
-    },
-    "ui": {
-        "start_minimized": false,
-        "show_notifications": true,
-        "show_missing_tray_warning": true
-    },
-    "advanced": {
-        "debug_logging": false,
-        "wayland_mode": false
+        "engine": "parakeet"
     }
 }
 PARAKEET_CONFIG
