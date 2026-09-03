@@ -1803,6 +1803,19 @@ class SpeechRecognitionManager:
                 url = parakeet.get_model_file_url(self.model_size, filename)
                 self._download_progress_callback = file_progress(index, filename)
                 self._stream_model_download(url, temp_file)
+
+                # Verify before the rename: the bundle is pinned to a revision,
+                # so a short file means a truncated download rather than an
+                # upstream change, and must not reach a path that
+                # is_model_downloaded() would report as installed.
+                expected_size = parakeet.expected_file_size(self.model_size, filename)
+                actual_size = os.path.getsize(temp_file)
+                if expected_size is not None and actual_size != expected_size:
+                    raise RuntimeError(
+                        f"{filename} downloaded {actual_size} bytes, expected "
+                        f"{expected_size}. The download was truncated; try again."
+                    )
+
                 os.rename(temp_file, dest_path)
                 temp_file = None
 

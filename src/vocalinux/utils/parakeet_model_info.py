@@ -8,6 +8,7 @@ engine, which runs NVIDIA NeMo ASR models through sherpa-onnx.
 import logging
 import os
 import shutil
+from typing import Optional
 
 from .paths import is_within_directory, models_dir
 
@@ -25,12 +26,24 @@ PARAKEET_MODEL_INFO = {
         "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
         "revision": "2bda32ec70b097a55adaa07d9a7173915b43cc78",
         "size_mb": 639,
+        "file_sizes": {
+            "encoder.int8.onnx": 652184281,
+            "decoder.int8.onnx": 11845275,
+            "joiner.int8.onnx": 6355277,
+            "tokens.txt": 93939,
+        },
         "desc": "Parakeet TDT 0.6B v3 (int8), 25 European languages",
     },
     "v2-english": {
         "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
         "revision": "1ab9323565ddb038682214b292f588070a538ce2",
         "size_mb": 630,
+        "file_sizes": {
+            "encoder.int8.onnx": 652184296,
+            "decoder.int8.onnx": 7257753,
+            "joiner.int8.onnx": 1739080,
+            "tokens.txt": 9384,
+        },
         "desc": "Parakeet TDT 0.6B v2 (int8), English",
     },
 }
@@ -107,6 +120,15 @@ def delete_model(model_name: str) -> str:
     shutil.rmtree(path)
     logger.info("Deleted Parakeet model %s (%s)", model_name, path)
     return path
+
+
+def expected_file_size(model_name: str, filename: str) -> Optional[int]:
+    """Byte size of one bundle file at the pinned revision, or None if unknown."""
+    model_info = PARAKEET_MODEL_INFO.get(model_name)
+    if not model_info:
+        return None
+
+    return model_info["file_sizes"].get(filename)
 
 
 def get_model_file_url(model_name: str, filename: str) -> str:
