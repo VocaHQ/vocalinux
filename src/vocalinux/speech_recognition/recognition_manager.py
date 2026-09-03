@@ -21,6 +21,7 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
@@ -1086,6 +1087,8 @@ class SpeechRecognitionManager:
             self._init_whisper()
         elif engine == "whisper_cpp":
             self._init_whispercpp()
+        elif engine == "parakeet":
+            self._init_parakeet()
         elif engine == "remote_api":
             self._init_remote_api()
         else:
@@ -1762,6 +1765,122 @@ class SpeechRecognitionManager:
             )
             logger.error(f"Error in whisper.cpp transcription: {e} ({audio_info})", exc_info=True)
             return ""
+
+    def _download_parakeet_model(self):
+        """Download the Parakeet model files with progress tracking."""
+        import requests
+
+        self._download_cancelled = False
+
+        model_dir = parakeet.get_model_path(self.model_size)
+        os.makedirs(model_dir, exist_ok=True)
+        logger.info(f"Downloading Parakeet '{self.model_size}' model to {model_dir}")
+
+        for filename in parakeet.MODEL_FILES:
+            dest_path = os.path.join(model_dir, filename)
+            if os.path.exists(dest_path):
+                continue
+            temp_file = dest_path + ".tmp"
+            url = parakeet.get_model_file_url(self.model_size, filename)
+            try:
+                self._stream_model_download(url, temp_file)
+                os.rename(temp_file, dest_path)
+            # RequestException=Exception under the test mocks; do not catch
+            # Timeout separately (it is not a real exception type there).
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to download Parakeet model from {url}: {e}")
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                msg = str(e).lower()
+                if "timeout" in msg or type(e).__name__ == "Timeout":
+                    raise RuntimeError(
+                        "Model download timed out (Hugging Face may be slow or unavailable). "
+                        "Check your network and try again."
+                    ) from e
+                raise RuntimeError(f"Failed to download Parakeet model: {e}") from e
+            except (OSError, RuntimeError, ValueError) as e:
+                logger.error(f"An error occurred during Parakeet model download: {e}")
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                raise
+
+        logger.info("Parakeet model downloaded successfully")
+        if self._download_progress_callback:
+            self._download_progress_callback(1.0, 0, "Complete!")
+
+    def _init_parakeet(self):
+        """Initialize the Parakeet speech recognition engine."""
+        try:
+            import sherpa_onnx
+
+            # Validate model size for Parakeet
+            valid_models = list(parakeet.PARAKEET_MODEL_INFO.keys())
+            if self.model_size not in valid_models:
+                logger.warning(
+                    f"Model size '{self.model_size}' not valid for Parakeet. "
+                    f"Valid options: {valid_models}. Using '{parakeet.RECOMMENDED_MODEL}' instead."
+                )
+                self.model_size = parakeet.RECOMMENDED_MODEL
+
+            model_dir = parakeet.get_model_path(self.model_size)
+
+            if not parakeet.is_model_downloaded(self.model_size):
+                if self._defer_download:
+                    logger.info(
+                        f"Parakeet model '{self.model_size}' not found at {model_dir}. "
+                        "Will download when needed."
+                    )
+                    self._model_initialized = False
+                    return  # Don't block startup
+                else:
+                    logger.info(f"Downloading Parakeet '{self.model_size}' model...")
+                    self._download_parakeet_model()
+
+            # NOTE: do not take _model_lock here. It is a non-reentrant Lock and
+            # reconfigure()/reinitialize_after_resume() already hold it when they
+            # call this, so acquiring it would deadlock the caller.
+            self.model = None
+            self.model = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=os.path.join(model_dir, "encoder.int8.onnx"),
+                decoder=os.path.join(model_dir, "decoder.int8.onnx"),
+                joiner=os.path.join(model_dir, "joiner.int8.onnx"),
+                tokens=os.path.join(model_dir, "tokens.txt"),
+                model_type="nemo_transducer",
+                feature_dim=128,
+                num_threads=4,
+            )
+            self._model_initialized = True
+            logger.info(f"Loaded Parakeet model from {model_dir}")
+
+        except ImportError as e:
+            logger.error(f"Failed to import sherpa-onnx: {e}")
+            logger.error("Please install it with 'pip install sherpa-onnx'")
+            self.state = RecognitionState.ERROR
+            raise
+        except (FileNotFoundError, RuntimeError, OSError) as e:
+            logger.error(f"Failed to initialize Parakeet engine: {e}", exc_info=True)
+            self.state = RecognitionState.ERROR
+            raise
+
+    def _transcribe_with_parakeet(self, audio_buffer: list[bytes]) -> str:
+        """Transcribe 16-bit PCM chunks (16kHz) with Parakeet."""
+        import numpy as np
+
+        if not audio_buffer:
+            return ""
+
+        audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
+        audio_float = audio_data.astype(np.float32) / 32768.0
+
+        # Lock model access to prevent a race with reconfigure() setting self.model to None
+        with self._model_lock:
+            if self.model is None:
+                logger.warning("Model is None during transcription, returning empty result")
+                return ""
+            stream = self.model.create_stream()
+            stream.accept_waveform(16000, audio_float)
+            self.model.decode_stream(stream)
+            return stream.result.text.strip()
 
     def _init_remote_api(self):
         """Initialize remote API speech recognition engine.
@@ -3017,6 +3136,9 @@ class SpeechRecognitionManager:
         elif self.engine == "whisper_cpp":
             text = self._transcribe_with_whispercpp(audio_buffer)
 
+        elif self.engine == "parakeet":
+            text = self._transcribe_with_parakeet(audio_buffer)
+
         elif self.engine == "remote_api":
             # Snapshot the HTTP session under lock to prevent race with
             # reconfigure() / reinitialize_after_resume() which close/recreate
@@ -3289,6 +3411,8 @@ class SpeechRecognitionManager:
                         self._init_whisper()
                     elif self.engine == "whisper_cpp":
                         self._init_whispercpp()
+                    elif self.engine == "parakeet":
+                        self._init_parakeet()
                     elif self.engine == "remote_api":
                         self._init_remote_api()
                     else:
@@ -3516,6 +3640,8 @@ class SpeechRecognitionManager:
                     self._init_whisper()
                 elif self.engine == "whisper_cpp":
                     self._init_whispercpp()
+                elif self.engine == "parakeet":
+                    self._init_parakeet()
                 elif self.engine == "remote_api":
                     self._init_remote_api()
                 else:

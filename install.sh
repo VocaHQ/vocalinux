@@ -365,7 +365,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --interactive, -i  Force interactive mode (default)"
             echo "  --auto           Non-interactive automatic installation"
-            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, remote_api"
+            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, remote_api"
             echo "  --dev            Install in development mode with all dev dependencies"
             echo "  --test           Run tests after installation"
             echo "  --venv-dir=PATH  Specify custom virtual environment directory"
@@ -2913,6 +2913,7 @@ engine_import_module() {
         vosk) echo "vosk" ;;
         whisper) echo "whisper" ;;
         whisper_cpp) echo "pywhispercpp.model" ;;
+        parakeet) echo "sherpa_onnx" ;;
         *) echo "" ;;
     esac
 }
@@ -2922,6 +2923,7 @@ engine_pip_name() {
         vosk) echo "vosk" ;;
         whisper) echo "openai-whisper" ;;
         whisper_cpp) echo "pywhispercpp" ;;
+        parakeet) echo "sherpa-onnx" ;;
         *) echo "" ;;
     esac
 }
@@ -3509,6 +3511,54 @@ FALLBACK_CONFIG
     }
 }
 VOSK_CONFIG
+                fi
+                ;;
+
+            parakeet)
+                print_info "Installing Parakeet (sherpa-onnx)..."
+                print_info "Parakeet runs NVIDIA NeMo ASR models on CPU."
+
+                # sherpa-onnx is an optional extra; install it alongside the base package
+                pip_install_extras_skip_pygobject "$PIP_LOG_FILE" parakeet || {
+                    print_error "Failed to install the parakeet engine"
+                    return 1
+                }
+
+                # Create config with parakeet as default
+                local PARAKEET_CONFIG_FILE="$CONFIG_DIR/config.json"
+                if [ ! -f "$PARAKEET_CONFIG_FILE" ]; then
+                    mkdir -p "$CONFIG_DIR"
+                    cat > "$PARAKEET_CONFIG_FILE" << 'PARAKEET_CONFIG'
+{
+    "speech_recognition": {
+        "engine": "parakeet",
+        "model_size": "v3-european",
+        "parakeet_model_size": "v3-european",
+        "vosk_model_size": "small",
+        "whisper_model_size": "tiny",
+        "whisper_cpp_model_size": "tiny",
+        "vad_sensitivity": 3,
+        "silence_timeout": 2.0
+    },
+    "audio": {
+        "device_index": null,
+        "device_name": null
+    },
+    "shortcuts": {
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
+    },
+    "ui": {
+        "start_minimized": false,
+        "show_notifications": true,
+        "show_missing_tray_warning": true
+    },
+    "advanced": {
+        "debug_logging": false,
+        "wayland_mode": false
+    }
+}
+PARAKEET_CONFIG
                 fi
                 ;;
 

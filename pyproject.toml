@@ -57,6 +57,9 @@ whisper = [
     "torch>=2.0.0",
     "torchaudio>=2.0.0",
 ]
+parakeet = [
+    "sherpa-onnx>=1.12.0",
+]
 vad = [
     "onnxruntime>=1.16.0",
 ]

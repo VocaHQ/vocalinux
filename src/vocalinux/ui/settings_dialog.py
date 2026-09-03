@@ -34,6 +34,7 @@ from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
@@ -147,6 +148,9 @@ ENGINE_MODELS = {
     "whisper_cpp": [
         *WHISPERCPP_MODEL_SIZES,
     ],  # whisper.cpp top-level size buckets; variants are selected separately
+    "parakeet": [
+        *parakeet.MODEL_SIZES,
+    ],  # Parakeet TDT 0.6B int8 bundles
     "remote_api": [],  # Remote API does not need local models
 }
 
@@ -164,6 +168,7 @@ ENGINE_DISPLAY_NAMES = {
     "vosk": "Vosk",
     "whisper": "Whisper",
     "whisper_cpp": "whisper.cpp",
+    "parakeet": "Parakeet",
     "remote_api": "Remote API",
 }
 
@@ -576,7 +581,13 @@ def get_available_engines():
     Detect which speech recognition engines are available/installed.
     Returns a dictionary of engine_name -> availability (bool).
     """
-    engines = {"vosk": False, "whisper": False, "whisper_cpp": False, "remote_api": False}
+    engines = {
+        "vosk": False,
+        "whisper": False,
+        "whisper_cpp": False,
+        "parakeet": False,
+        "remote_api": False,
+    }
 
     # Check VOSK
     try:
@@ -599,6 +610,14 @@ def get_available_engines():
         from pywhispercpp.model import Model
 
         engines["whisper_cpp"] = True
+    except ImportError:
+        pass
+
+    # Check Parakeet (sherpa-onnx)
+    try:
+        import sherpa_onnx  # noqa: F401
+
+        engines["parakeet"] = True
     except ImportError:
         pass
 
@@ -1232,6 +1251,10 @@ def recommended_model_for_engine(
     elif engine == "vosk":
         model_id, reason = _get_recommended_vosk_model()
         size_mb = VOSK_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    elif engine == "parakeet":
+        model_id = parakeet.RECOMMENDED_MODEL
+        reason = parakeet.RECOMMENDED_REASON
+        size_mb = parakeet.PARAKEET_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
     else:
         # Remote API transcribes server-side; there is nothing to download.
         return None
@@ -4762,6 +4785,8 @@ class SettingsDialog(Gtk.Dialog):
             smallest_model = None
             if engine == "whisper":
                 recommended_model, _ = _get_recommended_whisper_model()
+            elif engine == "parakeet":
+                recommended_model = parakeet.RECOMMENDED_MODEL
             else:
                 recommended_model, _ = _get_recommended_vosk_model()
 
@@ -4773,6 +4798,9 @@ class SettingsDialog(Gtk.Dialog):
                     elif engine == "vosk" and size in VOSK_MODEL_INFO:
                         info = VOSK_MODEL_INFO[size]
                         is_downloaded = _is_vosk_model_downloaded(size, self.language)
+                    elif engine == "parakeet":
+                        info = parakeet.PARAKEET_MODEL_INFO[size]
+                        is_downloaded = parakeet.is_model_downloaded(size)
                     else:
                         is_downloaded = False
                         info = {"size_mb": 0}
@@ -4889,6 +4917,9 @@ class SettingsDialog(Gtk.Dialog):
             size = (self.model_combo.get_active_id() or "").lower()
             language = self.language_combo.get_active_id() or self.language
             return vosk_model_dirname(size, language)
+        if engine == "parakeet":
+            model_id = self.model_combo.get_active_id()
+            return model_id.lower() if model_id else None
         return None
 
     def _list_unused_downloads(self) -> list[tuple[str, str, str]]:
@@ -4943,6 +4974,16 @@ class SettingsDialog(Gtk.Dialog):
                         f"{lang_name} · {_model_display_name(model.size)}",
                         _format_size(model.size_mb),
                         model.dirname == active_id,
+                    )
+                )
+        elif engine == "parakeet":
+            for name in parakeet.list_downloaded_models():
+                items.append(
+                    (
+                        name,
+                        _model_display_name(name),
+                        _format_size(parakeet.PARAKEET_MODEL_INFO[name]["size_mb"]),
+                        name == active_id,
                     )
                 )
 
@@ -5029,6 +5070,8 @@ class SettingsDialog(Gtk.Dialog):
             _delete_whisper_model(model_id)
         elif engine == "vosk":
             delete_vosk_model(model_id)
+        elif engine == "parakeet":
+            parakeet.delete_model(model_id)
         else:
             raise ValueError(f"No local models to delete for engine {engine}")
 
@@ -5082,7 +5125,9 @@ class SettingsDialog(Gtk.Dialog):
                 current_lang == "auto" or not SUPPORTED_LANGUAGES.get(current_lang, {}).get("vosk")
             ):
                 self.language = "en-us"
-            elif engine in ["whisper", "whisper_cpp", "remote_api"] and not current_lang:
+            elif (
+                engine in ["whisper", "whisper_cpp", "parakeet", "remote_api"] and not current_lang
+            ):
                 self.language = "auto"
 
         self._populate_model_options()
@@ -5188,7 +5233,7 @@ class SettingsDialog(Gtk.Dialog):
                     continue
                 is_downloaded = _is_vosk_model_downloaded("small", lang_code)
                 display_text += " ✓" if is_downloaded else " ↓"
-            elif engine in ["whisper", "whisper_cpp", "remote_api"]:
+            elif engine in ["whisper", "whisper_cpp", "parakeet", "remote_api"]:
                 if english_only_whispercpp and lang_info.get("whisper") != "en":
                     continue
                 # Both Whisper and whisper.cpp support auto-detect
@@ -5370,6 +5415,14 @@ class SettingsDialog(Gtk.Dialog):
             is_downloaded = _is_vosk_model_downloaded(model_name, self.language)
             recommended, reason = _get_recommended_vosk_model()
             extra_info = f"Size: {_format_size(info['size_mb'])}"
+        elif engine == "parakeet":
+            if model_name not in parakeet.PARAKEET_MODEL_INFO:
+                self.model_info_card.hide()
+                return
+            info = parakeet.PARAKEET_MODEL_INFO[model_name]
+            is_downloaded = parakeet.is_model_downloaded(model_name)
+            recommended, reason = parakeet.RECOMMENDED_MODEL, parakeet.RECOMMENDED_REASON
+            extra_info = f"Size: {_format_size(info['size_mb'])}"
         else:
             self.model_info_card.hide()
             return
@@ -5430,6 +5483,9 @@ class SettingsDialog(Gtk.Dialog):
             elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
                 needs_download = True
                 model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+            elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
+                needs_download = True
+                model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
 
             if needs_download:
                 if not self.speech_engine.try_begin_download():
@@ -5825,6 +5881,9 @@ For now, the engine has been reverted to VOSK."""
         elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
             needs_download = True
             model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+        elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
+            needs_download = True
+            model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
 
         if needs_download:
             if not self.speech_engine.try_begin_download():

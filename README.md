@@ -232,6 +232,7 @@ cd vocalinux
 # Or pick the engine up front
 ./install.sh --engine=whisper_cpp   # whisper.cpp (default, GPU-accelerated)
 ./install.sh --engine=vosk          # lightweight VOSK
+./install.sh --engine=parakeet      # Parakeet (25 European languages, CPU)
 ```
 
 The installer handles everything: system dependencies, Python environment, speech models, and desktop integration.
