@@ -316,11 +316,12 @@ jobs:
             "${{ matrix.distro }}" \
             bash /pk/boot-test.sh "/dist/$(basename "$APPIMAGE")"
 
-  # Nothing built the PKGBUILD before a tag pushed it to AUR users, and the
-  # channel broke twice that way (#736, #757). The gate swaps the not-yet-
-  # existing tag tarball for a git archive of the checkout, so it answers
-  # whether *this commit* builds on Arch. Deliberately archlinux:latest: the
-  # AUR is a rolling channel and both breakages were Arch moving under us.
+  # Nothing built the PKGBUILD before a tag pushed it to AUR users, which is
+  # how #757 shipped: Arch's setuptools 84 against our old <82 cap. The gate
+  # swaps the not-yet-existing tag tarball for a git archive of the checkout,
+  # so it answers whether *this commit* builds on Arch. Deliberately
+  # archlinux:latest: the AUR is a rolling channel and #757 was Arch moving
+  # under us.
   aur-build-test:
     name: 🏛️ Build AUR package (gate)
     runs-on: ubuntu-latest

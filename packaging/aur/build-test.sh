@@ -6,16 +6,23 @@
 #     bash /repo/packaging/aur/build-test.sh
 #   or: just aur-gate
 #
-# This is the gate #736 and #757 needed: both breakages reached AUR users
-# because nothing ever ran makepkg on the PKGBUILD before a tag published it.
+# This is the gate #757 needed: Arch extra moved to setuptools 84 while
+# build-system.requires still capped it below 82, so the PKGBUILD's
+# --no-isolation build broke for AUR users — and nothing ever ran makepkg on
+# the PKGBUILD before a tag published it.
 # The published source= points at the tag tarball, which does not exist until
 # the tag is pushed, so the gate replaces it with a git archive of HEAD under
 # the same filename: build()/package() run unchanged, and the gate answers
 # "does this commit build on Arch", not "did the last tag build".
 #
+# Not this gate's, despite reaching Arch users: #736 came through install.sh,
+# not through this package. The AUR build of v0.16.0 was intact, because the
+# tree it built carried neither model_checksums.txt nor the code reading it.
+# Closing that one takes a build gate for install.sh, not for this package.
+#
 # Deliberately archlinux:latest, unpinned: the AUR is a rolling channel and
-# both known breakages were Arch moving under us (setuptools 84 in #757). A
-# pinned image would test a world that no longer exists.
+# #757 was Arch moving under us. A pinned image would test a world that no
+# longer exists.
 #
 # Two depends cannot come from the repos: python-pywhispercpp is a virtual
 # name that the AUR -cpu/-cuda/-rocm backends provide (#579), and
@@ -24,6 +31,12 @@
 # smoke they are pip-installed from the hash-pinned requirements/runtime.txt,
 # so the smoke runs the versions we pin, not whatever AUR ships — that drift
 # (AUR -cpu is still 1.4.x) is a monitoring job, not this gate.
+#
+# What the smoke therefore does NOT prove: that depends=() is complete. This
+# container carries base-devel and python-pip with their own closures, and the
+# two names above arrive via pip --no-deps, so a missing *direct* dependency
+# still passes. Transitive ones are the provider's to declare — the backend
+# providing python-pywhispercpp declares python-platformdirs itself.
 set -euo pipefail
 
 REPO="${REPO:-/repo}"
@@ -52,9 +65,15 @@ pacman_retry() {
 
 [ -f "$PKGDIR/PKGBUILD" ] || fail "$PKGDIR/PKGBUILD not found"
 
+# Upgrade before installing anything. archlinux:latest lags the mirrors, so
+# -Sy alone would put fresh packages on a stale base — the partial upgrade
+# Arch warns about, and a breakage this gate would be causing rather than
+# detecting. It is also what "Arch as it is today" has to mean here.
+pacman_retry -Syu --noconfirm >/dev/null
+
 # The base image ships no git; the tree for makepkg comes from git archive.
 # safe.directory: the mount is owned by another uid than the container user.
-pacman_retry -Sy --needed --noconfirm git >/dev/null
+pacman_retry -S --needed --noconfirm git >/dev/null
 git config --global --add safe.directory '*'
 git -C "$REPO" rev-parse --verify HEAD >/dev/null \
   || fail "$REPO is not a git checkout; git archive needs it"
@@ -83,7 +102,7 @@ done
 # package (how a python-pywhispercpp-cpu rename would go unnoticed again).
 # base-devel is the documented prerequisite for building any AUR package
 # (fakeroot, debugedit and friends); makepkg aborts without it.
-pacman_retry -Sy --needed --noconfirm --asdeps base-devel namcap python-pip \
+pacman_retry -S --needed --noconfirm --asdeps base-devel namcap python-pip \
   "${repo_deps[@]}" >/dev/null
 
 WORKDIR="$(mktemp -d)"

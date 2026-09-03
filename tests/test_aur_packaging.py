@@ -1,9 +1,8 @@
 """Regression guards for the AUR packaging and its build gate.
 
-The channel has broken in production twice (#736, #757) and until the gate
-landed, no CI ever ran makepkg on the PKGBUILD before a tag pushed it to
-users — a PKGBUILD change triggered zero jobs, because no paths filter
-matched packaging/aur/**.
+#757 reached AUR users because no CI ever ran makepkg on the PKGBUILD before
+a tag pushed it to them — and a PKGBUILD change triggered zero jobs in the
+first place, because no paths filter matched packaging/aur/**.
 """
 
 import re
