@@ -15,16 +15,21 @@ logger = logging.getLogger(__name__)
 
 # Parakeet model information
 # Models are downloaded from Hugging Face as sherpa-onnx ONNX bundles.
-_PARAKEET_REPO = "https://huggingface.co"
+#
+# Each bundle is pinned to a Hugging Face commit rather than tracking main, so
+# a file replaced upstream cannot change what an install downloads.
+_HF_BASE_URL = "https://huggingface.co"
 
 PARAKEET_MODEL_INFO = {
     "v3-european": {
         "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+        "revision": "2bda32ec70b097a55adaa07d9a7173915b43cc78",
         "size_mb": 639,
         "desc": "Parakeet TDT 0.6B v3 (int8), 25 European languages",
     },
     "v2-english": {
         "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8",
+        "revision": "1ab9323565ddb038682214b292f588070a538ce2",
         "size_mb": 630,
         "desc": "Parakeet TDT 0.6B v2 (int8), English",
     },
@@ -119,4 +124,7 @@ def get_model_file_url(model_name: str, filename: str) -> str:
     if not model_info:
         raise ValueError(f"Unknown Parakeet model: {model_name}")
 
-    return f"{_PARAKEET_REPO}/{model_info['repo']}/resolve/main/{filename}?download=true"
+    return (
+        f"{_HF_BASE_URL}/{model_info['repo']}/resolve/{model_info['revision']}"
+        f"/{filename}?download=true"
+    )

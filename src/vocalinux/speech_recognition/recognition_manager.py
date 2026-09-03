@@ -1776,33 +1776,56 @@ class SpeechRecognitionManager:
         os.makedirs(model_dir, exist_ok=True)
         logger.info(f"Downloading Parakeet '{self.model_size}' model to {model_dir}")
 
-        for filename in parakeet.MODEL_FILES:
-            dest_path = os.path.join(model_dir, filename)
-            if os.path.exists(dest_path):
-                continue
-            temp_file = dest_path + ".tmp"
-            url = parakeet.get_model_file_url(self.model_size, filename)
-            try:
+        # _stream_model_download reports 0..1 per file, so remap each file into
+        # its own slice of the bundle: the bar advances once across the whole
+        # download instead of restarting for each of the four files.
+        outer_callback = self._download_progress_callback
+        total_files = len(parakeet.MODEL_FILES)
+
+        def file_progress(index, name):
+            def report(fraction, speed, status):
+                if outer_callback:
+                    outer_callback(
+                        (index + fraction) / total_files,
+                        speed,
+                        f"{name} ({index + 1}/{total_files}) - {status}",
+                    )
+
+            return report
+
+        temp_file = None
+        try:
+            for index, filename in enumerate(parakeet.MODEL_FILES):
+                dest_path = os.path.join(model_dir, filename)
+                if os.path.exists(dest_path):
+                    continue
+                temp_file = dest_path + ".tmp"
+                url = parakeet.get_model_file_url(self.model_size, filename)
+                self._download_progress_callback = file_progress(index, filename)
                 self._stream_model_download(url, temp_file)
                 os.rename(temp_file, dest_path)
-            # RequestException=Exception under the test mocks; do not catch
-            # Timeout separately (it is not a real exception type there).
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Failed to download Parakeet model from {url}: {e}")
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                msg = str(e).lower()
-                if "timeout" in msg or type(e).__name__ == "Timeout":
-                    raise RuntimeError(
-                        "Model download timed out (Hugging Face may be slow or unavailable). "
-                        "Check your network and try again."
-                    ) from e
-                raise RuntimeError(f"Failed to download Parakeet model: {e}") from e
-            except (OSError, RuntimeError, ValueError) as e:
-                logger.error(f"An error occurred during Parakeet model download: {e}")
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
-                raise
+                temp_file = None
+
+        # RequestException=Exception under the test mocks; do not catch
+        # Timeout separately (it is not a real exception type there).
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download the Parakeet model: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            msg = str(e).lower()
+            if "timeout" in msg or type(e).__name__ == "Timeout":
+                raise RuntimeError(
+                    "Model download timed out (Hugging Face may be slow or unavailable). "
+                    "Check your network and try again."
+                ) from e
+            raise RuntimeError(f"Failed to download Parakeet model: {e}") from e
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.error(f"An error occurred during Parakeet model download: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
+        finally:
+            self._download_progress_callback = outer_callback
 
         logger.info("Parakeet model downloaded successfully")
         if self._download_progress_callback:
