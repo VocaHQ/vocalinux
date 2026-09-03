@@ -216,8 +216,11 @@ flatpak run com.vocalinux.Vocalinux
 
 The Flatpak ships the whisper.cpp engine with Vulkan GPU support and runs through
 XWayland on Wayland sessions. See [`packaging/flatpak/README.md`](packaging/flatpak/README.md)
-for build details, permissions, and Flathub submission notes. Flathub publishing
-is in progress.
+for build details, permissions, and Flathub submission notes. It is **not on
+Flathub**: the submission ([flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368))
+was closed on 2026-07-23 on policy grounds. The manifest is complete and builds
+in CI on both arches, so build it yourself as above; where it gets published is
+tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).
 
 ### Alternative: Install from Source
 
@@ -266,7 +269,7 @@ Or launch it from your application menu!
 
 ## 📋 Requirements
 
-- **OS**: Linux (tested on Ubuntu 24.04+, Debian 12+, Fedora 39+, Arch Linux, openSUSE Tumbleweed)
+- **OS**: Linux (tested on Ubuntu 24.04+, Debian 12+, Fedora 42+, Arch Linux, openSUSE Tumbleweed)
 - **Python**: 3.11 or newer
 - **Display**: X11 or Wayland
 - **Hardware**: Microphone for voice input
@@ -450,7 +453,7 @@ This script generates all three sounds using the same smooth glide algorithm. Yo
 - [x] ~~Vulkan GPU support~~ ✅
 - [x] In-app update mechanism ✅
 - [x] ~~Wayland support via IBus~~ ✅
-- [x] ~~Flatpak packaging~~ ✅ (Flathub submission in progress)
+- [x] ~~Flatpak packaging~~ ✅ (manifest ships; not on Flathub — see #167)
 - [ ] Application-specific commands
 - [ ] Debian/Ubuntu package (.deb)
 - [ ] Voice command customization

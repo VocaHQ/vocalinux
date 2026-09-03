@@ -72,6 +72,13 @@ pipx run flatpak-pip-generator \
 
 ## Flathub Submission Notes
 
+Read this first: the submission,
+[flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368), was
+**closed on 2026-07-23** on policy grounds — the generative-AI policy, plus a
+"tray-only application" reading. Nothing below was the reason it failed, and
+re-submitting without addressing that is a repeat. See
+[#167](https://github.com/VocaHQ/vocalinux/issues/167) for the channel decision.
+
 1. Change the `vocalinux` module source from `type: dir` to a tagged release:
 
    ```yaml

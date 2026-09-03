@@ -9,10 +9,10 @@ The cross-distribution compatibility improvements have been implemented in phase
 | Phase 1 | ✅ Complete | Dynamic GI_TYPELIB_PATH detection using pkg-config, multi-arch support, ALSA library fallbacks |
 | Phase 2 | ✅ Complete | Enhanced distro detection (Gentoo, Alpine, Void, Solus, Mageia) |
 | Phase 3 | ✅ Complete | System dependency checker, improved error messages |
-| Phase 4 | ✅ Complete | CI test matrix, pkg-config as core dependency |
+| Phase 4 | 🟡 Partial | pkg-config as a core dependency ✅. The CI distro matrix covers six containers, but it checks detection logic, shell syntax and `--help` — it never runs the installer, and the container jobs are `continue-on-error`. Real install runs are tracked as phase 2.4 of [#701](https://github.com/VocaHQ/vocalinux/issues/701) |
 | **Phase 5** | ✅ **Complete** | **Fixed remaining hardcoded GI_TYPELIB_PATH values in install.sh and CI workflow** |
 | **Phase 6** | ✅ **Complete** | **Added wrapper script verification tests, updated documentation** |
-| **Phase 7** | ✅ **Complete** | **Flatpak packaging (whisper.cpp engine) for universal distribution support — see [`packaging/flatpak/`](../packaging/flatpak/README.md). Flathub submission in progress.** |
+| **Phase 7** | ✅ **Complete** | **Flatpak packaging (whisper.cpp engine) for universal distribution support — see [`packaging/flatpak/`](../packaging/flatpak/README.md). Not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).** |
 | Phase 8 | 📋 Planned | Snap packaging for Ubuntu Software Store |
 
 ## Technical Implementation
@@ -53,7 +53,7 @@ interpreter rather than the release label.
 |--------------|---------|--------|-------|
 | Ubuntu | 24.04+ | ✅ Full Support | 22.04 ships Python 3.10, below the 3.11 floor |
 | Debian | 12+, Testing | ✅ Full Support | Primary target; use Ayatana AppIndicator |
-| Fedora | 39+ | ✅ Good Support | Uses lib64 paths, fully supported |
+| Fedora | 42+ | ✅ Good Support | Uses lib64 paths; 42 is the oldest Fedora upstream still supports, and the one in the CI matrix |
 | Arch Linux | Rolling | ✅ Good Support | Community tested, rolling release compatible |
 | openSUSE | Tumbleweed | ✅ Good Support | Good support with zypper package manager |
 | Linux Mint | On Ubuntu 24.04+ | ✅ Good Support | Mint 22 qualifies; Mint 21 is on Ubuntu 22.04, below the floor |
