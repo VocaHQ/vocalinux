@@ -3524,19 +3524,22 @@ VOSK_CONFIG
                     return 1
                 }
 
-                # Only the engine has to be written; ConfigManager merges the
-                # remaining defaults (including parakeet_model_size) on load.
-                local PARAKEET_CONFIG_FILE="$CONFIG_DIR/config.json"
-                if [ ! -f "$PARAKEET_CONFIG_FILE" ]; then
-                    mkdir -p "$CONFIG_DIR"
-                    cat > "$PARAKEET_CONFIG_FILE" << 'PARAKEET_CONFIG'
+                # config_manager merges the remaining defaults, but a file with no
+                # shortcuts section reads as a pre-push-to-talk config and gets
+                # pinned back to ctrl+ctrl/toggle, so seed that section too.
+                mkdir -p "$CONFIG_DIR"
+                if [ ! -f "$CONFIG_DIR/config.json" ]; then
+                    cat > "$CONFIG_DIR/config.json" << 'PARAKEET_CONFIG'
 {
-    "speech_recognition": {
-        "engine": "parakeet"
+    "shortcuts": {
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
     }
 }
 PARAKEET_CONFIG
                 fi
+                set_configured_engine "$CONFIG_DIR/config.json" parakeet ||
+                    print_warning "Could not point $CONFIG_DIR/config.json at the parakeet engine."
                 ;;
 
             remote_api)
@@ -4619,6 +4622,10 @@ EOF
         vosk)
             ENGINE_DISPLAY_NAME="VOSK"
             BACKEND_INFO="Lightweight"
+            ;;
+        parakeet)
+            ENGINE_DISPLAY_NAME="Parakeet"
+            BACKEND_INFO="CPU"
             ;;
         remote_api)
             ENGINE_DISPLAY_NAME="Remote API"
