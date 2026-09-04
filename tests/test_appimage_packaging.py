@@ -17,6 +17,7 @@ BOOT_FAMILIES = {
 }
 PINS = APPIMAGE / "tool_checksums.txt"
 REQUIREMENTS = REPO_ROOT / "requirements"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 #: Workflows that build an AppImage, and so decide which distros it runs on.
 APPIMAGE_WORKFLOWS = ("unified-pipeline.yml", "release.yml", "nightly.yml")
@@ -300,3 +301,25 @@ def test_boot_test_has_a_package_recipe_for_every_distro_it_runs_on():
         if family is None or family not in case_block.group(0):
             missing.append(distro)
     assert not missing, f"boot-test.sh installs nothing for: {missing}"
+
+
+def test_setuptools_packages_cover_every_python_subpackage():
+    """AppImage and Flatpak install the wheel built from an explicit packages
+    list. A new subpackage left off that list boots fine from a source tree and
+    dies in the bundle with ModuleNotFoundError (#774).
+    """
+    import tomllib
+
+    declared = set(
+        tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["setuptools"]["packages"]
+    )
+    src_root = REPO_ROOT / "src" / "vocalinux"
+    discovered = {
+        "vocalinux"
+        if init.parent == src_root
+        else "vocalinux." + ".".join(init.parent.relative_to(src_root).parts)
+        for init in src_root.rglob("__init__.py")
+        if "__pycache__" not in init.parts
+    }
+    missing = sorted(discovered - declared)
+    assert not missing, f"add these to tool.setuptools.packages in pyproject.toml: {missing}"
