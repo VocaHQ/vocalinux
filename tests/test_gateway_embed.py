@@ -36,6 +36,17 @@ class TestLoopbackRejection(unittest.TestCase):
             self.assertTrue(is_loopback_url(url), url)
             self.assertIsNone(reject_loopback_url(url))
 
+    def test_rejects_short_form_loopback_and_localhost_star(self):
+        # Contract / gateway policy: 127.1 and localhost.* must never be Pairable.
+        for url in (
+            "http://127.1:8765",
+            "http://127.0.1:8765",
+            "http://localhost.localdomain:8765",
+            "http://localhost.foo:8765",
+        ):
+            self.assertTrue(is_loopback_url(url), url)
+            self.assertIsNone(reject_loopback_url(url), url)
+
     def test_rejects_link_local_for_qr(self):
         for url in (
             "http://169.254.10.20:8765",
@@ -189,6 +200,19 @@ class TestPairingDecode(unittest.TestCase):
                 "payload": {
                     "v": 1,
                     "url": "http://169.254.1.2:8765",
+                    "token": "tokentokentokentokentokentoken12",
+                }
+            }
+        )
+        self.assertIsNone(info.display_url)
+        self.assertFalse(info.pairable)
+
+    def test_short_form_loopback_not_pairable(self):
+        info = decode_pairing_payload(
+            {
+                "payload": {
+                    "v": 1,
+                    "url": "http://127.1:8765",
                     "token": "tokentokentokentokentokentoken12",
                 }
             }
