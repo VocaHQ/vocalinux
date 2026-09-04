@@ -11,6 +11,10 @@ Pick whichever your server exposes — the rest of this guide applies to both.
 
 > **Tip — share the server with your phone.** These HTTP formats are open enough that the same self-hosted server can also back mobile dictation apps. On Android, apps like *Dictate* and *Transcribro* speak OpenAI-compatible Whisper; on iOS, Shortcuts-based dictation clients can hit the same endpoint. Run one Whisper server, point your laptop and phone at it, and you get consistent dictation everywhere without uploading audio to a third party.
 
+## Local VocaGateway (optional)
+
+On Linux you can start an optional local [VocaGateway](https://github.com/VocaHQ/vocagateway) from **Settings → Speech Engine** (podman-first, docker fallback). That path uses the same Remote API settings described below, with endpoint `/v1/audio/transcriptions`. It is **not** on-device recognition: audio goes to the gateway container on your machine. Details: [GATEWAY_EMBED.md](GATEWAY_EMBED.md).
+
 ## How It Works
 
 When the **Remote API** engine is active, Vocalinux:

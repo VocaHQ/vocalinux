@@ -44,6 +44,7 @@ from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
 from . import notifications
+from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from .config_manager import get_shared_config_manager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
@@ -332,6 +333,11 @@ class TrayIndicator:
         self._add_menu_separator()
         self._add_menu_item("Settings", self._on_settings_clicked)
         self._add_menu_item("View Logs", self._on_logs_clicked)
+        self._gateway_stop_menu_item = self._add_menu_item(
+            "Stop local Gateway", self._on_stop_local_gateway_clicked
+        )
+        self._gateway_stop_menu_item.set_no_show_all(True)
+        self._gateway_stop_menu_item.hide()
         self._add_menu_separator()
         # Hidden until a background check finds a newer release.
         self._update_menu_item = self._add_menu_item(
@@ -352,6 +358,12 @@ class TrayIndicator:
             self._update_menu_item.hide()
         else:
             self._show_update_menu_item(self._pending_update)
+        self._gateway_stop_menu_item.hide()
+        self._gateway_manager = get_gateway_embed_manager()
+        self._gateway_manager.add_listener(self._on_gateway_status_for_tray)
+        self._sync_gateway_stop_menu(
+            self._gateway_manager.status, self._gateway_manager.managed_by_us
+        )
 
         # Update the UI based on the initial state
         self._update_ui(RecognitionState.IDLE)
@@ -1103,6 +1115,37 @@ class TrayIndicator:
         if getattr(self, "_input_monitor", None) is not None:
             self._input_monitor.cancel()
             self._input_monitor = None
+
+    def _on_gateway_status_for_tray(self, status: GatewayStatus, detail: str) -> None:
+        """Update tray Stop local Gateway visibility from a worker thread."""
+        GLib.idle_add(
+            self._sync_gateway_stop_menu,
+            status,
+            get_gateway_embed_manager().managed_by_us,
+        )
+
+    def _sync_gateway_stop_menu(self, status: GatewayStatus, managed: bool) -> bool:
+        item = getattr(self, "_gateway_stop_menu_item", None)
+        if item is None:
+            return False
+        show = bool(managed) and status in {
+            GatewayStatus.STARTING,
+            GatewayStatus.LIVE,
+            GatewayStatus.PAIRABLE,
+            GatewayStatus.READY,
+            GatewayStatus.ERROR,
+        }
+        if show:
+            item.show()
+        else:
+            item.hide()
+        return False
+
+    def _on_stop_local_gateway_clicked(self, widget):
+        """Stop a gateway started by this Vocalinux session."""
+        manager = get_gateway_embed_manager()
+        if manager.managed_by_us:
+            manager.stop_async()
 
     def _on_quit_clicked(self, widget):
         """Handle click on the Quit menu item."""
