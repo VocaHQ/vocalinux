@@ -24,6 +24,8 @@ import socket
 from functools import lru_cache
 from urllib.parse import urlparse
 
+from vocalinux.utils.host_process import host_env
+
 logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOSTS = frozenset(
@@ -117,6 +119,7 @@ def _bridge_iface_ips() -> frozenset[str]:
                 capture_output=True,
                 timeout=1.0,
                 text=True,
+                env=host_env(),
             )
         except (OSError, subprocess.SubprocessError):
             continue
