@@ -50,7 +50,10 @@ class GatewayEmbedManager:
         self._poll_stop = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
         self.lan_publish = False
+        # What compose was last started/republished with (pairing uses this).
+        self._compose_lan_publish: Optional[bool] = None
         self._runtime_detect_started = False
+        self._republish_started = False
         if not self.runner.runtime_ready:
             self.begin_runtime_detection()
 
@@ -147,6 +150,64 @@ class GatewayEmbedManager:
         )
         thread.start()
 
+    def apply_lan_publish(self, lan_publish: bool) -> None:
+        """Persist desired LAN flag; republish compose when we manage it.
+
+        Until republish finishes, pairing stays non-Pairable so QR never claims
+        LAN while still bound to 127.0.0.1 (or the previous publish mode).
+        """
+        self.lan_publish = bool(lan_publish)
+        if not self.runner.managed_by_us:
+            # Next Run will pick up lan_publish; clear stale QR if any.
+            if self._compose_lan_publish is not None and self._compose_lan_publish != self.lan_publish:
+                self._pairing = None
+            return
+        if self._compose_lan_publish == self.lan_publish:
+            return
+        # Drop Pairable immediately; republish worker restores it when safe.
+        self._pairing = None
+        with self._lock:
+            if self._republish_started:
+                return
+            self._republish_started = True
+        thread = threading.Thread(
+            target=self._republish_worker,
+            name="vocalinux-gateway-republish",
+            daemon=True,
+        )
+        thread.start()
+
+    def _republish_worker(self) -> None:
+        try:
+            with self._lock:
+                self._emit(
+                    GatewayStatus.STARTING,
+                    "Updating LAN publish so the pairing URL matches…",
+                )
+            public_url = _guess_lan_url() if self.lan_publish else None
+            if self.lan_publish and not public_url:
+                logger.info("LAN republish enabled but LAN IP could not be guessed")
+            result = self.runner.republish(
+                lan_publish=self.lan_publish, public_url=public_url
+            )
+            if not result.ok:
+                self._emit(
+                    GatewayStatus.ERROR,
+                    result.message
+                    or "Could not update LAN publish. Stop and Run again.",
+                )
+                return
+            self._compose_lan_publish = self.lan_publish
+            self._pairing = None
+            self.refresh_status()
+        finally:
+            with self._lock:
+                self._republish_started = False
+
+    def _effective_lan_for_pairing(self) -> bool:
+        """True only when desired LAN matches what compose actually published."""
+        return bool(self.lan_publish) and self._compose_lan_publish is True
+
     def _start_worker(self) -> None:
         with self._lock:
             self._emit(GatewayStatus.STARTING, "Fetching VocaGateway v0.1.0 and starting compose…")
@@ -170,6 +231,7 @@ class GatewayEmbedManager:
             self._emit(GatewayStatus.ERROR, result.message)
             return
 
+        self._compose_lan_publish = self.lan_publish
         self._start_polling()
         self.refresh_status()
 
@@ -179,6 +241,7 @@ class GatewayEmbedManager:
             self._emit(GatewayStatus.STARTING, "Stopping local VocaGateway…")
         result = self.runner.stop(wipe_volumes=False)
         self._pairing = None
+        self._compose_lan_publish = None
         if not result.ok:
             self._emit(GatewayStatus.ERROR, result.message)
             return
@@ -216,7 +279,7 @@ class GatewayEmbedManager:
         pairable = False
         if health.live and self._token:
             try:
-                public = _guess_lan_url() if self.lan_publish else None
+                public = _guess_lan_url() if self._effective_lan_for_pairing() else None
                 # Avoid re-downloading QR SVG every poll (hot-path memory churn).
                 need_qr = True
                 cached = self._pairing
@@ -260,7 +323,13 @@ class GatewayEmbedManager:
         )
         detail = ""
         if status is GatewayStatus.LIVE:
-            detail = "Gateway process is up. Download a model in the WebUI to become Ready."
+            if self.lan_publish and self._compose_lan_publish is not True:
+                detail = (
+                    "LAN is on in settings, but publish still needs a restart. "
+                    "Stop and Run again (or wait for republish) before pairing a phone."
+                )
+            else:
+                detail = "Gateway process is up. Download a model in the WebUI to become Ready."
         elif status is GatewayStatus.PAIRABLE:
             detail = "Phone can pair. Dictation Ready still needs a selected model."
         elif status is GatewayStatus.READY:
@@ -283,7 +352,7 @@ class GatewayEmbedManager:
         # Prefer non-loopback; for desktop-only use, allow loopback URL in remote_api
         # (phone QR still rejects loopback separately).
         url = info.display_url or info.url
-        if self.lan_publish:
+        if self._effective_lan_for_pairing():
             guessed = _guess_lan_url()
             if guessed:
                 url = guessed
