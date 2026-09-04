@@ -363,6 +363,55 @@ class GatewayRunner:
             self.last_error = ""
             return RunnerResult(ok=True, message="stopped", returncode=0)
 
+    def republish(
+        self, *, lan_publish: bool, public_url: str | None = None
+    ) -> RunnerResult:
+        """Rewrite publish host / PUBLIC_URL and recreate the gateway service.
+
+        Used when LAN is toggled while compose is already managed by us so the
+        phone-facing bind and pairing URL match the new setting.
+        """
+        with self._lock:
+            if not self.managed_by_us:
+                return RunnerResult(
+                    ok=False,
+                    message="gateway is not managed by this session",
+                    returncode=1,
+                )
+            try:
+                checkout, _token, env_path = self.prepare(
+                    lan_publish=lan_publish, public_url=public_url
+                )
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = str(exc)
+                return RunnerResult(ok=False, message=str(exc), returncode=1)
+
+            completed = self._compose(
+                [
+                    "-f",
+                    "compose.yaml",
+                    "--profile",
+                    "cpu",
+                    "up",
+                    "-d",
+                    "--force-recreate",
+                    "--no-build",
+                    "gateway",
+                ],
+                cwd=checkout,
+                env_file=env_path,
+                timeout=300,
+            )
+            if completed.returncode != 0:
+                stderr = (completed.stderr or b"").decode("utf-8", errors="replace")
+                message = stderr.strip()[-800:] or "compose republish failed"
+                self.last_error = message
+                return RunnerResult(ok=False, message=message, returncode=completed.returncode)
+
+            self.managed_by_us = True
+            self.last_error = ""
+            return RunnerResult(ok=True, message="republished", returncode=0)
+
     def is_compose_running(self) -> bool:
         """Best-effort ``compose ps -q gateway``."""
         checkout = self._checkout or gateway_cache_dir()
