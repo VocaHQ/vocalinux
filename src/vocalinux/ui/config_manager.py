@@ -191,6 +191,11 @@ DEFAULT_CONFIG = {
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
         "backend": "auto",
     },
+    "dictionary": {
+        # Custom terms are kept in custom-dictionary.txt rather than config.json
+        # so accessibility tools can consume the stable, line-oriented contract.
+        "terms_enabled": False,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,

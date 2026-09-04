@@ -2433,6 +2433,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.config_manager = config_manager
         self.speech_engine = speech_engine
+        self.dictionary_manager = getattr(speech_engine, "dictionary_manager", None)
         self.shortcut_update_callback = shortcut_update_callback
         self.update_status_callback = update_status_callback
         self.overlay_enabled_callback = overlay_enabled_callback
@@ -2507,6 +2508,7 @@ class SettingsDialog(Gtk.Dialog):
         # every distro (some system-monitor icons only ship with Yaru).
         self._pages = [
             SettingsPage("dictation", "Dictation", "input-keyboard-symbolic"),
+            SettingsPage("dictionary", "Custom Dictionary", "accessories-dictionary-symbolic"),
             SettingsPage("model", "Speech Model", "audio-input-microphone-symbolic"),
             SettingsPage("audio", "Audio", "audio-speakers-symbolic"),
             SettingsPage("performance", "Performance", "power-profile-performance-symbolic"),
@@ -2520,6 +2522,7 @@ class SettingsDialog(Gtk.Dialog):
         self.dictation_page = pages_by_name["dictation"]
         self.shortcuts_tab = self.dictation_page.box
         self.recognition_settings_tab = self.dictation_page.box
+        self.dictionary_tab = pages_by_name["dictionary"].box
         self.speech_engine_tab = pages_by_name["model"].box
         self.audio_tab = pages_by_name["audio"].box
         self.power_tab = pages_by_name["performance"].box
@@ -2580,6 +2583,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_shortcuts_section()
         self._build_recognition_section()
         self._build_simple_model_section()
+        self._build_dictionary_section()
         self._build_engine_section()
         self._build_remote_server_section()
         self._build_audio_section()
@@ -3053,6 +3057,299 @@ class SettingsDialog(Gtk.Dialog):
         self.start_minimized_switch.connect("state-set", self._on_start_minimized_toggled)
         self.missing_tray_warning_switch.connect("state-set", self._on_missing_tray_warning_toggled)
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
+
+    def _build_dictionary_section(self) -> None:
+        """Build the Custom Dictionary page for terms and transcript corrections."""
+        terms_group = PreferencesGroup(
+            title="Custom terms",
+            description=(
+                "Terms bias Whisper and whisper.cpp recognition. The UTF-8 terms file is "
+                "live-reloaded and has one term per line, so accessibility tools can edit it."
+            ),
+            keywords=("dictionary", "terms", "vocabulary", "whisper", "scanner"),
+        )
+        self.dictionary_terms_enabled_switch = Gtk.Switch()
+        terms_group.add_row(
+            PreferenceRow(
+                title="Use custom terms",
+                subtitle="Whisper and whisper.cpp only; VOSK and remote API do not accept prompts.",
+                widget=self.dictionary_terms_enabled_switch,
+            )
+        )
+        self.dictionary_terms_status_label = Gtk.Label(xalign=0)
+        self.dictionary_terms_status_label.set_line_wrap(True)
+        self.dictionary_terms_status_label.get_style_context().add_class("tip-label")
+        terms_group.add_row(
+            PreferenceRow(
+                title="Terms file",
+                subtitle="custom-dictionary.txt in the VocaLinux configuration directory",
+                widget=self.dictionary_terms_status_label,
+            )
+        )
+
+        terms_add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        terms_add_box.set_margin_top(8)
+        terms_add_box.set_margin_bottom(4)
+        terms_add_box.set_margin_start(16)
+        terms_add_box.set_margin_end(16)
+        self.dictionary_term_entry = Gtk.Entry()
+        self.dictionary_term_entry.set_placeholder_text("Add a term")
+        self.dictionary_term_entry.set_tooltip_text(
+            "Term to add to the scanner-friendly terms file"
+        )
+        self.dictionary_term_entry.get_accessible().set_name("Custom term")
+        self.dictionary_term_entry.set_hexpand(True)
+        terms_add_box.pack_start(self.dictionary_term_entry, True, True, 0)
+        self.dictionary_add_term_button = Gtk.Button(label="Add term")
+        self.dictionary_add_term_button.connect("clicked", self._on_dictionary_add_term)
+        self.dictionary_term_entry.connect("activate", self._on_dictionary_add_term)
+        terms_add_box.pack_start(self.dictionary_add_term_button, False, False, 0)
+        terms_add_row = Gtk.ListBoxRow()
+        terms_add_row.set_activatable(False)
+        terms_add_row.add(terms_add_box)
+        terms_group.add_row(terms_add_row)
+
+        self.dictionary_terms_listbox = Gtk.ListBox()
+        self.dictionary_terms_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.dictionary_terms_listbox.set_placeholder(
+            Gtk.Label(label="No custom terms yet.", xalign=0.5)
+        )
+        terms_list_row = Gtk.ListBoxRow()
+        terms_list_row.set_activatable(False)
+        terms_list_row.add(self.dictionary_terms_listbox)
+        terms_group.add_row(terms_list_row)
+        self.dictionary_tab.pack_start(terms_group, False, False, 0)
+
+        corrections_group = PreferencesGroup(
+            title="Transcript corrections",
+            description=(
+                "Corrections replace a misheard whole word or phrase in every completed "
+                "transcript. They run before voice commands, so avoid replacement text that "
+                "is itself a voice command."
+            ),
+            keywords=("dictionary", "correction", "replacement", "misheard", "transcript"),
+        )
+        corrections_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        corrections_box.set_margin_top(8)
+        corrections_box.set_margin_bottom(4)
+        corrections_box.set_margin_start(16)
+        corrections_box.set_margin_end(16)
+        self.dictionary_heard_entry = Gtk.Entry()
+        self.dictionary_heard_entry.set_placeholder_text("Heard as, e.g. super base")
+        self.dictionary_heard_entry.set_tooltip_text("Misheard phrase, matched case-insensitively")
+        self.dictionary_heard_entry.get_accessible().set_name("Heard phrase")
+        self.dictionary_heard_entry.set_hexpand(True)
+        corrections_box.pack_start(self.dictionary_heard_entry, True, True, 0)
+        self.dictionary_replacement_entry = Gtk.Entry()
+        self.dictionary_replacement_entry.set_placeholder_text("Replace with, e.g. Supabase")
+        self.dictionary_replacement_entry.set_tooltip_text(
+            "Replacement inserted with exactly this spelling"
+        )
+        self.dictionary_replacement_entry.get_accessible().set_name("Replacement text")
+        self.dictionary_replacement_entry.set_hexpand(True)
+        corrections_box.pack_start(self.dictionary_replacement_entry, True, True, 0)
+        self.dictionary_add_correction_button = Gtk.Button(label="Add correction")
+        self.dictionary_add_correction_button.connect("clicked", self._on_dictionary_add_correction)
+        self.dictionary_heard_entry.connect("activate", self._on_dictionary_add_correction)
+        self.dictionary_replacement_entry.connect("activate", self._on_dictionary_add_correction)
+        corrections_box.pack_start(self.dictionary_add_correction_button, False, False, 0)
+        corrections_add_row = Gtk.ListBoxRow()
+        corrections_add_row.set_activatable(False)
+        corrections_add_row.add(corrections_box)
+        corrections_group.add_row(corrections_add_row)
+
+        self.dictionary_corrections_listbox = Gtk.ListBox()
+        self.dictionary_corrections_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.dictionary_corrections_listbox.set_placeholder(
+            Gtk.Label(label="No transcript corrections yet.", xalign=0.5)
+        )
+        corrections_list_row = Gtk.ListBoxRow()
+        corrections_list_row.set_activatable(False)
+        corrections_list_row.add(self.dictionary_corrections_listbox)
+        corrections_group.add_row(corrections_list_row)
+        self.dictionary_feedback_label = Gtk.Label(xalign=0)
+        self.dictionary_feedback_label.set_line_wrap(True)
+        self.dictionary_feedback_label.get_accessible().set_name("Custom dictionary status")
+        self.dictionary_feedback_label.get_style_context().add_class("tip-label")
+        corrections_group.add_row(
+            PreferenceRow(title="Dictionary status", widget=self.dictionary_feedback_label)
+        )
+        self.dictionary_tab.pack_start(corrections_group, False, False, 0)
+
+        self.dictionary_terms_enabled_switch.connect("state-set", self._on_dictionary_terms_enabled)
+
+    def _dictionary_available(self) -> bool:
+        """Return whether the runtime has a file-backed dictionary manager."""
+        return self.dictionary_manager is not None
+
+    def _on_dictionary_terms_enabled(self, widget: Any, state: bool) -> bool:
+        """Persist terms enablement and restore the control when persistence fails."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return False
+        if not self.dictionary_manager.set_terms_enabled(bool(state)):
+            self.dictionary_feedback_label.set_text("Could not save custom terms setting.")
+        self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_add_term(self, widget: Any) -> None:
+        """Add a term to the fixed line file, reporting an observable result."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return
+        term = self.dictionary_term_entry.get_text().strip()
+        if not term:
+            self.dictionary_feedback_label.set_text("Enter a term before adding it.")
+            return
+        terms = self.dictionary_manager.get_terms()
+        if any(existing.casefold() == term.casefold() for existing in terms):
+            self.dictionary_feedback_label.set_text("That term is already in the terms file.")
+            return
+        if not self.dictionary_manager.save_terms([*terms, term]):
+            self.dictionary_feedback_label.set_text(
+                "Could not save the terms file; no term was added."
+            )
+            return
+        self.dictionary_term_entry.set_text("")
+        if any(
+            existing.casefold() == term.casefold()
+            for existing in self.dictionary_manager.get_terms()
+        ):
+            self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
+        else:
+            self.dictionary_feedback_label.set_text("That term is not valid for the terms file.")
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_remove_term(self, widget: Any, term: str) -> None:
+        """Remove one term from the fixed line file."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return
+        terms = [
+            existing
+            for existing in self.dictionary_manager.get_terms()
+            if existing.casefold() != term.casefold()
+        ]
+        if self.dictionary_manager.save_terms(terms):
+            self.dictionary_feedback_label.set_text("Term removed from the live terms file.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save the terms file; the term was not removed."
+            )
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_add_correction(self, widget: Any) -> None:
+        """Add or update a phrase correction in the structured corrections file."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return
+        heard = self.dictionary_heard_entry.get_text().strip()
+        replacement = self.dictionary_replacement_entry.get_text().strip()
+        if not heard or not replacement:
+            self.dictionary_feedback_label.set_text(
+                "Enter both the heard phrase and its replacement."
+            )
+            return
+        entries = self.dictionary_manager.get_corrections()
+        existing = [entry for entry in entries if entry["heard"].casefold() == heard.casefold()]
+        entries = [entry for entry in entries if entry["heard"].casefold() != heard.casefold()]
+        entries.append({"heard": heard, "replacement": replacement})
+        if not self.dictionary_manager.save_corrections(entries):
+            self.dictionary_feedback_label.set_text(
+                "Could not save corrections; no correction was changed."
+            )
+            return
+        self.dictionary_heard_entry.set_text("")
+        self.dictionary_replacement_entry.set_text("")
+        if any(
+            entry["heard"].casefold() == heard.casefold()
+            for entry in self.dictionary_manager.get_corrections()
+        ):
+            self.dictionary_feedback_label.set_text(
+                "Correction updated."
+                if existing
+                else "Correction saved to the live corrections file."
+            )
+        else:
+            self.dictionary_feedback_label.set_text("That correction is not valid for the file.")
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_remove_correction(self, widget: Any, heard: str) -> None:
+        """Remove one correction from the structured corrections file."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return
+        entries = [
+            entry
+            for entry in self.dictionary_manager.get_corrections()
+            if entry["heard"].casefold() != heard.casefold()
+        ]
+        if self.dictionary_manager.save_corrections(entries):
+            self.dictionary_feedback_label.set_text("Correction removed.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save corrections; nothing was removed."
+            )
+        self._refresh_dictionary_ui()
+
+    def _refresh_dictionary_ui(self) -> None:
+        """Rebuild custom dictionary controls from the live, file-backed state."""
+        if not hasattr(self, "dictionary_terms_enabled_switch"):
+            return
+        if not self._dictionary_available():
+            self.dictionary_terms_enabled_switch.set_sensitive(False)
+            self.dictionary_terms_status_label.set_text("Custom dictionary support is unavailable.")
+            return
+        transient = self.dictionary_manager.is_transient_terms
+        enabled = self.dictionary_manager.terms_enabled()
+        self.dictionary_terms_enabled_switch.set_active(enabled)
+        self.dictionary_terms_enabled_switch.set_sensitive(not transient)
+        self.dictionary_terms_status_label.set_text(
+            ("Session-only --dictionary-file override is active. " if transient else "")
+            + self.dictionary_manager.terms_status()
+        )
+        self.dictionary_term_entry.set_sensitive(not transient)
+        self.dictionary_add_term_button.set_sensitive(not transient)
+
+        for child in list(self.dictionary_terms_listbox.get_children()):
+            self.dictionary_terms_listbox.remove(child)
+        for term in self.dictionary_manager.get_terms():
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(6)
+            row_box.set_margin_bottom(6)
+            row_box.set_margin_start(16)
+            row_box.set_margin_end(16)
+            label = Gtk.Label(label=term, xalign=0)
+            label.set_hexpand(True)
+            row_box.pack_start(label, True, True, 0)
+            remove_button = Gtk.Button(label="Remove")
+            remove_button.set_tooltip_text(f"Remove term {term}")
+            remove_button.get_accessible().set_name(f"Remove term {term}")
+            remove_button.set_sensitive(not transient)
+            remove_button.connect("clicked", self._on_dictionary_remove_term, term)
+            row_box.pack_start(remove_button, False, False, 0)
+            row.add(row_box)
+            self.dictionary_terms_listbox.add(row)
+
+        for child in list(self.dictionary_corrections_listbox.get_children()):
+            self.dictionary_corrections_listbox.remove(child)
+        for entry in self.dictionary_manager.get_corrections():
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(6)
+            row_box.set_margin_bottom(6)
+            row_box.set_margin_start(16)
+            row_box.set_margin_end(16)
+            label = Gtk.Label(label=f"{entry['heard']} → {entry['replacement']}", xalign=0)
+            label.set_hexpand(True)
+            row_box.pack_start(label, True, True, 0)
+            remove_button = Gtk.Button(label="Remove")
+            remove_button.set_tooltip_text(f"Remove correction for {entry['heard']}")
+            remove_button.get_accessible().set_name(f"Remove correction for {entry['heard']}")
+            remove_button.connect("clicked", self._on_dictionary_remove_correction, entry["heard"])
+            row_box.pack_start(remove_button, False, False, 0)
+            row.add(row_box)
+            self.dictionary_corrections_listbox.add(row)
+        self.dictionary_terms_listbox.show_all()
+        self.dictionary_corrections_listbox.show_all()
 
     def _build_auto_pause_section(self):
         """Build Auto-Pause settings: enable toggle + process name list."""
@@ -5629,6 +5926,7 @@ class SettingsDialog(Gtk.Dialog):
         self.auto_pause_switch.set_active(auto_pause_enabled)
         self._update_auto_pause_sensitivity(auto_pause_enabled)
         self._refresh_auto_pause_list()
+        self._refresh_dictionary_ui()
 
         keepalive_settings = self.config_manager.get_settings().get("model_keepalive", {})
         keepalive_enabled = bool(keepalive_settings.get("enabled", False))
