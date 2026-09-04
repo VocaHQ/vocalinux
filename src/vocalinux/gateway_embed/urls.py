@@ -140,11 +140,7 @@ def is_container_bridge_host(host: str | None) -> bool:
 
 def is_unusable_phone_host(host: str | None) -> bool:
     """True when a phone QR must not advertise this host."""
-    return (
-        is_loopback_host(host)
-        or is_link_local_host(host)
-        or is_container_bridge_host(host)
-    )
+    return is_loopback_host(host) or is_link_local_host(host) or is_container_bridge_host(host)
 
 
 def is_loopback_url(url: str | None) -> bool:
