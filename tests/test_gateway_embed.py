@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import io
-from pathlib import Path
 import json
 import unittest
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from vocalinux.gateway_embed.pairing import (
     MAX_QR_SVG_BYTES,
@@ -207,9 +207,8 @@ class TestRunnerNoVolumeWipe(unittest.TestCase):
             runner.stop(wipe_volumes=True)
 
 
-
-class TestComposeCpuProfile(unittest.TestCase):
-    def test_start_uses_profile_cpu(self):
+class TestComposeUpArgs(unittest.TestCase):
+    def test_start_uses_default_gateway_service(self):
         from vocalinux.gateway_embed.runner import GatewayRunner
         from vocalinux.gateway_embed.runtime import RuntimeInfo
 
@@ -238,15 +237,16 @@ class TestComposeCpuProfile(unittest.TestCase):
         compose_calls = [c for c in calls if c[:2] == ["/usr/bin/podman", "compose"]]
         self.assertTrue(compose_calls)
         argv = compose_calls[0]
-        self.assertIn("--profile", argv)
-        self.assertEqual(argv[argv.index("--profile") + 1], "cpu")
+        self.assertNotIn("--profile", argv)
         self.assertIn("up", argv)
         self.assertIn("-d", argv)
+        self.assertIn("gateway", argv)
 
 
 class TestImagePin(unittest.TestCase):
     def test_rejects_latest_override(self):
         import tempfile
+
         from vocalinux.gateway_embed.runner import write_env_file
 
         with tempfile.TemporaryDirectory() as tmp:
