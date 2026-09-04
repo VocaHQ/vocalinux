@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -23,10 +24,18 @@ from .paths_embed import (
 )
 from .runtime import ContainerRuntime, RuntimeInfo, resolve_runtime_info
 from .sandbox import SandboxState, detect_sandbox
+from .urls import reject_loopback_url
 
 DEFAULT_IMAGE = "vocagateway:v0.1.0"
 # Compose --profile cpu: selects a future cpu profile if present; on v0.1.0
 # the unprofiled gateway service still starts, while cuda/vulkan/native stay off.
+
+# Image refs only: block newline / metachar injection into the compose .env.
+_IMAGE_RE = re.compile(
+    r"^(?:[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*)"
+    r"(?:/(?:[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*))*"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?$"
+)
 
 
 def _default_run(*args, **kwargs):
@@ -45,6 +54,24 @@ class RunnerResult:
     returncode: int = 0
 
 
+def _env_line_safe(value: str) -> bool:
+    """True when *value* can sit on a single compose .env line."""
+    return bool(value) and not any(ch in value for ch in "\n\r\0")
+
+
+def pin_gateway_image(raw: str | None) -> str:
+    """Return a pinned image ref; never ``:latest`` or hostile overrides."""
+    image = (raw or "").strip() or DEFAULT_IMAGE
+    if (
+        not _env_line_safe(image)
+        or image.endswith(":latest")
+        or image == "latest"
+        or not _IMAGE_RE.fullmatch(image)
+    ):
+        return DEFAULT_IMAGE
+    return image
+
+
 def write_env_file(
     *,
     token: str,
@@ -53,12 +80,12 @@ def write_env_file(
     path: str | None = None,
 ) -> str:
     """Write compose ``.env`` (mode 600). Never log the token."""
+    if not _env_line_safe(token):
+        raise ValueError("gateway token contains invalid characters for .env")
     env_path = path or env_file_path()
     os.makedirs(os.path.dirname(env_path), mode=0o700, exist_ok=True)
     publish_host = "0.0.0.0" if lan_publish else "127.0.0.1"
-    image = (os.environ.get("VOCAGATEWAY_IMAGE") or DEFAULT_IMAGE).strip()
-    if not image or image.endswith(":latest") or image == "latest":
-        image = DEFAULT_IMAGE
+    image = pin_gateway_image(os.environ.get("VOCAGATEWAY_IMAGE"))
     lines = [
         f"VOCAGATEWAY_TOKEN={token}",
         f"VOCAGATEWAY_PUBLISH_HOST={publish_host}",
@@ -68,9 +95,11 @@ def write_env_file(
         # first start builds locally into this tag (or VOCAGATEWAY_IMAGE).
         f"VOCAGATEWAY_IMAGE={image}",
     ]
-    if public_url:
-        lines.append(f"VOCAGATEWAY_PUBLIC_URL={public_url}")
-        lines.append(f"VOCAGATEWAY_PAIRING_URL={public_url}")
+    # Only phone-reachable PUBLIC_URL belongs in compose discovery / QR.
+    safe_public = reject_loopback_url(public_url) if public_url else None
+    if safe_public and _env_line_safe(safe_public):
+        lines.append(f"VOCAGATEWAY_PUBLIC_URL={safe_public}")
+        lines.append(f"VOCAGATEWAY_PAIRING_URL={safe_public}")
     content = "\n".join(lines) + "\n"
     flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
     fd = os.open(env_path, flags, 0o600)
@@ -145,29 +174,70 @@ class GatewayRunner:
         sandbox: SandboxState | None = None,
         *,
         run: Callable[..., subprocess.CompletedProcess] = _default_run,
+        lazy_runtime: bool = True,
     ):
-        self.runtime = runtime or resolve_runtime_info()
         self.sandbox = sandbox if sandbox is not None else detect_sandbox()
         self._run = run
         self._lock = threading.RLock()
+        self._runtime_lock = threading.Lock()
         self.managed_by_us = False
         self.last_error = ""
         self._checkout: Optional[str] = None
+        if runtime is not None:
+            self._runtime: RuntimeInfo = runtime
+            self._runtime_ready = True
+        elif lazy_runtime:
+            # Do not probe podman/docker on the GTK main thread.
+            self._runtime = RuntimeInfo(
+                kind=ContainerRuntime.NONE,
+                binary=None,
+                hint="Detecting container runtime…",
+            )
+            self._runtime_ready = False
+        else:
+            self._runtime = resolve_runtime_info()
+            self._runtime_ready = True
+
+    @property
+    def runtime(self) -> RuntimeInfo:
+        return self._runtime
+
+    @runtime.setter
+    def runtime(self, value: RuntimeInfo) -> None:
+        self._runtime = value
+
+    @property
+    def runtime_ready(self) -> bool:
+        return self._runtime_ready
+
+    def ensure_runtime(self) -> RuntimeInfo:
+        """Resolve container runtime; safe to call from a worker thread."""
+        if self._runtime_ready:
+            return self._runtime
+        with self._runtime_lock:
+            if not self._runtime_ready:
+                self._runtime = resolve_runtime_info()
+                self._runtime_ready = True
+            return self._runtime
 
     @property
     def available(self) -> bool:
+        if not self._runtime_ready:
+            return False
         return (
             not self.sandbox.blocked
-            and self.runtime.kind is not ContainerRuntime.NONE
-            and bool(self.runtime.compose_args)
+            and self._runtime.kind is not ContainerRuntime.NONE
+            and bool(self._runtime.compose_args)
         )
 
     @property
     def unavailable_hint(self) -> str:
         if self.sandbox.blocked:
             return self.sandbox.hint
-        if self.runtime.hint:
-            return self.runtime.hint
+        if not self._runtime_ready:
+            return "Detecting container runtime…"
+        if self._runtime.hint:
+            return self._runtime.hint
         return "No container runtime available."
 
     def local_base_url(self) -> str:
@@ -182,7 +252,8 @@ class GatewayRunner:
         extra_env: Mapping[str, str] | None = None,
         timeout: float = 600,
     ) -> subprocess.CompletedProcess:
-        argv = list(self.runtime.compose_args) + ["--env-file", env_file, "-p", COMPOSE_PROJECT]
+        self.ensure_runtime()
+        argv = list(self._runtime.compose_args) + ["--env-file", env_file, "-p", COMPOSE_PROJECT]
         argv.extend(args)
         env = host_env()
         if extra_env:
@@ -204,6 +275,7 @@ class GatewayRunner:
     def prepare(self, *, lan_publish: bool, public_url: str | None = None) -> tuple[str, str, str]:
         """Ensure checkout + token + env. Returns (checkout, token, env_path)."""
         with self._lock:
+            self.ensure_runtime()
             if self.sandbox.blocked:
                 raise RuntimeError(self.sandbox.hint)
             if not self.available:
@@ -267,7 +339,8 @@ class GatewayRunner:
                 raise RuntimeError("volume wipe is not allowed from the desktop UI")
             checkout = self._checkout or gateway_cache_dir()
             env_path = env_file_path()
-            if not os.path.isdir(checkout) or not self.runtime.compose_args:
+            self.ensure_runtime()
+            if not os.path.isdir(checkout) or not self._runtime.compose_args:
                 self.managed_by_us = False
                 return RunnerResult(ok=True, message="nothing to stop")
             if not os.path.isfile(env_path):
@@ -296,7 +369,7 @@ class GatewayRunner:
         env_path = env_file_path()
         if not os.path.isdir(checkout) or not os.path.isfile(env_path):
             return False
-        if not self.runtime.compose_args:
+        if not self._runtime_ready or not self._runtime.compose_args:
             return False
         try:
             completed = self._compose(

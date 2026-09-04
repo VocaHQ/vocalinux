@@ -7,11 +7,10 @@ import socket
 import threading
 from typing import Callable, List, Optional
 
-from .health import HealthSnapshot, probe_health
+from .health import probe_health
 from .pairing import PairingInfo, fetch_pairing
 from .preset import apply_remote_api_preset, remote_api_preset_from_pairing
 from .runner import GatewayRunner
-from .runtime import ContainerRuntime
 from .status import GatewayStatus
 from .urls import reject_loopback_url
 
@@ -33,7 +32,8 @@ def _guess_lan_url(port: int = 8765) -> Optional[str]:
         return None
     if not ip or ip.startswith("127."):
         return None
-    return f"http://{ip}:{port}"
+    candidate = f"http://{ip}:{port}"
+    return reject_loopback_url(candidate)
 
 
 class GatewayEmbedManager:
@@ -50,6 +50,9 @@ class GatewayEmbedManager:
         self._poll_stop = threading.Event()
         self._poll_thread: Optional[threading.Thread] = None
         self.lan_publish = False
+        self._runtime_detect_started = False
+        if not self.runner.runtime_ready:
+            self.begin_runtime_detection()
 
     # ------------------------------------------------------------------
     # listeners (GTK should register wrappers that idle_add into UI)
@@ -98,6 +101,35 @@ class GatewayEmbedManager:
     def unavailable_hint(self) -> str:
         return self.runner.unavailable_hint
 
+    @property
+    def runtime_ready(self) -> bool:
+        return self.runner.runtime_ready
+
+    def begin_runtime_detection(self) -> None:
+        """Probe podman/docker off the GTK main thread."""
+        if self.runner.runtime_ready:
+            return
+        with self._lock:
+            if self._runtime_detect_started:
+                return
+            self._runtime_detect_started = True
+
+        def _worker() -> None:
+            try:
+                self.runner.ensure_runtime()
+            except Exception:  # noqa: BLE001
+                logger.exception("container runtime detection failed")
+            detail = ""
+            if not self.runner.available:
+                detail = self.runner.unavailable_hint
+            self._emit(self._status, detail)
+
+        threading.Thread(
+            target=_worker,
+            name="vocalinux-gateway-runtime",
+            daemon=True,
+        ).start()
+
     def start_async(self, *, lan_publish: bool = False) -> None:
         self.lan_publish = lan_publish
         thread = threading.Thread(
@@ -126,6 +158,7 @@ class GatewayEmbedManager:
         try:
             from .paths_embed import ensure_token_file
 
+            self.runner.ensure_runtime()
             self._token = ensure_token_file()
             result = self.runner.start(lan_publish=self.lan_publish, public_url=public_url)
         except Exception as exc:  # noqa: BLE001
@@ -184,12 +217,31 @@ class GatewayEmbedManager:
         if health.live and self._token:
             try:
                 public = _guess_lan_url() if self.lan_publish else None
+                # Avoid re-downloading QR SVG every poll (hot-path memory churn).
+                need_qr = True
+                cached = self._pairing
+                if cached is not None and cached.qr_svg and cached.display_url:
+                    need_qr = False
                 info = fetch_pairing(
                     self.runner.local_base_url(),
                     self._token,
                     public_url=public,
-                    fetch_qr=True,
+                    fetch_qr=need_qr,
                 )
+                if (
+                    not info.qr_svg
+                    and cached is not None
+                    and cached.qr_svg
+                    and cached.display_url == info.display_url
+                ):
+                    info = PairingInfo(
+                        version=info.version,
+                        url=info.url,
+                        token=info.token,
+                        display_url=info.display_url,
+                        raw_payload=info.raw_payload,
+                        qr_svg=cached.qr_svg,
+                    )
                 self._pairing = info
                 pairable = info.pairable
             except Exception as exc:  # noqa: BLE001
