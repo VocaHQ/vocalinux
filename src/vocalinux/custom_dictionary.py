@@ -227,6 +227,56 @@ class CustomDictionaryManager:
             contents += "\n"
         return self._atomic_write(path, contents)
 
+    def add_term(self, term: str) -> bool:
+        """Append one valid term without rewriting comments or blank lines."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms edit while a CLI override is active")
+            return False
+        cleaned = self._single_term(term)
+        if cleaned is None:
+            return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot add custom term because the configured path is invalid")
+            return False
+        contents = self._read_terms_contents(path, missing_value="")
+        if contents is None:
+            return False
+        if any(existing.casefold() == cleaned.casefold() for existing in self.get_terms()):
+            logger.warning("Ignoring duplicate custom term %r", cleaned)
+            return False
+        separator = "" if not contents or contents.endswith(("\n", "\r")) else "\n"
+        return self._atomic_write(path, f"{contents}{separator}{cleaned}\n")
+
+    def remove_term(self, term: str) -> bool:
+        """Remove matching term lines without changing unrelated file content."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms edit while a CLI override is active")
+            return False
+        cleaned = self._single_term(term)
+        if cleaned is None:
+            return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot remove custom term because the configured path is invalid")
+            return False
+        contents = self._read_terms_contents(path)
+        if contents is None:
+            return False
+
+        remaining_lines: list[str] = []
+        removed = False
+        for line in contents.splitlines(keepends=True):
+            line_term = unicodedata.normalize("NFC", line.rstrip("\r\n").strip())
+            if not line_term.startswith("#") and line_term.casefold() == cleaned.casefold():
+                removed = True
+                continue
+            remaining_lines.append(line)
+        if not removed:
+            logger.warning("Custom term %r was not present in the terms file", cleaned)
+            return False
+        return self._atomic_write(path, "".join(remaining_lines))
+
     def build_initial_prompt(self) -> Optional[str]:
         """Build the current Whisper prompt from enabled terms, if any."""
         if not self.terms_enabled():
@@ -324,6 +374,26 @@ class CustomDictionaryManager:
             seen.add(key)
             normalized.append(cleaned)
         return normalized
+
+    @staticmethod
+    def _single_term(term: str) -> Optional[str]:
+        """Validate a single line-file term for an incremental edit."""
+        if not isinstance(term, str) or "\n" in term or "\r" in term:
+            logger.warning("Ignoring invalid custom term")
+            return None
+        normalized = CustomDictionaryManager._normalize_terms([term])
+        return normalized[0] if normalized else None
+
+    @staticmethod
+    def _read_terms_contents(path: Path, missing_value: Optional[str] = None) -> Optional[str]:
+        """Read terms text for an edit while reporting invalid source files safely."""
+        try:
+            return path.read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return missing_value
+        except (OSError, UnicodeError) as error:
+            logger.warning("Could not read custom terms file %s: %s", path, error)
+            return None
 
     def _legacy_corrections(self) -> list[dict[str, str]]:
         """Read the never-released #768 config shape without migrating it silently."""

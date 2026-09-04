@@ -1079,6 +1079,7 @@ class TestSettingsNavigation(unittest.TestCase):
     def test_topic_pages_exist(self):
         for name, title in [
             ("dictation", "Dictation"),
+            ("dictionary", "Custom Dictionary"),
             ("model", "Speech Model"),
             ("audio", "Audio"),
             ("performance", "Performance"),
@@ -1086,6 +1087,30 @@ class TestSettingsNavigation(unittest.TestCase):
             ("advanced", "Advanced"),
         ]:
             self.assertIn(f'SettingsPage("{name}", "{title}"', self.source_code)
+
+    def test_custom_dictionary_page_has_both_accessible_subsections(self):
+        """The dictionary page keeps terms and corrections distinct and accessible."""
+        body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
+        self.assertIn('title="Custom terms"', body)
+        self.assertIn('title="Transcript corrections"', body)
+        self.assertIn("Vocabulary bias works with Whisper and whisper.cpp", body)
+        for accessible_name in [
+            "Custom terms file",
+            "Custom term",
+            "Heard phrase",
+            "Replacement text",
+            "Custom dictionary status",
+        ]:
+            self.assertIn(accessible_name, body)
+
+    def test_custom_dictionary_path_and_persistence_handlers_are_present(self):
+        """Path chooser and failure feedback keep existing settings safe."""
+        self.assertIn('Gtk.FileChooserButton(title="Choose Terms File")', self.source_code)
+        self.assertIn("def _on_dictionary_terms_path_changed", self.source_code)
+        self.assertIn("set_terms_path", self.source_code)
+        self.assertIn("Could not save that custom terms path", self.source_code)
+        self.assertIn("add_term(term)", self.source_code)
+        self.assertIn("remove_term(term)", self.source_code)
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)
