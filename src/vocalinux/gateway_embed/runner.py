@@ -25,6 +25,8 @@ from .runtime import ContainerRuntime, RuntimeInfo, resolve_runtime_info
 from .sandbox import SandboxState, detect_sandbox
 
 DEFAULT_IMAGE = "vocagateway:v0.1.0"
+# Compose --profile cpu: selects a future cpu profile if present; on v0.1.0
+# the unprofiled gateway service still starts, while cuda/vulkan/native stay off.
 
 
 def _default_run(*args, **kwargs):
@@ -220,7 +222,7 @@ class GatewayRunner:
             return checkout, token, env_path
 
     def start(self, *, lan_publish: bool = False, public_url: str | None = None) -> RunnerResult:
-        """``compose up -d`` for default service gateway (builds if needed)."""
+        """``compose --profile cpu up -d`` for service gateway (builds if needed)."""
         with self._lock:
             try:
                 checkout, _token, env_path = self.prepare(
@@ -234,6 +236,8 @@ class GatewayRunner:
                 [
                     "-f",
                     "compose.yaml",
+                    "--profile",
+                    "cpu",
                     "up",
                     "-d",
                     "--build",
@@ -272,7 +276,7 @@ class GatewayRunner:
                 env_path = write_env_file(token=token, lan_publish=False)
 
             completed = self._compose(
-                ["-f", "compose.yaml", "down"],
+                ["-f", "compose.yaml", "--profile", "cpu", "down"],
                 cwd=checkout,
                 env_file=env_path,
                 timeout=180,
@@ -296,7 +300,7 @@ class GatewayRunner:
             return False
         try:
             completed = self._compose(
-                ["-f", "compose.yaml", "ps", "-q", "gateway"],
+                ["-f", "compose.yaml", "--profile", "cpu", "ps", "-q", "gateway"],
                 cwd=checkout,
                 env_file=env_path,
                 timeout=30,
