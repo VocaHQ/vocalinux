@@ -100,36 +100,10 @@ def _parse_host_ip(host: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Ad
 
 @lru_cache(maxsize=1)
 def _bridge_iface_ips() -> frozenset[str]:
-    """Best-effort IPs currently bound to known container-bridge interfaces."""
-    found: set[str] = set()
-    try:
-        import psutil  # type: ignore
-    except Exception:
-        psutil = None  # type: ignore
-    if psutil is not None:
-        try:
-            stats = psutil.net_if_addrs()
-        except Exception:  # noqa: BLE001
-            stats = {}
-        for name, addrs in stats.items():
-            if name not in _BRIDGE_IFACE_NAMES and not name.startswith("br-"):
-                continue
-            # Only treat classic docker0/podman0 by name; br-* is swarm/user
-            # networks and may be host-facing — skip unless exact bridge name.
-            if name not in _BRIDGE_IFACE_NAMES:
-                continue
-            for addr in addrs:
-                raw = getattr(addr, "address", None)
-                if not raw:
-                    continue
-                ip = _parse_host_ip(str(raw))
-                if ip is not None and not ip.is_loopback:
-                    found.add(str(ip))
-        return frozenset(found)
-
-    # Fallback without psutil: parse `ip -o addr show <iface>`.
+    """Best-effort IPs bound to docker0 / podman0 / cni-podman0."""
     import subprocess
 
+    found: set[str] = set()
     for iface in _BRIDGE_IFACE_NAMES:
         try:
             completed = subprocess.run(

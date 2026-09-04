@@ -43,6 +43,13 @@ class TestLoopbackRejection(unittest.TestCase):
         ):
             self.assertIsNone(reject_loopback_url(url), url)
 
+    def test_rejects_default_container_bridge(self):
+        for url in (
+            "http://172.17.0.1:8765",
+            "http://10.88.0.1:8765",
+        ):
+            self.assertIsNone(reject_loopback_url(url), url)
+
     def test_accepts_lan(self):
         url = "http://192.168.1.20:8765"
         self.assertFalse(is_loopback_url(url))
@@ -313,3 +320,49 @@ class TestTokenFileCap(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLanPublishGate(unittest.TestCase):
+    def test_pairing_waits_until_compose_matches_lan(self):
+        from vocalinux.gateway_embed.manager import GatewayEmbedManager
+        from vocalinux.gateway_embed.runner import GatewayRunner, RunnerResult
+        from vocalinux.gateway_embed.runtime import RuntimeInfo
+
+        runner = GatewayRunner(
+            runtime=RuntimeInfo(
+                kind=ContainerRuntime.PODMAN,
+                binary="/usr/bin/podman",
+                compose_args=("/usr/bin/podman", "compose"),
+            ),
+            sandbox=detect_sandbox({}),
+            run=MagicMock(),
+        )
+        runner.managed_by_us = True
+        manager = GatewayEmbedManager(runner=runner)
+        manager.lan_publish = True
+        manager._compose_lan_publish = False
+        self.assertFalse(manager._effective_lan_for_pairing())
+
+        calls = {"n": 0}
+
+        def fake_republish(**_kwargs):
+            calls["n"] += 1
+            manager._compose_lan_publish = True
+            return RunnerResult(ok=True, message="republished")
+
+        with patch.object(runner, "republish", side_effect=fake_republish):
+            manager.apply_lan_publish(True)
+            # Same value as desired but compose mismatch should still republish
+            # when _compose_lan_publish differs (already True desired).
+        # Force mismatch path explicitly:
+        manager._compose_lan_publish = False
+        manager._republish_started = False
+        with patch.object(runner, "republish", side_effect=fake_republish):
+            with patch.object(manager, "refresh_status"):
+                manager.apply_lan_publish(True)
+                # worker is async; call directly for determinism
+                manager._republish_started = True
+                manager._republish_worker()
+        self.assertTrue(manager._compose_lan_publish)
+        self.assertGreaterEqual(calls["n"], 1)
+

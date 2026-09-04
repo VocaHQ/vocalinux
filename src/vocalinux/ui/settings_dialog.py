@@ -4635,7 +4635,9 @@ class SettingsDialog(Gtk.Dialog):
         active = bool(self.gateway_lan_switch.get_active())
         self.config_manager.set("gateway_embed", "lan_publish", active)
         self.config_manager.save_config()
-        self._gateway_manager.lan_publish = active
+        # Republish when compose is already running so QR/bind match LAN.
+        self._gateway_manager.apply_lan_publish(active)
+        self._update_gateway_pairing_widgets()
 
     def _on_gateway_use_clicked(self, widget):
         try:
