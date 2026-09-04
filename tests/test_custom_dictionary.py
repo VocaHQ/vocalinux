@@ -7,6 +7,7 @@ from typing import Any
 
 from vocalinux.custom_dictionary import (
     CORRECTIONS_FILENAME,
+    DEFAULT_TERMS_PATH,
     TERMS_FILENAME,
     CustomDictionaryManager,
     apply_corrections,
@@ -20,7 +21,13 @@ class FakeConfig:
     """Minimal ConfigManager substitute with controllable persistence."""
 
     def __init__(self, values: dict[str, dict[str, Any]] | None = None, save_result: bool = True):
-        self.values = values or {"dictionary": {"terms_enabled": False, "max_terms": 200}}
+        self.values = values or {
+            "dictionary": {
+                "enabled": False,
+                "file_path": DEFAULT_TERMS_PATH,
+                "max_words": 200,
+            }
+        }
         self.save_result = save_result
 
     def get(self, section: str, key: str, default: Any = None) -> Any:
@@ -40,14 +47,18 @@ class FakeConfig:
 def manager_at(
     tmp_path: Path, monkeypatch, config: FakeConfig | None = None
 ) -> CustomDictionaryManager:
-    """Create a manager whose fixed files live in pytest's temp config directory."""
+    """Create a manager whose configured files live in pytest's temp directory."""
     monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
-    return CustomDictionaryManager(config or FakeConfig())
+    config = config or FakeConfig()
+    dictionary = config.values.setdefault("dictionary", {})
+    if dictionary.get("file_path") in (None, DEFAULT_TERMS_PATH):
+        dictionary["file_path"] = str(tmp_path / TERMS_FILENAME)
+    return CustomDictionaryManager(config)
 
 
 def test_terms_are_live_reloaded_and_scanner_friendly(tmp_path: Path, monkeypatch) -> None:
     """The UTF-8 line file accepts comments and applies an external replacement."""
-    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"terms_enabled": True}}))
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
     terms_file = tmp_path / TERMS_FILENAME
     terms_file.write_text("# scanner comment\nVocaLinux\nvocalinux\nSupabase\n", encoding="utf-8")
 
@@ -81,6 +92,87 @@ def test_enable_rollback_when_config_persistence_fails(tmp_path: Path, monkeypat
 
     assert not manager.set_terms_enabled(True)
     assert not manager.terms_enabled()
+
+
+def test_pr_767_dictionary_configuration_keys_and_contract_are_preserved(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Existing enabled, file_path, and max_words settings remain effective."""
+    configured_path = tmp_path / TERMS_FILENAME
+    configured_path.write_text("VocaLinux\nPyGObject\n", encoding="utf-8")
+    config = FakeConfig(
+        {
+            "dictionary": {
+                "enabled": True,
+                "file_path": str(configured_path),
+                "max_words": 1,
+            }
+        }
+    )
+    manager = manager_at(tmp_path, monkeypatch, config)
+
+    assert TERMS_FILENAME == "dictionary.txt"
+    assert DEFAULT_TERMS_PATH == "~/.config/vocalinux/dictionary.txt"
+    assert CustomDictionaryManager(FakeConfig()).terms_path_text() == DEFAULT_TERMS_PATH
+    assert manager.terms_enabled()
+    assert manager.terms_path() == configured_path
+    assert manager.build_initial_prompt() == "VocaLinux"
+
+
+def test_invalid_or_unreadable_configured_terms_path_is_not_persisted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Invalid paths are harmless and leave the previous configured path intact."""
+    previous_path = str(tmp_path / TERMS_FILENAME)
+    config = FakeConfig({"dictionary": {"file_path": previous_path}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+
+    assert not manager.set_terms_path("~vocalinux-user-does-not-exist/dictionary.txt")
+    assert config.get("dictionary", "file_path") == previous_path
+
+    assert not manager.set_terms_path(str(tmp_path))
+    assert config.get("dictionary", "file_path") == previous_path
+
+
+def test_invalid_saved_terms_path_is_safe_to_read_and_report(tmp_path: Path, monkeypatch) -> None:
+    """A pre-existing unresolved path cannot crash recognition or Settings."""
+    config = FakeConfig(
+        {
+            "dictionary": {
+                "enabled": True,
+                "file_path": "~vocalinux-user-does-not-exist/dictionary.txt",
+            }
+        }
+    )
+    manager = manager_at(tmp_path, monkeypatch, config)
+
+    assert manager.terms_path() is None
+    assert manager.get_terms() == []
+    assert manager.build_initial_prompt() is None
+    assert manager.terms_status() == "Configured terms path is invalid or cannot be expanded."
+
+
+def test_terms_path_save_failure_preserves_the_previous_configured_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A failed config save never claims a new path persisted."""
+    previous_path = str(tmp_path / TERMS_FILENAME)
+    config = FakeConfig({"dictionary": {"file_path": previous_path}}, save_result=False)
+    manager = manager_at(tmp_path, monkeypatch, config)
+
+    assert not manager.set_terms_path(str(tmp_path / "new-terms.txt"))
+    assert config.get("dictionary", "file_path") == previous_path
+
+
+def test_invalid_transient_terms_path_does_not_crash(tmp_path: Path, monkeypatch) -> None:
+    """An unresolved CLI tilde path disables only its session's terms safely."""
+    manager_at(tmp_path, monkeypatch)
+    manager = CustomDictionaryManager(FakeConfig(), "~vocalinux-user-does-not-exist/dictionary.txt")
+
+    assert manager.terms_enabled()
+    assert manager.terms_path() is None
+    assert manager.get_terms() == []
+    assert manager.terms_status() == "Configured terms path is invalid or cannot be expanded."
 
 
 def test_atomic_save_failure_preserves_existing_terms_file(tmp_path: Path, monkeypatch) -> None:
@@ -149,7 +241,7 @@ def test_invalid_corrections_file_fails_closed(tmp_path: Path, monkeypatch) -> N
 
 def test_invalid_terms_file_is_ignored_and_explained(tmp_path: Path, monkeypatch) -> None:
     """An invalid scanner file leaves prompt bias empty with a clear status."""
-    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"terms_enabled": True}}))
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
     (tmp_path / TERMS_FILENAME).write_bytes(b"\xff\xfe")
 
     assert manager.build_initial_prompt() is None

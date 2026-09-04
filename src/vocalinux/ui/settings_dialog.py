@@ -3076,13 +3076,31 @@ class SettingsDialog(Gtk.Dialog):
                 widget=self.dictionary_terms_enabled_switch,
             )
         )
+        terms_path_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.dictionary_terms_path_entry = Gtk.Entry()
+        self.dictionary_terms_path_entry.set_hexpand(True)
+        self.dictionary_terms_path_entry.set_placeholder_text("~/.config/vocalinux/dictionary.txt")
+        self.dictionary_terms_path_entry.set_tooltip_text(
+            "UTF-8 line file used for custom terms and the accessibility scanner"
+        )
+        self.dictionary_terms_path_entry.get_accessible().set_name("Custom terms file")
+        terms_path_box.pack_start(self.dictionary_terms_path_entry, True, True, 0)
+        self.dictionary_terms_file_button = Gtk.FileChooserButton(title="Choose Terms File")
+        terms_path_box.pack_start(self.dictionary_terms_file_button, False, False, 0)
+        terms_group.add_row(
+            PreferenceRow(
+                title="Terms file",
+                subtitle="UTF-8, one term per line; # starts a comment",
+                widget=terms_path_box,
+            )
+        )
         self.dictionary_terms_status_label = Gtk.Label(xalign=0)
         self.dictionary_terms_status_label.set_line_wrap(True)
         self.dictionary_terms_status_label.get_style_context().add_class("tip-label")
         terms_group.add_row(
             PreferenceRow(
-                title="Terms file",
-                subtitle="custom-dictionary.txt in the VocaLinux configuration directory",
+                title="Live status",
+                subtitle="The terms file is re-read before every transcription.",
                 widget=self.dictionary_terms_status_label,
             )
         )
@@ -3177,6 +3195,11 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_tab.pack_start(corrections_group, False, False, 0)
 
         self.dictionary_terms_enabled_switch.connect("state-set", self._on_dictionary_terms_enabled)
+        self.dictionary_terms_path_entry.connect("activate", self._on_dictionary_terms_path_changed)
+        self.dictionary_terms_path_entry.connect(
+            "focus-out-event", self._on_dictionary_terms_path_changed
+        )
+        self.dictionary_terms_file_button.connect("file-set", self._on_dictionary_terms_file_chosen)
 
     def _dictionary_available(self) -> bool:
         """Return whether the runtime has a file-backed dictionary manager."""
@@ -3190,6 +3213,26 @@ class SettingsDialog(Gtk.Dialog):
             self.dictionary_feedback_label.set_text("Could not save custom terms setting.")
         self._refresh_dictionary_ui()
         return False
+
+    def _on_dictionary_terms_path_changed(self, widget: Any, *args: Any) -> bool:
+        """Persist a validated custom terms path and restore it on failure."""
+        if self._initializing or self._applying_settings or not self._dictionary_available():
+            return False
+        if self.dictionary_manager.set_terms_path(self.dictionary_terms_path_entry.get_text()):
+            self.dictionary_feedback_label.set_text("Custom terms path saved.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save that custom terms path; keeping the previous path."
+            )
+        self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_terms_file_chosen(self, widget: Any) -> None:
+        """Apply a terms path selected through the GTK file chooser."""
+        path = widget.get_filename()
+        if path:
+            self.dictionary_terms_path_entry.set_text(path)
+            self._on_dictionary_terms_path_changed(self.dictionary_terms_path_entry)
 
     def _on_dictionary_add_term(self, widget: Any) -> None:
         """Add a term to the fixed line file, reporting an observable result."""
@@ -3299,6 +3342,9 @@ class SettingsDialog(Gtk.Dialog):
         enabled = self.dictionary_manager.terms_enabled()
         self.dictionary_terms_enabled_switch.set_active(enabled)
         self.dictionary_terms_enabled_switch.set_sensitive(not transient)
+        self.dictionary_terms_path_entry.set_text(self.dictionary_manager.terms_path_text())
+        self.dictionary_terms_path_entry.set_sensitive(not transient)
+        self.dictionary_terms_file_button.set_sensitive(not transient)
         self.dictionary_terms_status_label.set_text(
             ("Session-only --dictionary-file override is active. " if transient else "")
             + self.dictionary_manager.terms_status()

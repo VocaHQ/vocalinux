@@ -21,7 +21,7 @@ Both files live in VocaLinux's XDG-aware configuration directory:
 
 | File | Contract | Consumer |
 | --- | --- | --- |
-| `custom-dictionary.txt` | UTF-8 (BOM accepted), one term per line. Blank lines and lines beginning with `#` are ignored. Terms are de-duplicated case-insensitively while retaining the first spelling. | VocaLinux and an external accessibility scanner. |
+| `dictionary.txt` | UTF-8 (BOM accepted), one term per line. Blank lines and lines beginning with `#` are ignored. Terms are de-duplicated case-insensitively while retaining the first spelling. | VocaLinux and an external accessibility scanner. |
 | `custom-dictionary-corrections.json` | UTF-8 JSON object: `{"version": 1, "corrections": [{"heard": "super base", "replacement": "Supabase"}]}`. | VocaLinux only. |
 
 The terms file remains deliberately simple and scanner-friendly. Corrections
@@ -37,7 +37,9 @@ ignored safely; dictation continues without their entries.
 
 The terms file may contain any number of lines, but VocaLinux limits a single
 prompt to the first 200 valid terms and 2,000 characters. This bounds decoding
-work while leaving the scanner's complete line-file contract intact.
+work while leaving the scanner's complete line-file contract intact. The Custom
+Dictionary page keeps both an add/remove editor and a validated file chooser
+for the terms file.
 
 ## Processing and engine behavior
 
@@ -72,6 +74,15 @@ from the standard JSON file. The previous experimental #768
 `text_injection.custom_dictionary` config list is read only as a fallback until
 the JSON corrections file exists; it is never silently deleted or migrated.
 
+The #767 persisted configuration keys are retained unchanged:
+`dictionary.enabled`, `dictionary.file_path` (default
+`~/.config/vocalinux/dictionary.txt`), and `dictionary.max_words`. Existing
+Peony settings therefore continue to select the scanner's `dictionary.txt`
+file. New configured paths are accepted only when they can be expanded and are
+either absent (so the UI can create them) or readable regular files; a failed
+save leaves the prior setting in place. Invalid configured and `--dictionary-file`
+paths are safely ignored and shown as unavailable rather than raising.
+
 ## Alternatives rejected
 
 - **One mixed line file:** cannot express arbitrary phrases and replacements
@@ -80,13 +91,14 @@ the JSON corrections file exists; it is never silently deleted or migrated.
   settings writes and offers no durable external-file schema.
 - **Post-command correction:** allows command-like transcription errors to be
   acted on before they can be fixed.
-- **Automatically adding correction replacements to prompts:** conflates two
-  user intentions and changes bias unpredictably.
+- **Automatically adding correction replacements to prompts:** rejected because
+  replacements are not automatically included in the recognition prompt;
+  corrections work post-transcription on every engine.
 
 ## Human test checklist
 
 1. Add `VocaLinux`, `PyGObject`, and a non-ASCII term in **Custom terms**;
-   confirm `custom-dictionary.txt` is UTF-8, one line per term, and an external
+   confirm `dictionary.txt` is UTF-8, one line per term, and an external
    edit changes the next Whisper and whisper.cpp dictation segment.
 2. Add `super base` → `Supabase`; test lowercase, uppercase, punctuation, an
    overlapping short correction, `C++`, and non-ASCII text. Confirm replacement
@@ -104,3 +116,7 @@ the JSON corrections file exists; it is never silently deleted or migrated.
 7. Start with `--dictionary-file /path/to/terms.txt`; confirm the session uses
    that file, Settings disables terms editing, saved settings remain unchanged,
    and corrections still apply.
+8. Start with an unresolved path such as `--dictionary-file ~missing-user/terms.txt`
+   and configure an unreadable path through the file chooser. Confirm Settings
+   reports the path safely, dictation continues without terms, and the prior
+   saved `dictionary.file_path` remains intact.

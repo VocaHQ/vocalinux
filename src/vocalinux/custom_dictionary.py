@@ -16,7 +16,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TERMS_FILENAME = "custom-dictionary.txt"
+TERMS_FILENAME = "dictionary.txt"
+DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
 DEFAULT_MAX_TERMS = 200
@@ -121,29 +122,66 @@ class CustomDictionaryManager:
 
     def terms_enabled(self) -> bool:
         """Return whether custom terms should be offered to Whisper-family engines."""
-        return self.is_transient_terms or bool(
-            self.config.get("dictionary", "terms_enabled", False)
-        )
+        return self.is_transient_terms or bool(self.config.get("dictionary", "enabled", False))
 
     def set_terms_enabled(self, enabled: bool) -> bool:
         """Persist terms enablement, rolling back the in-memory setting on failure."""
         if self.is_transient_terms:
             logger.info("Ignoring saved terms enablement while a CLI override is active")
             return False
-        old_value = self.config.get("dictionary", "terms_enabled", False)
-        if not self.config.set("dictionary", "terms_enabled", bool(enabled)):
+        old_value = self.config.get("dictionary", "enabled", False)
+        if not self.config.set("dictionary", "enabled", bool(enabled)):
             return False
         if self.config.save_config():
             return True
-        self.config.set("dictionary", "terms_enabled", old_value)
+        self.config.set("dictionary", "enabled", old_value)
         logger.warning("Could not save custom terms enablement; keeping previous setting")
         return False
 
-    def terms_path(self) -> Path:
-        """Return the active custom terms path, in the config directory by default."""
+    def terms_path_text(self) -> str:
+        """Return the configured or session-only terms path without expansion."""
         if self._transient_terms_path is not None:
-            return Path(self._transient_terms_path).expanduser()
-        return Path(config_dir()) / TERMS_FILENAME
+            return self._transient_terms_path
+        configured = self.config.get("dictionary", "file_path", DEFAULT_TERMS_PATH)
+        if not isinstance(configured, str) or not configured.strip():
+            return DEFAULT_TERMS_PATH
+        return configured.strip()
+
+    def terms_path(self) -> Optional[Path]:
+        """Return the active expanded terms path, or None when it is invalid."""
+        configured = self.terms_path_text()
+        try:
+            return Path(configured).expanduser()
+        except RuntimeError as error:
+            logger.warning("Could not expand custom terms path %r: %s", configured, error)
+            return None
+
+    def set_terms_path(self, path: str) -> bool:
+        """Persist a usable terms path, retaining the prior setting on save failure."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms path change while a CLI override is active")
+            return False
+        if not isinstance(path, str) or not path.strip():
+            logger.warning("Ignoring empty custom terms path")
+            return False
+        configured = path.strip()
+        try:
+            candidate = Path(configured).expanduser()
+            if candidate.exists() and (not candidate.is_file() or not self._is_readable(candidate)):
+                logger.warning("Ignoring unusable custom terms path %s", candidate)
+                return False
+        except (OSError, RuntimeError) as error:
+            logger.warning("Ignoring invalid custom terms path %r: %s", configured, error)
+            return False
+
+        old_value = self.config.get("dictionary", "file_path", DEFAULT_TERMS_PATH)
+        if not self.config.set("dictionary", "file_path", configured):
+            return False
+        if self.config.save_config():
+            return True
+        self.config.set("dictionary", "file_path", old_value)
+        logger.warning("Could not save custom terms path; keeping previous setting")
+        return False
 
     @staticmethod
     def corrections_path() -> Path:
@@ -152,8 +190,11 @@ class CustomDictionaryManager:
 
     def get_terms(self) -> list[str]:
         """Read the current UTF-8 line file; external edits apply next segment."""
+        path = self.terms_path()
+        if path is None:
+            return []
         try:
-            contents = self.terms_path().read_text(encoding="utf-8-sig")
+            contents = path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             return []
         except (OSError, UnicodeError) as error:
@@ -176,17 +217,21 @@ class CustomDictionaryManager:
         if self.is_transient_terms:
             logger.info("Ignoring terms edit while a CLI override is active")
             return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot save custom terms because the configured path is invalid")
+            return False
         normalized_terms = self._normalize_terms(terms)
         contents = "\n".join(normalized_terms)
         if contents:
             contents += "\n"
-        return self._atomic_write(self.terms_path(), contents)
+        return self._atomic_write(path, contents)
 
     def build_initial_prompt(self) -> Optional[str]:
         """Build the current Whisper prompt from enabled terms, if any."""
         if not self.terms_enabled():
             return None
-        max_terms = self.config.get("dictionary", "max_terms", DEFAULT_MAX_TERMS)
+        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
         try:
             max_terms = max(0, int(max_terms))
         except (TypeError, ValueError):
@@ -236,6 +281,8 @@ class CustomDictionaryManager:
     def terms_status(self) -> str:
         """Return a concise, user-facing description of the custom terms file."""
         path = self.terms_path()
+        if path is None:
+            return "Configured terms path is invalid or cannot be expanded."
         try:
             if not path.exists():
                 return "Terms file does not exist yet; add a term to create it."
@@ -247,6 +294,15 @@ class CustomDictionaryManager:
         except OSError:
             return "Terms file cannot be inspected."
         return f"{len(self.get_terms())} term(s) available from the live file."
+
+    @staticmethod
+    def _is_readable(path: Path) -> bool:
+        """Return whether a path can be opened for reading."""
+        try:
+            with path.open("r", encoding="utf-8"):
+                return True
+        except OSError:
+            return False
 
     @staticmethod
     def _normalize_terms(terms: list[str]) -> list[str]:

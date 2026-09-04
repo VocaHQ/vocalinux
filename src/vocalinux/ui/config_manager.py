@@ -192,9 +192,10 @@ DEFAULT_CONFIG = {
         "backend": "auto",
     },
     "dictionary": {
-        # Custom terms are kept in custom-dictionary.txt rather than config.json
-        # so accessibility tools can consume the stable, line-oriented contract.
-        "terms_enabled": False,
+        # Preserve the custom-dictionary contract used by the accessibility scanner.
+        "enabled": False,
+        "file_path": "~/.config/vocalinux/dictionary.txt",
+        "max_words": 200,
     },
     "advanced": {
         "power_user_mode": False,
