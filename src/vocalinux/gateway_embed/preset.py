@@ -43,4 +43,4 @@ def apply_remote_api_preset(config_manager, preset: Mapping[str, str]) -> None:
     """Write *preset* into an existing ConfigManager and save."""
     for key, value in preset.items():
         config_manager.set("speech_recognition", key, value)
-    config_manager.save_settings()
+    config_manager.save_config()
