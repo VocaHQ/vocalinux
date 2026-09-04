@@ -46,6 +46,7 @@ class TestLoopbackRejection(unittest.TestCase):
     def test_rejects_default_container_bridge(self):
         for url in (
             "http://172.17.0.1:8765",
+            "http://172.17.0.2:8765",
             "http://10.88.0.1:8765",
         ):
             self.assertIsNone(reject_loopback_url(url), url)
@@ -166,6 +167,32 @@ class TestPairingDecode(unittest.TestCase):
     def test_payload_string_and_loopback_hidden(self):
         raw = json.dumps({"v": 1, "url": "http://127.0.0.1:8765", "token": "t" * 32})
         info = decode_pairing_payload({"payload": raw})
+        self.assertIsNone(info.display_url)
+        self.assertFalse(info.pairable)
+
+    def test_docker_bridge_not_pairable(self):
+        info = decode_pairing_payload(
+            {
+                "payload": {
+                    "v": 1,
+                    "url": "http://172.17.0.2:8765",
+                    "token": "tokentokentokentokentokentoken12",
+                }
+            }
+        )
+        self.assertIsNone(info.display_url)
+        self.assertFalse(info.pairable)
+
+    def test_link_local_not_pairable(self):
+        info = decode_pairing_payload(
+            {
+                "payload": {
+                    "v": 1,
+                    "url": "http://169.254.1.2:8765",
+                    "token": "tokentokentokentokentokentoken12",
+                }
+            }
+        )
         self.assertIsNone(info.display_url)
         self.assertFalse(info.pairable)
 
@@ -318,14 +345,10 @@ class TestTokenFileCap(unittest.TestCase):
             self.assertLess(Path(path).stat().st_size, 200)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestLanPublishGate(unittest.TestCase):
-    def test_pairing_waits_until_compose_matches_lan(self):
+    def _manager(self):
         from vocalinux.gateway_embed.manager import GatewayEmbedManager
-        from vocalinux.gateway_embed.runner import GatewayRunner, RunnerResult
+        from vocalinux.gateway_embed.runner import GatewayRunner
         from vocalinux.gateway_embed.runtime import RuntimeInfo
 
         runner = GatewayRunner(
@@ -337,32 +360,96 @@ class TestLanPublishGate(unittest.TestCase):
             sandbox=detect_sandbox({}),
             run=MagicMock(),
         )
+        return GatewayEmbedManager(runner=runner), runner
+
+    def test_lan_toggle_without_republish_not_pairable(self):
+        """Desired LAN alone must not advertise Pairable on a loopback bind."""
+        from vocalinux.gateway_embed.pairing import PairingInfo
+
+        manager, runner = self._manager()
         runner.managed_by_us = True
-        manager = GatewayEmbedManager(runner=runner)
         manager.lan_publish = True
         manager._compose_lan_publish = False
+        manager._token = "t" * 32
         self.assertFalse(manager._effective_lan_for_pairing())
 
+        captured = {}
+
+        def fake_fetch(base_url, token, *, public_url=None, fetch_qr=True, timeout=3.0):
+            captured["public_url"] = public_url
+            return PairingInfo(
+                version=1,
+                url="http://127.0.0.1:8765",
+                token=token,
+                display_url=None,
+                raw_payload={"v": 1, "url": "http://127.0.0.1:8765", "token": token},
+            )
+
+        with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+            health.return_value = MagicMock(live=True, ready=False, error="")
+            with patch(
+                "vocalinux.gateway_embed.manager.fetch_pairing", side_effect=fake_fetch
+            ):
+                status = manager.refresh_status()
+        self.assertIsNone(captured.get("public_url"))
+        self.assertEqual(status, GatewayStatus.LIVE)
+        self.assertIsNotNone(manager.pairing)
+        self.assertFalse(manager.pairing.pairable)
+
+    def test_apply_lan_publish_republishes_when_managed(self):
+        from vocalinux.gateway_embed.pairing import PairingInfo
+        from vocalinux.gateway_embed.runner import RunnerResult
+
+        manager, runner = self._manager()
+        runner.managed_by_us = True
+        manager.lan_publish = False
+        manager._compose_lan_publish = False
+        manager._pairing = PairingInfo(
+            version=1,
+            url="http://127.0.0.1:8765",
+            token="t" * 32,
+            display_url=None,
+            raw_payload={},
+        )
         calls = {"n": 0}
 
-        def fake_republish(**_kwargs):
+        def fake_republish(*, lan_publish, public_url=None):
             calls["n"] += 1
-            manager._compose_lan_publish = True
+            self.assertTrue(lan_publish)
             return RunnerResult(ok=True, message="republished")
 
-        with patch.object(runner, "republish", side_effect=fake_republish):
-            manager.apply_lan_publish(True)
-            # Same value as desired but compose mismatch should still republish
-            # when _compose_lan_publish differs (already True desired).
-        # Force mismatch path explicitly:
-        manager._compose_lan_publish = False
-        manager._republish_started = False
-        with patch.object(runner, "republish", side_effect=fake_republish):
-            with patch.object(manager, "refresh_status"):
-                manager.apply_lan_publish(True)
-                # worker is async; call directly for determinism
-                manager._republish_started = True
-                manager._republish_worker()
+        with patch("threading.Thread") as fake_thread:
+            fake_thread.return_value = MagicMock()
+            with patch.object(runner, "republish", side_effect=fake_republish):
+                with patch.object(
+                    manager, "refresh_status", return_value=GatewayStatus.LIVE
+                ):
+                    manager.apply_lan_publish(True)
+                    self.assertIsNone(manager.pairing)
+                    self.assertTrue(manager._republish_started)
+                    # Run worker synchronously (Thread.start was mocked).
+                    manager._republish_worker()
+        self.assertEqual(calls["n"], 1)
         self.assertTrue(manager._compose_lan_publish)
-        self.assertGreaterEqual(calls["n"], 1)
+        self.assertTrue(manager.lan_publish)
+        self.assertFalse(manager._republish_started)
 
+    def test_omits_bridge_public_url_from_env(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import write_env_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(
+                token="a" * 32,
+                lan_publish=True,
+                public_url="http://172.17.0.2:8765",
+                path=env_path,
+            )
+            body = Path(env_path).read_text(encoding="utf-8")
+            self.assertNotIn("VOCAGATEWAY_PUBLIC_URL=", body)
+
+
+if __name__ == "__main__":
+    unittest.main()
