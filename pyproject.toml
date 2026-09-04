@@ -105,6 +105,7 @@ required-version = ">=0.12,<0.13"
 # Resource dirs carry no .py files, but setuptools still treats them as packages.
 packages = [
     "vocalinux",
+    "vocalinux.gateway_embed",
     "vocalinux.resources",
     "vocalinux.resources.icons",
     "vocalinux.resources.icons.scalable",
