@@ -471,5 +471,34 @@ class TestLanPublishGate(unittest.TestCase):
             self.assertNotIn("VOCAGATEWAY_PUBLIC_URL=", body)
 
 
+class TestManagerListenerCleanup(unittest.TestCase):
+    def test_remove_listener_stops_callbacks(self):
+        """Settings destroy must be able to detach without further emits."""
+        from vocalinux.gateway_embed.manager import GatewayEmbedManager
+        from vocalinux.gateway_embed.runner import GatewayRunner
+        from vocalinux.gateway_embed.runtime import RuntimeInfo
+
+        runner = GatewayRunner(
+            runtime=RuntimeInfo(
+                kind=ContainerRuntime.PODMAN,
+                binary="/usr/bin/podman",
+                compose_args=("/usr/bin/podman", "compose"),
+            ),
+            sandbox=detect_sandbox({}),
+            run=MagicMock(),
+        )
+        manager = GatewayEmbedManager(runner=runner)
+        seen: list[str] = []
+
+        def listener(status, detail):
+            seen.append(detail)
+
+        manager.add_listener(listener)
+        manager._emit(manager.status, "one")
+        manager.remove_listener(listener)
+        manager._emit(manager.status, "two")
+        self.assertEqual(seen, ["one"])
+
+
 if __name__ == "__main__":
     unittest.main()
