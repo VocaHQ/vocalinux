@@ -37,6 +37,7 @@ from gi.repository import GdkPixbuf, Gio, GLib, GObject, Gtk
 # Import local modules - Use protocols to avoid circular imports
 from ..auto_pause_monitor import DEFAULT_POLL_INTERVAL_SECONDS, AutoPauseMonitor
 from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, TextInjectorProtocol
+from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
 from ..suspend_handler import SuspendHandler
 from ..utils.host_process import host_env
@@ -44,7 +45,6 @@ from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
 from . import notifications
-from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from .config_manager import get_shared_config_manager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager

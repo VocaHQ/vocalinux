@@ -4630,11 +4630,9 @@ class SettingsDialog(Gtk.Dialog):
             self._applying_settings = False
         self._auto_apply_settings()
         self.gateway_detail_label.set_text(
-            "Remote Server now points at this gateway "
-            f"({preset['remote_api_endpoint']})."
+            "Remote Server now points at this gateway " f"({preset['remote_api_endpoint']})."
         )
         self._update_engine_specific_ui()
-
 
     def _on_power_user_toggled(self, widget, state):
         """Handle the power-user opt-in toggle."""
