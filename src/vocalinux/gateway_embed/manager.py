@@ -159,7 +159,10 @@ class GatewayEmbedManager:
         self.lan_publish = bool(lan_publish)
         if not self.runner.managed_by_us:
             # Next Run will pick up lan_publish; clear stale QR if any.
-            if self._compose_lan_publish is not None and self._compose_lan_publish != self.lan_publish:
+            if (
+                self._compose_lan_publish is not None
+                and self._compose_lan_publish != self.lan_publish
+            ):
                 self._pairing = None
             return
         if self._compose_lan_publish == self.lan_publish:
@@ -187,14 +190,11 @@ class GatewayEmbedManager:
             public_url = _guess_lan_url() if self.lan_publish else None
             if self.lan_publish and not public_url:
                 logger.info("LAN republish enabled but LAN IP could not be guessed")
-            result = self.runner.republish(
-                lan_publish=self.lan_publish, public_url=public_url
-            )
+            result = self.runner.republish(lan_publish=self.lan_publish, public_url=public_url)
             if not result.ok:
                 self._emit(
                     GatewayStatus.ERROR,
-                    result.message
-                    or "Could not update LAN publish. Stop and Run again.",
+                    result.message or "Could not update LAN publish. Stop and Run again.",
                 )
                 return
             self._compose_lan_publish = self.lan_publish
