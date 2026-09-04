@@ -3,7 +3,8 @@
 Phone QR and Pairable must only use hosts a phone can open on the LAN (or
 an explicit public override). We reject:
 
-* loopback / unspecified: 127.0.0.0/8, ::1, localhost, 0.0.0.0, ::
+* loopback / unspecified: 127.0.0.0/8 (including short-form 127.1), ::1,
+  localhost / localhost.*, 0.0.0.0, ::
 * link-local: 169.254.0.0/16, fe80::/10
 * default container bridges (not host-facing LAN): 172.17.0.0/16 (docker0),
   10.88.0.0/16 (podman default). Broader RFC1918 (10/8, 172.16/12, 192.168/16)
@@ -11,12 +12,15 @@ an explicit public override). We reject:
 
 Optional: if docker0/podman0/cni-podman0 addresses are readable, those exact
 interface IPs are also rejected even outside the default ranges.
+
+Aligned with vocagateway desktop-embed pairing host policy.
 """
 
 from __future__ import annotations
 
 import ipaddress
 import logging
+import socket
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -48,54 +52,55 @@ _BRIDGE_IFACE_NAMES = frozenset(
 )
 
 
-def is_loopback_host(host: str | None) -> bool:
-    """Return True when *host* is loopback or unspecified."""
+def _normalize_host(host: str | None) -> str | None:
     if not host:
-        return True
-    cleaned = host.strip().lower().rstrip(".")
-    if cleaned in _LOOPBACK_HOSTS:
-        return True
-    if cleaned.startswith("[") and cleaned.endswith("]"):
-        inner = cleaned[1:-1]
-        if inner in {"::1", "::"}:
-            return True
-        cleaned = inner
-    try:
-        addr = ipaddress.ip_address(cleaned)
-    except ValueError:
-        return False
-    return bool(addr.is_loopback or addr.is_unspecified)
-
-
-def is_link_local_host(host: str | None) -> bool:
-    """Return True when *host* is link-local (not phone-reachable across LAN)."""
-    if not host:
-        return False
+        return None
     cleaned = host.strip().lower().rstrip(".")
     if cleaned.startswith("[") and cleaned.endswith("]"):
         cleaned = cleaned[1:-1]
     # Zone indices (fe80::1%eth0) are not phone-QR material.
     if "%" in cleaned:
         cleaned = cleaned.split("%", 1)[0]
+    return cleaned or None
+
+
+def _parse_short_ipv4_host(host: str) -> ipaddress.IPv4Address | None:
+    """Parse abbreviated IPv4 (``127.1``) that ``ip_address`` rejects."""
     try:
-        addr = ipaddress.ip_address(cleaned)
-    except ValueError:
-        return False
-    return bool(addr.is_link_local)
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except OSError:
+        return None
 
 
 def _parse_host_ip(host: str | None) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    if not host:
+    cleaned = _normalize_host(host)
+    if not cleaned:
         return None
-    cleaned = host.strip().lower().rstrip(".")
-    if cleaned.startswith("[") and cleaned.endswith("]"):
-        cleaned = cleaned[1:-1]
-    if "%" in cleaned:
-        cleaned = cleaned.split("%", 1)[0]
     try:
         return ipaddress.ip_address(cleaned)
     except ValueError:
-        return None
+        return _parse_short_ipv4_host(cleaned)
+
+
+def is_loopback_host(host: str | None) -> bool:
+    """Return True when *host* is loopback, unspecified, or localhost[.]."""
+    cleaned = _normalize_host(host)
+    if cleaned is None:
+        return True
+    if cleaned in _LOOPBACK_HOSTS or cleaned == "localhost" or cleaned.startswith("localhost."):
+        return True
+    addr = _parse_host_ip(cleaned)
+    if addr is None:
+        return False
+    return bool(addr.is_loopback or addr.is_unspecified)
+
+
+def is_link_local_host(host: str | None) -> bool:
+    """Return True when *host* is link-local (not phone-reachable across LAN)."""
+    addr = _parse_host_ip(host)
+    if addr is None:
+        return False
+    return bool(addr.is_link_local)
 
 
 @lru_cache(maxsize=1)
