@@ -4515,9 +4515,16 @@ class SettingsDialog(Gtk.Dialog):
                 self.gateway_detail_label.set_text(hint)
 
         self._gateway_manager.add_listener(self._on_gateway_status_from_worker)
+        self.connect("destroy", self._on_gateway_embed_dialog_destroy)
         self._apply_gateway_status_ui(
             self._gateway_manager.status, self._gateway_manager.status_detail
         )
+
+    def _on_gateway_embed_dialog_destroy(self, *_args) -> None:
+        """Drop status listener so polls never touch a destroyed Settings dialog."""
+        manager = getattr(self, "_gateway_manager", None)
+        if manager is not None:
+            manager.remove_listener(self._on_gateway_status_from_worker)
 
     def _on_gateway_status_from_worker(self, status: GatewayStatus, detail: str) -> None:
         """Marshal status updates onto the GTK main loop."""
@@ -4525,6 +4532,8 @@ class SettingsDialog(Gtk.Dialog):
 
     def _apply_gateway_status_ui(self, status: GatewayStatus, detail: str) -> bool:
         if not hasattr(self, "gateway_status_label"):
+            return False
+        if not self._dialog_is_alive():
             return False
         label = status.value if isinstance(status, GatewayStatus) else str(status)
         self.gateway_status_label.set_text(label)
