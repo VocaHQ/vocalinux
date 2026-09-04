@@ -148,6 +148,10 @@ DEFAULT_CONFIG = {
         # Tag last announced via desktop notification (avoids re-notifying every 6h).
         "last_notified_version": "",
     },
+    # Optional local VocaGateway (podman/docker). Never flips the default engine.
+    "gateway_embed": {
+        "lan_publish": False,  # VOCAGATEWAY_PUBLISH_HOST=0.0.0.0 when True (Phone on LAN)
+    },
 }
 
 

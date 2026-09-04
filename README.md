@@ -86,7 +86,7 @@ See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com
 - 🚀 **Start on login support** via XDG autostart (desktop-session startup)
 - 🔊 **Pleasant audio feedback** - smooth gliding tones, headphone-friendly
 - ⚙️ **Graphical settings** dialog for easy configuration
-- 📦 **3 engine choices** - whisper.cpp (default), OpenAI Whisper, or VOSK
+- 📦 **3 engine choices** - whisper.cpp (default), OpenAI Whisper, or VOSK (plus optional Remote API / local VocaGateway; not on-device)
 
 ## 📸 Screenshots
 
@@ -407,6 +407,8 @@ vocalinux/
 - [Update Guide](docs/UPDATE.md) - How to update Vocalinux
 - [User Guide](docs/USER_GUIDE.md) - Complete user documentation
 - [Distribution Compatibility](docs/DISTRO_COMPATIBILITY.md) - Distro/session behavior and caveats
+- [Remote HTTP transcription](docs/HTTP_REMOTE.md) - Offload ASR to a server on your network
+- [Local VocaGateway (optional)](docs/GATEWAY_EMBED.md) - Podman/docker helper; not on-device
 - [Contributing](CONTRIBUTING.md) - Development setup and contribution guidelines
 
 ## Repository mirrors
