@@ -207,8 +207,8 @@ class TestRunnerNoVolumeWipe(unittest.TestCase):
             runner.stop(wipe_volumes=True)
 
 
-class TestComposeUpArgs(unittest.TestCase):
-    def test_start_uses_default_gateway_service(self):
+class TestComposeCpuProfile(unittest.TestCase):
+    def test_start_uses_profile_cpu(self):
         from vocalinux.gateway_embed.runner import GatewayRunner
         from vocalinux.gateway_embed.runtime import RuntimeInfo
 
@@ -237,7 +237,8 @@ class TestComposeUpArgs(unittest.TestCase):
         compose_calls = [c for c in calls if c[:2] == ["/usr/bin/podman", "compose"]]
         self.assertTrue(compose_calls)
         argv = compose_calls[0]
-        self.assertNotIn("--profile", argv)
+        self.assertIn("--profile", argv)
+        self.assertEqual(argv[argv.index("--profile") + 1], "cpu")
         self.assertIn("up", argv)
         self.assertIn("-d", argv)
         self.assertIn("gateway", argv)
