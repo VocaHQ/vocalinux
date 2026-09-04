@@ -387,9 +387,7 @@ class TestLanPublishGate(unittest.TestCase):
 
         with patch("vocalinux.gateway_embed.manager.probe_health") as health:
             health.return_value = MagicMock(live=True, ready=False, error="")
-            with patch(
-                "vocalinux.gateway_embed.manager.fetch_pairing", side_effect=fake_fetch
-            ):
+            with patch("vocalinux.gateway_embed.manager.fetch_pairing", side_effect=fake_fetch):
                 status = manager.refresh_status()
         self.assertIsNone(captured.get("public_url"))
         self.assertEqual(status, GatewayStatus.LIVE)
@@ -421,9 +419,7 @@ class TestLanPublishGate(unittest.TestCase):
         with patch("threading.Thread") as fake_thread:
             fake_thread.return_value = MagicMock()
             with patch.object(runner, "republish", side_effect=fake_republish):
-                with patch.object(
-                    manager, "refresh_status", return_value=GatewayStatus.LIVE
-                ):
+                with patch.object(manager, "refresh_status", return_value=GatewayStatus.LIVE):
                     manager.apply_lan_publish(True)
                     self.assertIsNone(manager.pairing)
                     self.assertTrue(manager._republish_started)

@@ -363,9 +363,7 @@ class GatewayRunner:
             self.last_error = ""
             return RunnerResult(ok=True, message="stopped", returncode=0)
 
-    def republish(
-        self, *, lan_publish: bool, public_url: str | None = None
-    ) -> RunnerResult:
+    def republish(self, *, lan_publish: bool, public_url: str | None = None) -> RunnerResult:
         """Rewrite publish host / PUBLIC_URL and recreate the gateway service.
 
         Used when LAN is toggled while compose is already managed by us so the
