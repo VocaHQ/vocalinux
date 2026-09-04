@@ -26,6 +26,13 @@ from .sandbox import SandboxState, detect_sandbox
 
 DEFAULT_IMAGE = "vocagateway:v0.1.0"
 
+
+def _default_run(*args, **kwargs):
+    """Run a host binary with AppImage library paths stripped."""
+    env = kwargs.pop("env", None)
+    return subprocess.run(*args, env=host_env(env), **kwargs)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +84,7 @@ def write_env_file(
 def ensure_gateway_checkout(
     *,
     cache_dir: str | None = None,
-    run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    run: Callable[..., subprocess.CompletedProcess] = _default_run,
 ) -> str:
     """Clone or fetch vocagateway @ v0.1.0 into the XDG cache."""
     dest = cache_dir or gateway_cache_dir()
@@ -135,7 +142,7 @@ class GatewayRunner:
         runtime: RuntimeInfo | None = None,
         sandbox: SandboxState | None = None,
         *,
-        run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+        run: Callable[..., subprocess.CompletedProcess] = _default_run,
     ):
         self.runtime = runtime or resolve_runtime_info()
         self.sandbox = sandbox if sandbox is not None else detect_sandbox()
@@ -213,7 +220,7 @@ class GatewayRunner:
             return checkout, token, env_path
 
     def start(self, *, lan_publish: bool = False, public_url: str | None = None) -> RunnerResult:
-        """``compose --profile cpu up -d`` for service gateway (builds if needed)."""
+        """``compose up -d`` for default service gateway (builds if needed)."""
         with self._lock:
             try:
                 checkout, _token, env_path = self.prepare(
@@ -227,8 +234,6 @@ class GatewayRunner:
                 [
                     "-f",
                     "compose.yaml",
-                    "--profile",
-                    "cpu",
                     "up",
                     "-d",
                     "--build",
@@ -267,7 +272,7 @@ class GatewayRunner:
                 env_path = write_env_file(token=token, lan_publish=False)
 
             completed = self._compose(
-                ["-f", "compose.yaml", "--profile", "cpu", "down"],
+                ["-f", "compose.yaml", "down"],
                 cwd=checkout,
                 env_file=env_path,
                 timeout=180,
@@ -291,7 +296,7 @@ class GatewayRunner:
             return False
         try:
             completed = self._compose(
-                ["-f", "compose.yaml", "--profile", "cpu", "ps", "-q", "gateway"],
+                ["-f", "compose.yaml", "ps", "-q", "gateway"],
                 cwd=checkout,
                 env_file=env_path,
                 timeout=30,
