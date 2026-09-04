@@ -36,6 +36,13 @@ class TestLoopbackRejection(unittest.TestCase):
             self.assertTrue(is_loopback_url(url), url)
             self.assertIsNone(reject_loopback_url(url))
 
+    def test_rejects_link_local_for_qr(self):
+        for url in (
+            "http://169.254.10.20:8765",
+            "http://[fe80::1]:8765",
+        ):
+            self.assertIsNone(reject_loopback_url(url), url)
+
     def test_accepts_lan(self):
         url = "http://192.168.1.20:8765"
         self.assertFalse(is_loopback_url(url))
@@ -257,6 +264,51 @@ class TestImagePin(unittest.TestCase):
             body = Path(env_path).read_text(encoding="utf-8")
             self.assertIn("VOCAGATEWAY_IMAGE=vocagateway:v0.1.0", body)
             self.assertNotIn(":latest", body)
+
+    def test_rejects_newline_image_injection(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import write_env_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            evil = "vocagateway:v0.1.0\nEVIL=1"
+            with patch.dict("os.environ", {"VOCAGATEWAY_IMAGE": evil}):
+                write_env_file(token="a" * 32, lan_publish=False, path=env_path)
+            body = Path(env_path).read_text(encoding="utf-8")
+            self.assertIn("VOCAGATEWAY_IMAGE=vocagateway:v0.1.0\n", body)
+            self.assertNotIn("EVIL=", body)
+
+    def test_omits_loopback_public_url(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import write_env_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(
+                token="a" * 32,
+                lan_publish=True,
+                public_url="http://127.0.0.1:8765",
+                path=env_path,
+            )
+            body = Path(env_path).read_text(encoding="utf-8")
+            self.assertNotIn("VOCAGATEWAY_PUBLIC_URL=", body)
+
+
+class TestTokenFileCap(unittest.TestCase):
+    def test_oversized_token_file_regenerated(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.paths_embed import ensure_token_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = f"{tmp}/token"
+            with open(path, "wb") as handle:
+                handle.write(b"a" * 9000)
+            token = ensure_token_file(path)
+            self.assertEqual(len(token), 64)
+            self.assertLess(Path(path).stat().st_size, 200)
 
 
 if __name__ == "__main__":
