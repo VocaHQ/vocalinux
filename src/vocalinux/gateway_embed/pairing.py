@@ -9,7 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .urls import is_loopback_url, reject_loopback_url
+from .urls import is_unusable_phone_url, reject_loopback_url
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def fetch_pairing(
     """GET ``/v1/admin/pairing`` and optionally ``/qr.svg``."""
     root = base_url.rstrip("/")
     query = ""
-    if public_url and not is_loopback_url(public_url):
+    if public_url and not is_unusable_phone_url(public_url):
         from urllib.parse import quote
 
         query = f"?url={quote(public_url, safe=':/')}"
