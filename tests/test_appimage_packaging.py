@@ -1,6 +1,7 @@
 """Regression guards for AppImage packaging."""
 
 import re
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -308,16 +309,16 @@ def test_setuptools_packages_cover_every_python_subpackage():
     list. A new subpackage left off that list boots fine from a source tree and
     dies in the bundle with ModuleNotFoundError (#774).
     """
-    import tomllib
-
     declared = set(
         tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["tool"]["setuptools"]["packages"]
     )
     src_root = REPO_ROOT / "src" / "vocalinux"
     discovered = {
-        "vocalinux"
-        if init.parent == src_root
-        else "vocalinux." + ".".join(init.parent.relative_to(src_root).parts)
+        (
+            "vocalinux"
+            if init.parent == src_root
+            else "vocalinux." + ".".join(init.parent.relative_to(src_root).parts)
+        )
         for init in src_root.rglob("__init__.py")
         if "__pycache__" not in init.parts
     }
