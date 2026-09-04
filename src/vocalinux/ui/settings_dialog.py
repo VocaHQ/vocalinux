@@ -4501,7 +4501,12 @@ class SettingsDialog(Gtk.Dialog):
 
         self.content_box.pack_start(self.gateway_embed_group, False, False, 0)
 
-        if not self._gateway_manager.available:
+        # Runtime probe is async so Settings never blocks on podman/docker.
+        self._gateway_manager.begin_runtime_detection()
+        if not self._gateway_manager.runtime_ready:
+            self.gateway_run_btn.set_sensitive(False)
+            self.gateway_detail_label.set_text("Detecting container runtime…")
+        elif not self._gateway_manager.available:
             self.gateway_run_btn.set_sensitive(False)
             self.gateway_detail_label.set_text(self._gateway_manager.unavailable_hint)
         else:
@@ -4532,12 +4537,20 @@ class SettingsDialog(Gtk.Dialog):
             GatewayStatus.PAIRABLE,
             GatewayStatus.READY,
         }
-        if self._gateway_manager.available:
+        if not self._gateway_manager.runtime_ready:
+            self.gateway_run_btn.set_sensitive(False)
+            if not detail:
+                self.gateway_detail_label.set_text("Detecting container runtime…")
+        elif self._gateway_manager.available:
             if runningish or self._gateway_manager.managed_by_us:
                 self.gateway_run_btn.set_label("Stop local Gateway")
             else:
                 self.gateway_run_btn.set_label("Run VocaGateway locally")
             self.gateway_run_btn.set_sensitive(status is not GatewayStatus.STARTING)
+        else:
+            self.gateway_run_btn.set_sensitive(False)
+            if not detail:
+                self.gateway_detail_label.set_text(self._gateway_manager.unavailable_hint)
 
         can_use = status in {GatewayStatus.PAIRABLE, GatewayStatus.READY}
         self.gateway_use_btn.set_sensitive(can_use)
@@ -4546,15 +4559,19 @@ class SettingsDialog(Gtk.Dialog):
 
     def _update_gateway_pairing_widgets(self) -> None:
         info = self._gateway_manager.pairing
-        self.gateway_qr_image.hide()
-        self.gateway_qr_image.clear()
         if info is None:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
             self.gateway_pairing_label.set_text(
                 "Pairing QR appears when the gateway is Live with a phone-reachable URL "
                 "(enable LAN for Phone, or set VOCAGATEWAY_PUBLIC_URL)."
             )
             return
         if not info.display_url:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
             self.gateway_pairing_label.set_text(
                 "Gateway is live on loopback only. Enable LAN access for Phone "
                 "(or configure a non-loopback PUBLIC_URL) before pairing another device. "
@@ -4567,10 +4584,18 @@ class SettingsDialog(Gtk.Dialog):
             "Token is available to Use this Gateway and the QR; it is not logged."
         )
         if info.qr_svg:
-            pixbuf = self._pixbuf_from_svg_bytes(info.qr_svg)
-            if pixbuf is not None:
-                self.gateway_qr_image.set_from_pixbuf(pixbuf)
+            cache_key = (info.display_url, len(info.qr_svg))
+            if getattr(self, "_gateway_qr_cache_key", None) != cache_key:
+                pixbuf = self._pixbuf_from_svg_bytes(info.qr_svg)
+                if pixbuf is not None:
+                    self.gateway_qr_image.set_from_pixbuf(pixbuf)
+                    self._gateway_qr_cache_key = cache_key
+            if getattr(self, "_gateway_qr_cache_key", None) == cache_key:
                 self.gateway_qr_image.show()
+        else:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
 
     def _pixbuf_from_svg_bytes(self, data: bytes):
         """Best-effort SVG to GdkPixbuf; returns None when loaders are missing."""
@@ -4609,7 +4634,7 @@ class SettingsDialog(Gtk.Dialog):
             return
         active = bool(self.gateway_lan_switch.get_active())
         self.config_manager.set("gateway_embed", "lan_publish", active)
-        self.config_manager.save_settings()
+        self.config_manager.save_config()
         self._gateway_manager.lan_publish = active
 
     def _on_gateway_use_clicked(self, widget):
