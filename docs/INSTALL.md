@@ -140,7 +140,7 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 | Requirement | Details |
 |-------------|---------|
-| **Operating System** | Debian 12+, Ubuntu 24.04+, Fedora 39+, Arch Linux |
+| **Operating System** | Debian 12+, Ubuntu 24.04+, Fedora 42+, Arch Linux, openSUSE Tumbleweed |
 | **Python** | 3.11 or newer |
 | **Display Server** | X11 or Wayland |
 | **Hardware** | Microphone for speech input |

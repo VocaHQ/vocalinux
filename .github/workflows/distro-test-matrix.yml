@@ -4,7 +4,7 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'install.sh'
+      - '**/*.sh'
       - 'scripts/**'
       - 'pyproject.toml'
       - 'src/vocalinux/version.py'
@@ -12,7 +12,7 @@ on:
   pull_request:
     branches: [ main, master ]
     paths:
-      - 'install.sh'
+      - '**/*.sh'
       - 'scripts/**'
       - 'pyproject.toml'
       - 'src/vocalinux/version.py'
@@ -20,6 +20,21 @@ on:
   workflow_dispatch:
 
 jobs:
+  # The repo's only `bash -n install.sh` used to live inside the matrix below,
+  # under continue-on-error, so a syntax error in a 4698-line installer could
+  # not fail a build anywhere. This job is the one thing here allowed to fail.
+  # It is not phase 2.4 — nothing here runs the installer yet — it just stops
+  # the cheapest check we have from being advisory.
+  syntax:
+    name: Shell syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: bash -n every shell script we ship
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.sh' | xargs -0 -n1 -t bash -n
+
   test:
     name: Test on ${{ matrix.container }}
     runs-on: ubuntu-latest
@@ -27,11 +42,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # README.md advertises Arch and Tumbleweed as tested and neither was
+        # here; fedora:39 has been EOL since 2024 while the AppImage boot
+        # matrix moved to 42. This list is what the docs promise.
         container:
           - ubuntu:24.04
           - ubuntu:26.04
           - debian:12
-          - fedora:39
+          - fedora:42
+          - archlinux:latest
+          - opensuse/tumbleweed
     container:
       image: ${{ matrix.container }}
 
@@ -54,6 +74,13 @@ jobs:
               echo "⚠ dnf install failed, trying with --nogpgcheck..."
               dnf install -y --nogpgcheck bash curl python3 git
             }
+          elif command -v pacman >/dev/null 2>&1; then
+            # -Syu, never -Sy: archlinux:latest lags the mirrors and a partial
+            # upgrade would be our breakage, not the installer's.
+            pacman -Syu --noconfirm bash curl python git
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive --gpg-auto-import-keys refresh
+            zypper --non-interactive install bash curl python3 git
           fi
 
       # ============================================================================
@@ -139,6 +166,10 @@ jobs:
             apt-get install -y pkg-config libgirepository1.0-dev 2>/dev/null || true
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y pkg-config gobject-introspection-devel 2>/dev/null || true
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -S --needed --noconfirm pkgconf gobject-introspection 2>/dev/null || true
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive install pkgconf-pkg-config gobject-introspection-devel 2>/dev/null || true
           fi
 
           # Test typelib path detection
@@ -227,6 +258,10 @@ jobs:
             apt-get install -y python3-venv python3-pip python3-dev 2>/dev/null || true
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y python3-virtualenv python3-pip python3-devel 2>/dev/null || true
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -S --needed --noconfirm python python-pip 2>/dev/null || true
+          elif command -v zypper >/dev/null 2>&1; then
+            zypper --non-interactive install python3-pip python3-devel 2>/dev/null || true
           fi
 
           # Create a temporary venv to test the flow
@@ -271,13 +306,15 @@ jobs:
           echo "  ✓ ubuntu:24.04 - Full support expected"
           echo "  ✓ ubuntu:26.04 - Full support expected"
           echo "  ✓ debian:12 - Full support expected"
-          echo "  ⚠ fedora:39 - Good support, minor differences expected"
+          echo "  ⚠ fedora:42 - Good support, minor differences expected"
+          echo "  ⚠ archlinux:latest - Rolling; also the AUR package's distro"
+          echo "  ⚠ opensuse/tumbleweed - Rolling, least exercised"
           echo ""
           echo "Key tests performed:"
           echo "  1. /etc/os-release availability"
           echo "  2. Distro detection function"
           echo "  3. Typelib path detection"
-          echo "  4. install.sh syntax validation"
+          echo "  4. install.sh syntax validation (also gated in the syntax job)"
           echo "  5. Dependency checker"
           echo "  6. Installer --help command"
           echo "  7. Virtual environment creation"
