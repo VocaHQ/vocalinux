@@ -52,6 +52,15 @@ class TestConfigManager(unittest.TestCase):
         # Recreate after patching so each test starts from a known config path.
         _ensure_test_config_dir(self.temp_config_dir)
 
+        # Every test here starts without a config file, which is a first run, so
+        # language detection would shell out to localectl and make the result depend
+        # on the machine's keyboard layout. The seeding itself is covered in
+        # tests/test_system_language.py.
+        self.detect_patcher = patch(
+            "vocalinux.utils.system_language.detect_system_language", return_value=None
+        )
+        self.detect_patcher.start()
+
         # Patch logging to avoid actual logging
         self.logger_patcher = patch("vocalinux.ui.config_manager.logger")
         self.mock_logger = self.logger_patcher.start()
@@ -61,6 +70,7 @@ class TestConfigManager(unittest.TestCase):
         self.config_dir_patcher.stop()
         self.config_file_patcher.stop()
         self.makedirs_patcher.stop()
+        self.detect_patcher.stop()
         self.logger_patcher.stop()
         self.temp_dir.cleanup()
 

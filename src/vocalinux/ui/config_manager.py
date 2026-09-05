@@ -173,6 +173,32 @@ class ConfigManager:
         """Ensure the configuration directory exists."""
         os.makedirs(CONFIG_DIR, exist_ok=True)
 
+    def _seed_language_from_system(self):
+        """Start a first run from the language the system points at (#777).
+
+        Only applied when there is no config file yet, so a saved choice — including
+        a deliberate "auto" — is never overwritten. When nothing decisive is found
+        the packaged default stays in place.
+        """
+        try:
+            from ..utils.system_language import detect_system_language
+            from ..utils.vosk_model_info import SUPPORTED_LANGUAGES
+        except ImportError as exc:  # pragma: no cover - defensive
+            logger.debug(f"Language detection unavailable: {exc}")
+            return
+
+        try:
+            detected = detect_system_language(SUPPORTED_LANGUAGES)
+        except Exception as exc:  # pragma: no cover - detection must never block startup
+            logger.debug(f"Language detection failed: {exc}")
+            return
+
+        if not detected:
+            return
+
+        self.config.setdefault("speech_recognition", {})["language"] = detected
+        logger.info(f"First run: starting with language {detected}")
+
     def load_config(self):
         """
         Load configuration from the config file.
@@ -181,6 +207,7 @@ class ConfigManager:
         """
         if not os.path.exists(CONFIG_FILE):
             logger.info(f"Config file not found at {CONFIG_FILE}. Using defaults.")
+            self._seed_language_from_system()
             return
 
         try:
