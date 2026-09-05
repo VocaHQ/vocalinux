@@ -4821,12 +4821,42 @@ class SettingsDialog(Gtk.Dialog):
             self._populating_models = False
             self._refresh_unused_downloads()
 
+    def _resolve_saved_whispercpp_variant(self, saved_model_for_engine: str) -> str:
+        """Resolve which variant the saved configuration actually asks for.
+
+        ``whisper_cpp_model_size`` holds the id that loads the model, but for every
+        size below "large" the multilingual variant id *is* the bare size name, so
+        a stored "medium" cannot say whether the user chose the multilingual variant
+        or never chose anything. The explicit pin written by Settings answers that.
+        Without a pin the variant follows the selected language, which is what makes
+        picking English actually select an English-only model.
+        """
+        pinned = self.config_manager.get_model_variant_for_engine("whisper_cpp").lower()
+        if pinned in WHISPERCPP_MODEL_INFO:
+            return pinned
+
+        saved = (saved_model_for_engine or "").lower()
+
+        # Written by an older build that only stored one value: anything that is not
+        # a bare size name could only come from picking a specialization, so honour it.
+        if saved in WHISPERCPP_MODEL_INFO and saved not in WHISPERCPP_MODEL_SIZES:
+            return saved
+
+        size = saved if saved in WHISPERCPP_MODEL_SIZES else get_whispercpp_model_size(saved)
+        if size not in WHISPERCPP_MODEL_SIZES:
+            size = get_whispercpp_model_size("tiny")
+
+        derived = self._get_default_whispercpp_variant_for_size(size)
+        if derived in WHISPERCPP_MODEL_INFO:
+            return derived
+        return saved if saved in WHISPERCPP_MODEL_INFO else "tiny"
+
     def _populate_whispercpp_model_options(self, saved_model_for_engine: str):
         """Populate whisper.cpp size and specialization selectors."""
         recommended_model, _ = self._get_recommended_whispercpp_model_for_language()
         recommended_size = get_whispercpp_model_size(recommended_model)
 
-        saved_model = saved_model_for_engine.lower()
+        saved_model = self._resolve_saved_whispercpp_variant(saved_model_for_engine)
         if saved_model not in WHISPERCPP_MODEL_INFO:
             saved_model = (
                 recommended_model if recommended_model in WHISPERCPP_MODEL_INFO else "tiny"
@@ -5594,8 +5624,12 @@ class SettingsDialog(Gtk.Dialog):
         language_id = self.language_combo.get_active_id()
 
         engine = _engine_from_display(engine_text) if engine_text else "vosk"
+        model_variant = ""
         if engine == "whisper_cpp":
             model_size = self._get_selected_whispercpp_model()
+            # Recorded separately so a later run can tell a deliberate multilingual
+            # pick from a bare size left over in the config (see #776).
+            model_variant = model_size
         else:
             model_size = model_id.lower() if model_id else "small"
         language = language_id if language_id else self._default_language_for_engine(engine)
@@ -5606,6 +5640,7 @@ class SettingsDialog(Gtk.Dialog):
         settings = {
             "engine": engine,
             "model_size": model_size,
+            "model_variant": model_variant,
             "language": language,
             "vad_sensitivity": vad,
             "silence_timeout": silence,

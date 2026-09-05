@@ -69,6 +69,10 @@ DEFAULT_CONFIG = {
         "vosk_model_size": "small",  # Default model for VOSK engine
         "whisper_model_size": "tiny",  # Default model for Whisper engine
         "whisper_cpp_model_size": "tiny",  # Default model for whisper.cpp engine
+        # Variant the user picked explicitly in Settings. Empty means "not pinned":
+        # the variant is then derived from the selected language, because a bare size
+        # name ("medium") is indistinguishable from the multilingual variant id.
+        "whisper_cpp_model_variant": "",
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 2.0,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech
@@ -439,6 +443,24 @@ class ConfigManager:
         self.config["speech_recognition"]["model_size"] = model_size
         logger.info(f"Set {engine} model size to: {model_size}")
 
+    def get_model_variant_for_engine(self, engine: str) -> str:
+        """Return the variant the user pinned for an engine, or "" when unpinned.
+
+        Only whisper.cpp has variants. A pinned value means the user chose that
+        specialization in Settings; an empty value means the variant should be
+        derived from the selected language.
+        """
+        sr_config = self.config.get("speech_recognition", {})
+        return sr_config.get(f"{engine.lower()}_model_variant", "") or ""
+
+    def set_model_variant_for_engine(self, engine: str, model_variant: str):
+        """Pin the variant the user chose for an engine ("" clears the pin)."""
+        if "speech_recognition" not in self.config:
+            self.config["speech_recognition"] = {}
+
+        self.config["speech_recognition"][f"{engine.lower()}_model_variant"] = model_variant
+        logger.info(f"Set {engine} model variant to: {model_variant!r}")
+
     def is_voice_commands_enabled(self) -> bool:
         """Check if voice commands should be enabled.
 
@@ -467,6 +489,11 @@ class ConfigManager:
             engine = settings["engine"]
             model_size = settings["model_size"]
             self.set_model_size_for_engine(engine, model_size)
+
+        # A variant only arrives here when the user picked one in Settings, so
+        # storing it marks the choice as deliberate.
+        if "engine" in settings and "model_variant" in settings:
+            self.set_model_variant_for_engine(settings["engine"], settings["model_variant"])
 
         # Update all other keys present in the provided settings dict
         for key, value in settings.items():
