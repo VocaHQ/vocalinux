@@ -23,6 +23,7 @@ jobs:
     outputs:
       web: ${{ steps.filter.outputs.web }}
       python: ${{ steps.filter.outputs.python }}
+      aur: ${{ steps.filter.outputs.aur }}
       deploy_website: ${{ steps.deploy_check.outputs.deploy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -51,6 +52,14 @@ jobs:
               - 'resources/**'
               - 'justfile'
               - '.pre-commit-config.yaml'
+              - '.github/workflows/unified-pipeline.yml'
+            # The AUR gate builds packaging/aur/vocalinux/PKGBUILD from this
+            # tree. Its depends= mirror pyproject.toml, so every python change
+            # reaches the gate through the python filter above; this filter
+            # exists so a PKGBUILD-only change runs the gate without dragging
+            # the whole python matrix along.
+            aur:
+              - 'packaging/aur/**'
               - '.github/workflows/unified-pipeline.yml'
       - name: Check if website should deploy
         id: deploy_check
@@ -306,6 +315,28 @@ jobs:
             -v "$PWD/packaging/appimage:/pk:ro" \
             "${{ matrix.distro }}" \
             bash /pk/boot-test.sh "/dist/$(basename "$APPIMAGE")"
+
+  # Nothing built the PKGBUILD before a tag pushed it to AUR users, which is
+  # how #757 shipped: Arch's setuptools 84 against our old <82 cap. The gate
+  # swaps the not-yet-existing tag tarball for a git archive of the checkout,
+  # so it answers whether *this commit* builds on Arch. Deliberately
+  # archlinux:latest: the AUR is a rolling channel and #757 was Arch moving
+  # under us.
+  aur-build-test:
+    name: 🏛️ Build AUR package (gate)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.aur == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the PKGBUILD on Arch
+        run: |
+          docker run --rm \
+            -v "$PWD:/repo:ro" \
+            archlinux:latest \
+            bash /repo/packaging/aur/build-test.sh
 
   web-build:
     name: 🌐 Build Website

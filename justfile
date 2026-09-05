@@ -105,6 +105,23 @@ appimage: build
 appimage-boot distro="debian:12":
     docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/appimage:/pk:ro" {{distro}} bash /pk/boot-test.sh "/dist/$(basename "$(ls dist/*.AppImage)")"
 
+# Build the AUR package from this checkout on current Arch, as the CI gate
+# does. Answers "does this commit build on Arch" — the tag tarball source= is
+# swapped for a git archive of HEAD (needs docker).
+#
+# The checkout is mounted at its own path, and the main .git with it when this
+# is a linked worktree: a worktree's .git is a pointer to a gitdir outside the
+# tree, so git archive inside the container cannot see the objects without it.
+aur-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
+    if [ "$COMMON" != "$PWD/.git" ]; then
+        ARGS+=(-v "$COMMON:$COMMON:ro")
+    fi
+    docker run "${ARGS[@]}" archlinux:latest bash "$PWD/packaging/aur/build-test.sh"
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
 # when you want newer CPU builds (torchaudio on the CPU index lags torch).
