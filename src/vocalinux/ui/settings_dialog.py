@@ -5520,7 +5520,7 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_title.show()
         self.model_info_subtitle.show()
 
-    def _on_model_recommendation_clicked(self, _widget):
+    def _on_model_recommendation_clicked(self, _widget) -> None:
         """Apply the hardware recommendation to Model Size and Specialization."""
         if self._initializing or self._applying_settings or self._populating_models:
             return
@@ -5543,7 +5543,7 @@ class SettingsDialog(Gtk.Dialog):
                         self.model_combo.set_active(i)
                         break
 
-    def _select_whispercpp_model(self, model_id: str):
+    def _select_whispercpp_model(self, model_id: str) -> None:
         """Select a whisper.cpp catalog model in both size and specialization."""
         size = get_whispercpp_model_size(model_id)
         self._populating_models = True
