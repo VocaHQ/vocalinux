@@ -69,6 +69,9 @@ DEFAULT_CONFIG = {
         "vosk_model_size": "small",  # Default model for VOSK engine
         "whisper_model_size": "tiny",  # Default model for Whisper engine
         "whisper_cpp_model_size": "tiny",  # Default model for whisper.cpp engine
+        # "simple" asks for language and priority and derives the rest; "advanced"
+        # exposes engine, size and specialization directly (#779).
+        "settings_mode": "simple",
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 2.0,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech

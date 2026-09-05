@@ -34,6 +34,13 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..utils.model_choice import (
+    BALANCED,
+    PRIORITIES,
+    PRIORITY_LABELS,
+    priority_for_size,
+    size_for_priority,
+)
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
@@ -1832,6 +1839,12 @@ class SettingsDialog(Gtk.Dialog):
         self._test_result = ""
         self._initializing = True  # Flag to prevent auto-apply during initialization
         self._populating_models = False  # Flag to prevent model change handler during population
+        # Guards the simple-mode widgets while they are being pointed at the
+        # live configuration, so syncing them does not look like a user edit.
+        self._simple_syncing = False
+        self.settings_mode_combo = None
+        self.simple_group = None
+        self.engine_group = None
         self._processing_language_change = (
             False  # Flag to prevent recursive language change handling
         )
@@ -1946,6 +1959,7 @@ class SettingsDialog(Gtk.Dialog):
         # Build UI sections into their topic pages
         self._build_shortcuts_section()
         self._build_recognition_section()
+        self._build_settings_mode_section()
         self._build_engine_section()
         self._build_remote_server_section()
         self._build_audio_section()
@@ -1979,6 +1993,14 @@ class SettingsDialog(Gtk.Dialog):
             self.navigate_to_page(self._initial_page)
         else:
             self.sidebar_listbox.select_row(self.sidebar_listbox.get_row_at_index(0))
+
+        # Restore the saved mode and point the simple questions at the live model
+        # before the first visibility pass, so nothing flashes the wrong group.
+        saved_mode = self.config_manager.get("speech_recognition", "settings_mode", "simple")
+        self.settings_mode_combo.set_active_id(
+            saved_mode if saved_mode in ("simple", "advanced") else "simple"
+        )
+        self._sync_simple_from_advanced()
 
         # Then update visibility of engine-specific elements
         self._update_engine_specific_ui()
@@ -2832,9 +2854,77 @@ class SettingsDialog(Gtk.Dialog):
         self._tone_preview_kind = "stop" if kind == "start" else "start"
         self._sync_tone_preview_button(tone_id)
 
+    def _build_settings_mode_section(self):
+        """Build the mode switch and the simple-mode questions (#779)."""
+        mode_group = PreferencesGroup(title="Speech Model")
+
+        self.settings_mode_combo = Gtk.ComboBoxText()
+        _style_combo(self.settings_mode_combo)
+        _prevent_scroll_on_hover(self.settings_mode_combo)
+        self.settings_mode_combo.append("simple", "Simple")
+        self.settings_mode_combo.append("advanced", "Advanced")
+        mode_row = PreferenceRow(
+            title="Setup",
+            subtitle="Simple picks the model for you; Advanced exposes every control",
+            widget=self.settings_mode_combo,
+            keywords=("simple", "advanced", "mode"),
+        )
+        mode_group.add_row(mode_row)
+        self.content_box.pack_start(mode_group, False, False, 0)
+
+        self.simple_group = PreferencesGroup(title="What you dictate")
+
+        self.simple_language_combo = Gtk.ComboBoxText()
+        _style_combo(self.simple_language_combo)
+        _prevent_scroll_on_hover(self.simple_language_combo)
+        for language_id, info in SUPPORTED_LANGUAGES.items():
+            # Auto-detect is the switch below, not a language you speak.
+            if language_id != "auto":
+                self.simple_language_combo.append(language_id, info["name"])
+        self.simple_language_row = PreferenceRow(
+            title="Main language",
+            subtitle="The language you speak most of the time",
+            widget=self.simple_language_combo,
+            keywords=("language", "speak"),
+        )
+        self.simple_group.add_row(self.simple_language_row)
+
+        # The engine takes one language or none, so this is the only other option
+        # that exists. A second language field would promise something it cannot do.
+        self.simple_multi_switch = Gtk.Switch()
+        self.simple_multi_switch.set_valign(Gtk.Align.CENTER)
+        self.simple_multi_row = PreferenceRow(
+            title="I also dictate whole texts in other languages",
+            subtitle="Detects the language per utterance; can be wrong on short ones",
+            widget=self.simple_multi_switch,
+            keywords=("multilingual", "auto", "detect"),
+        )
+        self.simple_group.add_row(self.simple_multi_row)
+
+        self.simple_priority_combo = Gtk.ComboBoxText()
+        _style_combo(self.simple_priority_combo)
+        _prevent_scroll_on_hover(self.simple_priority_combo)
+        for priority in PRIORITIES:
+            self.simple_priority_combo.append(priority, PRIORITY_LABELS[priority])
+        self.simple_priority_row = PreferenceRow(
+            title="Priority",
+            subtitle="Balanced follows what your hardware can run",
+            widget=self.simple_priority_combo,
+            keywords=("speed", "accuracy", "priority"),
+        )
+        self.simple_group.add_row(self.simple_priority_row)
+
+        self.content_box.pack_start(self.simple_group, False, False, 0)
+
+        self.settings_mode_combo.connect("changed", self._on_settings_mode_changed)
+        self.simple_language_combo.connect("changed", self._on_simple_choice_changed)
+        self.simple_multi_switch.connect("notify::active", self._on_simple_choice_changed)
+        self.simple_priority_combo.connect("changed", self._on_simple_choice_changed)
+
     def _build_engine_section(self):
         """Build the Speech Engine section."""
         group = PreferencesGroup(title="Speech Engine")
+        self.engine_group = group
 
         # Engine selection
         self.engine_combo = Gtk.ComboBoxText()
@@ -5436,6 +5526,91 @@ class SettingsDialog(Gtk.Dialog):
             self._processing_language_change = False
         return False
 
+    def _get_settings_mode(self) -> str:
+        """Return the active mode, defaulting to simple."""
+        mode = self.settings_mode_combo.get_active_id() if self.settings_mode_combo else None
+        return mode if mode in ("simple", "advanced") else "simple"
+
+    def _sync_simple_from_advanced(self):
+        """Point the simple questions at the configuration that is actually live.
+
+        Switching modes must not change the model on its own, so the priority is
+        read back from the size already chosen rather than reset to a default.
+        """
+        language = self.language_combo.get_active_id() or self.language or "auto"
+        is_auto = language == "auto"
+
+        self._simple_syncing = True
+        try:
+            self.simple_multi_switch.set_active(is_auto)
+            if not is_auto:
+                self.simple_language_combo.set_active_id(language)
+            elif not self.simple_language_combo.get_active_id():
+                self.simple_language_combo.set_active_id("en-us")
+
+            recommended, _ = self._get_recommended_whispercpp_model_for_language()
+            current = self._get_selected_whispercpp_model()
+            priority = priority_for_size(
+                get_whispercpp_model_size(recommended), get_whispercpp_model_size(current)
+            )
+            self.simple_priority_combo.set_active_id(priority)
+        finally:
+            self._simple_syncing = False
+
+    def _apply_simple_choice(self):
+        """Drive the advanced controls from the simple questions.
+
+        Simple mode deliberately steers the existing widgets instead of writing the
+        configuration itself, so applying, downloading and the info card keep going
+        through exactly one code path.
+        """
+        language = (
+            "auto"
+            if self.simple_multi_switch.get_active()
+            else (self.simple_language_combo.get_active_id() or "en-us")
+        )
+        priority = self.simple_priority_combo.get_active_id() or BALANCED
+
+        self.engine_combo.set_active_id("whisper_cpp")
+        self._set_combo_active_id_or_first(self.language_combo, language)
+        self.language = language
+
+        recommended, _ = self._get_recommended_whispercpp_model_for_language()
+        size = size_for_priority(get_whispercpp_model_size(recommended), priority)
+        variant = _default_whispercpp_variant_for_size(size, language) or size
+
+        self.model_combo.set_active_id(size)
+        self._populate_whispercpp_variant_options(size, variant)
+        self.model_variant_combo.set_active_id(variant)
+
+    def _on_settings_mode_changed(self, _combo):
+        """Persist the mode and reshape the page."""
+        if self._initializing:
+            return
+        mode = self._get_settings_mode()
+        self.config_manager.set("speech_recognition", "settings_mode", mode)
+        self.config_manager.save_settings()
+        if mode == "simple":
+            self._sync_simple_from_advanced()
+        self._update_settings_mode_visibility()
+
+    def _on_simple_choice_changed(self, *_args):
+        """React to one of the simple questions changing."""
+        if self._initializing or self._simple_syncing or self._applying_settings:
+            return
+        self._apply_simple_choice()
+        self._auto_apply_settings()
+
+    def _update_settings_mode_visibility(self):
+        """Show the group the active mode calls for."""
+        simple = self._get_settings_mode() == "simple"
+        if simple:
+            self.simple_group.show_all()
+            self.engine_group.hide()
+        else:
+            self.simple_group.hide()
+            self.engine_group.show_all()
+
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
         engine_text = self.engine_combo.get_active_text()
@@ -5457,6 +5632,8 @@ class SettingsDialog(Gtk.Dialog):
                 self.model_variant_row.hide()
             self.remote_server_group.hide()
             self.remote_status_label.hide()
+
+        self._update_settings_mode_visibility()
 
         self._update_model_info()
         self._refresh_unused_downloads()
