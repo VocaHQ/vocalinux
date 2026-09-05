@@ -40,7 +40,7 @@ const homeJsonLd = [
     },
     description:
       "Offline voice dictation and speech-to-text for Linux with whisper.cpp and VOSK.",
-    softwareVersion: "0.16.1",
+    softwareVersion: "0.16.2",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

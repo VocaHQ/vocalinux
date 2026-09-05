@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.16.2" date="2026-09-05">
+      <description>
+        <p>Stability patch: skip leftover IBus on KDE so dictation types into real apps, Wayland/IBus shortcuts via wtype and ydotool, real BackSpace for "delete that", Fedora/Arch installer glslc (not glslang), nightly version stamp before build, release integrity checksums and pinned builders, AUR PKGBUILD CI gate, distro CI plus docs drift fixes, and VocaGateway Beta on the site.</p>
+      </description>
+    </release>
     <release version="0.16.1" date="2026-08-30">
       <description>
         <p>Stability patch: per-engine model size at startup, save the model only after it loaded, leftover-download list shows every row, one ConfigManager so Settings writes stick, tray stays idle after leftover transcription and can download the recommended model from the missing-model notification, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified model downloads, AppImage glibc that boots on Debian 12, AUR build against Arch extra setuptools 84, skip context_params on AUR pywhispercpp 1.4, and Settings/About layout polish.</p>

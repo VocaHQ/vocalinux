@@ -15,6 +15,23 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.16.2",
+    date: "2026-09-05",
+    type: "stable",
+    highlights: [
+      "KDE: skip leftover IBus when it is not the session IM so dictation types into Kate, browsers, and terminals (PR #753, fixes #752)",
+      "Wayland shortcuts: wtype and ydotool deliver real chords instead of refusing or silently doing nothing (PR #715)",
+      "IBus shortcuts: route X11_IBUS through xdotool and WAYLAND_IBUS through wtype/ydotool (PR #716)",
+      "Voice command delete that: send real BackSpace key events instead of U+0008 text (PR #714)",
+      "Installer: Fedora and Arch need glslc/shaderc packages, not glslang (PR #763, #604)",
+      "Nightly: stamp version.py before python -m build so wheel metadata matches the filename (PR #762)",
+      "Release integrity: checksums, signatures, and pinned builders for release artifacts (PR #759, epic #701 phase 5)",
+      "CI: gate AUR PKGBUILD builds on every PR; test the distros the docs promise and fix docs drift (PR #772, #773)",
+      "Site: VocaGateway family card is Beta; README logo, badges, and privacy copy (PR #765, #764)",
+      "Deps: bump the github-actions group (PR #766)",
+    ],
+  },
+  {
     version: "v0.16.1",
     date: "2026-08-30",
     type: "stable",

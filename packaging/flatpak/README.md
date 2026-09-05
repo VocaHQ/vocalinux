@@ -85,7 +85,7 @@ re-submitting without addressing that is a repeat. See
    sources:
      - type: git
        url: https://github.com/VocaHQ/vocalinux.git
-       tag: v0.16.1
+       tag: v0.16.2
        commit: <release-commit-sha>
    ```
 

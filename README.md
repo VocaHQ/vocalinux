@@ -43,9 +43,9 @@ It's a free, AGPL-3.0-licensed desktop app that lets you dictate text into *any*
 
 Models are downloaded once. After that, speech-to-text stays on your machine. No Voca account is required. Just speak and type.
 
-## 📚 What's New in v0.16.1
+## 📚 What's New in v0.16.2
 
-> **0.16.1** is a stability patch on the 0.16 series. Startup uses the engine's own model instead of a leftover generic key, leftover transcription no longer leaves the tray stuck, terminals get Ctrl+Shift+V paste, and the AppImage is built against a glibc Debian 12 can run. The installer now requires Python 3.11 and verifies model downloads.
+> **0.16.2** is a stability patch on the 0.16 series. Dictation types again on KDE when a leftover IBus daemon is not the session IM, Wayland and IBus keyboard shortcuts actually fire through wtype/ydotool, "delete that" sends real BackSpace, and the installer pulls glslc on Fedora/Arch. Release builds pin builders and ship checksums; AUR PKGBUILD and distro docs get CI gates.
 
 ### 0.16 series highlights
 
@@ -60,17 +60,17 @@ Models are downloaded once. After that, speech-to-text stays on your machine. No
 | **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
 | **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
 
-### Bug fixes in v0.16.1
+### Bug fixes in v0.16.2
 
-- **Speech models**: start on the engine's own model size; write the model to config only after it loaded; leftover-download list shows every row (#684, #685, #686, fixes #681, #683)
-- **Config**: one ConfigManager for the process, so Settings writes are not overwritten by a stale cache (#691, fixes #689)
-- **Tray**: stay idle after leftover transcription on toggle stop; the missing-model notification can download the recommended model (#741, #687)
-- **Injection / IBus**: Ctrl+Shift+V paste in terminals; keep the GNOME XWayland layout after scoped inject (#734, #742)
-- **Installer / AppImage**: Python 3.11 floor, verified model downloads, no invented GPUs; AppImage glibc that boots on Debian 12 through current Fedora (#713, #736, #743, #744)
-- **AUR**: build against Arch extra setuptools 84; skip `context_params` on AUR pywhispercpp 1.4 so the app starts
-- **Settings**: even dropdowns and a quieter About page with family platform marks (#754)
+- **KDE inject**: skip leftover IBus when it is not the session IM so dictation types into Kate, browsers, and terminals (#753, fixes #752)
+- **Wayland / IBus shortcuts**: wtype and ydotool deliver real chords; IBus sessions route shortcuts to a virtual-keyboard tool (#715, #716)
+- **Delete that**: send real BackSpace key events instead of U+0008 text (#714)
+- **Installer**: Fedora and Arch need glslc/shaderc, not glslang (#763, #604)
+- **Nightly / release**: stamp version before build; release integrity checksums and pinned builders (#762, #759)
+- **CI / docs**: AUR PKGBUILD gate on every PR; distro CI matches the docs (#772, #773)
+- **Site**: VocaGateway family card is Beta; README logo, badges, privacy copy (#765, #764)
 
-See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.1).
+See [docs/UPDATE.md](docs/UPDATE.md) and the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2).
 
 ---
 
@@ -464,7 +464,7 @@ Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text firs
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.1`) |
+| 🐧 Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | ✅ Available now (`v0.16.2`) |
 | 🍎 macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | 🚀 Beta (`v0.9.0`) |
 | 🪟 Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | 🚀 Unsigned beta (`v0.1.0-beta.1`) |
 | 📱 Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | 🚀 Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |
