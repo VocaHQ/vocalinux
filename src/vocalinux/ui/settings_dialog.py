@@ -2743,10 +2743,22 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
+        # The recommendation used to be a plain label, which left the panel stating
+        # the right answer while the pickers kept the wrong one (#778).
+        self.model_recommendation_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.model_recommendation_box.set_no_show_all(True)
+
         self.model_recommendation = Gtk.Label(xalign=0, wrap=True)
         self.model_recommendation.get_style_context().add_class("model-info-subtitle")
-        self.model_recommendation.set_no_show_all(True)
-        self.model_info_card.pack_start(self.model_recommendation, False, False, 0)
+        self.model_recommendation_box.pack_start(self.model_recommendation, True, True, 0)
+
+        self.model_recommendation_button = Gtk.Button(label="Use it")
+        self.model_recommendation_button.set_valign(Gtk.Align.CENTER)
+        self.model_recommendation_button.set_no_show_all(True)
+        self.model_recommendation_button.connect("clicked", self._on_apply_recommendation)
+        self.model_recommendation_box.pack_end(self.model_recommendation_button, False, False, 0)
+
+        self.model_info_card.pack_start(self.model_recommendation_box, False, False, 0)
 
         # Language warning (e.g. auto-detect, English-only models) lives in
         # the card so there is a single explanation surface below the group.
@@ -4659,10 +4671,59 @@ class SettingsDialog(Gtk.Dialog):
             language_id,
         )
 
+    def _downloaded_alternative_for(self, recommended: str) -> Optional[str]:
+        """Return a model already on disk that can stand in for ``recommended``.
+
+        Every entry in these pickers is a download decision priced in gigabytes, so
+        suggesting a fresh download while something equivalent is already on disk
+        wastes the user's bandwidth (#778). Only candidates that are not smaller than
+        the recommendation qualify, so this never quietly downgrades accuracy, and
+        English-only weights are only offered when English is actually selected.
+        """
+        if recommended in WHISPERCPP_MODEL_INFO and is_whispercpp_model_downloaded(recommended):
+            return None
+
+        language_id = self.language_combo.get_active_id() or self.language
+        wants_english = _language_is_english(language_id)
+        recommended_mb = WHISPERCPP_MODEL_INFO.get(recommended, {}).get("size_mb", 0)
+
+        # An English-only recommendation must not be answered with multilingual
+        # weights: they weigh the same and recognise English worse, which is the
+        # accuracy loss #776 is about.
+        needs_english_only = is_english_only_whispercpp_model(recommended)
+
+        best = None
+        best_mb = None
+        for model_name in list_downloaded_whispercpp_models():
+            info = WHISPERCPP_MODEL_INFO.get(model_name)
+            if not info:
+                continue
+            if is_english_only_whispercpp_model(model_name) and not wants_english:
+                continue
+            if needs_english_only and not is_english_only_whispercpp_model(model_name):
+                continue
+            if info["size_mb"] < recommended_mb:
+                continue
+            if best_mb is None or info["size_mb"] < best_mb:
+                best, best_mb = model_name, info["size_mb"]
+
+        return best
+
     def _get_default_whispercpp_variant_for_size(self, model_size: str) -> Optional[str]:
         """Return the default specialization for a user-selected size."""
         language_id = self.language_combo.get_active_id() or self.language
         return _default_whispercpp_variant_for_size(model_size, language_id)
+
+    def _on_apply_recommendation(self, _button):
+        """Set both pickers to the model the card is offering."""
+        target = getattr(self, "_recommended_target_model", None)
+        if not target or target not in WHISPERCPP_MODEL_INFO:
+            return
+
+        model_size = get_whispercpp_model_size(target)
+        self.model_combo.set_active_id(model_size)
+        self._populate_whispercpp_variant_options(model_size, target)
+        self.model_variant_combo.set_active_id(target)
 
     def _is_selected_whispercpp_model_english_only(self) -> bool:
         """Return whether the selected model is a whisper.cpp English-only variant."""
@@ -4835,7 +4896,14 @@ class SettingsDialog(Gtk.Dialog):
         saved_size = get_whispercpp_model_size(saved_model)
 
         for model_size in ENGINE_MODELS["whisper_cpp"]:
+            # Same shape as the specialization list: a size is a download decision
+            # too, so its price and whether it is already paid for belong here (#778).
+            size_variant = self._get_default_whispercpp_variant_for_size(model_size)
             display_text = _model_display_name(model_size)
+            if size_variant in WHISPERCPP_MODEL_INFO:
+                info = WHISPERCPP_MODEL_INFO[size_variant]
+                status = "✓" if is_whispercpp_model_downloaded(size_variant) else "↓"
+                display_text += f" ({_format_size(info['size_mb'])}) {status}"
             if model_size == recommended_size:
                 display_text += " ★"
             self.model_combo.append(model_size, display_text)
@@ -5385,13 +5453,30 @@ class SettingsDialog(Gtk.Dialog):
             status = f"<span foreground='#e5a50a'>Download ~{_format_size(info['size_mb'])}</span>"
         self.model_info_subtitle.set_markup(f"{extra_info} · {status}")
 
-        if model_name == recommended:
-            self.model_recommendation.hide()
+        target = recommended
+        message = None
+        if engine == "whisper_cpp":
+            already_have = self._downloaded_alternative_for(recommended)
+            if already_have and already_have != model_name:
+                target = already_have
+                message = (
+                    f"You already have {_model_display_name(already_have)} on disk — "
+                    "using it needs no download"
+                )
+
+        if target == model_name:
+            self._recommended_target_model = None
+            self.model_recommendation_box.hide()
+            self.model_recommendation_button.hide()
         else:
-            self.model_recommendation.set_text(
-                f"Recommended: {recommended_display_name} ({reason})"
-            )
+            self._recommended_target_model = target
+            if message is None:
+                message = f"Recommended: {_model_display_name(target)} ({reason})"
+            self.model_recommendation.set_text(message)
             self.model_recommendation.show()
+            can_apply = engine == "whisper_cpp" and target in WHISPERCPP_MODEL_INFO
+            self.model_recommendation_button.set_visible(can_apply)
+            self.model_recommendation_box.show()
 
         self._update_model_picker_tooltips()
         self.model_info_card.show()
