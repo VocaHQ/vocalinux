@@ -1,0 +1,77 @@
+name: PyPI publisher probe
+
+# Throwaway. Delete this file once it has answered its one question.
+#
+# `release.yml` publishes to PyPI with trusted publishing and no password
+# fallback (#759), and it triggers only on `v*` tags. So without this, a tag is
+# what discovers a missing or mistyped Trusted Publisher — halfway through a
+# release, after the GitHub release already exists.
+#
+# This asks PyPI the same question the release asks, and publishes nothing: it
+# requests the OIDC token GitHub would hand `publish-pypi`, offers it to PyPI's
+# mint-token endpoint, and reports whether PyPI accepted it. Owner rights on the
+# PyPI project are not needed to run it — only to fix a failure.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Can PyPI mint a token for us?
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    # Load-bearing, not decoration. `publish-pypi` declares this environment and
+    # the Trusted Publisher entry pins it, so the claim carries it. Probing from
+    # outside the environment would fail a correctly configured publisher and
+    # send someone chasing a problem that is not there.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/vocalinux/
+    steps:
+      - name: Exchange an OIDC token with PyPI
+        run: |
+          set -euo pipefail
+          # The minted token is a real upload credential for the project. It
+          # never leaves the runner and never reaches the log.
+          trap 'rm -f /tmp/mint.json' EXIT
+
+          audience="$(curl -sS --fail https://pypi.org/_/oidc/audience | jq -r .audience)"
+          echo "PyPI expects audience: $audience"
+
+          # GitHub mints the OIDC token through a per-job endpoint; the URL
+          # already carries a query string, hence '&audience='.
+          oidc="$(curl -sS --fail \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" | jq -r .value)"
+
+          code="$(curl -sS -o /tmp/mint.json -w '%{http_code}' \
+            -X POST https://pypi.org/_/oidc/mint-token \
+            -H 'Content-Type: application/json' \
+            -d "{\"token\": \"${oidc}\"}")"
+          echo "POST /_/oidc/mint-token -> HTTP $code"
+
+          if [ "$code" = "200" ] && jq -e 'has("token")' /tmp/mint.json >/dev/null; then
+            echo
+            echo "PASS: PyPI minted an upload token."
+            echo "      The Trusted Publisher matches VocaHQ / vocalinux /"
+            echo "      release.yml / environment 'pypi'. The next v* tag will publish."
+            exit 0
+          fi
+
+          echo
+          echo "FAIL: PyPI refused to mint a token. Response (token field removed):"
+          jq 'del(.token)' /tmp/mint.json 2>/dev/null || cat /tmp/mint.json
+          echo
+          echo "Then publish-pypi will fail on the next tag, and there is no API-token"
+          echo "fallback left in release.yml. Someone with Owner rights on the PyPI"
+          echo "project needs pypi.org -> vocalinux -> Manage -> Publishing, with all"
+          echo "four fields matching exactly:"
+          echo "  Owner:            VocaHQ"
+          echo "  Repository name:  vocalinux"
+          echo "  Workflow name:    release.yml"
+          echo "  Environment name: pypi"
+          exit 1
