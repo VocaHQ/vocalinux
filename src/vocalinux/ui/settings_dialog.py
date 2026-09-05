@@ -33,6 +33,10 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
+from ..gateway_embed import (  # noqa: E402
+    GatewayStatus,
+    get_gateway_embed_manager,
+)
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
@@ -1784,6 +1788,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_recognition_section()
         self._build_engine_section()
         self._build_remote_server_section()
+        self._build_gateway_embed_section()
         self._build_audio_section()
         self._build_auto_pause_section()
         self._build_model_keepalive_section()
@@ -4385,6 +4390,285 @@ class SettingsDialog(Gtk.Dialog):
 
         self.remote_server_group.hide()
         self.remote_status_label.hide()
+
+    def _build_gateway_embed_section(self):
+        """Optional local VocaGateway controls (podman-first). Always on Speech Engine."""
+        self._gateway_manager = get_gateway_embed_manager()
+        lan_publish = bool(self.config_manager.get("gateway_embed", "lan_publish", False))
+        self._gateway_manager.lan_publish = lan_publish
+
+        self.gateway_embed_group = PreferencesGroup(
+            title="Local VocaGateway",
+            description=(
+                "Optional self-hosted gateway via podman (or docker). "
+                "Audio goes to that container on this machine; it is not on-device "
+                "whisper.cpp. Pinned to VocaGateway v0.1.0."
+            ),
+            keywords=(
+                "vocagateway",
+                "gateway",
+                "podman",
+                "docker",
+                "pairing",
+                "phone",
+                "remote",
+            ),
+        )
+
+        self.gateway_run_btn = Gtk.Button(label="Run VocaGateway locally")
+        self.gateway_run_btn.set_size_request(_CONTROL_WIDTH, -1)
+        self.gateway_run_btn.connect("clicked", self._on_gateway_run_clicked)
+        self.gateway_embed_group.add_row(
+            PreferenceRow(
+                title="Local gateway",
+                subtitle="Start or stop the compose project vocagateway",
+                widget=self.gateway_run_btn,
+            )
+        )
+
+        self.gateway_status_label = Gtk.Label(label="Stopped", xalign=0)
+        self.gateway_status_label.get_style_context().add_class("status-info")
+        self.gateway_embed_group.add_row(
+            PreferenceRow(
+                title="Status",
+                subtitle="Stopped, Starting, Live, Pairable, Ready, or Error",
+                widget=self.gateway_status_label,
+            )
+        )
+
+        self.gateway_detail_label = Gtk.Label(label="", xalign=0, wrap=True)
+        self.gateway_detail_label.set_max_width_chars(55)
+        self.gateway_detail_label.get_style_context().add_class("preference-row-subtitle")
+        detail_row = Gtk.ListBoxRow()
+        detail_row.set_activatable(False)
+        detail_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        detail_box.set_margin_start(16)
+        detail_box.set_margin_end(16)
+        detail_box.set_margin_top(4)
+        detail_box.set_margin_bottom(8)
+        detail_box.pack_start(self.gateway_detail_label, False, False, 0)
+        detail_row.add(detail_box)
+        self.gateway_embed_group.add_row(detail_row)
+
+        self.gateway_lan_switch = Gtk.Switch()
+        self.gateway_lan_switch.set_active(lan_publish)
+        self.gateway_lan_switch.connect("notify::active", self._on_gateway_lan_toggled)
+        self.gateway_embed_group.add_row(
+            PreferenceRow(
+                title="Allow LAN access for Phone",
+                subtitle=(
+                    "Publishes 0.0.0.0:8765 and prefers a LAN URL in pairing. "
+                    "Open the port in your firewall on trusted networks only."
+                ),
+                widget=self.gateway_lan_switch,
+            )
+        )
+
+        self.gateway_use_btn = Gtk.Button(label="Use this Gateway")
+        self.gateway_use_btn.set_sensitive(False)
+        self.gateway_use_btn.set_tooltip_text(
+            "Fill Remote Server with this gateway URL and bearer token "
+            "(engine remote_api, endpoint /v1/audio/transcriptions)"
+        )
+        self.gateway_use_btn.connect("clicked", self._on_gateway_use_clicked)
+        self.gateway_embed_group.add_row(
+            PreferenceRow(
+                title="Remote API preset",
+                subtitle="Points Vocalinux at the local gateway",
+                widget=self.gateway_use_btn,
+            )
+        )
+
+        self.gateway_qr_image = Gtk.Image()
+        self.gateway_qr_image.set_no_show_all(True)
+        self.gateway_pairing_label = Gtk.Label(label="", xalign=0, wrap=True, selectable=True)
+        self.gateway_pairing_label.set_max_width_chars(55)
+        self.gateway_pairing_label.get_style_context().add_class("preference-row-subtitle")
+        pairing_row = Gtk.ListBoxRow()
+        pairing_row.set_activatable(False)
+        pairing_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        pairing_box.set_margin_start(16)
+        pairing_box.set_margin_end(16)
+        pairing_box.set_margin_top(8)
+        pairing_box.set_margin_bottom(12)
+        title = Gtk.Label(label="Phone pairing", xalign=0)
+        title.get_style_context().add_class("preference-row-title")
+        pairing_box.pack_start(title, False, False, 0)
+        pairing_box.pack_start(self.gateway_qr_image, False, False, 0)
+        pairing_box.pack_start(self.gateway_pairing_label, False, False, 0)
+        pairing_row.add(pairing_box)
+        self.gateway_embed_group.add_row(pairing_row)
+
+        self.content_box.pack_start(self.gateway_embed_group, False, False, 0)
+
+        # Runtime probe is async so Settings never blocks on podman/docker.
+        self._gateway_manager.begin_runtime_detection()
+        if not self._gateway_manager.runtime_ready:
+            self.gateway_run_btn.set_sensitive(False)
+            self.gateway_detail_label.set_text("Detecting container runtime…")
+        elif not self._gateway_manager.available:
+            self.gateway_run_btn.set_sensitive(False)
+            self.gateway_detail_label.set_text(self._gateway_manager.unavailable_hint)
+        else:
+            hint = getattr(self._gateway_manager.runner.sandbox, "hint", "") or ""
+            if hint:
+                self.gateway_detail_label.set_text(hint)
+
+        self._gateway_manager.add_listener(self._on_gateway_status_from_worker)
+        self.connect("destroy", self._on_gateway_embed_dialog_destroy)
+        self._apply_gateway_status_ui(
+            self._gateway_manager.status, self._gateway_manager.status_detail
+        )
+
+    def _on_gateway_embed_dialog_destroy(self, *_args) -> None:
+        """Drop status listener so polls never touch a destroyed Settings dialog."""
+        manager = getattr(self, "_gateway_manager", None)
+        if manager is not None:
+            manager.remove_listener(self._on_gateway_status_from_worker)
+
+    def _on_gateway_status_from_worker(self, status: GatewayStatus, detail: str) -> None:
+        """Marshal status updates onto the GTK main loop."""
+        GLib.idle_add(self._apply_gateway_status_ui, status, detail)
+
+    def _apply_gateway_status_ui(self, status: GatewayStatus, detail: str) -> bool:
+        if not hasattr(self, "gateway_status_label"):
+            return False
+        if not self._dialog_is_alive():
+            return False
+        label = status.value if isinstance(status, GatewayStatus) else str(status)
+        self.gateway_status_label.set_text(label)
+        if detail:
+            self.gateway_detail_label.set_text(detail)
+
+        runningish = status in {
+            GatewayStatus.STARTING,
+            GatewayStatus.LIVE,
+            GatewayStatus.PAIRABLE,
+            GatewayStatus.READY,
+        }
+        if not self._gateway_manager.runtime_ready:
+            self.gateway_run_btn.set_sensitive(False)
+            if not detail:
+                self.gateway_detail_label.set_text("Detecting container runtime…")
+        elif self._gateway_manager.available:
+            if runningish or self._gateway_manager.managed_by_us:
+                self.gateway_run_btn.set_label("Stop local Gateway")
+            else:
+                self.gateway_run_btn.set_label("Run VocaGateway locally")
+            self.gateway_run_btn.set_sensitive(status is not GatewayStatus.STARTING)
+        else:
+            self.gateway_run_btn.set_sensitive(False)
+            if not detail:
+                self.gateway_detail_label.set_text(self._gateway_manager.unavailable_hint)
+
+        can_use = status in {GatewayStatus.PAIRABLE, GatewayStatus.READY}
+        self.gateway_use_btn.set_sensitive(can_use)
+        self._update_gateway_pairing_widgets()
+        return False
+
+    def _update_gateway_pairing_widgets(self) -> None:
+        info = self._gateway_manager.pairing
+        if info is None:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
+            self.gateway_pairing_label.set_text(
+                "Pairing QR appears when the gateway is Live with a phone-reachable URL "
+                "(enable LAN for Phone, or set VOCAGATEWAY_PUBLIC_URL)."
+            )
+            return
+        if not info.display_url:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
+            self.gateway_pairing_label.set_text(
+                "Gateway is live on loopback only. Enable LAN access for Phone "
+                "(or configure a non-loopback PUBLIC_URL) before pairing another device. "
+                "Token is held for Use this Gateway and is not shown here."
+            )
+            return
+
+        self.gateway_pairing_label.set_text(
+            f"URL: {info.display_url}\n"
+            "Token is available to Use this Gateway and the QR; it is not logged."
+        )
+        if info.qr_svg:
+            cache_key = (info.display_url, len(info.qr_svg))
+            if getattr(self, "_gateway_qr_cache_key", None) != cache_key:
+                pixbuf = self._pixbuf_from_svg_bytes(info.qr_svg)
+                if pixbuf is not None:
+                    self.gateway_qr_image.set_from_pixbuf(pixbuf)
+                    self._gateway_qr_cache_key = cache_key
+            if getattr(self, "_gateway_qr_cache_key", None) == cache_key:
+                self.gateway_qr_image.show()
+        else:
+            self._gateway_qr_cache_key = None
+            self.gateway_qr_image.hide()
+            self.gateway_qr_image.clear()
+
+    def _pixbuf_from_svg_bytes(self, data: bytes):
+        """Best-effort SVG to GdkPixbuf; returns None when loaders are missing."""
+        try:
+            from gi.repository import GdkPixbuf
+
+            loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
+            loader.write(data[: 512 * 1024])
+            loader.close()
+            return loader.get_pixbuf()
+        except Exception:
+            return None
+
+    def _on_gateway_run_clicked(self, widget):
+        if not self._gateway_manager.available:
+            return
+        status = self._gateway_manager.status
+        if (
+            status
+            in {
+                GatewayStatus.STARTING,
+                GatewayStatus.LIVE,
+                GatewayStatus.PAIRABLE,
+                GatewayStatus.READY,
+            }
+            or self._gateway_manager.managed_by_us
+        ):
+            self._gateway_manager.stop_async()
+        else:
+            lan = bool(self.gateway_lan_switch.get_active())
+            self._gateway_manager.lan_publish = lan
+            self._gateway_manager.start_async(lan_publish=lan)
+
+    def _on_gateway_lan_toggled(self, widget, _pspec=None):
+        if getattr(self, "_initializing", False):
+            return
+        active = bool(self.gateway_lan_switch.get_active())
+        self.config_manager.set("gateway_embed", "lan_publish", active)
+        self.config_manager.save_config()
+        # Republish when compose is already running so QR/bind match LAN.
+        self._gateway_manager.apply_lan_publish(active)
+        self._update_gateway_pairing_widgets()
+
+    def _on_gateway_use_clicked(self, widget):
+        try:
+            preset = self._gateway_manager.use_this_gateway(self.config_manager)
+        except Exception as exc:
+            self.gateway_detail_label.set_text(str(exc))
+            return
+        self._applying_settings = True
+        try:
+            self.remote_api_url_entry.set_text(preset["remote_api_url"])
+            self.remote_api_key_entry.set_text(preset["remote_api_key"])
+            self.remote_api_endpoint_combo.set_active_id(preset["remote_api_endpoint"])
+            self.remote_api_model_entry.set_text(preset.get("remote_api_model") or "whisper-1")
+            if hasattr(self, "engine_combo"):
+                self.engine_combo.set_active_id("remote_api")
+        finally:
+            self._applying_settings = False
+        self._auto_apply_settings()
+        self.gateway_detail_label.set_text(
+            "Remote Server now points at this gateway " f"({preset['remote_api_endpoint']})."
+        )
+        self._update_engine_specific_ui()
 
     def _on_power_user_toggled(self, widget, state):
         """Handle the power-user opt-in toggle."""
