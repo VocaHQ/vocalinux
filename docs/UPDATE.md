@@ -2,6 +2,40 @@
 
 This guide explains how to update Vocalinux to the latest version.
 
+## What's New in v0.16.2
+
+0.16.2 is a **stability patch** on the 0.16 series. The feature set is the same as 0.16.x. This release fixes KDE leftover IBus so dictation types into real apps, Wayland and IBus keyboard shortcuts through wtype/ydotool, real BackSpace for "delete that", Fedora/Arch installer glslc packages, nightly version stamping, and release integrity pins. CI now gates AUR PKGBUILD builds and the distros the docs promise.
+
+### 0.16 series highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Update checker** | Settings → About checks stable/nightly; tray shows Update Available for newer GitHub releases (#631, #645) |
+| **Right Alt PTT default** | New installs default to hold Right Alt (push-to-talk); existing configs keep their shortcut (#648) |
+| **Searchable languages** | Type to filter the Speech Model language list (#672) |
+| **Delete unused models** | Remove leftover downloaded speech models from Settings (#671) |
+| **AGPL-3.0** | License aligned with other VocaHQ projects (#660) |
+| **Family mic icons** | App icon, tray states, and site favicons use the shared Voca family mic (#704) |
+| **Tone picker** | Settings → Audio: Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off, plus Preview. New installs default to Voca. Catalog uses family preview WAVs (#707, #708) |
+| **Installer** | Justfile, uv lockfiles, distro python3-gi required (no pip sdist of PyGObject). Epic #701 still open (#700, #705, #706) |
+
+### Bug fixes in v0.16.2
+
+- **KDE inject**: skip leftover IBus when it is not the session IM so dictation types into Kate, browsers, and terminals (#753 by @jatinkrmalik, fixes #752 by @justTravis)
+- **Wayland shortcuts**: wtype and ydotool deliver real chords instead of refusing or silently doing nothing (#715 by @eiseleb47)
+- **IBus shortcuts**: route X11_IBUS through xdotool and WAYLAND_IBUS through wtype/ydotool (#716 by @eiseleb47)
+- **Delete that**: send real BackSpace key events instead of U+0008 text (#714 by @eiseleb47)
+- **Installer**: Fedora and Arch need glslc/shaderc packages, not glslang (#763 by @jatinkrmalik, see #604)
+- **Nightly**: stamp `version.py` before `python -m build` so wheel metadata matches the filename (#762 by @sesav)
+- **Release integrity**: checksums, signatures, and pinned builders for release artifacts (#759 by @sesav, epic #701 phase 5)
+- **CI**: gate AUR PKGBUILD builds on every PR (#772 by @sesav)
+- **CI / docs**: test the distros the docs promise and fix docs drift (#773 by @sesav)
+- **Site**: VocaGateway family card is Beta; README logo, badges, and privacy copy (#765 by @jatinkrmalik, #764)
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2).
+
+---
+
 ## What's New in v0.16.1
 
 0.16.1 is a **stability patch** on the 0.16 series. The feature set is the same as 0.16.x. This release fixes wrong-model startup, leftover tray state after toggle stop, paste into terminals, GNOME XWayland layout after inject, and AppImages that needed a glibc newer than Debian 12. The installer now requires Python 3.11 and verifies model downloads.
@@ -488,7 +522,7 @@ The installer will:
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.16.1
+git checkout v0.16.2
 ./install.sh
 ```
 

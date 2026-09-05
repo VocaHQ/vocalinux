@@ -55,6 +55,11 @@ const reliabilityFeatures = [
 
 const releaseMap = [
   {
+    version: "v0.16.2",
+    highlights:
+      "Skip leftover IBus on KDE so dictation types, Wayland and IBus shortcuts via wtype/ydotool, real BackSpace for delete that, Fedora/Arch glslc installer fix, nightly version stamp, and release integrity pins.",
+  },
+  {
     version: "v0.16.1",
     highlights:
       "Per-engine model at startup, leftover tray idle after toggle stop, Ctrl+Shift+V paste in terminals, GNOME XWayland layout after scoped IBus inject, Python 3.11 installer floor with verified downloads, and AppImage glibc that boots on Debian 12.",

@@ -450,6 +450,7 @@ git push origin v0.5.1-beta
 | 0.14.2 | 2026-07-17 | Stable | IBus engine launch + FocusIn gate; settings tabs scroll to fit monitor |
 | 0.15.0 | 2026-07-28 | Stable | Searchable settings + sidebar dictation footer, AppImage, expanded languages, dictation polish, auto-pause/keepalive, Vulkan device selection, ibus-wayland, Bluetooth mic + shortcut UI fixes |
 | 0.16.0 | 2026-08-23 | Stable | Update checker + tray notify, Right Alt PTT default (new installs), searchable language list, delete unused models, Voca tone picker (family preview WAVs), About page, AGPL-3.0, family mic icons, installer/just/uv pinning, Test Dictation missing-model message, IBus/audio/clipboard/GPU/AppImage reliability, vocalinux.com family workbench restyle |
+| 0.16.2 | 2026-09-05 | Stable | Patch: KDE leftover IBus skip, Wayland/IBus shortcuts via wtype/ydotool, BackSpace delete that, installer glslc on Fedora/Arch, nightly version stamp, release integrity pins, AUR PKGBUILD CI gate, distro CI/docs drift, Gateway Beta on site |
 | 0.16.1 | 2026-08-30 | Stable | Patch: per-engine model at startup, leftover tray idle, terminal Ctrl+Shift+V paste, GNOME XWayland layout after IBus, Python 3.11 floor + verified downloads, AppImage glibc that boots on Debian 12, Settings/About polish |
 
 ## Questions?
