@@ -587,36 +587,35 @@ class TestAudioFeedback(unittest.TestCase):
 
     def test_play_sound_file_uses_host_env_for_pw_and_canberra(self):
         """pw-play/canberra must pass host_env like paplay (AppImage-safe)."""
-        import tempfile
-
         import vocalinux.ui.audio_feedback as audio_feedback
 
         fake_env = {"SAFE": "1"}
-        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-            path = tmp.name
-            with (
-                patch.object(audio_feedback, "_get_audio_player", return_value=("pw-play", ["wav"])),
-                patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
-                patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
-            ):
-                ok = audio_feedback._play_sound_file(path)
-                self.assertTrue(ok)
-                mock_host_env.assert_called()
-                self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
+        path = "start_recording.wav"
+        with (
+            patch.object(audio_feedback.os.path, "exists", return_value=True),
+            patch.object(audio_feedback, "_get_audio_player", return_value=("pw-play", ["wav"])),
+            patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
+            patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
+        ):
+            ok = audio_feedback._play_sound_file(path)
+            self.assertTrue(ok)
+            mock_host_env.assert_called()
+            self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
 
-            with (
-                patch.object(
-                    audio_feedback,
-                    "_get_audio_player",
-                    return_value=("canberra-gtk-play", ["wav"]),
-                ),
-                patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
-                patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
-            ):
-                ok = audio_feedback._play_sound_file(path)
-                self.assertTrue(ok)
-                mock_host_env.assert_called()
-                self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
-                self.assertEqual(
-                    mock_popen.call_args.args[0][:2], ["canberra-gtk-play", "--file"]
-                )
+        with (
+            patch.object(audio_feedback.os.path, "exists", return_value=True),
+            patch.object(
+                audio_feedback,
+                "_get_audio_player",
+                return_value=("canberra-gtk-play", ["wav"]),
+            ),
+            patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
+            patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
+        ):
+            ok = audio_feedback._play_sound_file(path)
+            self.assertTrue(ok)
+            mock_host_env.assert_called()
+            self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
+            self.assertEqual(
+                mock_popen.call_args.args[0][:2], ["canberra-gtk-play", "--file"]
+            )
