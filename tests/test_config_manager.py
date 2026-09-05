@@ -73,6 +73,18 @@ class TestConfigManager(unittest.TestCase):
         )
         self.assertTrue(os.path.exists(self.temp_config_dir))
 
+    def test_custom_dictionary_default_and_roundtrip(self):
+        """custom_dictionary defaults to [] and survives a save/reload cycle."""
+        config_manager = ConfigManager()
+        self.assertEqual(config_manager.get("text_injection", "custom_dictionary", None), [])
+
+        entries = [{"spoken": "super base", "replacement": "Supabase"}]
+        config_manager.set("text_injection", "custom_dictionary", entries)
+        config_manager.save_config()
+
+        reloaded = ConfigManager()
+        self.assertEqual(reloaded.get("text_injection", "custom_dictionary", []), entries)
+
     def test_ensure_config_dir(self):
         """Test that _ensure_config_dir creates the directory."""
         # Delete the config directory to test creation

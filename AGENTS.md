@@ -127,6 +127,7 @@ src/vocalinux/
 ├── speech_recognition/
 │   ├── recognition_manager.py  # whisper.cpp / Whisper / Vosk / remote
 │   ├── command_processor.py    # voice commands
+│   ├── dictionary_corrector.py  # custom dictionary transcript corrections
 │   ├── silero_vad.py
 │   └── data/                   # bundled silero_vad.onnx
 ├── text_injection/
@@ -150,6 +151,7 @@ Also: `tests/`, `docs/`, `packaging/` (AppImage, AUR, Flatpak), `scripts/`, `ins
 | Task | Start here |
 |---|---|
 | Voice command | `speech_recognition/command_processor.py` |
+| Transcript corrections | `speech_recognition/dictionary_corrector.py` |
 | Engine / models | `speech_recognition/recognition_manager.py` |
 | Text injection | `text_injection/text_injector.py`, `ibus_engine.py` |
 | Settings | `ui/config_manager.py`, `ui/settings_dialog.py` |

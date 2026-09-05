@@ -2183,6 +2183,169 @@ class SettingsDialog(Gtk.Dialog):
         self.start_minimized_switch.connect("state-set", self._on_start_minimized_toggled)
         self.missing_tray_warning_switch.connect("state-set", self._on_missing_tray_warning_toggled)
 
+    def _build_custom_dictionary_group(self) -> "PreferencesGroup":
+        """Build the Custom Dictionary settings: misheard phrase corrections."""
+        group = PreferencesGroup(
+            title="Custom Dictionary",
+            description=(
+                "Fix words the speech model mishears. Each entry replaces the "
+                "misheard phrase with your intended term in the final transcript, "
+                "e.g. 'super base' \u2192 'Supabase'. Matching is case-insensitive "
+                "on whole words. Changes apply from the next dictation onward."
+            ),
+            keywords=("dictionary", "vocabulary", "correction", "jargon", "replacement", "words"),
+        )
+
+        # Add entry: "Heard as" and "Replace with" fields + Add button
+        add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        add_box.set_margin_top(8)
+        add_box.set_margin_bottom(4)
+        add_box.set_margin_start(16)
+        add_box.set_margin_end(16)
+
+        self.custom_dictionary_spoken_entry = Gtk.Entry()
+        self.custom_dictionary_spoken_entry.set_placeholder_text("Heard as (e.g. super base)")
+        self.custom_dictionary_spoken_entry.set_hexpand(True)
+        self.custom_dictionary_spoken_entry.set_tooltip_text(
+            "The phrase the speech model typically mishears. "
+            "Matched case-insensitively on whole words."
+        )
+        add_box.pack_start(self.custom_dictionary_spoken_entry, True, True, 0)
+
+        self.custom_dictionary_replacement_entry = Gtk.Entry()
+        self.custom_dictionary_replacement_entry.set_placeholder_text(
+            "Replace with (e.g. Supabase)"
+        )
+        self.custom_dictionary_replacement_entry.set_hexpand(True)
+        self.custom_dictionary_replacement_entry.set_tooltip_text(
+            "The text to insert instead, exactly as typed here."
+        )
+        add_box.pack_start(self.custom_dictionary_replacement_entry, True, True, 0)
+
+        self.custom_dictionary_add_btn = Gtk.Button(label="Add")
+        self.custom_dictionary_add_btn.set_tooltip_text("Add this correction to the dictionary")
+        self.custom_dictionary_add_btn.connect("clicked", self._on_custom_dictionary_add_clicked)
+        self.custom_dictionary_spoken_entry.connect(
+            "activate", self._on_custom_dictionary_add_clicked
+        )
+        self.custom_dictionary_replacement_entry.connect(
+            "activate", self._on_custom_dictionary_add_clicked
+        )
+        add_box.pack_start(self.custom_dictionary_add_btn, False, False, 0)
+
+        add_row = Gtk.ListBoxRow()
+        add_row.set_activatable(False)
+        add_row.add(add_box)
+        group.add_row(add_row)
+
+        # List of configured corrections; the empty-state text is an in-list
+        # placeholder so there is no blank hole when the list is empty.
+        self.custom_dictionary_listbox = Gtk.ListBox()
+        self.custom_dictionary_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.custom_dictionary_listbox.set_activate_on_single_click(False)
+
+        self.custom_dictionary_empty_label = Gtk.Label(
+            label="No corrections yet. Add the misheard phrase and the term to use instead.",
+            xalign=0.5,
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self.custom_dictionary_empty_label.get_style_context().add_class("preference-row-subtitle")
+        self.custom_dictionary_empty_label.set_margin_top(12)
+        self.custom_dictionary_empty_label.set_margin_bottom(12)
+        self.custom_dictionary_empty_label.set_margin_start(16)
+        self.custom_dictionary_empty_label.set_margin_end(16)
+        self.custom_dictionary_empty_label.show()
+        self.custom_dictionary_listbox.set_placeholder(self.custom_dictionary_empty_label)
+
+        # No inner ScrolledWindow: the dictation page already scrolls, and a
+        # nested scroller would hide entries behind its own scrollbar.
+        list_row = Gtk.ListBoxRow()
+        list_row.set_activatable(False)
+        list_row.add(self.custom_dictionary_listbox)
+        group.add_row(list_row)
+
+        return group
+
+    def _get_custom_dictionary(self) -> list:
+        """Return a clean list of configured dictionary corrections."""
+        entries = self.config_manager.get("text_injection", "custom_dictionary", []) or []
+        if not isinstance(entries, list):
+            return []
+        cleaned = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            spoken = str(entry.get("spoken", "")).strip()
+            replacement = str(entry.get("replacement", "")).strip()
+            if spoken and replacement:
+                cleaned.append({"spoken": spoken, "replacement": replacement})
+        return cleaned
+
+    def _save_custom_dictionary(self, entries: list) -> None:
+        """Persist the dictionary and refresh the list UI."""
+        self.config_manager.set("text_injection", "custom_dictionary", entries)
+        self.config_manager.save_config()
+        self._refresh_custom_dictionary_list()
+
+    def _refresh_custom_dictionary_list(self) -> None:
+        """Rebuild the custom dictionary list UI from config."""
+        if not hasattr(self, "custom_dictionary_listbox"):
+            return
+
+        for child in list(self.custom_dictionary_listbox.get_children()):
+            self.custom_dictionary_listbox.remove(child)
+
+        for entry in self._get_custom_dictionary():
+            spoken = entry["spoken"]
+            replacement = entry["replacement"]
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            hbox.set_margin_top(6)
+            hbox.set_margin_bottom(6)
+            hbox.set_margin_start(16)
+            hbox.set_margin_end(16)
+
+            label = Gtk.Label(label=f"{spoken} \u2192 {replacement}", xalign=0)
+            label.set_hexpand(True)
+            hbox.pack_start(label, True, True, 0)
+
+            remove_btn = Gtk.Button(label="Remove")
+            remove_btn.set_tooltip_text(f"Remove the correction for '{spoken}'")
+            remove_btn.connect("clicked", self._on_custom_dictionary_remove_clicked, spoken)
+            hbox.pack_start(remove_btn, False, False, 0)
+
+            row.add(hbox)
+            self.custom_dictionary_listbox.add(row)
+
+        self.custom_dictionary_listbox.show_all()
+
+    def _on_custom_dictionary_add_clicked(self, widget):
+        if self._initializing or self._applying_settings:
+            return
+        spoken = self.custom_dictionary_spoken_entry.get_text().strip()
+        replacement = self.custom_dictionary_replacement_entry.get_text().strip()
+        if not spoken or not replacement:
+            return
+        entries = self._get_custom_dictionary()
+        # Re-adding an existing phrase updates its replacement (last wins)
+        entries = [e for e in entries if e["spoken"].lower() != spoken.lower()]
+        entries.append({"spoken": spoken, "replacement": replacement})
+        self._save_custom_dictionary(entries)
+        self.custom_dictionary_spoken_entry.set_text("")
+        self.custom_dictionary_replacement_entry.set_text("")
+        logger.info("Saved dictionary correction: '%s' -> '%s'", spoken, replacement)
+
+    def _on_custom_dictionary_remove_clicked(self, widget, spoken: str):
+        if self._initializing or self._applying_settings:
+            return
+        entries = [
+            e for e in self._get_custom_dictionary() if e["spoken"].lower() != spoken.lower()
+        ]
+        self._save_custom_dictionary(entries)
+        logger.info("Removed dictionary correction for '%s'", spoken)
+
     def _build_auto_pause_section(self):
         """Build Auto-Pause settings: enable toggle + process name list."""
         group = PreferencesGroup(
@@ -3013,6 +3176,10 @@ class SettingsDialog(Gtk.Dialog):
             "state-set", self._on_append_trailing_space_toggled
         )
         self.paste_shortcut_combo.connect("changed", self._on_paste_shortcut_changed)
+
+        # Custom dictionary group: user-configured transcript corrections
+        dictionary_group = self._build_custom_dictionary_group()
+        self.recognition_settings_tab.pack_start(dictionary_group, False, False, 0)
 
         if not silero_active:
             vad_info_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -4515,6 +4682,7 @@ class SettingsDialog(Gtk.Dialog):
         self.auto_pause_switch.set_active(auto_pause_enabled)
         self._update_auto_pause_sensitivity(auto_pause_enabled)
         self._refresh_auto_pause_list()
+        self._refresh_custom_dictionary_list()
 
         keepalive_settings = self.config_manager.get_settings().get("model_keepalive", {})
         keepalive_enabled = bool(keepalive_settings.get("enabled", False))

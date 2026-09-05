@@ -126,6 +126,10 @@ DEFAULT_CONFIG = {
         # Clipboard-paste chord: auto-detect terminals, or force Ctrl+V /
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
+        # User-defined phrase corrections applied to the final transcript,
+        # e.g. [{"spoken": "super base", "replacement": "Supabase"}].
+        # Applied case-insensitively on whole words by the recognition manager.
+        "custom_dictionary": [],
     },
     "advanced": {
         "power_user_mode": False,

@@ -38,6 +38,7 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
+from .dictionary_corrector import apply_dictionary, load_custom_dictionary
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
@@ -3045,6 +3046,14 @@ class SpeechRecognitionManager:
                 # Voice commands disabled - pass text through directly (Whisper handles punctuation)
                 processed_text = text.strip()
                 actions = []
+
+            # Apply user-configured custom dictionary corrections so
+            # misheard words are fixed in the final transcript. The
+            # dictionary is re-read from config.json on every segment so
+            # Settings changes apply without a restart.
+            dictionary_entries = load_custom_dictionary()
+            if dictionary_entries:
+                processed_text = apply_dictionary(processed_text, dictionary_entries)
 
             # Call text callbacks with processed text
             logger.debug(
