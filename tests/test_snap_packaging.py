@@ -156,4 +156,3 @@ def test_snapcraft_metadata_matches_project(snapcraft_doc: dict) -> None:
     assert "github.com/jatinkrmalik/vocalinux" not in recipe
     assert str(snapcraft_doc.get("version")) == _app_version_from_source()
     assert snapcraft_doc.get("adopt-info") == "vocalinux"
-

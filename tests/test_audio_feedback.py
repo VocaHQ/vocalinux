@@ -616,6 +616,4 @@ class TestAudioFeedback(unittest.TestCase):
             self.assertTrue(ok)
             mock_host_env.assert_called()
             self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
-            self.assertEqual(
-                mock_popen.call_args.args[0][:2], ["canberra-gtk-play", "--file"]
-            )
+            self.assertEqual(mock_popen.call_args.args[0][:2], ["canberra-gtk-play", "--file"])
