@@ -955,8 +955,17 @@ class TestSettingsNavigation(unittest.TestCase):
             ("performance", "Performance"),
             ("application", "Application"),
             ("advanced", "Advanced"),
+            ("dictionary", "Dictionary"),
         ]:
             self.assertIn(f'SettingsPage("{name}", "{title}"', self.source_code)
+
+    def test_dictionary_page_wires_live_and_session_only_state(self):
+        """Dictionary controls must reflect the live manager and CLI override state."""
+        self.assertIn("self._build_dictionary_section()", self.source_code)
+        self.assertIn("self.dictionary_manager = getattr(speech_engine", self.source_code)
+        self.assertIn("self.dictionary_enabled_switch = Gtk.Switch()", self.source_code)
+        self.assertIn("transient = self.dictionary_manager.is_transient", self.source_code)
+        self.assertIn("self.dictionary_manager.get_status()", self.source_code)
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)

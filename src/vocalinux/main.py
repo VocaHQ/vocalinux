@@ -91,6 +91,14 @@ def parse_arguments():
         action="store_true",
         help="Start minimized to system tray",
     )
+    parser.add_argument(
+        "--dictionary-file",
+        type=str,
+        help=(
+            "Use this custom dictionary file for this session (one term per line); "
+            "enables custom dictionary support without changing config.json"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -322,6 +330,7 @@ def main():
 
     # Now it's safe to import GTK-dependent modules
     from .common_types import RecognitionState
+    from .dictionary_manager import DictionaryManager
     from .speech_recognition import recognition_manager
     from .text_injection import text_injector
     from .ui import tray_indicator
@@ -413,6 +422,16 @@ def main():
 
     advanced_settings = config_manager.get_settings().get("advanced", {})
 
+    dictionary_file = getattr(args, "dictionary_file", None)
+    transient_dictionary_path = (
+        dictionary_file.strip()
+        if isinstance(dictionary_file, str) and dictionary_file.strip()
+        else None
+    )
+    if transient_dictionary_path is not None:
+        logger.info("Using session-only dictionary file override: %s", transient_dictionary_path)
+    dictionary_manager = DictionaryManager(config_manager, transient_path=transient_dictionary_path)
+
     logger.info(f"Final settings: engine={engine}, language={language}, model={model_size}")
     if audio_device_index is not None:
         logger.info(
@@ -445,6 +464,7 @@ def main():
             whispercpp_no_speech_thold=advanced_settings.get("whispercpp_no_speech_thold", 0.6),
             whispercpp_n_threads=advanced_settings.get("whispercpp_n_threads", 0),
             whispercpp_gpu_device=advanced_settings.get("whispercpp_gpu_device", None),
+            dictionary_manager=dictionary_manager,
             remote_api_url=saved_settings.get("remote_api_url", ""),
             remote_api_key=saved_settings.get("remote_api_key", ""),
             remote_api_endpoint=saved_settings.get("remote_api_endpoint", "/inference"),

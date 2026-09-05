@@ -127,6 +127,11 @@ DEFAULT_CONFIG = {
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
     },
+    "dictionary": {
+        "enabled": False,
+        "file_path": "~/.config/vocalinux/dictionary.txt",
+        "max_words": 200,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,

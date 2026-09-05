@@ -1662,6 +1662,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.config_manager = config_manager
         self.speech_engine = speech_engine
+        self.dictionary_manager = getattr(speech_engine, "dictionary_manager", None)
         self.shortcut_update_callback = shortcut_update_callback
         self.update_status_callback = update_status_callback
         self._test_active = False
@@ -1715,6 +1716,7 @@ class SettingsDialog(Gtk.Dialog):
             SettingsPage("performance", "Performance", "power-profile-performance-symbolic"),
             SettingsPage("application", "Application", "preferences-system-symbolic"),
             SettingsPage("advanced", "Advanced", "applications-engineering-symbolic"),
+            SettingsPage("dictionary", "Dictionary", "accessories-dictionary-symbolic"),
             SettingsPage("about", "About", "help-about-symbolic"),
         ]
         pages_by_name = {page.name: page for page in self._pages}
@@ -1728,6 +1730,7 @@ class SettingsDialog(Gtk.Dialog):
         self.power_tab = pages_by_name["performance"].box
         self.general_tab = pages_by_name["application"].box
         self.advanced_tab = pages_by_name["advanced"].box
+        self.dictionary_tab = pages_by_name["dictionary"].box
         self.about_tab = pages_by_name["about"].box
 
         # Each page is wrapped in a vertical ScrolledWindow: without one, the
@@ -1790,6 +1793,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_gpu_section()
         self._build_general_section()
         self._build_advanced_section()
+        self._build_dictionary_section()
         self._build_about_section()
         self._build_sidebar_footer(sidebar_box)
 
@@ -3568,6 +3572,98 @@ class SettingsDialog(Gtk.Dialog):
         """Close the dialog through the normal response path (same as title-bar X)."""
         self.response(Gtk.ResponseType.CLOSE)
 
+    def _build_dictionary_section(self) -> None:
+        """Build controls for the live custom dictionary file."""
+        group = PreferencesGroup(title="Custom Dictionary")
+        self.dictionary_enabled_switch = Gtk.Switch()
+        group.add_row(
+            PreferenceRow(
+                title="Enable custom dictionary",
+                subtitle="Bias Whisper and whisper.cpp toward terms in a text file",
+                widget=self.dictionary_enabled_switch,
+            )
+        )
+
+        path_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.dictionary_path_entry = Gtk.Entry()
+        self.dictionary_path_entry.set_hexpand(True)
+        self.dictionary_path_entry.set_placeholder_text("~/.config/vocalinux/dictionary.txt")
+        path_box.pack_start(self.dictionary_path_entry, True, True, 0)
+        self.dictionary_file_button = Gtk.FileChooserButton(title="Choose Dictionary File")
+        path_box.pack_start(self.dictionary_file_button, False, False, 0)
+        group.add_row(
+            PreferenceRow(
+                title="Dictionary file",
+                subtitle="UTF-8 text, one term per line; # starts a comment",
+                widget=path_box,
+            )
+        )
+
+        self.dictionary_status_label = Gtk.Label(xalign=0)
+        self.dictionary_status_label.set_line_wrap(True)
+        self.dictionary_status_label.get_style_context().add_class("tip-label")
+        group.add_row(
+            PreferenceRow(
+                title="Status",
+                subtitle="The file is re-read before every transcription.",
+                widget=self.dictionary_status_label,
+            )
+        )
+        self.dictionary_tab.pack_start(group, False, False, 0)
+
+        self.dictionary_enabled_switch.connect("state-set", self._on_dictionary_enabled)
+        self.dictionary_path_entry.connect("activate", self._on_dictionary_path_changed)
+        self.dictionary_path_entry.connect("focus-out-event", self._on_dictionary_path_changed)
+        self.dictionary_file_button.connect("file-set", self._on_dictionary_file_chosen)
+
+    def _on_dictionary_enabled(self, widget: Any, state: bool) -> bool:
+        """Persist dictionary enablement immediately."""
+        if not self._initializing and not self._applying_settings and self.dictionary_manager:
+            self.dictionary_manager.set_enabled(bool(state))
+            self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_path_changed(self, widget: Any, *args: Any) -> bool:
+        """Persist a manually entered dictionary path."""
+        if not self._initializing and not self._applying_settings and self.dictionary_manager:
+            self.dictionary_manager.set_path(self.dictionary_path_entry.get_text())
+            self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_file_chosen(self, widget: Any) -> None:
+        """Persist a path selected through the GTK file chooser."""
+        path = widget.get_filename()
+        if path:
+            self.dictionary_path_entry.set_text(path)
+            self._on_dictionary_path_changed(self.dictionary_path_entry)
+
+    def _refresh_dictionary_ui(self) -> None:
+        """Refresh dictionary controls and engine-specific status text."""
+        if self.dictionary_manager is None:
+            self.dictionary_enabled_switch.set_sensitive(False)
+            self.dictionary_path_entry.set_sensitive(False)
+            self.dictionary_file_button.set_sensitive(False)
+            self.dictionary_status_label.set_text("Dictionary support is unavailable.")
+            return
+        enabled = self.dictionary_manager.is_enabled()
+        self.dictionary_enabled_switch.set_active(enabled)
+        transient = self.dictionary_manager.is_transient
+        self.dictionary_enabled_switch.set_sensitive(not transient)
+        path = self.dictionary_manager.get_path()
+        self.dictionary_path_entry.set_text(str(path) if path is not None else "")
+        self.dictionary_path_entry.set_sensitive(enabled and not transient)
+        self.dictionary_file_button.set_sensitive(enabled and not transient)
+        if self._get_selected_engine() == "vosk":
+            self.dictionary_status_label.set_text(
+                "VOSK does not support custom dictionaries; the file is ignored."
+            )
+        elif transient:
+            self.dictionary_status_label.set_text(
+                "Session-only --dictionary-file override is active; Settings changes are disabled."
+            )
+        else:
+            self.dictionary_status_label.set_text(self.dictionary_manager.get_status())
+
     def _build_advanced_section(self):
         """Build the Advanced section with whisper.cpp parameters."""
 
@@ -4607,6 +4703,7 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_no_speech_thold_spin.set_value(
             advanced_settings.get("whispercpp_no_speech_thold", 0.6)
         )
+        self._refresh_dictionary_ui()
 
     def _get_current_settings(self):
         """Get current settings from config manager."""
@@ -5299,6 +5396,7 @@ class SettingsDialog(Gtk.Dialog):
         self._update_language_warning()
         self._update_model_picker_tooltips()
         self._update_advanced_tab_sensitivity()
+        self._refresh_dictionary_ui()
 
     def _update_advanced_tab_sensitivity(self):
         """Enable or disable advanced settings based on selected engine."""
