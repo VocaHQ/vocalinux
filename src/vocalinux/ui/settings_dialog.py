@@ -274,6 +274,59 @@ def _default_whispercpp_variant_for_size(model_size: str, language_id: str) -> O
     return variants[0]
 
 
+def _is_language_paired_standard_variant(model_name: str) -> bool:
+    """Return whether a model id is the bare multilingual / .en pair for its size.
+
+    Size bucket names (tiny, base, small, medium) are also the multilingual
+    specialization ids. Config often stores those ambiguous size-level defaults,
+    so they must not be treated as a locked multilingual choice.
+    """
+    model_name = model_name.lower()
+    size = get_whispercpp_model_size(model_name)
+    if size == "large":
+        return model_name == "large"
+    return model_name in {size, f"{size}.en"}
+
+
+def _mirror_whispercpp_english_variant(model_name: str) -> str:
+    """Map medium <-> medium.en and medium-q5_0 <-> medium.en-q5_0 style ids."""
+    model_name = model_name.lower()
+    size = get_whispercpp_model_size(model_name)
+    english_prefix = f"{size}.en"
+    if model_name.startswith(english_prefix):
+        return size + model_name[len(english_prefix) :]
+    if model_name.startswith(size):
+        return english_prefix + model_name[len(size) :]
+    return model_name
+
+
+def _whispercpp_variant_for_language(selected_model: str, language_id: str) -> str:
+    """Retarget a saved specialization when language implies .en vs multilingual."""
+    selected_model = selected_model.lower()
+    size = get_whispercpp_model_size(selected_model)
+    variants = get_whispercpp_model_variants(size)
+    if selected_model not in variants:
+        return selected_model
+
+    wants_english = _language_is_english(language_id)
+    is_english_only = is_english_only_whispercpp_model(selected_model)
+
+    if _is_language_paired_standard_variant(selected_model):
+        default = _default_whispercpp_variant_for_size(size, language_id)
+        return default if default in variants else selected_model
+
+    if wants_english != is_english_only:
+        mirrored = _mirror_whispercpp_english_variant(selected_model)
+        if mirrored in variants:
+            return mirrored
+        if not wants_english and is_english_only:
+            default = _default_whispercpp_variant_for_size(size, language_id)
+            if default in variants:
+                return default
+
+    return selected_model
+
+
 # Uniform width for right-hand row controls so they align down a page.
 # ComboBoxText sizes itself to the longest item unless the cell is ellipsized,
 # which is why Shortcut Mode used to dwarf Shortcut Key.
@@ -4866,7 +4919,14 @@ class SettingsDialog(Gtk.Dialog):
             )
             self.model_variant_combo.append(model_name, display_text)
 
+        language_id = self.language_combo.get_active_id() or self.language
         model_to_set = selected_model if selected_model in variants else None
+        if model_to_set:
+            # Bare size ids double as multilingual variants; retarget for language
+            # so English picks .en instead of leaving Standard multilingual stuck.
+            model_to_set = _whispercpp_variant_for_language(model_to_set, language_id)
+            if model_to_set not in variants:
+                model_to_set = None
         if not model_to_set and recommended_model in variants:
             model_to_set = recommended_model
         if not model_to_set:

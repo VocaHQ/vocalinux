@@ -713,6 +713,35 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "auto"), "medium")
 
+    def test_whispercpp_variant_for_language_retargets_ambiguous_size_ids(self):
+        """Bare size ids must follow language, not stick on multilingual."""
+        from vocalinux.ui.settings_dialog import _whispercpp_variant_for_language
+
+        # Default config stores "tiny"/"medium" which are also multilingual ids.
+        self.assertEqual(_whispercpp_variant_for_language("medium", "en-us"), "medium.en")
+        self.assertEqual(_whispercpp_variant_for_language("tiny", "en-us"), "tiny.en")
+        self.assertEqual(_whispercpp_variant_for_language("small", "en-in"), "small.en")
+        self.assertEqual(_whispercpp_variant_for_language("medium", "auto"), "medium")
+        self.assertEqual(_whispercpp_variant_for_language("medium.en", "auto"), "medium")
+        self.assertEqual(_whispercpp_variant_for_language("medium.en", "fr"), "medium")
+
+        # Quantized pairs mirror with language when a match exists.
+        self.assertEqual(
+            _whispercpp_variant_for_language("medium-q5_0", "en-us"),
+            "medium.en-q5_0",
+        )
+        self.assertEqual(
+            _whispercpp_variant_for_language("medium.en-q5_0", "auto"),
+            "medium-q5_0",
+        )
+
+        # No English pair: leave the deliberate specialization alone.
+        self.assertEqual(
+            _whispercpp_variant_for_language("large-v3-turbo", "en-us"),
+            "large-v3-turbo",
+        )
+        self.assertEqual(_whispercpp_variant_for_language("large", "en-us"), "large")
+
     def test_whisper_delete_unknown_model(self):
         """Test deleting an unknown Whisper model raises ValueError."""
         from vocalinux.ui.settings_dialog import _delete_whisper_model
