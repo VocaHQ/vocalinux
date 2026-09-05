@@ -241,7 +241,7 @@ The installer handles everything: system dependencies, Python environment, speec
 
 ### Snap (Ubuntu Snap Store) — not published yet
 
-Snap packaging lives in-repo (`snap/snapcraft.yaml`) for issue [#48](https://github.com/jatinkrmalik/vocalinux/issues/48). **The app is not listed on the Snap Store yet**, so `snap install vocalinux` will not work until a maintainer registers the name and uploads a build. Strategy, confinement notes, and publish checklist: [packaging/snap/README.md](packaging/snap/README.md).
+Snap packaging lives in-repo (`snap/snapcraft.yaml`) for issue [#48](https://github.com/VocaHQ/vocalinux/issues/48). **The app is not listed on the Snap Store yet**, so `snap install vocalinux` will not work until a maintainer registers the name and uploads a build. Strategy, confinement notes, and publish checklist: [packaging/snap/README.md](packaging/snap/README.md).
 
 Once published:
 

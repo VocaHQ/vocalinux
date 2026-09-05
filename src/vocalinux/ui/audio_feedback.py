@@ -179,12 +179,14 @@ def _play_sound_file(sound_path):
                 [player, sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "canberra-gtk-play":
             subprocess.Popen(
                 [player, "--file", sound_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                env=host_env(),
             )
         elif player == "aplay":
             subprocess.Popen(

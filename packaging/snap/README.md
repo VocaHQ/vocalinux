@@ -1,7 +1,7 @@
 # Vocalinux Snap packaging
 
 Snap packaging for Ubuntu and other snap-enabled distros (issue
-[#48](https://github.com/jatinkrmalik/vocalinux/issues/48)).
+[#48](https://github.com/VocaHQ/vocalinux/issues/48)).
 
 Recipe: [`snap/snapcraft.yaml`](../../snap/snapcraft.yaml)
 GUI assets: [`snap/gui/`](../../snap/gui/)
@@ -95,9 +95,10 @@ real-device testing, escalate deliberately:
 ## What is not in this snap (v1)
 
 - OpenAI Whisper + PyTorch/CUDA (optional extra; huge).
-- Privileged global shortcuts via evdev.
-- Guaranteed native Wayland injection on every compositor (same class of limits as Flatpak; XWayland/xdotool and IBus paths are the supported sandboxed routes).
+- Auto-connected global hotkeys (evdev needs a one-time `sudo snap connect vocalinux:raw-input`; tray works without it).
+- Guaranteed native Wayland injection on every compositor (same class of limits as Flatpak; XWayland/xdotool, staged `wtype`, and IBus paths are the supported sandboxed routes).
 - Automatic Snap Store upload from CI (needs a human-provisioned token).
+- ydotool / uinput injection (not staged; host classic installs may use ydotool separately).
 
 ## Local build
 
@@ -143,7 +144,7 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 | Engine scope | whisper.cpp first | whisper.cpp first (+ VOSK dep possible) |
 | Mic | `pulseaudio` socket | `audio-record` / pulse |
 | Injection | x11 + xdotool/xsel | stage xdotool/xsel/xclip; x11 via gnome extension |
-| Hotkeys | no `/dev/input` | same |
+| Hotkeys | no `/dev/input` | `raw-input` plug (manual connect) |
 | Models | network + app data dir | network + `~/snap/vocalinux/` |
 | Store | Flathub (separate track) | Snap Store |
 
@@ -158,3 +159,28 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 - [ ] Store listing assets uploaded
 - [ ] Promote to `stable` when satisfied
 - [ ] README Snap badge + docs flipped from “not published yet” to live commands
+
+## Ordered Snap Store deploy steps (human + in-repo)
+
+**Already automated / in-repo (no Snapcraft login required):**
+
+1. `snap/snapcraft.yaml` (strict, gnome extension, plugs, ALSA→Pulse, version from `version.py`)
+2. GUI assets under `snap/gui/` + ALSA conf under `snap/local/`
+3. Structural CI coverage via `tests/test_snap_packaging.py`
+4. Install/README/DISTRO copy that states Snap is **not published yet**
+5. Runtime helpers for snap: `raw-input` hints, evdev `/proc` fallback, `wtype` + `paplay` staged
+
+**Jatin must do once on a machine with Snapcraft auth (cannot be done by agents):**
+
+1. `snapcraft login` (Canonical/Ubuntu One account that will own the listing)
+2. `snapcraft register vocalinux` (or claim the name if already reserved)
+3. On a clean checkout of the release tag/commit: `snapcraft pack`
+4. `snapcraft upload --release=edge vocalinux_*.snap` (or upload then `snapcraft release <rev> edge`)
+5. Connect plugs on a test Ubuntu desktop install and QA: tray, mic, model download, type into gedit/browser, optional `sudo snap connect vocalinux:raw-input` for hotkeys
+6. Upload Store listing assets (icon, screenshots, description, category, license AGPL-3.0, links to https://github.com/VocaHQ/vocalinux)
+7. When edge QA passes: `snapcraft release vocalinux <rev> candidate` (optional) then `stable`
+8. Flip README/INSTALL from “not published yet” to live `snap install` + add the Snap Store badge
+9. Optional later: add a CI job with a Snap Store export token for continuous `edge` publishes (token stays out of git)
+
+**Channel policy:** `edge` first while `grade: devel`; set `grade: stable` in the recipe before promoting a build intended for `stable`.
+

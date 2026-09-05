@@ -12,11 +12,11 @@ name: vocalinux
 base: core22
 # Fallback version; live version is set from src/vocalinux/version.py via
 # adopt-info + craftctl set in the vocalinux part (required for craftctl).
-version: "0.14.0-beta"
+version: "0.16.2"
 adopt-info: vocalinux
 summary: Free offline voice dictation for Linux
 description: |
-  Vocalinux is free, GPLv3 voice typing for Linux. Dictate into almost any
+  Vocalinux is free, AGPL-3.0 voice typing for Linux. Dictate into almost any
   application using fully offline speech recognition.
 
   This snap ships the default whisper.cpp engine path plus VOSK (from project
@@ -40,11 +40,11 @@ description: |
 
 grade: devel
 confinement: strict
-license: GPL-3.0
-contact: https://github.com/jatinkrmalik/vocalinux/issues
-issues: https://github.com/jatinkrmalik/vocalinux/issues
-website: https://github.com/jatinkrmalik/vocalinux
-source-code: https://github.com/jatinkrmalik/vocalinux
+license: AGPL-3.0
+contact: https://github.com/VocaHQ/vocalinux/issues
+issues: https://github.com/VocaHQ/vocalinux/issues
+website: https://github.com/VocaHQ/vocalinux
+source-code: https://github.com/VocaHQ/vocalinux
 donation: https://github.com/sponsors/jatinkrmalik
 
 apps:

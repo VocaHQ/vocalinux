@@ -140,7 +140,7 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 Snap packaging is in the repository (`snap/snapcraft.yaml`) but **Vocalinux is
 not on the Snap Store yet**. Track progress in
-[issue #48](https://github.com/jatinkrmalik/vocalinux/issues/48) and
+[issue #48](https://github.com/VocaHQ/vocalinux/issues/48) and
 [packaging/snap/README.md](../packaging/snap/README.md).
 
 **After** the first store publish (planned `edge`, then `stable`):

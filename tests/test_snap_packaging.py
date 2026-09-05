@@ -60,6 +60,13 @@ def test_version_tracks_project_not_issue_draft_only(snapcraft_doc: dict) -> Non
         f"snap version {recipe_version!r} must match {app_version!r} "
         "or set version from version.py in override-pull"
     )
+    # Keep YAML fallback version aligned with version.py so tooling that
+    # skips override-pull still sees a current release number.
+    if has_version_override:
+        assert matches_source, (
+            f"fallback snap version {recipe_version!r} should match "
+            f"version.py {app_version!r} even when craftctl sets the live version"
+        )
 
 
 def test_strict_first_ship_or_documented_classic(snapcraft_doc: dict) -> None:
@@ -139,3 +146,14 @@ def test_packaging_readme_covers_store_strategy() -> None:
     assert "audio-record" in lower
     assert "human" in lower or "maintainer" in lower
     assert "not yet" in lower or "not published" in lower
+
+
+def test_snapcraft_metadata_matches_project(snapcraft_doc: dict) -> None:
+    """Keep store metadata aligned with AGPL + VocaHQ after org/license moves."""
+    assert snapcraft_doc.get("license") in {"AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"}
+    recipe = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    assert "github.com/VocaHQ/vocalinux" in recipe
+    assert "github.com/jatinkrmalik/vocalinux" not in recipe
+    assert str(snapcraft_doc.get("version")) == _app_version_from_source()
+    assert snapcraft_doc.get("adopt-info") == "vocalinux"
+
