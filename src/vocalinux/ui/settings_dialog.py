@@ -274,6 +274,84 @@ def _default_whispercpp_variant_for_size(model_size: str, language_id: str) -> O
     return variants[0]
 
 
+def _is_quantized_whispercpp_model(model_name: str) -> bool:
+    """Return whether a whisper.cpp catalog name is a quantized weight."""
+    return "-q" in model_name.lower()
+
+
+def _whispercpp_size_representative(model_size: str) -> str:
+    """Return the catalog id whose weight stands in for a size in the Model Size list."""
+    model_size = model_size.lower()
+    if model_size in WHISPERCPP_MODEL_INFO:
+        return model_size
+    variants = get_whispercpp_model_variants(model_size)
+    return variants[0] if variants else model_size
+
+
+def _whispercpp_size_is_downloaded(model_size: str) -> bool:
+    """Return True when any specialization of this size is already on disk."""
+    return any(
+        is_whispercpp_model_downloaded(variant)
+        for variant in get_whispercpp_model_variants(model_size)
+    )
+
+
+def _whispercpp_size_option_label(model_size: str, recommended_size: str) -> str:
+    """Build a Model Size row that mirrors Specialization: weight + download marker."""
+    representative = _whispercpp_size_representative(model_size)
+    info = WHISPERCPP_MODEL_INFO.get(representative, {"size_mb": 0})
+    status = "✓" if _whispercpp_size_is_downloaded(model_size) else "↓"
+    star = " ★" if model_size == recommended_size else ""
+    return (
+        f"{_model_display_name(model_size)} "
+        f"({_format_size(info.get('size_mb', 0))}) {status}{star}"
+    )
+
+
+def _find_comparable_on_disk_whispercpp(target_model: str, language_id: str) -> Optional[str]:
+    """Return a same-size on-disk alternative when the target still needs a download.
+
+    Comparable means the same Model Size bucket. English-only weights are only
+    offered when the selected language is English, so a French session is not
+    pointed at a model that cannot transcribe it.
+    """
+    target_model = (target_model or "").lower()
+    if not target_model or target_model not in WHISPERCPP_MODEL_INFO:
+        return None
+    if is_whispercpp_model_downloaded(target_model):
+        return None
+
+    size = get_whispercpp_model_size(target_model)
+    english_lang = _language_is_english(language_id)
+    candidates: list[str] = []
+    for variant in get_whispercpp_model_variants(size):
+        if variant == target_model:
+            continue
+        if not is_whispercpp_model_downloaded(variant):
+            continue
+        if not english_lang and is_english_only_whispercpp_model(variant):
+            continue
+        candidates.append(variant)
+    if not candidates:
+        return None
+
+    target_is_en = is_english_only_whispercpp_model(target_model)
+
+    def rank(name: str) -> tuple:
+        is_en = is_english_only_whispercpp_model(name)
+        if english_lang:
+            lang_fit = 2 if is_en else 1
+        else:
+            lang_fit = 2 if not is_en else 0
+        spec_match = 1 if is_en == target_is_en else 0
+        full_precision = 0 if _is_quantized_whispercpp_model(name) else 1
+        # Prefer the fuller weight when both are full precision.
+        size_mb = WHISPERCPP_MODEL_INFO.get(name, {}).get("size_mb", 0)
+        return (lang_fit, spec_match, full_precision, size_mb)
+
+    return max(candidates, key=rank)
+
+
 # Uniform width for right-hand row controls so they align down a page.
 # ComboBoxText sizes itself to the longest item unless the cell is ellipsized,
 # which is why Shortcut Mode used to dwarf Shortcut Key.
@@ -925,6 +1003,28 @@ spinbutton {
 .model-info-subtitle {
     font-size: 0.9em;
     color: @theme_unfocused_fg_color;
+}
+
+.model-recommendation-button {
+    padding: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
+    box-shadow: none;
+}
+
+.model-recommendation-button label {
+    font-size: 0.9em;
+    color: @theme_selected_bg_color;
+}
+
+.model-recommendation-button:hover label {
+    text-decoration: underline;
+}
+
+.model-recommendation-button:disabled label {
+    color: @theme_unfocused_fg_color;
+    text-decoration: none;
 }
 
 /* Tip styling */
@@ -2743,10 +2843,20 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
-        self.model_recommendation = Gtk.Label(xalign=0, wrap=True)
-        self.model_recommendation.get_style_context().add_class("model-info-subtitle")
+        # Clickable apply action: sets Model Size and Specialization together.
+        self.model_recommendation = Gtk.Button()
+        self.model_recommendation.set_relief(Gtk.ReliefStyle.NONE)
+        self.model_recommendation.set_halign(Gtk.Align.START)
+        self.model_recommendation.set_focus_on_click(True)
+        self.model_recommendation.get_style_context().add_class("model-recommendation-button")
         self.model_recommendation.set_no_show_all(True)
+        self.model_recommendation_label = Gtk.Label(xalign=0, wrap=True)
+        self.model_recommendation_label.set_line_wrap(True)
+        self.model_recommendation_label.set_max_width_chars(60)
+        self.model_recommendation.add(self.model_recommendation_label)
+        self.model_recommendation.connect("clicked", self._on_model_recommendation_clicked)
         self.model_info_card.pack_start(self.model_recommendation, False, False, 0)
+        self._recommended_model_id = None
 
         # Language warning (e.g. auto-detect, English-only models) lives in
         # the card so there is a single explanation surface below the group.
@@ -4835,10 +4945,10 @@ class SettingsDialog(Gtk.Dialog):
         saved_size = get_whispercpp_model_size(saved_model)
 
         for model_size in ENGINE_MODELS["whisper_cpp"]:
-            display_text = _model_display_name(model_size)
-            if model_size == recommended_size:
-                display_text += " ★"
-            self.model_combo.append(model_size, display_text)
+            self.model_combo.append(
+                model_size,
+                _whispercpp_size_option_label(model_size, recommended_size),
+            )
 
         self._set_combo_active_id_or_first(self.model_combo, saved_size)
         active_size = self.model_combo.get_active_id() or saved_size
@@ -5385,11 +5495,23 @@ class SettingsDialog(Gtk.Dialog):
             status = f"<span foreground='#e5a50a'>Download ~{_format_size(info['size_mb'])}</span>"
         self.model_info_subtitle.set_markup(f"{extra_info} · {status}")
 
+        self._recommended_model_id = recommended
         if model_name == recommended:
             self.model_recommendation.hide()
         else:
-            self.model_recommendation.set_text(
-                f"Recommended: {recommended_display_name} ({reason})"
+            on_disk_note = ""
+            if engine == "whisper_cpp" and not is_whispercpp_model_downloaded(recommended):
+                # Hint when the recommendation still needs a download but a
+                # same-size weight is already local.
+                language_id = self.language_combo.get_active_id() or self.language
+                alternative = _find_comparable_on_disk_whispercpp(recommended, language_id)
+                if alternative:
+                    on_disk_note = f" · {_model_display_name(alternative)} already on disk"
+            self.model_recommendation_label.set_text(
+                f"Use recommended: {recommended_display_name} ({reason}){on_disk_note}"
+            )
+            self.model_recommendation.set_tooltip_text(
+                "Set Model Size and Specialization to the recommended model"
             )
             self.model_recommendation.show()
 
@@ -5397,6 +5519,83 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_card.show()
         self.model_info_title.show()
         self.model_info_subtitle.show()
+
+    def _on_model_recommendation_clicked(self, _widget) -> None:
+        """Apply the hardware recommendation to Model Size and Specialization."""
+        if self._initializing or self._applying_settings or self._populating_models:
+            return
+        recommended = self._recommended_model_id
+        if not recommended:
+            return
+
+        engine = self._get_selected_engine()
+        if engine == "whisper_cpp":
+            self._select_whispercpp_model(recommended)
+            return
+
+        # Whisper and Vosk expose a single size list (no specialization row).
+        model_id = recommended.capitalize()
+        if not self.model_combo.set_active_id(model_id):
+            model = self.model_combo.get_model()
+            if model:
+                for i, row in enumerate(model):
+                    if str(row[0]).lower() == recommended.lower():
+                        self.model_combo.set_active(i)
+                        break
+
+    def _select_whispercpp_model(self, model_id: str) -> None:
+        """Select a whisper.cpp catalog model in both size and specialization."""
+        size = get_whispercpp_model_size(model_id)
+        self._populating_models = True
+        try:
+            self._set_combo_active_id_or_first(self.model_combo, size)
+            self._populate_whispercpp_variant_options(size, model_id)
+            self._sync_language_options_for_selected_model()
+        finally:
+            self._populating_models = False
+        self._update_model_info()
+        self._refresh_unused_downloads()
+        self._auto_apply_settings()
+
+    def _offer_comparable_on_disk_dialog(self, requested_model: str, alternative_model: str) -> str:
+        """Ask whether to use a same-size on-disk model instead of downloading.
+
+        Returns one of ``use_disk``, ``download``, or ``cancel``.
+        """
+        requested_label = _model_display_name(requested_model)
+        alternative_label = _model_display_name(alternative_model)
+        alternative_size = _format_size(
+            WHISPERCPP_MODEL_INFO.get(alternative_model, {}).get("size_mb", 0)
+        )
+        requested_size = _format_size(
+            WHISPERCPP_MODEL_INFO.get(requested_model, {}).get("size_mb", 0)
+        )
+
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Model already on disk",
+        )
+        dialog.format_secondary_text(
+            f"{requested_label} (~{requested_size}) is not downloaded yet. "
+            f"{alternative_label} (~{alternative_size}) is the same size and "
+            f"already on disk.\n\n"
+            f"Use the on-disk model instead of downloading another?"
+        )
+        dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button(f"_Download {requested_label}", Gtk.ResponseType.REJECT)
+        use_btn = dialog.add_button(f"_Use {alternative_label}", Gtk.ResponseType.ACCEPT)
+        use_btn.get_style_context().add_class("suggested-action")
+        response = dialog.run()
+        dialog.destroy()
+
+        if response == Gtk.ResponseType.ACCEPT:
+            return "use_disk"
+        if response == Gtk.ResponseType.REJECT:
+            return "download"
+        return "cancel"
 
     def _auto_apply_settings(self):
         """Automatically apply settings when changed."""
@@ -5432,14 +5631,44 @@ class SettingsDialog(Gtk.Dialog):
                 model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
 
             if needs_download:
-                if not self.speech_engine.try_begin_download():
+                if engine == "whisper_cpp" and not getattr(self, "_skip_on_disk_offer", False):
+                    language_id = settings.get("language") or self.language
+                    alternative = _find_comparable_on_disk_whispercpp(model_name, language_id)
+                    if alternative:
+                        choice = self._offer_comparable_on_disk_dialog(model_name, alternative)
+                        if choice == "cancel":
+                            self._resync_model_ui_from_config()
+                            return
+                        if choice == "use_disk":
+                            size = get_whispercpp_model_size(alternative)
+                            self._populating_models = True
+                            try:
+                                self._set_combo_active_id_or_first(self.model_combo, size)
+                                self._populate_whispercpp_variant_options(size, alternative)
+                                self._sync_language_options_for_selected_model()
+                            finally:
+                                self._populating_models = False
+                            settings = self.get_selected_settings()
+                            model_name = settings.get("model_size", alternative)
+                            needs_download = False
+                            self._update_model_info()
+                            self._refresh_unused_downloads()
+                        # choice == "download": fall through and prompt for the
+                        # originally selected model.
+
+                if needs_download and not self.speech_engine.try_begin_download():
                     # The tray is already downloading a model; a second download
                     # would fight it over the engine's progress callback and
                     # configuration. Put the picker back on the saved model.
                     self._show_download_busy_dialog()
                     self._resync_model_ui_from_config()
                     return
+
+            if needs_download:
                 logger.info(f"Model {model_name} needs download, showing progress dialog")
+                # Refresh size from the (possibly updated) selection.
+                if engine == "whisper_cpp":
+                    model_info = WHISPERCPP_MODEL_INFO.get(model_name, model_info)
                 download_dialog = ModelDownloadDialog(
                     self,
                     model_name,
@@ -5827,11 +6056,37 @@ For now, the engine has been reverted to VOSK."""
             model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
 
         if needs_download:
+            if engine == "whisper_cpp" and not getattr(self, "_skip_on_disk_offer", False):
+                language_id = settings.get("language") or self.language
+                alternative = _find_comparable_on_disk_whispercpp(model_name, language_id)
+                if alternative:
+                    choice = self._offer_comparable_on_disk_dialog(model_name, alternative)
+                    if choice == "cancel":
+                        self._resync_model_ui_from_config()
+                        return
+                    if choice == "use_disk":
+                        size = get_whispercpp_model_size(alternative)
+                        self._populating_models = True
+                        try:
+                            self._set_combo_active_id_or_first(self.model_combo, size)
+                            self._populate_whispercpp_variant_options(size, alternative)
+                            self._sync_language_options_for_selected_model()
+                        finally:
+                            self._populating_models = False
+                        settings = self.get_selected_settings()
+                        model_name = settings.get("model_size", alternative)
+                        needs_download = False
+                        self._update_model_info()
+                        self._refresh_unused_downloads()
+
+        if needs_download:
             if not self.speech_engine.try_begin_download():
                 # Same guard as in _auto_apply_settings: one download at a time.
                 self._show_download_busy_dialog()
                 self._resync_model_ui_from_config()
                 return
+            if engine == "whisper_cpp":
+                model_info = WHISPERCPP_MODEL_INFO.get(model_name, model_info)
             download_dialog = ModelDownloadDialog(
                 self,
                 model_name,
