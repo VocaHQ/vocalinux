@@ -23,10 +23,19 @@ RELEASE = REPO_ROOT / ".github" / "workflows" / "release.yml"
 DIST_ARTIFACT = "python-dist"
 
 #: Container and builder action pins must stay identical to flatpak.yml.
+#: The builder runs privileged, so the image must be an immutable digest, not
+#: the moving gnome-50 tag. Digest is the gnome-50 OCI index as of 2026-09-06.
 _FLATPAK_CI = REPO_ROOT / ".github" / "workflows" / "flatpak.yml"
-_FLATPAK_IMAGE = "ghcr.io/flathub-infra/flatpak-github-actions:gnome-50"
+_FLATPAK_IMAGE = (
+    "ghcr.io/flathub-infra/flatpak-github-actions:gnome-50"
+    "@sha256:1fb2df10a57276f90806e1f35454048e30bf1855b7b4ff4808c9ee55887bd852"
+)
 _FLATPAK_BUILDER = (
     "flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3"
+)
+_FLATPAK_TAG_ONLY = re.compile(
+    r"image:\s*ghcr\.io/flathub-infra/flatpak-github-actions:gnome-50\s*$",
+    re.M,
 )
 
 
@@ -175,8 +184,11 @@ def test_flatpak_release_jobs_reuse_ci_builder_pins():
     Attach is a separate ubuntu-latest job: the builder image is Freedesktop
     SDK and does not ship GitHub CLI, unlike the AppImage runners.
     """
+    assert "@sha256:" in _FLATPAK_IMAGE, "the builder image pin must be a digest, not a tag"
+
     ci = _FLATPAK_CI.read_text(encoding="utf-8")
     assert _FLATPAK_IMAGE in ci, "flatpak.yml image pin moved; update this test"
+    assert not _FLATPAK_TAG_ONLY.search(ci), "flatpak.yml pins the mutable gnome-50 tag"
     assert _FLATPAK_BUILDER in ci, "flatpak.yml action pin moved; update this test"
 
     jobs = _jobs()
@@ -186,6 +198,7 @@ def test_flatpak_release_jobs_reuse_ci_builder_pins():
     ):
         block = jobs[name]
         assert _FLATPAK_IMAGE in block, f"{name} does not use the CI builder image"
+        assert not _FLATPAK_TAG_ONLY.search(block), f"{name} pins the mutable gnome-50 tag"
         assert "options: --privileged" in block, f"{name} is not a privileged container"
         assert _FLATPAK_BUILDER in block, f"{name} does not use the pinned builder action"
         assert f"arch: {arch}" in block

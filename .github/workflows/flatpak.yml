@@ -47,7 +47,8 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.matrix.outputs.include) }}
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      # Privileged builder: pin the OCI index, not the mutable gnome-50 tag.
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:1fb2df10a57276f90806e1f35454048e30bf1855b7b4ff4808c9ee55887bd852
       options: --privileged
     steps:
       - name: Checkout

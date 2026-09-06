@@ -253,12 +253,12 @@ jobs:
   # (no needs) so they overlap the wheel / x86_64 AppImage job. The builder
   # image is Freedesktop SDK, not a GitHub-hosted runner: no `gh`, so attach
   # is a follow-up job on ubuntu-latest, same `gh release upload --clobber`
-  # as the aarch64 AppImage.
+  # as the aarch64 AppImage. The image is digest-pinned: it runs privileged.
   build-flatpak-amd64:
     name: Build Flatpak (x86_64)
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:1fb2df10a57276f90806e1f35454048e30bf1855b7b4ff4808c9ee55887bd852
       options: --privileged
     steps:
       - name: Checkout code
@@ -293,7 +293,7 @@ jobs:
     name: Build Flatpak (aarch64)
     runs-on: ubuntu-24.04-arm
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50@sha256:1fb2df10a57276f90806e1f35454048e30bf1855b7b4ff4808c9ee55887bd852
       options: --privileged
     steps:
       - name: Checkout code
