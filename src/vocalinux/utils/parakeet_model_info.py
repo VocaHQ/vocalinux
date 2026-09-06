@@ -8,7 +8,7 @@ engine, which runs NVIDIA NeMo ASR models through sherpa-onnx.
 import logging
 import os
 import shutil
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .paths import is_within_directory, models_dir
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # a file replaced upstream cannot change what an install downloads.
 _HF_BASE_URL = "https://huggingface.co"
 
-PARAKEET_MODEL_INFO = {
+PARAKEET_MODEL_INFO: Dict[str, Dict[str, Any]] = {
     "v3-european": {
         "repo": "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
         "revision": "2bda32ec70b097a55adaa07d9a7173915b43cc78",
@@ -128,7 +128,8 @@ def expected_file_size(model_name: str, filename: str) -> Optional[int]:
     if not model_info:
         return None
 
-    return model_info["file_sizes"].get(filename)
+    file_sizes: Dict[str, int] = model_info["file_sizes"]
+    return file_sizes.get(filename)
 
 
 def get_model_file_url(model_name: str, filename: str) -> str:
