@@ -235,7 +235,7 @@ def test_the_info_card_stays_on_the_page(settings_dialog):
 
     source = inspect.getsource(settings_dialog.SettingsDialog._build_engine_section)
 
-    assert "self.content_box.pack_start(self.model_info_card" in source
+    assert "self.simple_page.pack_start(self.model_info_card" in source
     assert "self.advanced_box.pack_start(self.model_info_card" not in source
 
 
@@ -265,54 +265,86 @@ def test_no_switch_pins_the_main_language(settings_dialog, dialog_class):
     assert dialog_class._simple_decoding_language(dialog) == "pl"
 
 
-def test_closing_the_advanced_window_reparents_the_controls_then_destroys_it(
+def test_expanding_the_island_shows_the_rows_for_the_active_engine(settings_dialog, dialog_class):
+    """show_all() first, then the per-engine pass, or rows the engine does not
+    use would be revealed."""
+    dialog = Mock()
+    dialog._initializing = False
+    expander = Mock()
+    expander.get_expanded.return_value = True
+    order = []
+    dialog.advanced_box.show_all.side_effect = lambda: order.append("show_all")
+    dialog._update_engine_specific_ui.side_effect = lambda: order.append("engine_ui")
+
+    dialog_class._on_advanced_expanded(dialog, expander, None)
+
+    assert order == ["show_all", "engine_ui"]
+    dialog.config_manager.set.assert_called_once_with("speech_recognition", "show_advanced", True)
+
+
+def test_collapsing_the_island_rereads_the_live_model(settings_dialog, dialog_class):
+    dialog = Mock()
+    dialog._initializing = False
+    expander = Mock()
+    expander.get_expanded.return_value = False
+
+    dialog_class._on_advanced_expanded(dialog, expander, None)
+
+    dialog._sync_simple_from_advanced.assert_called_once()
+    dialog.config_manager.set.assert_called_once_with("speech_recognition", "show_advanced", False)
+
+
+def test_restoring_the_island_on_open_does_not_write_the_config(settings_dialog, dialog_class):
+    """Setting the saved state during init must not count as a user choice."""
+    dialog = Mock()
+    dialog._initializing = True
+    expander = Mock()
+    expander.get_expanded.return_value = True
+
+    dialog_class._on_advanced_expanded(dialog, expander, None)
+
+    dialog.config_manager.set.assert_not_called()
+
+
+def test_a_change_in_the_advanced_rows_shows_up_in_the_simple_answers(
     settings_dialog, dialog_class
 ):
-    """The controls must outlive the window, or the second open finds them gone."""
+    """Both cards are on screen; they must not contradict each other."""
     dialog = Mock()
-    window = Mock()
-    order = []
-    dialog.advanced_box.get_parent.return_value.remove.side_effect = lambda box: order.append(
-        "remove"
-    )
-    window.destroy.side_effect = lambda: order.append("destroy")
+    dialog._initializing = False
+    dialog._simple_driving = False
+    dialog._simple_syncing = False
 
-    handled = dialog_class._on_advanced_window_close(dialog, window, None)
+    dialog_class._refresh_simple_readout(dialog)
 
-    assert order == ["remove", "destroy"]
-    assert dialog.advanced_window is None
-    assert handled is True
+    dialog._sync_simple_from_advanced.assert_called_once()
 
 
-def test_the_advanced_window_is_never_transient_for_the_dialog(settings_dialog, dialog_class):
-    """A transient, hidden-then-presented toplevel crashed KWin 6.7 (findModal
-    recursion — a cycle in its transient-for chain). See tag kwin-crash-repro."""
+@pytest.mark.parametrize("flag", ["_initializing", "_simple_driving", "_simple_syncing"])
+def test_the_readout_stays_quiet_while_simple_mode_is_steering(settings_dialog, dialog_class, flag):
+    """Re-syncing mid-steer would read half-set controls back into the answers."""
+    dialog = Mock()
+    dialog._initializing = False
+    dialog._simple_driving = False
+    dialog._simple_syncing = False
+    setattr(dialog, flag, True)
+
+    dialog_class._refresh_simple_readout(dialog)
+
+    dialog._sync_simple_from_advanced.assert_not_called()
+
+
+def test_no_second_toplevel_is_created_for_advanced(settings_dialog, dialog_class):
+    """A second window failed twice on KWin/Wayland: transient for the dialog it
+    crashed the compositor (tag kwin-crash-repro); standing alone it could not
+    be raised above the dialog. The island lives in the same window."""
     import inspect
 
-    source = inspect.getsource(dialog_class._on_open_advanced_window)
+    source = inspect.getsource(dialog_class._build_simple_model_section)
 
+    assert "Gtk.Window(" not in source
     assert "set_transient_for" not in source
-    assert ".hide()" not in source
-
-
-def test_the_advanced_window_is_raised_with_the_clicks_timestamp(settings_dialog, dialog_class):
-    """Reported: it opened behind the dialog. Without a transient parent only an
-    activation request with a real timestamp brings it to the front on Wayland."""
-    dialog = Mock()
-
-    with patch.object(settings_dialog.Gtk, "get_current_event_time", return_value=123456):
-        dialog_class._raise_advanced_window(dialog)
-
-    dialog.advanced_window.present_with_time.assert_called_once_with(123456)
-
-
-def test_raising_the_advanced_window_still_never_makes_it_transient(settings_dialog, dialog_class):
-    import inspect
-
-    source = inspect.getsource(dialog_class._raise_advanced_window)
-
-    assert "set_transient_for" not in source
-    assert "present_with_time" in source
+    assert "Gtk.Expander" in source
 
 
 def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it(

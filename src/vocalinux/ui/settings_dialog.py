@@ -1845,9 +1845,10 @@ class SettingsDialog(Gtk.Dialog):
         # Set while simple mode steers the advanced controls, so their own change
         # handlers do not each trigger a separate engine reload.
         self._simple_driving = False
-        self.advanced_button = None
         self.advanced_box = None
-        self.advanced_window = None
+        self.advanced_island = None
+        self.advanced_expander = None
+        self.simple_page = None
         self.simple_group = None
         self.engine_group = None
         self._processing_language_change = (
@@ -2002,6 +2003,9 @@ class SettingsDialog(Gtk.Dialog):
         # Restore the saved mode and point the simple questions at the live model
         # before the first visibility pass, so nothing flashes the wrong group.
         self._sync_simple_from_advanced()
+        self.advanced_expander.set_expanded(
+            bool(self.config_manager.get("speech_recognition", "show_advanced", False))
+        )
 
         # Then update visibility of engine-specific elements
         self._update_engine_specific_ui()
@@ -2933,26 +2937,48 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_priority_row)
 
-        self.advanced_button = Gtk.Button(label="Open…")
-        self.advanced_button.set_valign(Gtk.Align.CENTER)
-        self.advanced_button.set_size_request(_ACTION_WIDTH, -1)
-        self.advanced_button.set_halign(Gtk.Align.END)
-        self.advanced_row = PreferenceRow(
-            title="Advanced",
-            subtitle="Engine, model size, specialization and the rest, in their own window",
-            widget=self.advanced_button,
-            keywords=("advanced", "engine", "model", "specialization"),
+        # The simple card and, under it, the info card the engine section adds.
+        self.simple_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.simple_page.pack_start(self.simple_group, False, False, 0)
+        self.content_box.pack_start(self.simple_page, False, False, 0)
+
+        # Advanced is its own island under the simple card: collapsed to a
+        # header by default, expanding in place. Not a second window — that went
+        # wrong twice on KWin/Wayland: transient for the dialog it crashed the
+        # compositor (findModal recursion, tag kwin-crash-repro); standing alone
+        # it could not be raised above the dialog at all. Both cards visible at
+        # once also makes the expanded rows a readout of what the simple answers
+        # resolved to.
+        self.advanced_island = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.advanced_island.get_style_context().add_class("preferences-group")
+
+        self.advanced_expander = Gtk.Expander()
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title = Gtk.Label(label="Advanced", xalign=0)
+        title.get_style_context().add_class("preferences-group-title")
+        subtitle = Gtk.Label(
+            label="Engine, model size, specialization, downloads and the remote server",
+            xalign=0,
+            wrap=True,
         )
-        self.simple_group.add_row(self.advanced_row)
+        subtitle.get_style_context().add_class("preference-row-subtitle")
+        header.pack_start(title, False, False, 0)
+        header.pack_start(subtitle, False, False, 0)
+        self.advanced_expander.set_label_widget(header)
+        self.advanced_expander.set_margin_top(12)
+        self.advanced_expander.set_margin_bottom(12)
+        self.advanced_expander.set_margin_start(16)
+        self.advanced_expander.set_margin_end(16)
 
-        self.content_box.pack_start(self.simple_group, False, False, 0)
-
-        # Everything the detailed view holds is packed in here instead of into the
-        # page, and this box becomes the content of the advanced window.
+        # Everything the detailed view holds is packed in here; the sections
+        # built after this one append to it.
         self.advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.advanced_box.set_border_width(12)
+        self.advanced_box.set_margin_top(8)
+        self.advanced_expander.add(self.advanced_box)
+        self.advanced_island.pack_start(self.advanced_expander, False, False, 0)
+        self.content_box.pack_start(self.advanced_island, False, False, 0)
 
-        self.advanced_button.connect("clicked", self._on_open_advanced_window)
+        self.advanced_expander.connect("notify::expanded", self._on_advanced_expanded)
         self.simple_language_combo.connect("changed", self._on_simple_choice_changed)
         self.simple_second_language_combo.connect("changed", self._on_simple_choice_changed)
         self.simple_multi_switch.connect("notify::active", self._on_simple_choice_changed)
@@ -3049,7 +3075,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # On the page, under the simple questions: it is the only feedback that a
         # priority or language change did anything, and what it will cost.
-        self.content_box.pack_start(self.model_info_card, False, False, 0)
+        self.simple_page.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
@@ -5598,6 +5624,7 @@ class SettingsDialog(Gtk.Dialog):
             self.simple_priority_combo.set_active_id(priority)
         finally:
             self._simple_syncing = False
+        self._update_simple_visibility()
 
     def _simple_decoding_language(self) -> str:
         """Resolve the two simple language answers into what the engine accepts.
@@ -5642,60 +5669,30 @@ class SettingsDialog(Gtk.Dialog):
         self._populate_whispercpp_variant_options(size, variant)
         self.model_variant_combo.set_active_id(variant)
 
-    def _on_open_advanced_window(self, _button):
-        """Open the detailed controls in their own window.
+    def _on_advanced_expanded(self, expander, _param):
+        """Expand or collapse the advanced island, remembering the choice."""
+        expanded = expander.get_expanded()
+        if expanded:
+            self.advanced_box.show_all()
+            # Per-engine visibility has to run after show_all, which would
+            # otherwise reveal rows the active engine does not use.
+            self._update_engine_specific_ui()
+        else:
+            self._sync_simple_from_advanced()
+        if not self._initializing:
+            self.config_manager.set("speech_recognition", "show_advanced", expanded)
+            self.config_manager.save_settings()
 
-        Built fresh on every open and torn down on close. The first version kept
-        one window alive, transient for this dialog, hidden on close and shown
-        again with present(); on KWin 6.7 (Wayland) that crashed the compositor
-        with unbounded recursion in KWin::Window::findModal(), i.e. a cycle in
-        its transient-for chain. Neither ingredient is needed: the window stands
-        on its own, and the controls are re-parented out before it is destroyed.
+    def _refresh_simple_readout(self):
+        """Keep the simple answers describing the live model.
+
+        With both cards on screen, a change made in the advanced rows has to show
+        in the simple ones too, or the two would contradict each other. Skipped
+        while simple mode is itself steering the advanced rows, and during init.
         """
-        if self.advanced_window is not None:
-            self._raise_advanced_window()
+        if self._initializing or self._simple_driving or self._simple_syncing:
             return
-
-        window = Gtk.Window(title="Advanced speech model settings")
-        window.set_default_size(680, 720)
-        window.set_type_hint(Gdk.WindowTypeHint.NORMAL)
-        scroller = Gtk.ScrolledWindow()
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.add(self.advanced_box)
-        window.add(scroller)
-        window.connect("delete-event", self._on_advanced_window_close)
-        self.advanced_window = window
-
-        window.show_all()
-        # Per-engine visibility has to run after show_all, which would otherwise
-        # reveal rows the active engine does not use.
-        self._update_engine_specific_ui()
-        self._raise_advanced_window()
-
-    def _raise_advanced_window(self):
-        """Bring the advanced window above the dialog.
-
-        With no transient parent the compositor has no reason to stack it over
-        the dialog, and on Wayland a toplevel mapped without an activation token
-        lands behind the focused window. Presenting with the timestamp of the
-        click that opened it asks for both, and needs no transient link — which
-        is what crashed KWin (see _on_open_advanced_window).
-        """
-        if self.advanced_window is None:
-            return
-        timestamp = Gtk.get_current_event_time()
-        if not timestamp:
-            timestamp = Gdk.CURRENT_TIME
-        self.advanced_window.present_with_time(timestamp)
-
-    def _on_advanced_window_close(self, window, _event):
-        """Tear the window down, keeping the controls for the next open."""
-        parent = self.advanced_box.get_parent()
-        if parent is not None:
-            parent.remove(self.advanced_box)
-        self.advanced_window = None
-        window.destroy()
-        return True
+        self._sync_simple_from_advanced()
 
     def _on_simple_choice_changed(self, *_args):
         """React to one of the simple questions changing.
@@ -5837,6 +5834,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _update_model_info(self):
         """Update the model info card display."""
+        self._refresh_simple_readout()
         engine_text = self.engine_combo.get_active_text()
         if not engine_text:
             self.model_info_card.hide()
