@@ -55,6 +55,9 @@ def _dialog_stub():
     dialog._initializing = False
     dialog._test_active = False
     dialog._populating_models = False
+    # A Mock attribute is truthy, which would make _auto_apply_settings think
+    # simple mode is mid-way through steering the controls (#779).
+    dialog._simple_driving = False
     dialog.language = "en-us"
     # The real attribute is an enum member; a bare "idle" string would compare
     # unequal and send every test down the stop_recognition + sleep(0.5) branch.

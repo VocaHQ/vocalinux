@@ -1842,6 +1842,9 @@ class SettingsDialog(Gtk.Dialog):
         # Guards the simple-mode widgets while they are being pointed at the
         # live configuration, so syncing them does not look like a user edit.
         self._simple_syncing = False
+        # Set while simple mode steers the advanced controls, so their own change
+        # handlers do not each trigger a separate engine reload.
+        self._simple_driving = False
         self.settings_mode_combo = None
         self.simple_group = None
         self.engine_group = None
@@ -2874,16 +2877,25 @@ class SettingsDialog(Gtk.Dialog):
 
         self.simple_group = PreferencesGroup(title="What you dictate")
 
-        self.simple_language_combo = Gtk.ComboBoxText()
+        # Searchable, like the advanced row: over thirty languages is too many to
+        # scroll, and a list you cannot type into is a step backwards.
+        self.simple_language_combo = Gtk.ComboBoxText.new_with_entry()
         _style_combo(self.simple_language_combo)
         _prevent_scroll_on_hover(self.simple_language_combo)
         for language_id, info in SUPPORTED_LANGUAGES.items():
             # Auto-detect is the switch below, not a language you speak.
             if language_id != "auto":
                 self.simple_language_combo.append(language_id, info["name"])
+        _attach_language_combo_search(self.simple_language_combo)
+        simple_language_entry = self.simple_language_combo.get_child()
+        if simple_language_entry is not None:
+            simple_language_entry.connect("activate", self._on_simple_language_entry_activate)
+            simple_language_entry.connect(
+                "focus-out-event", self._on_simple_language_entry_focus_out
+            )
         self.simple_language_row = PreferenceRow(
             title="Main language",
-            subtitle="The language you speak most of the time",
+            subtitle="Type to search, or pick from the list",
             widget=self.simple_language_combo,
             keywords=("language", "speak"),
         )
@@ -5595,11 +5607,54 @@ class SettingsDialog(Gtk.Dialog):
         self._update_settings_mode_visibility()
 
     def _on_simple_choice_changed(self, *_args):
-        """React to one of the simple questions changing."""
+        """React to one of the simple questions changing.
+
+        Driving the four advanced controls emits "changed" on each of them, and
+        every one of those handlers ends in _auto_apply_settings, so a single pick
+        used to reconfigure the engine up to four times and freeze the window while
+        each reload ran. Suppress those while steering, then apply exactly once.
+        """
         if self._initializing or self._simple_syncing or self._applying_settings:
             return
-        self._apply_simple_choice()
+        if self._simple_driving:
+            return
+
+        self._simple_driving = True
+        try:
+            self._apply_simple_choice()
+        finally:
+            self._simple_driving = False
+
         self._auto_apply_settings()
+
+    def _commit_or_restore_simple_language_entry(self) -> bool:
+        """Resolve text typed into the simple language box, or restore the last pick."""
+        if self._initializing or self._simple_syncing:
+            return False
+        if self.simple_language_combo.get_active_id():
+            return False
+
+        entry = self.simple_language_combo.get_child()
+        typed = entry.get_text() if entry is not None else ""
+        match_id = _resolve_combo_text_query(typed, _combo_text_rows(self.simple_language_combo))
+        if match_id:
+            self.simple_language_combo.set_active_id(match_id)
+            return False
+
+        # Restoring the same language must not re-apply settings.
+        self._simple_syncing = True
+        try:
+            fallback = self.language if self.language != "auto" else "en-us"
+            self._set_combo_active_id_or_first(self.simple_language_combo, fallback)
+        finally:
+            self._simple_syncing = False
+        return False
+
+    def _on_simple_language_entry_activate(self, _entry):
+        self._commit_or_restore_simple_language_entry()
+
+    def _on_simple_language_entry_focus_out(self, _entry, _event):
+        return self._commit_or_restore_simple_language_entry()
 
     def _update_settings_mode_visibility(self):
         """Show the group the active mode calls for."""
@@ -5751,6 +5806,11 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         if self._populating_models:
+            return
+
+        # Simple mode is mid-way through steering the advanced controls; it applies
+        # once itself when it is done.
+        if self._simple_driving:
             return
 
         self._applying_settings = True
