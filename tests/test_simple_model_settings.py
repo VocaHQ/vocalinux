@@ -47,7 +47,7 @@ def dialog_class(settings_dialog):
     return settings_dialog.SettingsDialog
 
 
-def _dialog_stub(language="pl", multi=False, priority=BALANCED, recommended="small"):
+def _dialog_stub(language="pl", multi=False, priority=BALANCED, recommended="small", second=None):
     dialog = Mock()
     dialog._initializing = False
     dialog._simple_syncing = False
@@ -57,9 +57,20 @@ def _dialog_stub(language="pl", multi=False, priority=BALANCED, recommended="sma
     dialog.language = language
     dialog.simple_language_combo.get_active_id.return_value = language
     dialog.simple_multi_switch.get_active.return_value = multi
+    dialog.simple_second_language_combo.get_active_id.return_value = second
     dialog.simple_priority_combo.get_active_id.return_value = priority
     dialog._get_recommended_whispercpp_model_for_language.return_value = (recommended, "reason")
+    # The language resolution is the code under test's own helper, not a mock.
+    dialog._simple_decoding_language.side_effect = (
+        lambda: _sd().SettingsDialog._simple_decoding_language(dialog)
+    )
     return dialog
+
+
+def _sd():
+    import vocalinux.ui.settings_dialog as module
+
+    return module
 
 
 # --- the size half of the derivation -------------------------------------
@@ -110,15 +121,15 @@ def test_english_gets_the_english_only_variant(settings_dialog, dialog_class):
     dialog.model_variant_combo.set_active_id.assert_called_once_with("small.en")
 
 
-def test_the_other_languages_switch_turns_on_auto_detect(settings_dialog, dialog_class):
-    """The engine takes one language or none; this is the "none" case."""
-    dialog = _dialog_stub(language="en-us", multi=True, priority=BALANCED, recommended="small")
+def test_naming_a_second_language_turns_on_auto_detect(settings_dialog, dialog_class):
+    """Two languages cannot be pinned, so the engine gets detection instead."""
+    dialog = _dialog_stub(language="pl", multi=True, second="en-us", recommended="small")
 
     dialog_class._apply_simple_choice(dialog)
 
     dialog._set_combo_active_id_or_first.assert_called_once_with(dialog.language_combo, "auto")
     assert dialog.language == "auto"
-    # Auto-detect cannot use English-only weights.
+    # Detection cannot use English-only weights.
     dialog.model_variant_combo.set_active_id.assert_called_once_with("small")
 
 
@@ -168,36 +179,60 @@ def test_a_real_edit_applies_and_saves(settings_dialog, dialog_class):
     dialog._auto_apply_settings.assert_called_once()
 
 
-def test_the_simple_questions_stay_visible_when_advanced_is_revealed(settings_dialog, dialog_class):
-    """Advanced adds detail under the summary; it does not replace it."""
+def test_the_second_language_list_appears_only_when_asked_for(settings_dialog, dialog_class):
     dialog = Mock()
-    dialog.advanced_toggle.get_active.return_value = True
+    dialog.simple_multi_switch.get_active.return_value = True
 
-    dialog_class._update_advanced_visibility(dialog)
+    dialog_class._update_simple_visibility(dialog)
 
-    dialog.simple_group.show_all.assert_called_once()
-    dialog.advanced_revealer.set_reveal_child.assert_called_once_with(True)
+    dialog.simple_second_language_row.show_all.assert_called_once()
 
 
-def test_advanced_starts_collapsed(settings_dialog, dialog_class):
+def test_the_second_language_list_is_hidden_by_default(settings_dialog, dialog_class):
     dialog = Mock()
-    dialog.advanced_toggle.get_active.return_value = False
+    dialog.simple_multi_switch.get_active.return_value = False
 
-    dialog_class._update_advanced_visibility(dialog)
+    dialog_class._update_simple_visibility(dialog)
 
-    dialog.simple_group.show_all.assert_called_once()
-    dialog.advanced_revealer.set_reveal_child.assert_called_once_with(False)
+    dialog.simple_second_language_row.hide.assert_called_once()
 
 
-def test_toggling_advanced_is_remembered(settings_dialog, dialog_class):
+def test_a_second_language_switches_decoding_to_detection(settings_dialog, dialog_class):
+    """whisper takes one language or none, so two means automatic detection."""
+    dialog = _dialog_stub(language="pl", multi=True, second="en-us")
+
+    assert dialog_class._simple_decoding_language(dialog) == "auto"
+
+
+def test_two_english_entries_still_pin_english(settings_dialog, dialog_class):
+    """en-US plus en-IN is still English, so the .en weights stay usable."""
+    dialog = _dialog_stub(language="en-us", multi=True, second="en-in")
+
+    assert dialog_class._simple_decoding_language(dialog) == "en-us"
+
+
+def test_the_switch_without_a_second_language_keeps_the_main_one(settings_dialog, dialog_class):
+    dialog = _dialog_stub(language="pl", multi=True, second=None)
+
+    assert dialog_class._simple_decoding_language(dialog) == "pl"
+
+
+def test_no_switch_pins_the_main_language(settings_dialog, dialog_class):
+    dialog = _dialog_stub(language="pl", multi=False, second="en-us")
+
+    assert dialog_class._simple_decoding_language(dialog) == "pl"
+
+
+def test_the_advanced_window_hides_instead_of_destroying_its_widgets(settings_dialog, dialog_class):
+    """Destroying it would leave the controls gone the second time it is opened."""
     dialog = Mock()
-    dialog._initializing = False
-    dialog.advanced_toggle.get_active.return_value = True
+    window = Mock()
 
-    dialog_class._on_advanced_toggled(dialog)
+    handled = dialog_class._on_advanced_window_close(dialog, window, None)
 
-    dialog.config_manager.set.assert_called_once_with("speech_recognition", "show_advanced", True)
-    dialog._update_advanced_visibility.assert_called_once()
+    window.hide.assert_called_once()
+    window.destroy.assert_not_called()
+    assert handled is True
 
 
 def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it(
@@ -207,6 +242,7 @@ def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it
     dialog = Mock()
     dialog.language = "en-us"
     dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog.config_manager.get.return_value = ""
     dialog._get_recommended_whispercpp_model_for_language.return_value = ("small.en", "reason")
     dialog._get_selected_whispercpp_model.return_value = "medium.en"
 
@@ -224,6 +260,7 @@ def test_auto_detect_shows_up_as_the_other_languages_switch(settings_dialog, dia
     dialog.language = "auto"
     dialog.language_combo.get_active_id.return_value = "auto"
     dialog.simple_language_combo.get_active_id.return_value = None
+    dialog.config_manager.get.return_value = ""
     dialog._get_recommended_whispercpp_model_for_language.return_value = ("small", "reason")
     dialog._get_selected_whispercpp_model.return_value = "small"
 

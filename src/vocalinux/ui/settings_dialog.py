@@ -1845,8 +1845,9 @@ class SettingsDialog(Gtk.Dialog):
         # Set while simple mode steers the advanced controls, so their own change
         # handlers do not each trigger a separate engine reload.
         self._simple_driving = False
-        self.advanced_toggle = None
-        self.advanced_revealer = None
+        self.advanced_button = None
+        self.advanced_box = None
+        self.advanced_window = None
         self.simple_group = None
         self.engine_group = None
         self._processing_language_change = (
@@ -2000,9 +2001,6 @@ class SettingsDialog(Gtk.Dialog):
 
         # Restore the saved mode and point the simple questions at the live model
         # before the first visibility pass, so nothing flashes the wrong group.
-        self.advanced_toggle.set_active(
-            bool(self.config_manager.get("speech_recognition", "show_advanced", False))
-        )
         self._sync_simple_from_advanced()
 
         # Then update visibility of engine-specific elements
@@ -2897,6 +2895,27 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_multi_row)
 
+        self.simple_second_language_combo = Gtk.ComboBoxText.new_with_entry()
+        _style_combo(self.simple_second_language_combo)
+        _prevent_scroll_on_hover(self.simple_second_language_combo)
+        for language_id, info in SUPPORTED_LANGUAGES.items():
+            if language_id != "auto":
+                self.simple_second_language_combo.append(language_id, info["name"])
+        _attach_language_combo_search(self.simple_second_language_combo)
+        second_entry = self.simple_second_language_combo.get_child()
+        if second_entry is not None:
+            second_entry.connect("activate", self._on_simple_choice_changed)
+        self.simple_second_language_row = PreferenceRow(
+            title="Other language",
+            # Honest about what the engine does: whisper takes one language or
+            # none, so naming a second one switches decoding to detection.
+            subtitle="Recognition switches to automatic detection so both work",
+            widget=self.simple_second_language_combo,
+            keywords=("second", "language", "other"),
+        )
+        self.simple_second_language_row.set_no_show_all(True)
+        self.simple_group.add_row(self.simple_second_language_row)
+
         self.simple_priority_combo = Gtk.ComboBoxText()
         _style_combo(self.simple_priority_combo)
         _prevent_scroll_on_hover(self.simple_priority_combo)
@@ -2910,27 +2929,28 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_priority_row)
 
-        # Advanced is an addition, not a separate mode: the detailed controls slide
-        # out underneath and keep showing what the simple answers resolved to.
-        self.advanced_toggle = Gtk.Switch()
-        self.advanced_toggle.set_valign(Gtk.Align.CENTER)
+        self.advanced_button = Gtk.Button(label="Open…")
+        self.advanced_button.set_valign(Gtk.Align.CENTER)
+        self.advanced_button.set_size_request(_ACTION_WIDTH, -1)
+        self.advanced_button.set_halign(Gtk.Align.END)
         self.advanced_row = PreferenceRow(
             title="Advanced",
-            subtitle="Show engine, model size and specialization",
-            widget=self.advanced_toggle,
+            subtitle="Engine, model size, specialization and the rest, in their own window",
+            widget=self.advanced_button,
             keywords=("advanced", "engine", "model", "specialization"),
         )
         self.simple_group.add_row(self.advanced_row)
 
         self.content_box.pack_start(self.simple_group, False, False, 0)
 
-        self.advanced_revealer = Gtk.Revealer()
-        self.advanced_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-        self.advanced_revealer.set_transition_duration(200)
-        self.content_box.pack_start(self.advanced_revealer, False, False, 0)
+        # Everything the detailed view holds is packed in here instead of into the
+        # page, and this box becomes the content of the advanced window.
+        self.advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.advanced_box.set_border_width(12)
 
-        self.advanced_toggle.connect("notify::active", self._on_advanced_toggled)
+        self.advanced_button.connect("clicked", self._on_open_advanced_window)
         self.simple_language_combo.connect("changed", self._on_simple_choice_changed)
+        self.simple_second_language_combo.connect("changed", self._on_simple_choice_changed)
         self.simple_multi_switch.connect("notify::active", self._on_simple_choice_changed)
         self.simple_priority_combo.connect("changed", self._on_simple_choice_changed)
 
@@ -2995,7 +3015,7 @@ class SettingsDialog(Gtk.Dialog):
         group.add_row(self.language_row)
 
         # Lives inside the revealer built above, so the Advanced switch slides it out.
-        self.advanced_revealer.add(group)
+        self.advanced_box.pack_start(group, False, False, 0)
 
         # Model info card (shown below the group)
         self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -3023,7 +3043,7 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
 
-        self.content_box.pack_start(self.model_info_card, False, False, 0)
+        self.advanced_box.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
@@ -3062,7 +3082,7 @@ class SettingsDialog(Gtk.Dialog):
             "notify::expanded", lambda *_args: self._fit_unused_downloads_height()
         )
         self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
-        self.content_box.pack_start(self.unused_models_group, False, False, 0)
+        self.advanced_box.pack_start(self.unused_models_group, False, False, 0)
 
         # Connect signals
         self.engine_combo.connect("changed", self._on_engine_changed)
@@ -4623,14 +4643,14 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.remote_server_group.add_row(remote_test_row)
 
-        self.content_box.pack_start(self.remote_server_group, False, False, 0)
+        self.advanced_box.pack_start(self.remote_server_group, False, False, 0)
 
         # Status label below the group
         self.remote_status_label = Gtk.Label(label="", use_markup=True, xalign=0)
         self.remote_status_label.set_margin_start(16)
         self.remote_status_label.set_margin_top(4)
         self.remote_status_label.get_style_context().add_class("status-info")
-        self.content_box.pack_start(self.remote_status_label, False, False, 0)
+        self.advanced_box.pack_start(self.remote_status_label, False, False, 0)
 
         # Load saved values into the widgets
         saved_url = self.config_manager.get("speech_recognition", "remote_api_url", "")
@@ -5549,13 +5569,17 @@ class SettingsDialog(Gtk.Dialog):
         language = self.language_combo.get_active_id() or self.language or "auto"
         is_auto = language == "auto"
 
+        stored_second = self.config_manager.get("speech_recognition", "simple_second_language", "")
+
         self._simple_syncing = True
         try:
-            self.simple_multi_switch.set_active(is_auto)
+            self.simple_multi_switch.set_active(is_auto or bool(stored_second))
             if not is_auto:
                 self.simple_language_combo.set_active_id(language)
             elif not self.simple_language_combo.get_active_id():
                 self.simple_language_combo.set_active_id("en-us")
+            if stored_second:
+                self.simple_second_language_combo.set_active_id(stored_second)
 
             recommended, _ = self._get_recommended_whispercpp_model_for_language()
             current = self._get_selected_whispercpp_model()
@@ -5566,6 +5590,25 @@ class SettingsDialog(Gtk.Dialog):
         finally:
             self._simple_syncing = False
 
+    def _simple_decoding_language(self) -> str:
+        """Resolve the two simple language answers into what the engine accepts.
+
+        whisper takes one language or none, so naming a second language has to mean
+        automatic detection. The one exception is two English entries — en-US plus
+        en-IN, say — where English can still be pinned and the English-only weights,
+        which are the same size and better at English, stay available.
+        """
+        primary = self.simple_language_combo.get_active_id() or "en-us"
+        if not self.simple_multi_switch.get_active():
+            return primary
+
+        secondary = self.simple_second_language_combo.get_active_id()
+        if not secondary or secondary == primary:
+            return primary
+        if _language_is_english(primary) and _language_is_english(secondary):
+            return primary
+        return "auto"
+
     def _apply_simple_choice(self):
         """Drive the advanced controls from the simple questions.
 
@@ -5573,11 +5616,7 @@ class SettingsDialog(Gtk.Dialog):
         configuration itself, so applying, downloading and the info card keep going
         through exactly one code path.
         """
-        language = (
-            "auto"
-            if self.simple_multi_switch.get_active()
-            else (self.simple_language_combo.get_active_id() or "en-us")
-        )
+        language = self._simple_decoding_language()
         priority = self.simple_priority_combo.get_active_id() or BALANCED
 
         self.engine_combo.set_active_id("whisper_cpp")
@@ -5592,14 +5631,31 @@ class SettingsDialog(Gtk.Dialog):
         self._populate_whispercpp_variant_options(size, variant)
         self.model_variant_combo.set_active_id(variant)
 
-    def _on_advanced_toggled(self, *_args):
-        """Slide the detailed controls in or out and remember the choice."""
-        if self._initializing:
-            return
-        expanded = self.advanced_toggle.get_active()
-        self.config_manager.set("speech_recognition", "show_advanced", expanded)
-        self.config_manager.save_settings()
-        self._update_advanced_visibility()
+    def _on_open_advanced_window(self, _button):
+        """Open the detailed controls in their own window."""
+        if self.advanced_window is None:
+            window = Gtk.Window(title="Advanced speech model settings")
+            window.set_transient_for(self)
+            window.set_default_size(680, 720)
+            scroller = Gtk.ScrolledWindow()
+            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+            scroller.add(self.advanced_box)
+            window.add(scroller)
+            # Keep the widgets alive: closing must hide, not destroy, or reopening
+            # would find the controls gone.
+            window.connect("delete-event", self._on_advanced_window_close)
+            self.advanced_window = window
+
+        self.advanced_window.show_all()
+        # Per-engine visibility has to run after show_all, which would otherwise
+        # reveal rows the active engine does not use.
+        self._update_engine_specific_ui()
+        self.advanced_window.present()
+
+    def _on_advanced_window_close(self, window, _event):
+        """Hide the advanced window instead of destroying its widgets."""
+        window.hide()
+        return True
 
     def _on_simple_choice_changed(self, *_args):
         """React to one of the simple questions changing.
@@ -5620,6 +5676,13 @@ class SettingsDialog(Gtk.Dialog):
         finally:
             self._simple_driving = False
 
+        second = (
+            self.simple_second_language_combo.get_active_id()
+            if self.simple_multi_switch.get_active()
+            else ""
+        )
+        self.config_manager.set("speech_recognition", "simple_second_language", second or "")
+        self._update_simple_visibility()
         self._auto_apply_settings()
 
     def _commit_or_restore_simple_language_entry(self) -> bool:
@@ -5651,18 +5714,14 @@ class SettingsDialog(Gtk.Dialog):
     def _on_simple_language_entry_focus_out(self, _entry, _event):
         return self._commit_or_restore_simple_language_entry()
 
-    def _update_advanced_visibility(self):
-        """Reveal or hide the detailed controls.
-
-        The simple questions stay on screen either way: Advanced adds detail rather
-        than replacing the summary, so the detailed rows double as a readout of what
-        the simple answers resolved to.
-        """
+    def _update_simple_visibility(self):
+        """Show the simple questions, with the second language only when asked for."""
         self.simple_group.show_all()
-        expanded = self.advanced_toggle.get_active()
-        if expanded:
-            self.engine_group.show_all()
-        self.advanced_revealer.set_reveal_child(expanded)
+        wants_second = self.simple_multi_switch.get_active()
+        if wants_second:
+            self.simple_second_language_row.show_all()
+        else:
+            self.simple_second_language_row.hide()
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
@@ -5686,7 +5745,7 @@ class SettingsDialog(Gtk.Dialog):
             self.remote_server_group.hide()
             self.remote_status_label.hide()
 
-        self._update_advanced_visibility()
+        self._update_simple_visibility()
 
         self._update_model_info()
         self._refresh_unused_downloads()

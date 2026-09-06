@@ -528,8 +528,12 @@ class TestSettingsDialogInstantApply(unittest.TestCase):
         with open(source_path, "r") as f:
             source_code = f.read()
 
-        self.assertIn("self.content_box.pack_start(self.remote_server_group", source_code)
-        self.assertIn("self.content_box.pack_start(self.remote_status_label", source_code)
+        # Reached from the Speech Model page: the detailed controls now live in the
+        # window the Advanced button opens, next to the engine picker that selects
+        # remote_api. The point of this test is that they are not exiled to the
+        # separate Advanced page, which the advanced_tab assertions below still guard.
+        self.assertIn("self.advanced_box.pack_start(self.remote_server_group", source_code)
+        self.assertIn("self.advanced_box.pack_start(self.remote_status_label", source_code)
         self.assertIn("self.remote_api_model_entry", source_code)
         self.assertIn("OpenAI/FunASR", source_code)
         self.assertNotIn("advanced_tab.pack_start(self.remote_server_group", source_code)

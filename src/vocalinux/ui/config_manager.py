@@ -69,9 +69,9 @@ DEFAULT_CONFIG = {
         "vosk_model_size": "small",  # Default model for VOSK engine
         "whisper_model_size": "tiny",  # Default model for Whisper engine
         "whisper_cpp_model_size": "tiny",  # Default model for whisper.cpp engine
-        # Whether the detailed engine/size/specialization rows are revealed under
-        # the simple questions. Simple is the panel; this only adds detail (#779).
-        "show_advanced": False,
+        # The second language offered once "I also dictate in other languages" is
+        # on. Empty means the main language is pinned on its own (#779).
+        "simple_second_language": "",
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 2.0,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech
