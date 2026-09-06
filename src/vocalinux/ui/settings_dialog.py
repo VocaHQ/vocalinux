@@ -2861,7 +2861,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Searchable, like the advanced row: over thirty languages is too many to
         # scroll, and a list you cannot type into is a step backwards.
-        self.simple_language_combo = Gtk.ComboBoxText.new_with_entry()
+        self.simple_language_combo = SearchableComboBox()
         _style_combo(self.simple_language_combo)
         _prevent_scroll_on_hover(self.simple_language_combo)
         for language_id, info in SUPPORTED_LANGUAGES.items():
@@ -2895,7 +2895,7 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_multi_row)
 
-        self.simple_second_language_combo = Gtk.ComboBoxText.new_with_entry()
+        self.simple_second_language_combo = SearchableComboBox()
         _style_combo(self.simple_second_language_combo)
         _prevent_scroll_on_hover(self.simple_second_language_combo)
         for language_id, info in SUPPORTED_LANGUAGES.items():
