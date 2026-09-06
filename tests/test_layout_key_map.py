@@ -182,79 +182,334 @@ def test_detect_gnome_layout_nonzero_exit(monkeypatch):
     assert lkm._detect_gnome_layout() == ("", "")
 
 
-def test_detect_kde_layout_current_layout_neo(tmp_path, monkeypatch):
-    (tmp_path / "kxkbrc").write_text("[Layout]\nCurrentLayout=de(neo)\n", encoding="utf-8")
+_REALISTIC_KXKBRC = """[Layout]
+DisplayNames=,
+LayoutList=us,de
+VariantList=,neo
+Use=true
+"""
+
+_NEO_LAYOUT_MEMORY = """<!DOCTYPE LayoutMap>
+<LayoutMap version="1.0" SwitchMode="Global">
+        <item currentLayout="de(neo)"/>
+</LayoutMap>
+"""
+
+
+def _write_kxkbrc(tmp_path, content: str = _REALISTIC_KXKBRC):
+    (tmp_path / "kxkbrc").write_text(content, encoding="utf-8")
+
+
+def _write_layout_memory(tmp_path, xml: str, *, kded: str = "kded6"):
+    session = tmp_path / kded / "keyboard" / "session"
+    session.mkdir(parents=True, exist_ok=True)
+    (session / "layout_memory.xml").write_text(xml, encoding="utf-8")
+
+
+def _isolate_kde_files(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(lkm, "_kde_dbus_layout_index", lambda: None)
+
+
+def _clear_plasma_env(monkeypatch) -> None:
+    """Force the GNOME-first detector order; ignore a KDE CI host's session vars."""
+    for var in (
+        "XDG_CURRENT_DESKTOP",
+        "XDG_SESSION_DESKTOP",
+        "DESKTOP_SESSION",
+        "KDE_FULL_SESSION",
+        "GDMSESSION",
+    ):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_match_token_empty_variant_uses_listed_variant():
+    """Bare ``de`` must pick the listed neo pair, not parse as de+empty."""
+    pairs = [("us", ""), ("de", "neo")]
+    assert lkm._match_token_to_listed_pairs("de", pairs) == ("de", "neo")
+    assert lkm._match_token_to_listed_pairs("de(neo)", pairs) == ("de", "neo")
+    assert lkm._match_token_to_listed_pairs("us", pairs) == ("us", "")
+
+
+def test_match_token_with_variant_prefers_exact_pair():
+    pairs = [("de", "qwertz"), ("de", "neo")]
+    assert lkm._match_token_to_listed_pairs("de(neo)", pairs) == ("de", "neo")
+    assert lkm._match_token_to_listed_pairs("de(qwertz)", pairs) == ("de", "qwertz")
+    assert lkm._match_token_to_listed_pairs("de", pairs) == ("de", "qwertz")
+
+
+def test_match_token_unique_layout_name_uses_listed_variant():
+    pairs = [("fr", "oss"), ("de", "neo")]
+    assert lkm._match_token_to_listed_pairs("de", pairs) == ("de", "neo")
+    assert lkm._match_token_to_listed_pairs("fr", pairs) == ("fr", "oss")
+    assert lkm._match_token_to_listed_pairs("it", pairs) == ("", "")
+
+
+def test_detect_kde_layout_memory_neo_not_index_zero(tmp_path, monkeypatch):
+    """Neo active in layout_memory, but us is LayoutList index 0 (issue #787)."""
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY)
     assert lkm._detect_kde_layout() == ("de", "neo")
 
 
-def test_detect_kde_layout_list_and_index(tmp_path, monkeypatch):
-    (tmp_path / "kxkbrc").write_text(
-        "[Layout]\nLayoutList=us,de\nVariantList=,neo\nLayoutIndex=1\n",
-        encoding="utf-8",
+def test_detect_kde_layout_memory_bare_de_keeps_neo_variant(tmp_path, monkeypatch):
+    """layout_memory currentLayout=de (no (neo)) still resolves VariantList neo."""
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(
+        tmp_path,
+        '<LayoutMap version="1.0" SwitchMode="Global">' '<item currentLayout="de"/></LayoutMap>\n',
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert lkm._detect_kde_layout() == ("de", "neo")
 
 
-def test_detect_kde_layout_current_layout_without_variant_uses_lists(tmp_path, monkeypatch):
-    (tmp_path / "kxkbrc").write_text(
-        "[Layout]\nCurrentLayout=de\nLayoutList=de\nVariantList=neo\nLayoutIndex=0\n",
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    assert lkm._detect_kde_layout() == ("de", "neo")
+def test_get_active_map_kde_neo_from_layout_memory(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("us", ""))
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY)
+    char_map = lkm.get_active_char_to_evdev_map()
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    assert char_map["v"] == 17
+    assert char_map["p"] == 47
 
 
-def test_detect_kde_layout_missing_file(tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+def test_detect_kde_layout_missing_files(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
     assert lkm._detect_kde_layout() == ("", "")
 
 
-def test_detect_kde_layout_quoted_and_kconfig_suffix(tmp_path, monkeypatch):
-    (tmp_path / "kxkbrc").write_text(
-        '[Layout]\nCurrentLayout[$i]="de(neo)"\n',
-        encoding="utf-8",
+def test_detect_kde_layout_quoted_token(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(
+        tmp_path,
+        '[Layout]\nLayoutList[$i]="us,de"\nVariantList[$i]=",neo"\nUse=true\n',
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    _write_layout_memory(
+        tmp_path,
+        '<LayoutMap version="1.0" SwitchMode="Global">'
+        "<item currentLayout=\"'de(neo)'\"/></LayoutMap>\n",
+    )
     assert lkm._detect_kde_layout() == ("de", "neo")
 
 
-def test_detect_kde_layout_index_out_of_range(tmp_path, monkeypatch):
-    (tmp_path / "kxkbrc").write_text(
-        "[Layout]\nLayoutList=de\nVariantList=neo\nLayoutIndex=9\n",
-        encoding="utf-8",
+def test_detect_kde_layout_memory_without_kxkbrc(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY)
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_ignores_invented_kxkbrc_keys(tmp_path, monkeypatch):
+    """CurrentLayout/LayoutIndex are not in keyboardsettings.kcfg; do not use them."""
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(
+        tmp_path,
+        "[Layout]\nLayoutList=us,de\nVariantList=,neo\n"
+        "CurrentLayout=de(neo)\nLayoutIndex=1\nUse=true\n",
     )
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert lkm._detect_kde_layout() == ("", "")
 
 
-def test_detect_active_layout_prefers_gnome_over_kde(monkeypatch):
+def test_detect_kde_layout_single_list_entry(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path, "[Layout]\nLayoutList=de\nVariantList=neo\nUse=true\n")
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_kded5_fallback(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY, kded="kded5")
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_prefers_kded6_over_kded5(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(
+        tmp_path,
+        '<LayoutMap SwitchMode="Global"><item currentLayout="de(neo)"/></LayoutMap>\n',
+        kded="kded6",
+    )
+    _write_layout_memory(
+        tmp_path,
+        '<LayoutMap SwitchMode="Global"><item currentLayout="us"/></LayoutMap>\n',
+        kded="kded5",
+    )
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_malformed_memory_falls_through(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(tmp_path, "<not-xml", kded="kded6")
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY, kded="kded5")
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_multi_item_matches_list(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(
+        tmp_path,
+        """<LayoutMap version="1.0" SwitchMode="WinClass">
+            <item currentLayout="fr" ownerKey="unused"/>
+            <item currentLayout="de(neo)" ownerKey="konsole"/>
+        </LayoutMap>
+        """,
+    )
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_multi_item_bare_de_keeps_neo(tmp_path, monkeypatch):
+    _isolate_kde_files(tmp_path, monkeypatch)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(
+        tmp_path,
+        """<LayoutMap version="1.0" SwitchMode="WinClass">
+            <item currentLayout="fr" ownerKey="unused"/>
+            <item currentLayout="de" ownerKey="konsole"/>
+        </LayoutMap>
+        """,
+    )
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_kde_dbus_layout_index_parses_uint32(monkeypatch):
+    def fake_run(cmd, **kwargs):
+        assert cmd[0] == "gdbus"
+        assert "--session" in cmd
+        assert "org.kde.keyboard" in cmd
+        assert "/Layouts" in cmd
+        assert "org.kde.KeyboardLayouts.getLayout" in cmd
+        assert kwargs.get("timeout") == 2
+        assert kwargs.get("env") is not None
+        return types.SimpleNamespace(returncode=0, stdout="(uint32 1,)\n")
+
+    monkeypatch.setattr(lkm.subprocess, "run", fake_run)
+    assert lkm._kde_dbus_layout_index() == 1
+
+
+def test_kde_dbus_layout_index_parses_bare_int(monkeypatch):
+    monkeypatch.setattr(
+        lkm.subprocess,
+        "run",
+        lambda *_a, **_k: types.SimpleNamespace(returncode=0, stdout="(1,)\n"),
+    )
+    assert lkm._kde_dbus_layout_index() == 1
+
+
+def test_kde_dbus_layout_index_missing_gdbus(monkeypatch):
+    def boom(*_a, **_k):
+        raise FileNotFoundError("gdbus")
+
+    monkeypatch.setattr(lkm.subprocess, "run", boom)
+    assert lkm._kde_dbus_layout_index() is None
+
+
+def test_kde_dbus_layout_index_nonzero_exit(monkeypatch):
+    monkeypatch.setattr(
+        lkm.subprocess,
+        "run",
+        lambda *_a, **_k: types.SimpleNamespace(returncode=1, stdout=""),
+    )
+    assert lkm._kde_dbus_layout_index() is None
+
+
+def test_detect_kde_prefers_dbus_index_over_memory(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(lkm, "_kde_dbus_layout_index", lambda: 1)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(
+        tmp_path,
+        '<LayoutMap SwitchMode="Global"><item currentLayout="us"/></LayoutMap>\n',
+    )
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_dbus_out_of_range_falls_through_to_memory(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(lkm, "_kde_dbus_layout_index", lambda: 9)
+    _write_kxkbrc(tmp_path)
+    _write_layout_memory(tmp_path, _NEO_LAYOUT_MEMORY)
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_is_plasma_session_reads_desktop_vars(monkeypatch):
+    _clear_plasma_env(monkeypatch)
+    assert not lkm._is_plasma_session()
+    monkeypatch.setenv("XDG_SESSION_DESKTOP", "plasmawayland")
+    assert lkm._is_plasma_session()
+    _clear_plasma_env(monkeypatch)
+    monkeypatch.setenv("KDE_FULL_SESSION", "true")
+    assert lkm._is_plasma_session()
+
+
+def test_detect_active_layout_prefers_gnome_outside_plasma(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", "oss"))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
     assert lkm._detect_active_layout() == ("fr", "oss")
 
 
+def test_detect_active_layout_plasma_prefers_kde_over_gnome(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("us", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
+    assert lkm._detect_active_layout() == ("de", "neo")
+
+
 def test_detect_active_layout_falls_back_to_kde(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
     assert lkm._detect_active_layout() == ("de", "neo")
 
 
+def test_detect_active_layout_plasma_falls_back_to_gnome(monkeypatch):
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "plasma")
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", "oss"))
+    assert lkm._detect_active_layout() == ("fr", "oss")
+
+
 def test_get_active_map_us_is_none(monkeypatch):
+    """GNOME us → None only outside Plasma (KDE neo must not win this path)."""
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("us", ""))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
     assert lkm.get_active_char_to_evdev_map() is None
 
 
+def test_get_active_map_plasma_leftover_gnome_us_loses_to_kde_neo(monkeypatch):
+    """Leftover GNOME us must not hide Plasma neo (issue #787)."""
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE")
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("us", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
+    char_map = lkm.get_active_char_to_evdev_map()
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    assert char_map["v"] == 17
+    assert char_map["p"] == 47
+
+
 def test_get_active_map_empty_layout(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
     assert lkm.get_active_char_to_evdev_map() is None
 
 
 def test_get_active_map_loads_fr(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
     char_map = lkm.get_active_char_to_evdev_map()
     if char_map is None:
         pytest.skip("libxkbcommon or XKB data not available")
@@ -264,12 +519,15 @@ def test_get_active_map_loads_fr(monkeypatch):
 
 
 def test_get_active_map_when_build_fails(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
     monkeypatch.setattr(lkm, "build_char_to_evdev_map", lambda *_a, **_k: None)
     assert lkm.get_active_char_to_evdev_map() is None
 
 
 def test_get_active_map_uses_kde_when_gnome_empty(monkeypatch):
+    _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
     char_map = lkm.get_active_char_to_evdev_map()

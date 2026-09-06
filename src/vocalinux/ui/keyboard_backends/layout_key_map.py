@@ -11,12 +11,13 @@ import logging
 import os
 import re
 import subprocess
+import xml.etree.ElementTree as ET
 from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_int, c_uint32, c_void_p
 from functools import lru_cache
 from typing import Optional
 
 from ...utils.host_process import host_env
-from ...utils.paths import xdg_config_home
+from ...utils.paths import xdg_config_home, xdg_data_home
 
 logger = logging.getLogger(__name__)
 
@@ -192,73 +193,272 @@ def _csv_fields(raw: str) -> list[str]:
     return [part.strip() for part in raw.split(",")] if raw else []
 
 
-def _detect_kde_layout() -> tuple[str, str]:
-    """Current XKB layout from KDE Plasma ``kxkbrc`` (works on Wayland).
+def _is_plasma_session() -> bool:
+    """Return True when the session looks like KDE Plasma."""
+    if os.environ.get("KDE_FULL_SESSION", "").lower() == "true":
+        return True
+    desktop = " ".join(
+        os.environ.get(var, "")
+        for var in (
+            "XDG_CURRENT_DESKTOP",
+            "XDG_SESSION_DESKTOP",
+            "DESKTOP_SESSION",
+            "GDMSESSION",
+        )
+    ).lower()
+    return "kde" in desktop or "plasma" in desktop
 
-    Plasma stores the active layout in ``~/.config/kxkbrc`` (``$XDG_CONFIG_HOME``)
-    under ``[Layout]``. ``CurrentLayout`` looks like ``de(neo)``. When that key
-    is missing, ``LayoutList`` + ``VariantList`` + ``LayoutIndex`` identify the
-    same pair.
+
+def _layout_pair_at(layouts: list[str], variants: list[str], index: int) -> tuple[str, str]:
+    """Return the LayoutList/VariantList pair at ``index``, or empty."""
+    if index < 0 or index >= len(layouts):
+        return "", ""
+    layout = layouts[index]
+    if not layout:
+        return "", ""
+    variant = variants[index] if index < len(variants) else ""
+    return layout, variant
+
+
+def _listed_layout_pairs(layouts: list[str], variants: list[str]) -> list[tuple[str, str]]:
+    pairs: list[tuple[str, str]] = []
+    for index, layout in enumerate(layouts):
+        if not layout:
+            continue
+        variant = variants[index] if index < len(variants) else ""
+        pairs.append((layout, variant))
+    return pairs
+
+
+def _match_token_to_listed_pairs(token: str, pairs: list[tuple[str, str]]) -> tuple[str, str]:
+    """Match ``de(neo)`` / ``de`` against parallel LayoutList+VariantList entries.
+
+    Exact ``layout+variant`` wins. A token with an empty variant (``de``) matches
+    the first listed pair with that layout name, so ``LayoutList=us,de`` +
+    ``VariantList=,neo`` still yields ``de``+``neo`` instead of dropping the
+    variant. A unique layout name in the list is the usual case of that rule.
+    """
+    layout, variant = _parse_kde_layout_token(token)
+    if not layout:
+        return "", ""
+    for listed_layout, listed_variant in pairs:
+        if listed_layout == layout and listed_variant == variant:
+            return listed_layout, listed_variant
+    if variant:
+        return "", ""
+    for listed_layout, listed_variant in pairs:
+        if listed_layout == layout:
+            return listed_layout, listed_variant
+    return "", ""
+
+
+def _layout_from_memory_token(token: str, pairs: list[tuple[str, str]]) -> tuple[str, str]:
+    matched = _match_token_to_listed_pairs(token, pairs)
+    if matched[0]:
+        return matched
+    return _parse_kde_layout_token(token)
+
+
+def _kde_layout_memory_paths() -> list[str]:
+    data_home = xdg_data_home()
+    return [
+        os.path.join(data_home, "kded6", "keyboard", "session", "layout_memory.xml"),
+        os.path.join(data_home, "kded5", "keyboard", "session", "layout_memory.xml"),
+    ]
+
+
+def _read_kde_layout_memory(path: str) -> tuple[str, list[str]]:
+    """Return ``(SwitchMode, currentLayout tokens)`` from a layout_memory.xml."""
+    try:
+        tree = ET.parse(path)
+    except FileNotFoundError:
+        return "", []
+    except (OSError, ET.ParseError) as e:
+        logger.debug("layout_memory.xml parse failed (%s): %s", path, e)
+        return "", []
+
+    root = tree.getroot()
+    switch_mode = (root.get("SwitchMode") or "").strip()
+    tokens: list[str] = []
+    for item in root.iter("item"):
+        raw = item.get("currentLayout")
+        if raw is None:
+            continue
+        token = raw.strip()
+        if token:
+            tokens.append(token)
+    return switch_mode, tokens
+
+
+def _pick_layout_from_memory_tokens(
+    switch_mode: str,
+    tokens: list[str],
+    layouts: list[str],
+    variants: list[str],
+) -> tuple[str, str]:
+    """Choose an active pair from layout_memory.xml tokens.
+
+    Prefer SwitchMode=Global (or a single item). With several items, prefer the
+    first token that matches LayoutList+VariantList, else the first parseable
+    currentLayout. Per-window SwitchMode maps can be stale without D-Bus.
+    """
+    if not tokens:
+        return "", ""
+    pairs = _listed_layout_pairs(layouts, variants)
+    if switch_mode.lower() == "global" or len(tokens) == 1:
+        return _layout_from_memory_token(tokens[0], pairs)
+    for token in tokens:
+        matched = _match_token_to_listed_pairs(token, pairs)
+        if matched[0]:
+            return matched
+    for token in tokens:
+        layout, variant = _parse_kde_layout_token(token)
+        if layout:
+            return layout, variant
+    return "", ""
+
+
+def _detect_kde_layout_from_memory(layouts: list[str], variants: list[str]) -> tuple[str, str]:
+    for path in _kde_layout_memory_paths():
+        switch_mode, tokens = _read_kde_layout_memory(path)
+        if not tokens:
+            continue
+        layout, variant = _pick_layout_from_memory_tokens(switch_mode, tokens, layouts, variants)
+        if layout:
+            logger.debug(
+                "KDE layout from %s: layout=%s variant=%s",
+                path,
+                layout,
+                variant or "(none)",
+            )
+            return layout, variant
+    return "", ""
+
+
+def _kde_dbus_layout_index() -> Optional[int]:
+    """Live Plasma layout index from ``org.kde.KeyboardLayouts.getLayout``.
+
+    Unavailable in headless tests and in a Flatpak sandbox without D-Bus talk
+    permission. ``gdbus`` is a host binary, so the child env is ``host_env()``.
+    """
+    try:
+        result = subprocess.run(
+            [
+                "gdbus",
+                "call",
+                "--session",
+                "--dest",
+                "org.kde.keyboard",
+                "--object-path",
+                "/Layouts",
+                "--method",
+                "org.kde.KeyboardLayouts.getLayout",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+            env=host_env(),
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("KDE layout D-Bus query failed: %s", e)
+        return None
+    if result.returncode != 0:
+        logger.debug(
+            "KDE layout D-Bus getLayout rc=%s out=%r",
+            result.returncode,
+            (result.stdout or "")[:200],
+        )
+        return None
+    out = (result.stdout or "").strip()
+    match = re.search(r"uint(?:32|64)\s+(\d+)", out, re.IGNORECASE)
+    if not match:
+        match = re.search(r"\(\s*(\d+)\s*,", out)
+    if not match:
+        logger.debug("KDE layout D-Bus getLayout unparsed: %r", out)
+        return None
+    return int(match.group(1))
+
+
+def _detect_kde_layout() -> tuple[str, str]:
+    """Current XKB layout from KDE Plasma (Wayland-safe).
+
+    ``kxkbrc`` ``[Layout]`` only lists configured sources (``LayoutList`` /
+    ``VariantList``). Plasma's ``keyboardsettings.kcfg`` has no
+    ``CurrentLayout`` or ``LayoutIndex``; those keys are ignored if present.
+
+    Active layout, in order:
+    1. D-Bus ``org.kde.keyboard`` ``/Layouts`` ``getLayout`` index into the lists
+    2. ``$XDG_DATA_HOME/kded6/keyboard/session/layout_memory.xml``
+       (``kded5`` fallback), matching ``currentLayout`` (e.g. ``de(neo)``)
+    3. The sole ``LayoutList`` entry, when there is only one
+    4. Empty (do not assume index 0)
 
     ``setxkbmap -query`` is not used: on Wayland it talks to XWayland, not the
     compositor, and can report a stale or default US map (see
     ``ibus_engine.get_current_xkb_layout`` and issue #474).
     """
+    values: dict[str, str] = {}
     path = os.path.join(xdg_config_home(), "kxkbrc")
     try:
         values = _read_kconfig_group(path, "Layout")
     except FileNotFoundError:
-        return "", ""
+        pass
     except OSError as e:
         logger.debug("kxkbrc layout query failed: %s", e)
-        return "", ""
-
-    current = values.get("CurrentLayout", "")
-    layout, variant = _parse_kde_layout_token(current)
-    if layout and variant:
-        return layout, variant
 
     layouts = _csv_fields(values.get("LayoutList", ""))
     variants = _csv_fields(values.get("VariantList", ""))
-    index_raw = values.get("LayoutIndex", "").strip()
-    index = 0
-    if index_raw:
-        try:
-            index = int(index_raw)
-        except ValueError:
-            logger.debug("Ignoring invalid kxkbrc LayoutIndex=%r", index_raw)
-            index = 0
+
     if layouts:
-        if index < 0 or index >= len(layouts):
-            logger.debug("kxkbrc LayoutIndex=%s out of range for LayoutList", index)
-            if not layout:
-                return "", ""
-        else:
-            listed_layout = layouts[index]
-            listed_variant = variants[index] if index < len(variants) else ""
-            if not layout:
-                layout = listed_layout
-            if not variant:
-                # CurrentLayout=de with VariantList=neo at the same index.
-                if not listed_layout or listed_layout == layout:
-                    variant = listed_variant
-    return (layout, variant) if layout else ("", "")
+        index = _kde_dbus_layout_index()
+        if index is not None:
+            pair = _layout_pair_at(layouts, variants, index)
+            if pair[0]:
+                logger.debug(
+                    "KDE layout from D-Bus index %s: layout=%s variant=%s",
+                    index,
+                    pair[0],
+                    pair[1] or "(none)",
+                )
+                return pair
+            logger.debug("KDE D-Bus layout index %s out of range for LayoutList", index)
+
+    layout, variant = _detect_kde_layout_from_memory(layouts, variants)
+    if layout:
+        return layout, variant
+
+    named_indexes = [i for i, name in enumerate(layouts) if name]
+    if len(named_indexes) == 1:
+        return _layout_pair_at(layouts, variants, named_indexes[0])
+    return "", ""
 
 
 def _detect_active_layout() -> tuple[str, str]:
-    """Best-effort active XKB layout from the session (Wayland-safe)."""
-    layout, variant = _detect_gnome_layout()
-    if layout:
-        return layout, variant
-    layout, variant = _detect_kde_layout()
-    if layout:
-        return layout, variant
+    """Best-effort active XKB layout from the session (Wayland-safe).
+
+    Plasma sessions prefer KDE sources so leftover GNOME gsettings (often ``us``)
+    cannot win. Other desktops try GNOME first, then KDE.
+    """
+    detectors = (_detect_kde_layout, _detect_gnome_layout)
+    if not _is_plasma_session():
+        detectors = (_detect_gnome_layout, _detect_kde_layout)
+    for detect in detectors:
+        layout, variant = detect()
+        if layout:
+            return layout, variant
     return "", ""
 
 
 @lru_cache(maxsize=1)
 def get_active_char_to_evdev_map() -> Optional[dict[str, int]]:
-    """Cached char→evdev map for the active layout; None → use US KEY_* names."""
+    """Cached char→evdev map for the active layout; None → use US KEY_* names.
+
+    Process-cached (``lru_cache``): a layout switch after startup is not
+    picked up. Plasma per-window ``SwitchMode`` can leave ``layout_memory.xml``
+    stale when D-Bus ``getLayout`` is unavailable (headless tests, Flatpak
+    without talk permission).
+    """
     layout, variant = _detect_active_layout()
     if not layout or (layout == "us" and not variant):
         return None

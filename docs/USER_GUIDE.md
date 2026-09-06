@@ -44,6 +44,8 @@ Vocalinux capitalizes the start of dictation and letters after `.`, `!`, or `?`.
 
 When Vocalinux injects through the clipboard (the usual Wayland / ydotool path), it sends **Ctrl+V** in ordinary text fields and **Ctrl+Shift+V** in terminal emulator windows. Auto-detect works on X11 and on Hyprland, Sway, and niri. On GNOME or KDE Wayland, set **Settings → Dictation → Clipboard Paste Shortcut** to **Ctrl+Shift+V**.
 
+On non-US layouts such as German Neo, that chord uses the key that types **v** on the active layout (not physical KEY_V). Plasma's active layout comes from layout memory or D-Bus, not from `kxkbrc` list order. The map is cached for the process lifetime — restart Vocalinux after switching layouts. Per-window Plasma layouts may be stale if D-Bus is unavailable.
+
 Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**. Choose **Ctrl+V** if a window was mis-detected as a terminal.
 
 ### Understanding the Status Icons
