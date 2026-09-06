@@ -139,31 +139,21 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 ### From Snap (Ubuntu Snap Store)
 
 Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue
-[#48](https://github.com/VocaHQ/vocalinux/issues/48)). Public channel today is
-`latest/edge` (refreshing to 0.16.2 via this packaging). Promote through
-`candidate` then `stable` — see [packaging/snap/README.md](../packaging/snap/README.md).
+[#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`.
 
 ```bash
-# Testing channel (current public release path)
 sudo snap install vocalinux --edge
 
-# After candidate / stable promotion of 0.16.2:
-# sudo snap install vocalinux --candidate
-# sudo snap install vocalinux
-
-# Grant microphone / hotkeys if snapd does not auto-connect them
+# Optional: grant microphone / hotkeys if snapd does not auto-connect them
 sudo snap connect vocalinux:audio-record
 sudo snap connect vocalinux:raw-input
 ```
 
-To build a local `.snap` for development (requires `snapcraft` + LXD/Multipass):
+Pack and upload (requires `snapcraft` + LXD/Multipass):
 
 ```bash
-sudo snap install snapcraft --classic
 snapcraft pack
-sudo snap install --dangerous ./vocalinux_*.snap
-sudo snap connect vocalinux:audio-record
-sudo snap connect vocalinux:raw-input
+snapcraft upload --release=edge vocalinux_*.snap
 ```
 
 ## System Requirements

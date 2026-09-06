@@ -6,7 +6,7 @@
 #
 # Build (from repo root, with snapcraft + LXD or Multipass):
 #   snapcraft pack
-# See packaging/snap/README.md for full strategy, plugs, and store publish steps.
+# See docs/INSTALL.md for pack and store upload steps.
 
 name: vocalinux
 base: core24  # Ubuntu 24.04 / Python 3.12 (project requires-python >=3.11)

@@ -241,7 +241,7 @@ The installer handles everything: system dependencies, Python environment, speec
 
 ### Snap (Ubuntu Snap Store)
 
-In-repo recipe: `snap/snapcraft.yaml` (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Store listing is live at [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux); refresh builds with upload (name already owned — do not re-register). Strategy + edge→candidate→stable checklist: [packaging/snap/README.md](packaging/snap/README.md).
+In-repo recipe: `snap/snapcraft.yaml` (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Store listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). Pack and upload steps: [docs/INSTALL.md](docs/INSTALL.md).
 
 ```bash
 sudo snap install vocalinux --edge   # current public channel (0.16.2 refresh)
