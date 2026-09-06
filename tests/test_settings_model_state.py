@@ -72,10 +72,39 @@ class _InlineThread:
         self._target()
 
 
+class _DeferredThread:
+    """Record the worker without running it, so the apply-guard stays held."""
+
+    def __init__(self, target=None, daemon=None, **kwargs):
+        self.target = target
+
+    def start(self):
+        pass
+
+
 def _glib_stub(idle_calls):
     glib = MagicMock()
     glib.idle_add.side_effect = lambda func, *args: idle_calls.append((func, args))
     return glib
+
+
+def _already_downloaded_settings():
+    return {
+        "engine": "vosk",
+        "model_size": "small",
+        "language": "en-us",
+    }
+
+
+def _run_finish_idle(dialog, dialog_class, idle_calls):
+    """Invoke the scheduled apply-guard release (Mock dialogs have no real method)."""
+    finish = dialog_class._finish_auto_apply
+    ran = False
+    for func, args in idle_calls:
+        if func is dialog._finish_auto_apply or func is finish:
+            finish(dialog, *args)
+            ran = True
+    assert ran, "expected GLib.idle_add of the apply-guard release"
 
 
 def test_settings_persisted_only_after_the_engine_accepts_them(dialog_class):
@@ -102,19 +131,84 @@ def test_failed_apply_leaves_the_previous_model_configured(dialog_class):
 def test_failed_auto_apply_resyncs_the_pickers_with_the_config(settings_dialog, dialog_class):
     """The pickers go back to the saved model so a retry is possible."""
     dialog = _dialog_stub()
-    dialog.get_selected_settings.return_value = {
-        "engine": "vosk",
-        "model_size": "small",
-        "language": "en-us",
-    }
-    dialog.speech_engine.reconfigure.side_effect = RuntimeError("boom")
+    dialog.get_selected_settings.return_value = _already_downloaded_settings()
+    dialog._apply_settings_internal.side_effect = RuntimeError("boom")
+    idle_calls = []
 
-    with patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True):
+    with (
+        patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
         dialog_class._auto_apply_settings(dialog)
 
     dialog._save_selected_settings.assert_not_called()
-    dialog._resync_model_ui_from_config.assert_called_once()
+    assert (dialog._resync_model_ui_from_config, ()) in idle_calls
+    assert dialog._applying_settings is True
+    _run_finish_idle(dialog, dialog_class, idle_calls)
     assert dialog._applying_settings is False
+
+
+def test_already_downloaded_auto_apply_runs_on_a_worker(settings_dialog, dialog_class):
+    """A model already on disk must not reconfigure on the GTK main loop."""
+    dialog = _dialog_stub()
+    settings = _already_downloaded_settings()
+    dialog.get_selected_settings.return_value = settings
+    dialog._apply_settings_internal.return_value = True
+    idle_calls = []
+
+    with (
+        patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+
+    dialog._apply_settings_internal.assert_called_once_with(settings, raise_errors=True)
+    dialog.speech_engine.reconfigure.assert_not_called()
+    assert dialog._applying_settings is True
+    _run_finish_idle(dialog, dialog_class, idle_calls)
+    assert dialog._applying_settings is False
+
+
+def test_apply_guard_blocks_a_second_auto_apply_while_a_worker_is_in_flight(
+    settings_dialog, dialog_class
+):
+    """A second pick must not start another load until the first apply finishes."""
+    dialog = _dialog_stub()
+    dialog.get_selected_settings.return_value = _already_downloaded_settings()
+    idle_calls = []
+    workers = []
+
+    class _CaptureThread(_DeferredThread):
+        def __init__(self, target=None, daemon=None, **kwargs):
+            super().__init__(target=target, daemon=daemon, **kwargs)
+            workers.append(self)
+
+    with (
+        patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _CaptureThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+        assert dialog._applying_settings is True
+        assert len(workers) == 1
+
+        dialog.get_selected_settings.reset_mock()
+        dialog_class._auto_apply_settings(dialog)
+        assert len(workers) == 1
+        dialog.get_selected_settings.assert_not_called()
+        dialog._apply_settings_internal.assert_not_called()
+
+        workers[0].target()
+        dialog._apply_settings_internal.assert_called_once()
+        assert dialog._applying_settings is True
+
+        _run_finish_idle(dialog, dialog_class, idle_calls)
+        assert dialog._applying_settings is False
+
+        dialog_class._auto_apply_settings(dialog)
+        assert len(workers) == 2
 
 
 def test_download_path_resyncs_when_the_apply_reports_failure(settings_dialog, dialog_class):

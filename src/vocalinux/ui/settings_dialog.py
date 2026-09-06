@@ -5413,6 +5413,9 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         self._applying_settings = True
+        # Already-downloaded apply is handed to a worker that clears this flag
+        # via GLib.idle_add. Download still holds it for the modal run() below.
+        worker_holds_guard = False
         try:
             settings = self.get_selected_settings()
             engine = settings.get("engine", "vosk")
@@ -5515,18 +5518,30 @@ class SettingsDialog(Gtk.Dialog):
 
             logger.info(f"Auto-applying settings: {settings}")
 
-            was_running = self.speech_engine.state != RecognitionState.IDLE
-            if was_running:
-                self.speech_engine.stop_recognition()
+            def apply_already_downloaded():
+                try:
+                    self._apply_settings_internal(settings, raise_errors=True)
+                    logger.info("Settings auto-applied successfully")
+                except Exception as e:
+                    logger.error(f"Failed to auto-apply settings: {e}")
+                    GLib.idle_add(self._resync_model_ui_from_config)
+                finally:
+                    GLib.idle_add(self._finish_auto_apply)
 
-            self.speech_engine.reconfigure(**settings)
-            self._save_selected_settings(settings)
-            logger.info("Settings auto-applied successfully")
+            threading.Thread(target=apply_already_downloaded, daemon=True).start()
+            worker_holds_guard = True
+            return
         except Exception as e:
             logger.error(f"Failed to auto-apply settings: {e}")
             self._resync_model_ui_from_config()
         finally:
-            self._applying_settings = False
+            if not worker_holds_guard:
+                self._applying_settings = False
+
+    def _finish_auto_apply(self) -> bool:
+        """Release the apply-guard after an already-downloaded worker finishes."""
+        self._applying_settings = False
+        return False
 
     def _resync_model_ui_from_config(self):
         """Put the pickers back on the settings that are actually saved.

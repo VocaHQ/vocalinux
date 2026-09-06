@@ -101,9 +101,9 @@ def test_success_still_returns_true():
 def test_both_download_threads_ask_for_the_failure():
     """Source guard: every _apply_settings_internal call made off the main loop
     passes raise_errors=True, so a regression cannot silently reintroduce the
-    swallowed-error path in a download thread."""
+    swallowed-error path on a worker thread."""
     import inspect
 
     source = inspect.getsource(settings_dialog)
     thread_calls = source.count("_apply_settings_internal(settings, raise_errors=True)")
-    assert thread_calls == 2
+    assert thread_calls == 3
