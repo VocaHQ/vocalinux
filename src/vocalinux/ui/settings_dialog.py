@@ -2861,7 +2861,7 @@ class SettingsDialog(Gtk.Dialog):
 
         # Searchable, like the advanced row: over thirty languages is too many to
         # scroll, and a list you cannot type into is a step backwards.
-        self.simple_language_combo = SearchableComboBox()
+        self.simple_language_combo = SearchablePicker()
         _style_combo(self.simple_language_combo)
         _prevent_scroll_on_hover(self.simple_language_combo)
         for language_id, info in SUPPORTED_LANGUAGES.items():
@@ -2895,9 +2895,13 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_multi_row)
 
-        self.simple_second_language_combo = SearchableComboBox()
+        self.simple_second_language_combo = SearchablePicker()
         _style_combo(self.simple_second_language_combo)
         _prevent_scroll_on_hover(self.simple_second_language_combo)
+        # First entry is the multilingual answer: any language, detected per
+        # utterance. Naming one specific second language means the same thing
+        # to the engine, but lets the user say which one they had in mind.
+        self.simple_second_language_combo.append("auto", "Any language (auto-detect)")
         for language_id, info in SUPPORTED_LANGUAGES.items():
             if language_id != "auto":
                 self.simple_second_language_combo.append(language_id, info["name"])
@@ -2908,8 +2912,8 @@ class SettingsDialog(Gtk.Dialog):
         self.simple_second_language_row = PreferenceRow(
             title="Other language",
             # Honest about what the engine does: whisper takes one language or
-            # none, so naming a second one switches decoding to detection.
-            subtitle="Recognition switches to automatic detection so both work",
+            # none, so any second language means detection per utterance.
+            subtitle="Recognition detects the language of each utterance",
             widget=self.simple_second_language_combo,
             keywords=("second", "language", "other"),
         )
@@ -3043,7 +3047,9 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
 
-        self.advanced_box.pack_start(self.model_info_card, False, False, 0)
+        # On the page, under the simple questions: it is the only feedback that a
+        # priority or language change did anything, and what it will cost.
+        self.content_box.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
@@ -5580,6 +5586,9 @@ class SettingsDialog(Gtk.Dialog):
                 self.simple_language_combo.set_active_id("en-us")
             if stored_second:
                 self.simple_second_language_combo.set_active_id(stored_second)
+            elif is_auto:
+                # Detection with no named second language is the "any" answer.
+                self.simple_second_language_combo.set_active_id("auto")
 
             recommended, _ = self._get_recommended_whispercpp_model_for_language()
             current = self._get_selected_whispercpp_model()
@@ -5605,6 +5614,8 @@ class SettingsDialog(Gtk.Dialog):
         secondary = self.simple_second_language_combo.get_active_id()
         if not secondary or secondary == primary:
             return primary
+        if secondary == "auto":
+            return "auto"
         if _language_is_english(primary) and _language_is_english(secondary):
             return primary
         return "auto"
@@ -5632,29 +5643,41 @@ class SettingsDialog(Gtk.Dialog):
         self.model_variant_combo.set_active_id(variant)
 
     def _on_open_advanced_window(self, _button):
-        """Open the detailed controls in their own window."""
-        if self.advanced_window is None:
-            window = Gtk.Window(title="Advanced speech model settings")
-            window.set_transient_for(self)
-            window.set_default_size(680, 720)
-            scroller = Gtk.ScrolledWindow()
-            scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-            scroller.add(self.advanced_box)
-            window.add(scroller)
-            # Keep the widgets alive: closing must hide, not destroy, or reopening
-            # would find the controls gone.
-            window.connect("delete-event", self._on_advanced_window_close)
-            self.advanced_window = window
+        """Open the detailed controls in their own window.
 
-        self.advanced_window.show_all()
+        Built fresh on every open and torn down on close. The first version kept
+        one window alive, transient for this dialog, hidden on close and shown
+        again with present(); on KWin 6.7 (Wayland) that crashed the compositor
+        with unbounded recursion in KWin::Window::findModal(), i.e. a cycle in
+        its transient-for chain. Neither ingredient is needed: the window stands
+        on its own, and the controls are re-parented out before it is destroyed.
+        """
+        if self.advanced_window is not None:
+            self.advanced_window.present_with_time(Gdk.CURRENT_TIME)
+            return
+
+        window = Gtk.Window(title="Advanced speech model settings")
+        window.set_default_size(680, 720)
+        window.set_type_hint(Gdk.WindowTypeHint.NORMAL)
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.add(self.advanced_box)
+        window.add(scroller)
+        window.connect("delete-event", self._on_advanced_window_close)
+        self.advanced_window = window
+
+        window.show_all()
         # Per-engine visibility has to run after show_all, which would otherwise
         # reveal rows the active engine does not use.
         self._update_engine_specific_ui()
-        self.advanced_window.present()
 
     def _on_advanced_window_close(self, window, _event):
-        """Hide the advanced window instead of destroying its widgets."""
-        window.hide()
+        """Tear the window down, keeping the controls for the next open."""
+        parent = self.advanced_box.get_parent()
+        if parent is not None:
+            parent.remove(self.advanced_box)
+        self.advanced_window = None
+        window.destroy()
         return True
 
     def _on_simple_choice_changed(self, *_args):
@@ -5669,6 +5692,18 @@ class SettingsDialog(Gtk.Dialog):
             return
         if self._simple_driving:
             return
+
+        # Turning the switch on with nothing picked yet means "any language";
+        # otherwise the switch alone would visibly do nothing.
+        if (
+            self.simple_multi_switch.get_active()
+            and not self.simple_second_language_combo.get_active_id()
+        ):
+            self._simple_syncing = True
+            try:
+                self.simple_second_language_combo.set_active_id("auto")
+            finally:
+                self._simple_syncing = False
 
         self._simple_driving = True
         try:
@@ -5718,10 +5753,15 @@ class SettingsDialog(Gtk.Dialog):
         """Show the simple questions, with the second language only when asked for."""
         self.simple_group.show_all()
         wants_second = self.simple_multi_switch.get_active()
+        # show_all() is a no-op on a widget flagged no_show_all, so the flag has
+        # to be cleared before showing and restored after hiding — the same
+        # dance _set_custom_shortcut_row_visible does.
         if wants_second:
+            self.simple_second_language_row.set_no_show_all(False)
             self.simple_second_language_row.show_all()
         else:
             self.simple_second_language_row.hide()
+            self.simple_second_language_row.set_no_show_all(True)
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""

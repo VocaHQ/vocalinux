@@ -180,21 +180,63 @@ def test_a_real_edit_applies_and_saves(settings_dialog, dialog_class):
 
 
 def test_the_second_language_list_appears_only_when_asked_for(settings_dialog, dialog_class):
+    """show_all() is a no-op on a no_show_all widget: the flag must go first.
+
+    Reported from the installed build — the switch turned on and nothing
+    appeared, because the row was shown with the flag still set.
+    """
     dialog = Mock()
     dialog.simple_multi_switch.get_active.return_value = True
+    row = dialog.simple_second_language_row
+    order = []
+    row.set_no_show_all.side_effect = lambda flag: order.append(("no_show_all", flag))
+    row.show_all.side_effect = lambda: order.append(("show_all", None))
 
     dialog_class._update_simple_visibility(dialog)
 
-    dialog.simple_second_language_row.show_all.assert_called_once()
+    assert order == [("no_show_all", False), ("show_all", None)]
 
 
 def test_the_second_language_list_is_hidden_by_default(settings_dialog, dialog_class):
     dialog = Mock()
     dialog.simple_multi_switch.get_active.return_value = False
+    row = dialog.simple_second_language_row
+    order = []
+    row.hide.side_effect = lambda: order.append("hide")
+    row.set_no_show_all.side_effect = lambda flag: order.append(("no_show_all", flag))
 
     dialog_class._update_simple_visibility(dialog)
 
-    dialog.simple_second_language_row.hide.assert_called_once()
+    assert order == ["hide", ("no_show_all", True)]
+
+
+def test_any_language_as_the_second_answer_means_detection(settings_dialog, dialog_class):
+    """The explicit multilingual option."""
+    dialog = _dialog_stub(language="pl", multi=True, second="auto")
+
+    assert dialog_class._simple_decoding_language(dialog) == "auto"
+
+
+def test_turning_the_switch_on_defaults_the_second_list_to_any_language(
+    settings_dialog, dialog_class
+):
+    """Otherwise flipping the switch alone would visibly do nothing."""
+    dialog = _dialog_stub(language="pl", multi=True, second=None)
+
+    dialog_class._on_simple_choice_changed(dialog)
+
+    dialog.simple_second_language_combo.set_active_id.assert_called_once_with("auto")
+    dialog._apply_simple_choice.assert_called_once()
+
+
+def test_the_info_card_stays_on_the_page(settings_dialog):
+    """It is the only feedback that a priority change did anything, and its cost."""
+    import inspect
+
+    source = inspect.getsource(settings_dialog.SettingsDialog._build_engine_section)
+
+    assert "self.content_box.pack_start(self.model_info_card" in source
+    assert "self.advanced_box.pack_start(self.model_info_card" not in source
 
 
 def test_a_second_language_switches_decoding_to_detection(settings_dialog, dialog_class):
@@ -223,16 +265,35 @@ def test_no_switch_pins_the_main_language(settings_dialog, dialog_class):
     assert dialog_class._simple_decoding_language(dialog) == "pl"
 
 
-def test_the_advanced_window_hides_instead_of_destroying_its_widgets(settings_dialog, dialog_class):
-    """Destroying it would leave the controls gone the second time it is opened."""
+def test_closing_the_advanced_window_reparents_the_controls_then_destroys_it(
+    settings_dialog, dialog_class
+):
+    """The controls must outlive the window, or the second open finds them gone."""
     dialog = Mock()
     window = Mock()
+    order = []
+    dialog.advanced_box.get_parent.return_value.remove.side_effect = lambda box: order.append(
+        "remove"
+    )
+    window.destroy.side_effect = lambda: order.append("destroy")
 
     handled = dialog_class._on_advanced_window_close(dialog, window, None)
 
-    window.hide.assert_called_once()
-    window.destroy.assert_not_called()
+    assert order == ["remove", "destroy"]
+    assert dialog.advanced_window is None
     assert handled is True
+
+
+def test_the_advanced_window_is_never_transient_for_the_dialog(settings_dialog, dialog_class):
+    """A transient, hidden-then-presented toplevel crashed KWin 6.7 (findModal
+    recursion — a cycle in its transient-for chain). See tag kwin-crash-repro."""
+    import inspect
+
+    source = inspect.getsource(dialog_class._on_open_advanced_window)
+
+    assert "set_transient_for" not in source
+    assert ".present()" not in source
+    assert ".hide()" not in source
 
 
 def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it(
