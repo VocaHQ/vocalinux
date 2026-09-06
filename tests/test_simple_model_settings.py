@@ -292,8 +292,27 @@ def test_the_advanced_window_is_never_transient_for_the_dialog(settings_dialog, 
     source = inspect.getsource(dialog_class._on_open_advanced_window)
 
     assert "set_transient_for" not in source
-    assert ".present()" not in source
     assert ".hide()" not in source
+
+
+def test_the_advanced_window_is_raised_with_the_clicks_timestamp(settings_dialog, dialog_class):
+    """Reported: it opened behind the dialog. Without a transient parent only an
+    activation request with a real timestamp brings it to the front on Wayland."""
+    dialog = Mock()
+
+    with patch.object(settings_dialog.Gtk, "get_current_event_time", return_value=123456):
+        dialog_class._raise_advanced_window(dialog)
+
+    dialog.advanced_window.present_with_time.assert_called_once_with(123456)
+
+
+def test_raising_the_advanced_window_still_never_makes_it_transient(settings_dialog, dialog_class):
+    import inspect
+
+    source = inspect.getsource(dialog_class._raise_advanced_window)
+
+    assert "set_transient_for" not in source
+    assert "present_with_time" in source
 
 
 def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it(

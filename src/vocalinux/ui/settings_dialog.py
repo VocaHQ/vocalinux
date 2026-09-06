@@ -5653,7 +5653,7 @@ class SettingsDialog(Gtk.Dialog):
         on its own, and the controls are re-parented out before it is destroyed.
         """
         if self.advanced_window is not None:
-            self.advanced_window.present_with_time(Gdk.CURRENT_TIME)
+            self._raise_advanced_window()
             return
 
         window = Gtk.Window(title="Advanced speech model settings")
@@ -5670,6 +5670,23 @@ class SettingsDialog(Gtk.Dialog):
         # Per-engine visibility has to run after show_all, which would otherwise
         # reveal rows the active engine does not use.
         self._update_engine_specific_ui()
+        self._raise_advanced_window()
+
+    def _raise_advanced_window(self):
+        """Bring the advanced window above the dialog.
+
+        With no transient parent the compositor has no reason to stack it over
+        the dialog, and on Wayland a toplevel mapped without an activation token
+        lands behind the focused window. Presenting with the timestamp of the
+        click that opened it asks for both, and needs no transient link — which
+        is what crashed KWin (see _on_open_advanced_window).
+        """
+        if self.advanced_window is None:
+            return
+        timestamp = Gtk.get_current_event_time()
+        if not timestamp:
+            timestamp = Gdk.CURRENT_TIME
+        self.advanced_window.present_with_time(timestamp)
 
     def _on_advanced_window_close(self, window, _event):
         """Tear the window down, keeping the controls for the next open."""
