@@ -356,8 +356,8 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: 'Release ${{ github.ref_name }}'
 
-  # Store-only: do not attach the .snap to the GitHub Release. grade: devel in
-  # snap/snapcraft.yaml forbids stable; promote candidate → stable after QA.
+  # Store-only: do not attach the .snap to the GitHub Release. grade: stable
+  # allows candidate; do not auto-release to stable — promote after QA.
   # Secret: SNAPCRAFT_STORE_CREDENTIALS (snapcraft export-login).
   publish-snap:
     name: Build and Publish Snap

@@ -33,7 +33,7 @@ description: |
     - Microphone may need: sudo snap connect vocalinux:audio-record
     - Config and models live under ~/snap/vocalinux/
 
-grade: devel
+grade: stable
 confinement: strict
 license: AGPL-3.0-only
 icon: snap/gui/vocalinux.png

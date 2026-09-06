@@ -20,6 +20,7 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     assert doc["icon"] == "snap/gui/vocalinux.png"
     assert doc["website"] == "https://vocalinux.com"
     assert doc["confinement"] == "strict"
+    assert doc["grade"] == "stable"
 
     plugs = set((doc.get("apps") or {}).get("vocalinux", {}).get("plugs") or [])
     assert "raw-input" in plugs
