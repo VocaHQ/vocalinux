@@ -204,8 +204,12 @@ See [docs/AUR.md](docs/AUR.md).
 
 ### Flatpak (any distro)
 
-For a sandboxed, distro-independent install (great for NixOS, Fedora Silverblue,
-Steam Deck, and anywhere else), build the Flatpak from the bundled manifest:
+GitHub Releases attach `Vocalinux-<version>-x86_64.flatpak` and
+`Vocalinux-<version>-aarch64.flatpak`. After the Flathub GNOME runtime is
+present, install with `flatpak install --user ./Vocalinux-<version>-x86_64.flatpak`.
+Bundles do not auto-update.
+
+For a local build (contributors), use the bundled manifest:
 
 ```bash
 flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50
@@ -216,11 +220,11 @@ flatpak run com.vocalinux.Vocalinux
 
 The Flatpak ships the whisper.cpp engine with Vulkan GPU support and runs through
 XWayland on Wayland sessions. See [`packaging/flatpak/README.md`](packaging/flatpak/README.md)
-for build details, permissions, and Flathub submission notes. It is **not on
-Flathub**: the submission ([flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368))
-was closed on 2026-07-23 on policy grounds. The manifest is complete and builds
-in CI on both arches, so build it yourself as above; where it gets published is
-tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).
+for build details and permissions. It is **not on Flathub**: the submission
+([flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368)) was closed
+on 2026-07-23 on policy grounds. Release `.flatpak` assets are tracked in
+[#784](https://github.com/VocaHQ/vocalinux/issues/784); the longer-term channel
+is [#167](https://github.com/VocaHQ/vocalinux/issues/167).
 
 ### Alternative: Install from Source
 

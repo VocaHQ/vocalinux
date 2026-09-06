@@ -2,6 +2,26 @@
 
 Manifest and AppStream metadata for building Vocalinux as a Flatpak.
 
+## GitHub Release bundles
+
+Each `v*` GitHub Release attaches `Vocalinux-<version>-x86_64.flatpak` and
+`Vocalinux-<version>-aarch64.flatpak`. That is the easy install path:
+
+```bash
+# once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install flathub org.gnome.Platform//50
+
+flatpak install --user ./Vocalinux-<version>-x86_64.flatpak
+flatpak run com.vocalinux.Vocalinux
+```
+
+Bundles do **not** auto-update. Vocalinux is **not on Flathub** (submission
+[flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368) closed on
+policy grounds; we are not re-submitting). A self-hosted VocaHQ remote is the
+long-term auto-update path. Until then, download a new bundle from the next
+release. Local `flatpak-builder` remains for contributors (below).
+
 ## Current Scope
 
 The manifest ships the default `whisper_cpp` engine only. VOSK is omitted because
@@ -70,28 +90,15 @@ pipx run flatpak-pip-generator \
 `python3-build-dependencies.yaml` is a small hand-maintained helper so
 `--no-build-isolation` builds can import `mesonpy` before NumPy is built.
 
-## Flathub Submission Notes
+## Channel: GitHub Releases, not Flathub
 
-Read this first: the submission,
-[flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368), was
-**closed on 2026-07-23** on policy grounds — the generative-AI policy, plus a
-"tray-only application" reading. Nothing below was the reason it failed, and
-re-submitting without addressing that is a repeat. See
-[#167](https://github.com/VocaHQ/vocalinux/issues/167) for the channel decision.
-
-1. Change the `vocalinux` module source from `type: dir` to a tagged release:
-
-   ```yaml
-   sources:
-     - type: git
-       url: https://github.com/VocaHQ/vocalinux.git
-       tag: v0.16.2
-       commit: <release-commit-sha>
-   ```
-
-2. Keep build-time network access disabled; only declared sources.
-3. Re-run AppStream validation and `flatpak-builder` locally.
-4. Be ready to justify sandbox permissions (IBus and StatusNotifier D-Bus talk names).
+Flathub is **not pursued**. The submission,
+[flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368), was closed
+on 2026-07-23 on policy grounds. See
+[#167](https://github.com/VocaHQ/vocalinux/issues/167) for the channel decision
+and [#784](https://github.com/VocaHQ/vocalinux/issues/784) for release bundles.
+Do not re-submit. Local builds and GitHub Release `.flatpak` assets are the
+supported paths.
 
 ## Manifest Details
 

@@ -161,10 +161,25 @@ jobs:
             ```
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
+            ### Flatpak
+            Download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached shortly
+            after this release is published). The app is **not on Flathub**; these are GitHub
+            Release bundles with **no auto-update**.
+            ```bash
+            # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
+            flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+            flatpak install flathub org.gnome.Platform//50
+
+            flatpak install --user ./Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak
+            flatpak run com.vocalinux.Vocalinux
+            ```
+            Whisper.cpp engine only. Hotkeys need device access as documented in
+            packaging/flatpak/README.md. Not on Flathub (https://github.com/flathub/flathub/pull/9368).
+
             ### Verifying what you downloaded
-            `SHA256SUMS` covers every file here and is attached once the aarch64 build finishes,
-            a few minutes after this release appears. The wheel and sdist below are the same bytes
-            published to PyPI.
+            `SHA256SUMS` covers every file here and is attached once the aarch64 AppImage and
+            both Flatpak builds finish, a few minutes after this release appears. The wheel and
+            sdist below are the same bytes published to PyPI.
             ```bash
             sha256sum -c --ignore-missing SHA256SUMS
             ```
@@ -234,12 +249,116 @@ jobs:
             --repo ${{ github.repository }} \
             --clobber
 
-  # Runs last because the aarch64 AppImage lands after the release is created:
-  # a checksum manifest that covers three of the four files is worse than none,
-  # since the missing one looks like the tampered one.
+  # Pins match .github/workflows/flatpak.yml. These jobs start with the tag
+  # (no needs) so they overlap the wheel / x86_64 AppImage job. The builder
+  # image is Freedesktop SDK, not a GitHub-hosted runner: no `gh`, so attach
+  # is a follow-up job on ubuntu-latest, same `gh release upload --clobber`
+  # as the aarch64 AppImage.
+  build-flatpak-amd64:
+    name: Build Flatpak (x86_64)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
+        with:
+          bundle: Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak
+          manifest-path: packaging/flatpak/com.vocalinux.Vocalinux.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          arch: x86_64
+          # Pinned actions/upload-artifact below, same digest as AppImage.
+          upload-artifact: false
+          mirror-screenshots-url: https://dl.flathub.org/media
+
+      - name: Upload the x86_64 Flatpak
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flatpak-x86_64
+          path: Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak
+          if-no-files-found: error
+          retention-days: 7
+
+  build-flatpak-arm64:
+    name: Build Flatpak (aarch64)
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Build and bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
+        with:
+          bundle: Vocalinux-${{ steps.get_version.outputs.VERSION }}-aarch64.flatpak
+          manifest-path: packaging/flatpak/com.vocalinux.Vocalinux.yml
+          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          arch: aarch64
+          upload-artifact: false
+          mirror-screenshots-url: https://dl.flathub.org/media
+
+      - name: Upload the aarch64 Flatpak
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flatpak-aarch64
+          path: Vocalinux-${{ steps.get_version.outputs.VERSION }}-aarch64.flatpak
+          if-no-files-found: error
+          retention-days: 7
+
+  attach-flatpak:
+    name: Attach Flatpak bundles
+    needs: [build-and-release, build-flatpak-amd64, build-flatpak-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the x86_64 Flatpak
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: flatpak-x86_64
+          path: dist
+
+      - name: Download the aarch64 Flatpak
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: flatpak-aarch64
+          path: dist
+
+      - name: Attach to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ls -la dist/*.flatpak
+          gh release upload "${{ github.ref_name }}" \
+            dist/*.flatpak \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  # Runs last because the aarch64 AppImage and both Flatpak bundles land after
+  # the release is created: a checksum manifest that covers some of the files
+  # is worse than none, since the missing one looks like the tampered one.
   publish-checksums:
     name: Checksums and Provenance
-    needs: [build-and-release, build-appimage-arm64]
+    needs: [build-and-release, build-appimage-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -259,7 +378,7 @@ jobs:
           ls -la
           # Bare names, so `sha256sum -c` works in whatever directory the user
           # downloaded the release into.
-          sha256sum -- *.whl *.tar.gz *.AppImage | tee SHA256SUMS
+          sha256sum -- *.whl *.tar.gz *.AppImage *.flatpak | tee SHA256SUMS
 
       # Attesting from the manifest rather than a second glob: the file we
       # publish and the set we attest cannot drift apart.

@@ -22,6 +22,13 @@ RELEASE = REPO_ROOT / ".github" / "workflows" / "release.yml"
 #: The artifact holding the wheel and sdist that every other job consumes.
 DIST_ARTIFACT = "python-dist"
 
+#: Container and builder action pins must stay identical to flatpak.yml.
+_FLATPAK_CI = REPO_ROOT / ".github" / "workflows" / "flatpak.yml"
+_FLATPAK_IMAGE = "ghcr.io/flathub-infra/flatpak-github-actions:gnome-50"
+_FLATPAK_BUILDER = (
+    "flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3"
+)
+
 
 def _text() -> str:
     return RELEASE.read_text(encoding="utf-8")
@@ -120,7 +127,7 @@ def test_the_manifest_covers_every_kind_of_artifact_we_publish():
     assert "merge-multiple: true" in block, "it collects one artifact, not all of them"
     checksum_line = re.search(r"sha256sum -- (.+)$", block, re.M)
     assert checksum_line, "publish-checksums does not generate SHA256SUMS"
-    for pattern in ("*.whl", "*.tar.gz", "*.AppImage"):
+    for pattern in ("*.whl", "*.tar.gz", "*.AppImage", "*.flatpak"):
         assert pattern in checksum_line.group(1), f"{pattern} is published but unchecksummed"
 
 
@@ -160,3 +167,51 @@ def test_the_release_notes_tell_users_how_to_verify_the_download():
     assert "SHA256SUMS" in body, "the release notes never mention the manifest"
     assert "sha256sum -c" in body, "the notes do not show how to check it"
     assert "gh attestation verify" in body, "the notes do not show how to check provenance"
+
+
+def test_flatpak_release_jobs_reuse_ci_builder_pins():
+    """Release bundles must be the same builder image and action commit as CI.
+
+    Attach is a separate ubuntu-latest job: the builder image is Freedesktop
+    SDK and does not ship GitHub CLI, unlike the AppImage runners.
+    """
+    ci = _FLATPAK_CI.read_text(encoding="utf-8")
+    assert _FLATPAK_IMAGE in ci, "flatpak.yml image pin moved; update this test"
+    assert _FLATPAK_BUILDER in ci, "flatpak.yml action pin moved; update this test"
+
+    jobs = _jobs()
+    for name, arch, runner in (
+        ("build-flatpak-amd64", "x86_64", "ubuntu-latest"),
+        ("build-flatpak-arm64", "aarch64", "ubuntu-24.04-arm"),
+    ):
+        block = jobs[name]
+        assert _FLATPAK_IMAGE in block, f"{name} does not use the CI builder image"
+        assert "options: --privileged" in block, f"{name} is not a privileged container"
+        assert _FLATPAK_BUILDER in block, f"{name} does not use the pinned builder action"
+        assert f"arch: {arch}" in block
+        assert f"runs-on: {runner}" in block
+        assert f"Vocalinux-${{{{ steps.get_version.outputs.VERSION }}}}-{arch}.flatpak" in block
+        assert "actions/upload-artifact" in block, f"{name} does not upload a workflow artifact"
+        assert "gh release upload" not in block, f"{name} cannot run gh in the builder image"
+        assert "python -m build" not in _without_comments(block)
+
+    attach = jobs["attach-flatpak"]
+    assert _needs(attach) >= {
+        "build-and-release",
+        "build-flatpak-amd64",
+        "build-flatpak-arm64",
+    }
+    assert "gh release upload" in attach
+    assert "--clobber" in attach
+    assert "dist/*.flatpak" in attach
+    assert _permissions(attach).get("contents") == "write"
+
+
+def test_the_release_notes_document_flatpak_bundles():
+    """Users need the Flathub runtime, --user install, and the no-store caveats."""
+    body = _jobs()["build-and-release"]
+    assert "flatpak install --user" in body
+    assert "org.gnome.Platform//50" in body
+    assert "no auto-update" in body
+    assert "not on Flathub" in body
+    assert "Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak" in body
