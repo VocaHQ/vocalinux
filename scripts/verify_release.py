@@ -31,6 +31,10 @@ PYPI_TIMEOUT = 30
 #: Both commands the notes should hand the user, plus the file they act on.
 NOTES_MUST_MENTION = ("sha256sum -c", "gh attestation verify", MANIFEST)
 
+#: What `gh attestation verify` asks for, so this asks for the same. Pre-encoded:
+#: `gh api` reads an unescaped `://` in a query as a protocol and refuses.
+SLSA_PROVENANCE = "https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1"
+
 
 def _gh(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["gh", *args], capture_output=True, text=True)
@@ -108,7 +112,8 @@ def check_provenance(slug: str, manifest: dict[str, str]) -> list[str]:
     """The manifest is the subject-checksums input, so it is not a subject itself."""
     problems = []
     for name, digest in sorted(manifest.items()):
-        done = _gh("api", f"/repos/{slug}/attestations/sha256:{digest}")
+        query = f"/repos/{slug}/attestations/sha256:{digest}"
+        done = _gh("api", f"{query}?predicate_type={SLSA_PROVENANCE}")
         try:
             bundles = json.loads(done.stdout).get("attestations") if done.returncode == 0 else None
         except json.JSONDecodeError:
@@ -123,26 +128,31 @@ def check_notes(body: str) -> list[str]:
 
 
 def check_pypi(version: str, stored: dict[str, str]) -> list[str]:
-    # Imported here, not at module scope: urllib.error reaches tempfile through
-    # urllib.response, and two tests in this repository leave a MagicMock in
-    # sys.modules["tempfile"], which makes a late import a metaclass conflict.
+    expected = {n: d for n, d in stored.items() if n.endswith(PYPI_SUFFIXES)}
+    # Per suffix: a release that lost its sdist would otherwise pass on the wheel.
+    problems = [
+        f"the release carries no {suffix} to compare against PyPI"
+        for suffix in PYPI_SUFFIXES
+        if not any(name.endswith(suffix) for name in expected)
+    ]
+    if not expected:
+        return problems
+
+    # Past the early return, and not at module scope: urllib.error reaches
+    # tempfile, which two tests here leave as a MagicMock in sys.modules.
     import urllib.error
     import urllib.request
 
-    expected = {n: d for n, d in stored.items() if n.endswith(PYPI_SUFFIXES)}
-    if not expected:
-        return [f"the release carries no {' or '.join(PYPI_SUFFIXES)} to compare"]
     try:
         url = f"https://pypi.org/pypi/{PYPI_PROJECT}/{version}/json"
         with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
         if error.code == 404:
-            return [f"PyPI has no {PYPI_PROJECT} {version}"]
+            return problems + [f"PyPI has no {PYPI_PROJECT} {version}"]
         raise
     published = {i["filename"]: i["digests"]["sha256"].lower() for i in payload["urls"]}
 
-    problems = []
     for name, digest in sorted(expected.items()):
         if name not in published:
             problems.append(f"{name} is on the release but not on PyPI")

@@ -84,6 +84,32 @@ def test_notes_without_the_verification_block_fail():
     )
 
 
+def test_provenance_asks_only_for_slsa_build_provenance(monkeypatch):
+    """Unfiltered, an SBOM would read as the provenance users are told to expect."""
+
+    class Done:
+        returncode = 0
+        stdout = '{"attestations": [{}]}'
+
+    asked = []
+
+    def fake_gh(*args):
+        asked.append(args[-1])
+        return Done()
+
+    monkeypatch.setattr(verify, "_gh", fake_gh)
+    assert not verify.check_provenance("owner/repo", {"a.whl": "aa"})
+    assert f"predicate_type={verify.SLSA_PROVENANCE}" in asked[0]
+
+
+def test_a_release_missing_a_distribution_names_it():
+    """Comparing only what is left would pass while PyPI serves an unchecked file."""
+    assert verify.check_pypi("0.16.2", {"Vocalinux-0.16.2-x86_64.AppImage": "aa"}) == [
+        "the release carries no .whl to compare against PyPI",
+        "the release carries no .tar.gz to compare against PyPI",
+    ]
+
+
 def test_github_digests_are_read_without_their_algorithm_prefix():
     stored, undigested = verify.asset_digests(
         [{"name": "a.AppImage", "digest": "sha256:AABB"}, {"name": "b.snap"}]
