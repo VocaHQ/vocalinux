@@ -119,38 +119,98 @@ def find_keyboard_devices() -> list[str]:
     """
     Find all keyboard input devices.
 
+    Prefers /proc/bus/input/devices (host installs). Falls back to
+    ``evdev.list_devices()`` when that path cannot be read (common under snap
+    confinement even with raw-input, which grants /dev/input/event* but may
+    still deny /proc/bus/input/devices).
+
     Returns:
         List of device paths for keyboard devices
     """
-    keyboard_devices = []
-
     try:
-        # Read from /proc/bus/input/devices to find keyboards
-        with open("/proc/bus/input/devices", "r") as f:
-            current_device = None
-            for line in f:
-                line = line.rstrip("\n")
-                if line.startswith("I: Bus="):
-                    current_device = {"handlers": []}
-                elif line.startswith("H: Handlers=") and current_device is not None:
-                    handlers = line.split("=", 1)[1].strip()
-                    current_device["handlers"] = handlers.split()
-                elif line.startswith("B: KEY=") and current_device is not None:
-                    # Check if this device has keyboard keys (bit 0 is set)
-                    key_bits = line.split("=", 1)[1].strip()
-                    # The first hex digit after KEY= contains keyboard capability
-                    # If it's not 0, 1, or ffffffffff, it has keyboard keys
-                    if key_bits and key_bits != "0":
-                        # Check if event handler exists
-                        for handler in current_device.get("handlers", []):
-                            if handler.startswith("event"):
-                                device_path = f"/dev/input/{handler}"
-                                if os.path.exists(device_path):
-                                    keyboard_devices.append(device_path)
-                    current_device = None
-
+        return _parse_keyboard_devices_from_proc(
+            open("/proc/bus/input/devices", "r", encoding="utf-8", errors="replace")
+        )
     except (IOError, OSError) as e:
-        logger.error(f"Error reading input devices: {e}")
+        logger.debug(f"Cannot read /proc/bus/input/devices: {e}")
+        fallback = _find_keyboard_devices_from_evdev()
+        if fallback:
+            # Hot-plug rescans call this often; keep the noise down after first hit.
+            logger.debug(
+                "Using evdev.list_devices() fallback for keyboard discovery "
+                f"({len(fallback)} device(s))"
+            )
+        return fallback
+
+
+def _parse_keyboard_devices_from_proc(proc_file) -> list[str]:
+    """Parse an open /proc/bus/input/devices stream for event KEY devices."""
+    keyboard_devices: list[str] = []
+    current_device = None
+    with proc_file as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.startswith("I: Bus="):
+                current_device = {"handlers": []}
+            elif line.startswith("H: Handlers=") and current_device is not None:
+                handlers = line.split("=", 1)[1].strip()
+                current_device["handlers"] = handlers.split()
+            elif line.startswith("B: KEY=") and current_device is not None:
+                # Check if this device has keyboard keys (bit 0 is set)
+                key_bits = line.split("=", 1)[1].strip()
+                # The first hex digit after KEY= contains keyboard capability
+                # If it's not 0, 1, or ffffffffff, it has keyboard keys
+                if key_bits and key_bits != "0":
+                    # Check if event handler exists
+                    for handler in current_device.get("handlers", []):
+                        if handler.startswith("event"):
+                            device_path = f"/dev/input/{handler}"
+                            if os.path.exists(device_path):
+                                keyboard_devices.append(device_path)
+                current_device = None
+    return keyboard_devices
+
+
+def _find_keyboard_devices_from_evdev() -> list[str]:
+    """Discover keyboards by opening devices from ``evdev.list_devices()``."""
+    if not EVDEV_AVAILABLE:
+        return []
+
+    keyboard_devices: list[str] = []
+    try:
+        paths = list(evdev.list_devices())
+    except Exception as e:
+        logger.debug(f"evdev.list_devices() failed: {e}")
+        return []
+
+    for path in paths:
+        try:
+            device = InputDevice(path)
+            capabilities = device.capabilities()
+            device.close()
+        except (OSError, IOError, TypeError, ValueError):
+            continue
+
+        # Prefer devices that look like keyboards: EV_KEY with a common letter
+        # or a modifier. This includes combo "Keyboard" nodes on mice/remotes.
+        key_caps = capabilities.get(ecodes.EV_KEY, []) if capabilities else []
+        if not key_caps:
+            continue
+        if any(
+            code in key_caps
+            for code in (
+                KEY_LEFTCTRL,
+                KEY_RIGHTCTRL,
+                KEY_LEFTALT,
+                KEY_RIGHTALT,
+                KEY_LEFTSHIFT,
+                KEY_RIGHTSHIFT,
+                KEY_LEFTMETA,
+                KEY_RIGHTMETA,
+                getattr(ecodes, "KEY_A", -1),
+            )
+        ):
+            keyboard_devices.append(path)
 
     return keyboard_devices
 
@@ -326,22 +386,46 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if not EVDEV_AVAILABLE:
             return "Install python-evdev: pip install evdev"
 
+        in_snap = bool(os.environ.get("SNAP_NAME") or os.environ.get("SNAP"))
+
         try:
             devices = find_keyboard_devices()
-            if not devices:
-                return None  # No devices found, not a permission issue
+            if devices:
+                # Try to open the first device to check permissions
+                for device_path in devices[:1]:
+                    try:
+                        InputDevice(device_path)
+                        return None  # Successfully opened, permissions OK
+                    except (OSError, IOError) as e:
+                        if "Permission denied" in str(e) or e.errno == errno.EACCES:
+                            if in_snap:
+                                return (
+                                    "Snap is missing input-device access. "
+                                    "Connect once, then restart:\n"
+                                    "sudo snap connect vocalinux:raw-input"
+                                )
+                            return (
+                                "Add your user to the 'input' group and log out/in:\n"
+                                "sudo usermod -a -G input $USER"
+                            )
+                return None
 
-            # Try to open the first device to check permissions
-            for device_path in devices[:1]:  # Just check the first one
-                try:
-                    InputDevice(device_path)
-                    return None  # Successfully opened, permissions OK
-                except (OSError, IOError) as e:
-                    if "Permission denied" in str(e) or e.errno == errno.EACCES:
-                        return (
-                            "Add your user to the 'input' group and log out/in:\n"
-                            "sudo usermod -a -G input $USER"
-                        )
+            # No devices found — snap without raw-input often cannot list anything.
+            if in_snap:
+                return (
+                    "Snap is missing input-device access. Connect once, then restart:\n"
+                    "sudo snap connect vocalinux:raw-input"
+                )
+
+            try:
+                with open("/proc/bus/input/devices", "r"):
+                    pass
+            except (OSError, IOError) as e:
+                if "Permission denied" in str(e) or getattr(e, "errno", None) == errno.EACCES:
+                    return (
+                        "Add your user to the 'input' group and log out/in:\n"
+                        "sudo usermod -a -G input $USER"
+                    )
         except Exception:
             pass
 

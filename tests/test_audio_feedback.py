@@ -73,6 +73,34 @@ class TestAudioFeedback(unittest.TestCase):
             self.assertEqual(player, "paplay")
             self.assertEqual(formats, ["wav"])
 
+    def test_get_audio_player_pw_play(self):
+        """Test detecting PipeWire pw-play player."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with patch.object(audio_feedback.shutil, "which") as mock_which:
+
+            def which_side_effect(cmd):
+                return cmd == "pw-play"
+
+            mock_which.side_effect = which_side_effect
+            player, formats = audio_feedback._get_audio_player()
+            self.assertEqual(player, "pw-play")
+            self.assertEqual(formats, ["wav"])
+
+    def test_get_audio_player_canberra(self):
+        """Test detecting canberra-gtk-play player."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with patch.object(audio_feedback.shutil, "which") as mock_which:
+
+            def which_side_effect(cmd):
+                return cmd == "canberra-gtk-play"
+
+            mock_which.side_effect = which_side_effect
+            player, formats = audio_feedback._get_audio_player()
+            self.assertEqual(player, "canberra-gtk-play")
+            self.assertEqual(formats, ["wav"])
+
     def test_get_audio_player_alsa(self):
         """Test detecting ALSA player."""
         # Import the module first
@@ -83,6 +111,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": True,
                     "play": False,
                     "mplayer": False,
@@ -107,6 +137,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": False,
                     "play": True,
                     "mplayer": False,
@@ -131,6 +163,8 @@ class TestAudioFeedback(unittest.TestCase):
             def which_side_effect(cmd):
                 return {
                     "paplay": False,
+                    "pw-play": False,
+                    "canberra-gtk-play": False,
                     "aplay": False,
                     "play": False,
                     "mplayer": True,
@@ -550,3 +584,36 @@ class TestAudioFeedback(unittest.TestCase):
             mock_play.reset_mock()
             self.assertFalse(audio_feedback.preview_tone_cue("off", "start"))
             mock_play.assert_not_called()
+
+    def test_play_sound_file_uses_host_env_for_pw_and_canberra(self):
+        """pw-play/canberra must pass host_env like paplay (AppImage-safe)."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        fake_env = {"SAFE": "1"}
+        path = "start_recording.wav"
+        with (
+            patch.object(audio_feedback.os.path, "exists", return_value=True),
+            patch.object(audio_feedback, "_get_audio_player", return_value=("pw-play", ["wav"])),
+            patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
+            patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
+        ):
+            ok = audio_feedback._play_sound_file(path)
+            self.assertTrue(ok)
+            mock_host_env.assert_called()
+            self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
+
+        with (
+            patch.object(audio_feedback.os.path, "exists", return_value=True),
+            patch.object(
+                audio_feedback,
+                "_get_audio_player",
+                return_value=("canberra-gtk-play", ["wav"]),
+            ),
+            patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
+            patch.object(audio_feedback, "host_env", return_value=fake_env) as mock_host_env,
+        ):
+            ok = audio_feedback._play_sound_file(path)
+            self.assertTrue(ok)
+            mock_host_env.assert_called()
+            self.assertEqual(mock_popen.call_args.kwargs.get("env"), fake_env)
+            self.assertEqual(mock_popen.call_args.args[0][:2], ["canberra-gtk-play", "--file"])

@@ -8,6 +8,13 @@ dist/
 build/
 *.egg-info/
 *.egg
+*.snap
+# snapcraft local build trees (repo root only)
+/parts/
+/prime/
+/stage/
+/snap/.snapcraft/
+/.snapcraft/
 
 # Virtual environments
 venv/

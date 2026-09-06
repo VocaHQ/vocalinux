@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Vocalinux
+Comment=Free, offline voice dictation for Linux
+GenericName=Voice Typing
+Exec=vocalinux
+Icon=${SNAP}/usr/share/icons/hicolor/scalable/apps/vocalinux.svg
+Terminal=false
+Categories=Utility;Accessibility;AudioVideo;
+Keywords=voice;typing;dictation;speech;recognition;transcription;accessibility;
+StartupNotify=true
+StartupWMClass=com.vocalinux.Vocalinux
+X-GNOME-UsesNotifications=true
+X-SnapInstanceName=vocalinux

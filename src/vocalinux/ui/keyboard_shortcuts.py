@@ -91,10 +91,22 @@ class KeyboardShortcutManager:
 
     def _log_unavailable_hints(self):
         """Log helpful hints when no backend is available."""
+        import os
+
         env = DesktopEnvironment.detect()
+        in_snap = bool(os.environ.get("SNAP_NAME") or os.environ.get("SNAP"))
+
+        logger.warning("=" * 60)
+        if in_snap:
+            logger.warning("Keyboard shortcuts need Snap input access")
+            logger.warning("=" * 60)
+            logger.warning("Global hotkeys read /dev/input (evdev). Connect once:")
+            logger.warning("  sudo snap connect vocalinux:raw-input")
+            logger.warning("Then restart Vocalinux. Until then, use the system tray.")
+            logger.warning("=" * 60)
+            return
 
         if env == DesktopEnvironment.WAYLAND:
-            logger.warning("=" * 60)
             logger.warning("Keyboard shortcuts not available on Wayland")
             logger.warning("=" * 60)
             logger.warning("To enable keyboard shortcuts on Wayland:")
