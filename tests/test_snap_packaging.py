@@ -18,6 +18,7 @@ VERSION_PY = REPO_ROOT / "src" / "vocalinux" / "version.py"
 SNAP_README = REPO_ROOT / "packaging" / "snap" / "README.md"
 DESKTOP_FILE = REPO_ROOT / "snap" / "gui" / "vocalinux.desktop"
 SNAP_ICON = REPO_ROOT / "snap" / "gui" / "vocalinux.svg"
+SNAP_STORE_ICON = REPO_ROOT / "snap" / "gui" / "vocalinux.png"
 
 
 @pytest.fixture(scope="module")
@@ -135,6 +136,8 @@ def test_snap_gui_assets_exist() -> None:
     assert "Exec=vocalinux" in desktop
     assert SNAP_ICON.is_file()
     assert SNAP_ICON.stat().st_size > 0
+    assert SNAP_STORE_ICON.is_file()
+    assert SNAP_STORE_ICON.stat().st_size > 0
 
 
 def test_packaging_readme_covers_store_strategy() -> None:
@@ -153,9 +156,16 @@ def test_packaging_readme_covers_store_strategy() -> None:
 
 def test_snapcraft_metadata_matches_project(snapcraft_doc: dict) -> None:
     """Keep store metadata aligned with AGPL + VocaHQ after org/license moves."""
-    assert snapcraft_doc.get("license") in {"AGPL-3.0", "AGPL-3.0-only", "AGPL-3.0-or-later"}
+    assert snapcraft_doc.get("license") == "AGPL-3.0-only"
     recipe = SNAPCRAFT_YAML.read_text(encoding="utf-8")
     assert "github.com/VocaHQ/vocalinux" in recipe
     assert "github.com/jatinkrmalik/vocalinux" not in recipe
     assert str(snapcraft_doc.get("version")) == _app_version_from_source()
     assert snapcraft_doc.get("adopt-info") == "vocalinux"
+    assert snapcraft_doc.get("website") == "https://vocalinux.com"
+    assert snapcraft_doc.get("icon") == "snap/gui/vocalinux.png"
+    assert snapcraft_doc.get("summary") == "Free offline voice dictation for Linux"
+    description = snapcraft_doc.get("description") or ""
+    assert "No Voca account" in description
+    assert "too large for the snap" in description
+    assert "sudo snap connect vocalinux:raw-input" in description

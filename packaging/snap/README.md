@@ -58,8 +58,9 @@ Do **not** run `snapcraft register vocalinux`.
    snapcraft release vocalinux N stable
    ```
    Or one-shot edge: `snapcraft upload --release=edge vocalinux_*.snap`.
-4. Update Store listing metadata to match this recipe: **AGPL-3.0** license,
-   VocaHQ links (`https://github.com/VocaHQ/vocalinux`), screenshots, summary.
+4. Keep Store listing metadata in sync with `snap/snapcraft.yaml`
+   (summary, description, `AGPL-3.0-only`, website `https://vocalinux.com`,
+   Store icon `snap/gui/vocalinux.png`).
 5. Desktop QA on Ubuntu: tray, mic, model download, type into gedit/browser;
    optional `sudo snap connect vocalinux:raw-input` for hotkeys.
 6. Flip README/INSTALL copy from “edge-only / not on stable yet” once `stable`
@@ -179,7 +180,7 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 - [ ] `snapcraft upload` → `release … edge` (replace rev 6 / 0.14.0-beta)
 - [ ] `snapcraft release … candidate` and install `--candidate` for QA
 - [ ] Verify: tray, mic, model download, type into gedit/browser; raw-input if testing hotkeys
-- [ ] Listing metadata: AGPL-3.0, VocaHQ URLs, screenshots current
+- [ ] Listing metadata matches snapcraft.yaml (summary/description/icon, AGPL-3.0-only)
 - [ ] `snapcraft release … stable` when candidate QA passes
 - [ ] README/INSTALL: document `snap install vocalinux` once stable is current
 
@@ -187,7 +188,7 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 
 **Already automated / in-repo:**
 
-1. `snap/snapcraft.yaml` (strict, gnome extension, plugs, ALSA→Pulse, version from `version.py` = 0.16.2 + AGPL metadata)
+1. `snap/snapcraft.yaml` (strict, gnome extension, plugs, ALSA→Pulse, version from `version.py` = 0.16.2; listing summary/description/icon match the Snap Store)
 2. GUI assets under `snap/gui/` + ALSA conf under `snap/local/`
 3. Structural CI coverage via `tests/test_snap_packaging.py`
 4. Runtime helpers: `raw-input` hints, evdev `/proc` fallback, staged `wtype` + `paplay`
@@ -200,7 +201,7 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 3. `snapcraft upload vocalinux_0.16.2_*.snap` → note revision **N**
 4. `snapcraft release vocalinux N edge` (supersede store 0.14.0-beta rev 6)
 5. `snapcraft release vocalinux N candidate` → `sudo snap install vocalinux --candidate` QA
-6. Update listing at https://snapcraft.io/vocalinux/listing (AGPL-3.0, screenshots, links)
+6. Confirm listing at https://snapcraft.io/vocalinux matches snapcraft.yaml metadata
 7. `snapcraft release vocalinux N stable` after QA
 8. Optional: export token for CI edge publishes later
 

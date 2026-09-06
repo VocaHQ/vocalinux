@@ -16,34 +16,30 @@ version: "0.16.2"
 adopt-info: vocalinux
 summary: Free offline voice dictation for Linux
 description: |
-  Vocalinux is free, AGPL-3.0 voice typing for Linux. Dictate into almost any
-  application using fully offline speech recognition.
+  Vocalinux is free voice typing for Linux. Hold a shortcut or toggle dictation, and text lands in almost any app on X11 or Wayland.
 
-  This snap ships the default whisper.cpp engine path plus VOSK (from project
-  dependencies). The optional OpenAI Whisper / PyTorch stack is not bundled
-  (large CUDA/torch footprint).
+  Speech recognition runs on your machine after you download a model. No Voca account. No cloud transcription on the default path.
+
+  This snap ships the whisper.cpp engine plus VOSK. The optional OpenAI Whisper / PyTorch stack is not bundled (too large for the snap).
 
   Features:
-    - System tray control and GTK 3 settings UI
-    - Offline dictation (speech models download on first use over the network)
-    - Microphone capture and short audio feedback tones
-    - Text injection via xdotool/xsel (X11 and XWayland) and IBus when available
+    - System tray control and GTK settings
+    - Offline dictation (models download on first use)
+    - Microphone capture and short feedback tones
+    - Text injection via xdotool/xsel (X11/XWayland) and IBus when available
 
-  Sandbox notes (strict confinement):
-    - Global keyboard shortcuts need the raw-input interface (reads /dev/input).
-      Connect once after install if shortcuts do not work:
-        sudo snap connect vocalinux:raw-input
-      Until then, use the system tray to start/stop dictation.
-    - After install, connect the microphone if not auto-connected:
-        sudo snap connect vocalinux:audio-record
-    - Config and models live under ~/snap/vocalinux/ (snap-private HOME).
+  Sandbox notes:
+    - Global hotkeys need: sudo snap connect vocalinux:raw-input
+    - Microphone may need: sudo snap connect vocalinux:audio-record
+    - Config and models live under ~/snap/vocalinux/
 
 grade: devel
 confinement: strict
-license: AGPL-3.0
+license: AGPL-3.0-only
+icon: snap/gui/vocalinux.png
 contact: https://github.com/VocaHQ/vocalinux/issues
 issues: https://github.com/VocaHQ/vocalinux/issues
-website: https://github.com/VocaHQ/vocalinux
+website: https://vocalinux.com
 source-code: https://github.com/VocaHQ/vocalinux
 donation: https://github.com/sponsors/jatinkrmalik
 
