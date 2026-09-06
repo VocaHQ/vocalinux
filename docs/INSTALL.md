@@ -140,6 +140,9 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue
 [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`.
+Tagged `v*` releases build and publish to Snap Store `edge` and `candidate`
+via CI when `SNAPCRAFT_STORE_CREDENTIALS` is set. `stable` is still a
+manual promote after QA.
 
 ```bash
 sudo snap install vocalinux --edge

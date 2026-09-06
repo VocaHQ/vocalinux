@@ -356,6 +356,40 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: 'Release ${{ github.ref_name }}'
 
+  # Store-only: do not attach the .snap to the GitHub Release. grade: devel in
+  # snap/snapcraft.yaml forbids stable; promote candidate → stable after QA.
+  # Secret: SNAPCRAFT_STORE_CREDENTIALS (snapcraft export-login).
+  publish-snap:
+    name: Build and Publish Snap
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Require Snap Store credentials
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap"
+            exit 1
+          fi
+
+      - name: Build snap
+        id: build
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+
+      - name: Publish snap to edge and candidate
+        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        with:
+          snap: ${{ steps.build.outputs.snap }}
+          release: edge,candidate
+
   deploy-website:
     name: Deploy Website
     runs-on: ubuntu-latest

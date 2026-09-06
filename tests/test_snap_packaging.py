@@ -28,3 +28,19 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     assert DESKTOP_FILE.is_file()
     assert SNAP_PNG.is_file()
     assert SNAP_PNG.stat().st_size > 0
+
+
+def test_release_publishes_snap_to_edge_and_candidate() -> None:
+    """v* tags must ship the snap to the store, not attach it to GitHub."""
+    text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "  publish-snap:\n" in text
+    job = text.split("  publish-snap:\n", 1)[1].split("\n  deploy-website:", 1)[0]
+    assert "needs: build-and-release" in job
+    assert "snapcore/action-build@" in job
+    assert "snapcore/action-publish@" in job
+    assert "release: edge,candidate" in job
+    assert "release: stable" not in job
+    assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap" in job
+    assert "gh release upload" not in job
+    assert "action-gh-release" not in job
+    assert "upload-artifact" not in job
