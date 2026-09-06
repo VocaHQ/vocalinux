@@ -168,18 +168,36 @@ def test_a_real_edit_applies_and_saves(settings_dialog, dialog_class):
     dialog._auto_apply_settings.assert_called_once()
 
 
-def test_switching_modes_shows_one_group_and_hides_the_other(settings_dialog, dialog_class):
+def test_the_simple_questions_stay_visible_when_advanced_is_revealed(settings_dialog, dialog_class):
+    """Advanced adds detail under the summary; it does not replace it."""
     dialog = Mock()
-    dialog._get_settings_mode.return_value = "simple"
-    dialog_class._update_settings_mode_visibility(dialog)
-    dialog.simple_group.show_all.assert_called_once()
-    dialog.engine_group.hide.assert_called_once()
+    dialog.advanced_toggle.get_active.return_value = True
 
+    dialog_class._update_advanced_visibility(dialog)
+
+    dialog.simple_group.show_all.assert_called_once()
+    dialog.advanced_revealer.set_reveal_child.assert_called_once_with(True)
+
+
+def test_advanced_starts_collapsed(settings_dialog, dialog_class):
     dialog = Mock()
-    dialog._get_settings_mode.return_value = "advanced"
-    dialog_class._update_settings_mode_visibility(dialog)
-    dialog.engine_group.show_all.assert_called_once()
-    dialog.simple_group.hide.assert_called_once()
+    dialog.advanced_toggle.get_active.return_value = False
+
+    dialog_class._update_advanced_visibility(dialog)
+
+    dialog.simple_group.show_all.assert_called_once()
+    dialog.advanced_revealer.set_reveal_child.assert_called_once_with(False)
+
+
+def test_toggling_advanced_is_remembered(settings_dialog, dialog_class):
+    dialog = Mock()
+    dialog._initializing = False
+    dialog.advanced_toggle.get_active.return_value = True
+
+    dialog_class._on_advanced_toggled(dialog)
+
+    dialog.config_manager.set.assert_called_once_with("speech_recognition", "show_advanced", True)
+    dialog._update_advanced_visibility.assert_called_once()
 
 
 def test_opening_simple_mode_describes_the_current_model_instead_of_resetting_it(

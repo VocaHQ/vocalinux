@@ -1845,7 +1845,8 @@ class SettingsDialog(Gtk.Dialog):
         # Set while simple mode steers the advanced controls, so their own change
         # handlers do not each trigger a separate engine reload.
         self._simple_driving = False
-        self.settings_mode_combo = None
+        self.advanced_toggle = None
+        self.advanced_revealer = None
         self.simple_group = None
         self.engine_group = None
         self._processing_language_change = (
@@ -1962,7 +1963,7 @@ class SettingsDialog(Gtk.Dialog):
         # Build UI sections into their topic pages
         self._build_shortcuts_section()
         self._build_recognition_section()
-        self._build_settings_mode_section()
+        self._build_simple_model_section()
         self._build_engine_section()
         self._build_remote_server_section()
         self._build_audio_section()
@@ -1999,9 +2000,8 @@ class SettingsDialog(Gtk.Dialog):
 
         # Restore the saved mode and point the simple questions at the live model
         # before the first visibility pass, so nothing flashes the wrong group.
-        saved_mode = self.config_manager.get("speech_recognition", "settings_mode", "simple")
-        self.settings_mode_combo.set_active_id(
-            saved_mode if saved_mode in ("simple", "advanced") else "simple"
+        self.advanced_toggle.set_active(
+            bool(self.config_manager.get("speech_recognition", "show_advanced", False))
         )
         self._sync_simple_from_advanced()
 
@@ -2857,24 +2857,8 @@ class SettingsDialog(Gtk.Dialog):
         self._tone_preview_kind = "stop" if kind == "start" else "start"
         self._sync_tone_preview_button(tone_id)
 
-    def _build_settings_mode_section(self):
-        """Build the mode switch and the simple-mode questions (#779)."""
-        mode_group = PreferencesGroup(title="Speech Model")
-
-        self.settings_mode_combo = Gtk.ComboBoxText()
-        _style_combo(self.settings_mode_combo)
-        _prevent_scroll_on_hover(self.settings_mode_combo)
-        self.settings_mode_combo.append("simple", "Simple")
-        self.settings_mode_combo.append("advanced", "Advanced")
-        mode_row = PreferenceRow(
-            title="Setup",
-            subtitle="Simple picks the model for you; Advanced exposes every control",
-            widget=self.settings_mode_combo,
-            keywords=("simple", "advanced", "mode"),
-        )
-        mode_group.add_row(mode_row)
-        self.content_box.pack_start(mode_group, False, False, 0)
-
+    def _build_simple_model_section(self):
+        """Build the simple questions and the Advanced reveal (#779)."""
         self.simple_group = PreferencesGroup(title="What you dictate")
 
         # Searchable, like the advanced row: over thirty languages is too many to
@@ -2926,9 +2910,26 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.simple_group.add_row(self.simple_priority_row)
 
+        # Advanced is an addition, not a separate mode: the detailed controls slide
+        # out underneath and keep showing what the simple answers resolved to.
+        self.advanced_toggle = Gtk.Switch()
+        self.advanced_toggle.set_valign(Gtk.Align.CENTER)
+        self.advanced_row = PreferenceRow(
+            title="Advanced",
+            subtitle="Show engine, model size and specialization",
+            widget=self.advanced_toggle,
+            keywords=("advanced", "engine", "model", "specialization"),
+        )
+        self.simple_group.add_row(self.advanced_row)
+
         self.content_box.pack_start(self.simple_group, False, False, 0)
 
-        self.settings_mode_combo.connect("changed", self._on_settings_mode_changed)
+        self.advanced_revealer = Gtk.Revealer()
+        self.advanced_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+        self.advanced_revealer.set_transition_duration(200)
+        self.content_box.pack_start(self.advanced_revealer, False, False, 0)
+
+        self.advanced_toggle.connect("notify::active", self._on_advanced_toggled)
         self.simple_language_combo.connect("changed", self._on_simple_choice_changed)
         self.simple_multi_switch.connect("notify::active", self._on_simple_choice_changed)
         self.simple_priority_combo.connect("changed", self._on_simple_choice_changed)
@@ -2993,7 +2994,8 @@ class SettingsDialog(Gtk.Dialog):
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
         group.add_row(self.language_row)
 
-        self.content_box.pack_start(group, False, False, 0)
+        # Lives inside the revealer built above, so the Advanced switch slides it out.
+        self.advanced_revealer.add(group)
 
         # Model info card (shown below the group)
         self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -5538,11 +5540,6 @@ class SettingsDialog(Gtk.Dialog):
             self._processing_language_change = False
         return False
 
-    def _get_settings_mode(self) -> str:
-        """Return the active mode, defaulting to simple."""
-        mode = self.settings_mode_combo.get_active_id() if self.settings_mode_combo else None
-        return mode if mode in ("simple", "advanced") else "simple"
-
     def _sync_simple_from_advanced(self):
         """Point the simple questions at the configuration that is actually live.
 
@@ -5595,16 +5592,14 @@ class SettingsDialog(Gtk.Dialog):
         self._populate_whispercpp_variant_options(size, variant)
         self.model_variant_combo.set_active_id(variant)
 
-    def _on_settings_mode_changed(self, _combo):
-        """Persist the mode and reshape the page."""
+    def _on_advanced_toggled(self, *_args):
+        """Slide the detailed controls in or out and remember the choice."""
         if self._initializing:
             return
-        mode = self._get_settings_mode()
-        self.config_manager.set("speech_recognition", "settings_mode", mode)
+        expanded = self.advanced_toggle.get_active()
+        self.config_manager.set("speech_recognition", "show_advanced", expanded)
         self.config_manager.save_settings()
-        if mode == "simple":
-            self._sync_simple_from_advanced()
-        self._update_settings_mode_visibility()
+        self._update_advanced_visibility()
 
     def _on_simple_choice_changed(self, *_args):
         """React to one of the simple questions changing.
@@ -5656,15 +5651,18 @@ class SettingsDialog(Gtk.Dialog):
     def _on_simple_language_entry_focus_out(self, _entry, _event):
         return self._commit_or_restore_simple_language_entry()
 
-    def _update_settings_mode_visibility(self):
-        """Show the group the active mode calls for."""
-        simple = self._get_settings_mode() == "simple"
-        if simple:
-            self.simple_group.show_all()
-            self.engine_group.hide()
-        else:
-            self.simple_group.hide()
+    def _update_advanced_visibility(self):
+        """Reveal or hide the detailed controls.
+
+        The simple questions stay on screen either way: Advanced adds detail rather
+        than replacing the summary, so the detailed rows double as a readout of what
+        the simple answers resolved to.
+        """
+        self.simple_group.show_all()
+        expanded = self.advanced_toggle.get_active()
+        if expanded:
             self.engine_group.show_all()
+        self.advanced_revealer.set_reveal_child(expanded)
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
@@ -5688,7 +5686,7 @@ class SettingsDialog(Gtk.Dialog):
             self.remote_server_group.hide()
             self.remote_status_label.hide()
 
-        self._update_settings_mode_visibility()
+        self._update_advanced_visibility()
 
         self._update_model_info()
         self._refresh_unused_downloads()
