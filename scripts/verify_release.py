@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""Check that a published release verifies as published.
+
+The guards in tests/ read workflow files, so none of them can see what a
+release looks like once its run has finished. This reads the release:
+
+  manifest    SHA256SUMS is attached, lists every other asset, and its digests
+              match the bytes GitHub stores
+  provenance  every artifact the manifest lists resolves in the attestations API
+  notes       the body still tells users how to check both
+  pypi        the wheel and the sdist on PyPI are the bytes on the release
+
+Nothing is downloaded: GitHub reports a sha256 for every asset it stores, and an
+asset it reports none for fails rather than being skipped.
+
+Usage: scripts/verify_release.py [tag]   (default: the latest stable release)
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+MANIFEST = "SHA256SUMS"
+PYPI_PROJECT = "vocalinux"
+PYPI_SUFFIXES = (".whl", ".tar.gz")
+PYPI_TIMEOUT = 30
+
+#: Both commands the notes should hand the user, plus the file they act on.
+NOTES_MUST_MENTION = ("sha256sum -c", "gh attestation verify", MANIFEST)
+
+
+def _gh(*args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(["gh", *args], capture_output=True, text=True)
+
+
+def _gh_ok(*args: str) -> str:
+    done = _gh(*args)
+    if done.returncode != 0:
+        raise SystemExit(f"gh {' '.join(args)} failed:\n{done.stderr.strip()}")
+    return done.stdout
+
+
+def repo_slug() -> str:
+    slug = os.environ.get("GITHUB_REPOSITORY")
+    return slug or json.loads(_gh_ok("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
+
+
+def fetch_release(tag: str | None) -> dict:
+    """The latest stable release, or the one named by tag. `0.16.2` is accepted
+    as well as `v0.16.2`, since that is how the version is usually written."""
+    fields = "tagName,body,isDraft,isPrerelease,assets"
+    candidates = [tag] + ([f"v{tag}"] if tag and tag[0].isdigit() else [])
+    for candidate in candidates:
+        done = _gh("release", "view", *([candidate] if candidate else []), "--json", fields)
+        if done.returncode == 0:
+            return json.loads(done.stdout)
+    named = " or ".join(c for c in candidates if c) or "the latest stable release"
+    raise SystemExit(f"no release found for {named}\nusage: verify_release.py [tag], e.g. v0.16.2")
+
+
+def parse_manifest(text: str) -> dict[str, str]:
+    """`<digest>  <name>` per line, as sha256sum writes and reads it."""
+    entries = {}
+    for number, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            raise ValueError(f"{MANIFEST} line {number} is not `<digest>  <name>`: {line!r}")
+        # Binary mode marks the name with a leading star, which is not the name.
+        entries[parts[1].strip().lstrip("*")] = parts[0].strip().lower()
+    return entries
+
+
+def asset_digests(assets: list[dict]) -> tuple[dict[str, str], list[str]]:
+    """(name -> sha256, names GitHub reports no digest for)."""
+    digests: dict[str, str] = {}
+    undigested: list[str] = []
+    for asset in assets:
+        raw = (asset.get("digest") or "").strip().lower()
+        if raw.startswith("sha256:"):
+            digests[asset["name"]] = raw.split(":", 1)[1]
+        else:
+            undigested.append(asset["name"])
+    return digests, undigested
+
+
+def check_manifest(stored: dict, manifest: dict, undigested: list) -> list[str]:
+    """Both directions: a missing line reads as tampering to anyone running
+    `sha256sum -c`, and an extra one is a promise nothing keeps."""
+    covered, listed = set(stored) - {MANIFEST}, set(manifest)
+    return (
+        [f"GitHub reports no digest for {name}" for name in undigested if name != MANIFEST]
+        + [f"{name} is published but absent from {MANIFEST}" for name in sorted(covered - listed)]
+        + [f"{MANIFEST} lists {name}, which is not an asset" for name in sorted(listed - covered)]
+        + [
+            f"{name}: {MANIFEST} says {manifest[name]}, GitHub stores {stored[name]}"
+            for name in sorted(covered & listed)
+            if manifest[name] != stored[name]
+        ]
+    )
+
+
+def check_provenance(slug: str, manifest: dict[str, str]) -> list[str]:
+    """The manifest is the subject-checksums input, so it is not a subject itself."""
+    problems = []
+    for name, digest in sorted(manifest.items()):
+        done = _gh("api", f"/repos/{slug}/attestations/sha256:{digest}")
+        try:
+            bundles = json.loads(done.stdout).get("attestations") if done.returncode == 0 else None
+        except json.JSONDecodeError:
+            bundles = None
+        if not bundles:
+            problems.append(f"{name} has no build provenance")
+    return problems
+
+
+def check_notes(body: str) -> list[str]:
+    return [f"the notes never mention `{p}`" for p in NOTES_MUST_MENTION if p not in body]
+
+
+def check_pypi(version: str, stored: dict[str, str]) -> list[str]:
+    # Imported here, not at module scope: urllib.error reaches tempfile through
+    # urllib.response, and two tests in this repository leave a MagicMock in
+    # sys.modules["tempfile"], which makes a late import a metaclass conflict.
+    import urllib.error
+    import urllib.request
+
+    expected = {n: d for n, d in stored.items() if n.endswith(PYPI_SUFFIXES)}
+    if not expected:
+        return [f"the release carries no {' or '.join(PYPI_SUFFIXES)} to compare"]
+    try:
+        url = f"https://pypi.org/pypi/{PYPI_PROJECT}/{version}/json"
+        with urllib.request.urlopen(url, timeout=PYPI_TIMEOUT) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        if error.code == 404:
+            return [f"PyPI has no {PYPI_PROJECT} {version}"]
+        raise
+    published = {i["filename"]: i["digests"]["sha256"].lower() for i in payload["urls"]}
+
+    problems = []
+    for name, digest in sorted(expected.items()):
+        if name not in published:
+            problems.append(f"{name} is on the release but not on PyPI")
+        elif published[name] != digest:
+            problems.append(f"{name}: PyPI serves {published[name]}, the release serves {digest}")
+    return problems
+
+
+def report(results: list[tuple[str, list[str]]]) -> bool:
+    width = max(len(label) for label, _ in results)
+    for label, problems in results:
+        print(f"  {label.ljust(width)}  {'FAIL' if problems else 'PASS'}")
+        for problem in problems:
+            print(f"  {' ' * width}    {problem}")
+    return not any(problems for _, problems in results)
+
+
+def main(argv: list[str]) -> int:
+    tag = argv[1] if len(argv) > 1 and argv[1] else None
+    slug = repo_slug()
+    release = fetch_release(tag)
+
+    if release["isDraft"] or release["isPrerelease"]:
+        # Nightlies never go through publish-checksums and carry no manifest.
+        print(f"{release['tagName']} is not a published stable release")
+        return 1
+
+    tag = release["tagName"]
+    stored, undigested = asset_digests(release["assets"])
+    print(f"Verifying {slug} {tag}, {len(release['assets'])} assets\n")
+
+    if MANIFEST not in stored and MANIFEST not in undigested:
+        results = [("manifest", [f"{tag} has no {MANIFEST} attached"])]
+    else:
+        text = _gh_ok("release", "download", tag, "--pattern", MANIFEST, "--output", "-")
+        manifest = parse_manifest(text)
+        results = [
+            ("manifest", check_manifest(stored, manifest, undigested)),
+            ("provenance", check_provenance(slug, manifest)),
+            ("notes", check_notes(release["body"])),
+            ("pypi", check_pypi(tag.lstrip("v"), stored)),
+        ]
+
+    ok = report(results)
+    print(f"\n{tag} {'verifies' if ok else 'does not verify'} as published")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

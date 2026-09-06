@@ -122,6 +122,12 @@ aur-gate:
     fi
     docker run "${ARGS[@]}" archlinux:latest bash "$PWD/packaging/aur/build-test.sh"
 
+# Check that a published release verifies as published: manifest, provenance,
+# notes and PyPI digests. Needs gh, downloads nothing.
+# Usage: `just verify-release` for the latest, or `just verify-release v0.16.2`
+verify-release tag="":
+    python3 scripts/verify_release.py {{tag}}
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
 # when you want newer CPU builds (torchaudio on the CPU index lags torch).

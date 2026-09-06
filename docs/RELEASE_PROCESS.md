@@ -79,7 +79,15 @@ Install `just` from https://just.systems or the distro package `just`.
 - [ ] Push branch and create PR
 - [ ] After PR merge, create tag: `git tag -a vX.Y.Z-PHASE -m "Release X.Y.Z-PHASE"`
 - [ ] Push tag: `git push origin vX.Y.Z-PHASE`
+
+### After the release run finishes
+- [ ] Run `just verify-release` - the published release verifies as published
+- [ ] Re-run it after any hand edit to the release: attaching an asset, or rewriting the notes
 ```
+
+`verify-release.yml` runs the same check when the release workflow finishes.
+It cannot see a hand edit made afterwards, which is how every v0.16.2 defect
+arrived, so run it yourself after touching a published release.
 
 ## Detailed Release Steps
 
@@ -158,7 +166,12 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
 7. `## Thanks` — external PR authors and issue reporters by `@handle`
 8. `## Install / Upgrade` — `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
-9. Footer compare link: `https://github.com/VocaHQ/vocalinux/compare/vPREV...vX.Y.Z`
+9. `### Verifying what you downloaded` (required, and easy to lose). `release.yml`
+   generates it, with `sha256sum -c --ignore-missing SHA256SUMS` and
+   `gh attestation verify`. A hand-written body replaces the generated one, so carry
+   this block over deliberately. v0.16.2 published a checksum manifest and build
+   provenance and mentioned neither, so nothing a user reads told them either existed
+10. Footer compare link: `https://github.com/VocaHQ/vocalinux/compare/vPREV...vX.Y.Z`
 
 #### Include / exclude
 
