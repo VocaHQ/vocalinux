@@ -12,7 +12,7 @@ import re
 import select
 import threading
 import time
-from typing import Optional
+from typing import Optional, TextIO
 
 # Try to import evdev
 try:
@@ -143,7 +143,7 @@ def find_keyboard_devices() -> list[str]:
         return fallback
 
 
-def _parse_keyboard_devices_from_proc(proc_file) -> list[str]:
+def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices."""
     keyboard_devices: list[str] = []
     current_device = None
@@ -186,8 +186,10 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
     for path in paths:
         try:
             device = InputDevice(path)
-            capabilities = device.capabilities()
-            device.close()
+            try:
+                capabilities = device.capabilities()
+            finally:
+                device.close()
         except (OSError, IOError, TypeError, ValueError):
             continue
 

@@ -9,7 +9,7 @@
 # See packaging/snap/README.md for full strategy, plugs, and store publish steps.
 
 name: vocalinux
-base: core22
+base: core24  # Ubuntu 24.04 / Python 3.12 (project requires-python >=3.11)
 # Fallback version; live version is set from src/vocalinux/version.py via
 # adopt-info + craftctl set in the vocalinux part (required for craftctl).
 version: "0.16.2"
@@ -98,10 +98,10 @@ parts:
       - python3-dev
       - libdbus-1-dev
     stage-packages:
-      # Only extras not provided by the gnome-42 platform content snap.
+      # Only extras not provided by the gnome-46-2404 platform content snap.
       # Staging GTK/GLib/AppIndicator here duplicates the platform and can crash GI.
       - libportaudio2
-      - libasound2
+      - libasound2t64  # Ubuntu 24.04 / core24 name for libasound2
       - libasound2-data
       - libasound2-plugins # pcm/ctl pulse → host PulseAudio/PipeWire
       - pulseaudio-utils # paplay for start/stop UI sounds

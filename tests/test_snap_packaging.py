@@ -39,7 +39,8 @@ def _app_version_from_source() -> str:
 
 def test_snapcraft_yaml_exists_and_names_vocalinux(snapcraft_doc: dict) -> None:
     assert snapcraft_doc["name"] == "vocalinux"
-    assert snapcraft_doc["base"] in {"core22", "core24"}
+    # core24 ships Python 3.12; core22 is 3.10 and fails requires-python >=3.11.
+    assert snapcraft_doc["base"] == "core24"
     assert snapcraft_doc["confinement"] in {"strict", "classic", "devmode"}
 
 
