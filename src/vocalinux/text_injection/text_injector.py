@@ -1389,13 +1389,15 @@ class TextInjector:
 
     def _inject_via_clipboard_paste(self, text: str) -> bool:
         """
-        Inject text by copying to clipboard and simulating a paste with ydotool.
+        Inject text by copying to clipboard and simulating a paste chord.
 
         Ordinary text fields receive Ctrl+V. Terminal emulators typically bind
         paste to Ctrl+Shift+V, so auto-detect (or the Settings override) picks
         that chord instead. Workaround for ydotool's US-ASCII-only key events
-        (see issue #362). Saves the previous clipboard and restores it after a
-        short delay. Overlapping pastes share one restore target
+        (see issue #362). The chord itself is sent with wtype keysyms when
+        that tool is usable, otherwise with a layout-resolved ydotool keycode
+        for Latin 'v' (issue #787). Saves the previous clipboard and restores
+        it after a short delay. Overlapping pastes share one restore target
         (pre-first-injection content) and a generation counter so stale restore
         threads exit.
 
@@ -1424,13 +1426,16 @@ class TextInjector:
             self._clipboard_restore_generation += 1
             generation = self._clipboard_restore_generation
 
-        # Simulate paste via ydotool. Syntax differs by major version:
+        # Simulate paste. Prefer wtype keysyms (layout-independent) when that
+        # tool is usable; otherwise ydotool. ydotool syntax differs by version:
         # - 0.1.x (distro packages): named sequences, e.g. ctrl+v
-        # - 1.x (Flatpak build): keycode:value  (29=LEFTCTRL, 42=LEFTSHIFT, 47=V)
-        # Passing 1.x codes to 0.1.x does not paste; it types garbage (e.g. "2442").
+        # - 1.x (Flatpak build): keycode:value (29=LEFTCTRL, 42=LEFTSHIFT,
+        #   and the evdev code that produces Latin 'v' on the active layout —
+        #   KEY_V=47 only on QWERTY). Passing 1.x codes to 0.1.x does not
+        #   paste; it types garbage (e.g. "2442").
         try:
             use_terminal_paste = self._should_use_terminal_paste()
-            cmd = self._ydotool_ctrl_v_command(terminal=use_terminal_paste)
+            cmd = self._clipboard_paste_command(terminal=use_terminal_paste)
             logger.debug(
                 "Simulating %s paste with: %s",
                 "terminal" if use_terminal_paste else "standard",
@@ -1485,12 +1490,46 @@ class TextInjector:
 
         return True
 
-    # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_LEFTSHIFT=42, KEY_V=47.
-    _YDOTOOL_V1_CTRL_V = ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]
-    _YDOTOOL_V1_CTRL_SHIFT_V = ["ydotool", "key", "29:1", "42:1", "47:1", "47:0", "42:0", "29:0"]
-    # ydotool 0.1.x (common distro packages): named key sequences.
+    # ydotool 1.x (Flatpak pins v1.0.4): KEY_LEFTCTRL=29, KEY_LEFTSHIFT=42.
+    # KEY_V=47 is the QWERTY physical key; non-QWERTY layouts (e.g. de(neo))
+    # produce Latin 'v' on a different keycode and must not use 47 blindly.
+    _YDOTOOL_KEY_LEFTCTRL = 29
+    _YDOTOOL_KEY_LEFTSHIFT = 42
+    _YDOTOOL_KEY_V_QWERTY = 47
+    # ydotool 0.1.x (common distro packages): named key sequences. ``v`` here
+    # is physical KEY_V, so non-QWERTY paste uses the linux name of the key
+    # that actually produces 'v' (see _ydotool_ctrl_v_command).
     _YDOTOOL_LEGACY_CTRL_V = ["ydotool", "key", "ctrl+v"]
     _YDOTOOL_LEGACY_CTRL_SHIFT_V = ["ydotool", "key", "ctrl+shift+v"]
+    # Kernel KEY_* letter names are QWERTY positions (KEY_W=17), not characters.
+    _EVDEV_LETTER_KEY_NAMES = {
+        16: "q",
+        17: "w",
+        18: "e",
+        19: "r",
+        20: "t",
+        21: "y",
+        22: "u",
+        23: "i",
+        24: "o",
+        25: "p",
+        30: "a",
+        31: "s",
+        32: "d",
+        33: "f",
+        34: "g",
+        35: "h",
+        36: "j",
+        37: "k",
+        38: "l",
+        44: "z",
+        45: "x",
+        46: "c",
+        47: "v",
+        48: "b",
+        49: "n",
+        50: "m",
+    }
 
     def _ydotool_uses_legacy_named_keys(self) -> bool:
         """Return True when the installed ydotool expects named key sequences."""
@@ -1532,11 +1571,131 @@ class TextInjector:
         self._ydotool_legacy_named_keys = uses_legacy
         return uses_legacy
 
+    def _evdev_keycode_for_paste_v(self) -> int:
+        """Return the evdev keycode that produces Latin 'v' on the active layout.
+
+        Falls back to QWERTY KEY_V (47) when the layout map is missing or has
+        no 'v' entry. LEFTCTRL/LEFTSHIFT are not remapped.
+        """
+        try:
+            from ..ui.keyboard_backends.layout_key_map import get_active_char_to_evdev_map
+
+            char_map = get_active_char_to_evdev_map()
+        except Exception as exc:
+            logger.debug("Could not load layout map for paste 'v': %s", exc)
+            return self._YDOTOOL_KEY_V_QWERTY
+        if char_map and "v" in char_map:
+            try:
+                return int(char_map["v"])
+            except (TypeError, ValueError):
+                logger.debug("Ignoring non-integer layout map entry for 'v': %r", char_map["v"])
+        return self._YDOTOOL_KEY_V_QWERTY
+
+    def _linux_key_name_for_evdev_code(self, code: int) -> Optional[str]:
+        """Return the ydotool 0.1.x key name for an evdev keycode.
+
+        Named ``ctrl+v`` is physical KEY_V. On Neo, Latin 'v' is KEY_W (17), so
+        the legacy dialect must emit ``ctrl+w``. Names come from evdev.ecodes
+        when available; kernel KEY_* letter positions are the fallback.
+        """
+        try:
+            from evdev import ecodes
+
+            name = None
+            keys = getattr(ecodes, "keys", None)
+            if isinstance(keys, dict):
+                name = keys.get(code)
+            if name is None:
+                key_map = getattr(ecodes, "KEY", None)
+                if isinstance(key_map, dict):
+                    name = key_map.get(code)
+            if name is None:
+                bytype = getattr(ecodes, "bytype", None)
+                ev_key = getattr(ecodes, "EV_KEY", None)
+                if isinstance(bytype, dict) and ev_key is not None:
+                    name = bytype.get(ev_key, {}).get(code)
+            if isinstance(name, (list, tuple)):
+                name = next(
+                    (item for item in name if isinstance(item, str) and item.startswith("KEY_")),
+                    None,
+                )
+            if isinstance(name, str) and name.startswith("KEY_") and len(name) > 4:
+                return name[4:].lower()
+        except Exception as exc:
+            logger.debug("evdev.ecodes lookup failed for keycode %s: %s", code, exc)
+        return self._EVDEV_LETTER_KEY_NAMES.get(code)
+
+    def _ydotool_v1_paste_command(self, v_code: int, *, terminal: bool) -> list:
+        """ydotool 1.x press/release sequence for Ctrl(+Shift)+the key that types 'v'."""
+        ctrl = self._YDOTOOL_KEY_LEFTCTRL
+        shift = self._YDOTOOL_KEY_LEFTSHIFT
+        if terminal:
+            return [
+                "ydotool",
+                "key",
+                f"{ctrl}:1",
+                f"{shift}:1",
+                f"{v_code}:1",
+                f"{v_code}:0",
+                f"{shift}:0",
+                f"{ctrl}:0",
+            ]
+        return ["ydotool", "key", f"{ctrl}:1", f"{v_code}:1", f"{v_code}:0", f"{ctrl}:0"]
+
+    def _wtype_usable_for_paste(self) -> bool:
+        """Return True when wtype can send a layout-independent paste keysym.
+
+        Paste may use wtype even when the typing backend is ydotool. KDE Plasma
+        already treats wtype as an unreliable virtual-keyboard path, so skip it
+        there unless this session already selected wtype (startup probe passed).
+        """
+        cached = getattr(self, "_wtype_paste_usable", None)
+        if cached is not None:
+            return bool(cached)
+
+        if getattr(self, "wayland_tool", None) == "wtype":
+            self._wtype_paste_usable = True
+            return True
+        if not shutil.which("wtype"):
+            self._wtype_paste_usable = False
+            return False
+        if _is_kde_plasma_session():
+            logger.debug("Skipping wtype paste chord on KDE Plasma (wtype is unreliable there)")
+            self._wtype_paste_usable = False
+            return False
+        try:
+            result = self._probe_wtype_support()
+            error_output = (result.stderr or "").lower()
+            usable = result.returncode == 0 and "compositor does not support" not in error_output
+        except Exception as exc:
+            logger.debug("wtype paste probe failed: %s", exc)
+            usable = False
+        self._wtype_paste_usable = usable
+        return usable
+
+    def _wtype_paste_command(self, *, terminal: bool = False) -> list:
+        """wtype argv that types Latin 'v' as a keysym, with Ctrl (and Shift)."""
+        if terminal:
+            return ["wtype", "-M", "ctrl", "-M", "shift", "v"]
+        return ["wtype", "-M", "ctrl", "v"]
+
+    def _clipboard_paste_command(self, *, terminal: bool = False) -> list:
+        """Return argv for the clipboard paste chord.
+
+        Prefers wtype keysyms when that tool is usable (layout-independent).
+        Otherwise uses ydotool with a layout-resolved keycode for 'v'.
+        """
+        if self._wtype_usable_for_paste():
+            return self._wtype_paste_command(terminal=terminal)
+        return self._ydotool_ctrl_v_command(terminal=terminal)
+
     def _ydotool_ctrl_v_command(self, *, terminal: bool = False) -> list:
         """Return argv to simulate paste for the installed ydotool.
 
-        ydotool 0.1.x expects ``key ctrl+v`` or ``key ctrl+shift+v``. ydotool 1.x
-        expects evdev press/release keycodes (29=LEFTCTRL, 42=LEFTSHIFT, 47=V).
+        ydotool 0.1.x expects ``key ctrl+v`` or ``key ctrl+shift+v`` (physical
+        KEY_V). ydotool 1.x expects evdev press/release keycodes (29=LEFTCTRL,
+        42=LEFTSHIFT, plus the key that produces Latin 'v' on the active
+        layout — 47 only on QWERTY).
 
         Flatpak always ships pinned ydotool 1.0.4 under /app, so we use the
         keycode form there without probing. Host installs probe ``key --help``.
@@ -1546,14 +1705,42 @@ class TextInjector:
         if cached is not None:
             return list(cached)
 
+        v_code = self._evdev_keycode_for_paste_v()
         if self._ydotool_uses_legacy_named_keys():
-            cmd = (
-                list(self._YDOTOOL_LEGACY_CTRL_SHIFT_V)
-                if terminal
-                else list(self._YDOTOOL_LEGACY_CTRL_V)
-            )
+            if v_code == self._YDOTOOL_KEY_V_QWERTY:
+                cmd = (
+                    list(self._YDOTOOL_LEGACY_CTRL_SHIFT_V)
+                    if terminal
+                    else list(self._YDOTOOL_LEGACY_CTRL_V)
+                )
+            else:
+                key_name = self._linux_key_name_for_evdev_code(v_code)
+                if key_name:
+                    token = f"ctrl+shift+{key_name}" if terminal else f"ctrl+{key_name}"
+                    cmd = ["ydotool", "key", token]
+                    logger.info(
+                        "ydotool 0.1.x paste uses %s (layout 'v' is evdev %s, not KEY_V=47)",
+                        token,
+                        v_code,
+                    )
+                else:
+                    # Named ctrl+v would hit the wrong physical key. Prefer the
+                    # 1.x keycode form; some builds accept it, and 0.1.x garbage
+                    # is still better documented than silently opening Print.
+                    cmd = self._ydotool_v1_paste_command(v_code, terminal=terminal)
+                    logger.warning(
+                        "ydotool 0.1.x has no name for layout 'v' keycode %s; "
+                        "sending 1.x-style keycodes %s",
+                        v_code,
+                        cmd,
+                    )
         else:
-            cmd = list(self._YDOTOOL_V1_CTRL_SHIFT_V) if terminal else list(self._YDOTOOL_V1_CTRL_V)
+            cmd = self._ydotool_v1_paste_command(v_code, terminal=terminal)
+            if v_code != self._YDOTOOL_KEY_V_QWERTY:
+                logger.info(
+                    "ydotool paste uses evdev %s for Latin 'v' (not QWERTY KEY_V=47)",
+                    v_code,
+                )
 
         setattr(self, cache_attr, cmd)
         return list(cmd)
@@ -1668,13 +1855,20 @@ class TextInjector:
         # modify typed keys.
         self._wait_for_modifiers_released()
 
-        # Prefer clipboard + Ctrl+V for ydotool: one paste, layout-independent.
+        # Prefer clipboard + paste chord for ydotool: one chord instead of
+        # per-character evdev keycodes (those follow physical US key positions
+        # and scramble text on other layouts). The paste chord is not
+        # automatically layout-safe: wtype keysyms are, ydotool keycodes are
+        # only after resolving Latin 'v' for the active layout (#787).
         # Flatpak ships wl-copy (--socket=wayland) so native Wayland apps get
         # bulk paste; character-by-character type is only a fallback.
         if self.wayland_tool == "ydotool":
             if not self._ensure_ydotoold():
                 logger.warning("ydotoold not ready before injection")
-            logger.info("Using clipboard paste for ydotool (instant, layout-independent)")
+            logger.info(
+                "Using clipboard paste for ydotool "
+                "(single paste chord instead of per-character typing)"
+            )
             if self._inject_via_clipboard_paste(text):
                 return
             logger.warning(

@@ -108,12 +108,17 @@ class TestShouldUseTerminalPaste(unittest.TestCase):
                     self.assertEqual(obj._paste_shortcut_preference(), "ctrl+shift+v")
 
 
+_NEO_CHAR_MAP = {"v": 17, "p": 47}  # de(neo): Latin v is KEY_W, KEY_V types p
+_LAYOUT_MAP = "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map"
+
+
 class TestYdotoolTerminalPasteCommand(unittest.TestCase):
     """Terminal paste must use Ctrl+Shift+V in both ydotool dialects."""
 
+    @patch(_LAYOUT_MAP, return_value=None)
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_legacy_named_sequence(self, mock_which, mock_run):
+    def test_legacy_named_sequence(self, mock_which, mock_run, _mock_map):
         mock_which.return_value = "/usr/bin/ydotool"
         mock_run.return_value = MagicMock(
             returncode=0,
@@ -128,8 +133,9 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
         )
         self.assertEqual(injector._ydotool_ctrl_v_command(), ["ydotool", "key", "ctrl+v"])
 
+    @patch(_LAYOUT_MAP, return_value=None)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_flatpak_uses_shift_keycodes(self, mock_which):
+    def test_flatpak_uses_shift_keycodes(self, mock_which, _mock_map):
         mock_which.return_value = "/app/bin/ydotool"
         injector = _make_injector()
         with patch.dict("os.environ", {"FLATPAK_ID": "com.vocalinux.Vocalinux"}):
@@ -141,6 +147,100 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
                 injector._ydotool_ctrl_v_command(),
                 ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
             )
+
+    @patch(_LAYOUT_MAP, return_value=_NEO_CHAR_MAP)
+    def test_ydotool_v1_uses_layout_keycode_for_v(self, _mock_map):
+        """de(neo) paste must hit KEY_W=17, not QWERTY KEY_V=47 (issue #787)."""
+        injector = _make_injector()
+        injector._ydotool_legacy_named_keys = False
+        self.assertEqual(
+            injector._ydotool_ctrl_v_command(),
+            ["ydotool", "key", "29:1", "17:1", "17:0", "29:0"],
+        )
+        self.assertEqual(
+            injector._ydotool_ctrl_v_command(terminal=True),
+            ["ydotool", "key", "29:1", "42:1", "17:1", "17:0", "42:0", "29:0"],
+        )
+        for cmd in (
+            injector._ydotool_ctrl_v_command(),
+            injector._ydotool_ctrl_v_command(terminal=True),
+        ):
+            self.assertNotIn("47:1", cmd)
+            self.assertNotIn("47:0", cmd)
+
+    @patch(_LAYOUT_MAP, return_value=None)
+    def test_ydotool_v1_us_map_uses_key_v(self, _mock_map):
+        injector = _make_injector()
+        injector._ydotool_legacy_named_keys = False
+        self.assertEqual(
+            injector._ydotool_ctrl_v_command(),
+            ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
+        )
+
+    @patch(_LAYOUT_MAP, return_value={})
+    def test_ydotool_v1_empty_map_uses_key_v(self, _mock_map):
+        injector = _make_injector()
+        injector._ydotool_legacy_named_keys = False
+        self.assertEqual(
+            injector._ydotool_ctrl_v_command(),
+            ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"],
+        )
+
+    @patch(_LAYOUT_MAP, return_value=_NEO_CHAR_MAP)
+    def test_ydotool_legacy_uses_linux_name_for_layout_v(self, _mock_map):
+        """0.1.x named ctrl+v is physical KEY_V; Neo must emit ctrl+w."""
+        injector = _make_injector()
+        injector._ydotool_legacy_named_keys = True
+        self.assertEqual(injector._ydotool_ctrl_v_command(), ["ydotool", "key", "ctrl+w"])
+        self.assertEqual(
+            injector._ydotool_ctrl_v_command(terminal=True),
+            ["ydotool", "key", "ctrl+shift+w"],
+        )
+
+    def test_prefers_wtype_keysyms_for_paste_chord(self):
+        """Paste may use wtype keysyms even when typing stays on ydotool."""
+        injector = _make_injector()
+        injector.wayland_tool = "ydotool"
+        with patch.object(injector, "_wtype_usable_for_paste", return_value=True):
+            cmd = injector._clipboard_paste_command()
+            terminal = injector._clipboard_paste_command(terminal=True)
+        self.assertEqual(cmd, ["wtype", "-M", "ctrl", "v"])
+        self.assertEqual(terminal, ["wtype", "-M", "ctrl", "-M", "shift", "v"])
+        self.assertIn("v", cmd)
+        self.assertNotIn("47", cmd)
+        self.assertNotIn("47:1", cmd)
+
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_clipboard_paste_uses_wtype_argv_when_chosen(self, mock_run, mock_which):
+        mock_which.side_effect = lambda cmd: cmd in ("wl-copy", "wtype", "ydotool")
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+        injector = _make_injector()
+        injector.wayland_tool = "ydotool"
+        with patch.object(injector, "_wtype_usable_for_paste", return_value=True):
+            with patch.object(injector, "_copy_to_clipboard", return_value=True):
+                with patch.object(injector, "_read_clipboard", return_value="old"):
+                    with patch.object(injector, "_should_use_terminal_paste", return_value=False):
+                        self.assertTrue(injector._inject_via_clipboard_paste("hello"))
+        paste_cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
+        self.assertTrue(
+            any(c == ["wtype", "-M", "ctrl", "v"] for c in paste_cmds),
+            paste_cmds,
+        )
+        self.assertFalse(any("47:1" in c for c in paste_cmds))
+
+    def test_wtype_paste_skipped_on_kde_when_typing_backend_is_ydotool(self):
+        injector = _make_injector()
+        injector.wayland_tool = "ydotool"
+        with patch(
+            "vocalinux.text_injection.text_injector._is_kde_plasma_session",
+            return_value=True,
+        ):
+            with patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wtype" if cmd == "wtype" else None,
+            ):
+                self.assertFalse(injector._wtype_usable_for_paste())
 
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")

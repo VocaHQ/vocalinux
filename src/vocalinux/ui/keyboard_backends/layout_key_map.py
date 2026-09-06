@@ -8,6 +8,7 @@ On AZERTY, "a" is KEY_Q not KEY_A. This builds the map for the active layout.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_int, c_uint32, c_void_p
@@ -15,6 +16,7 @@ from functools import lru_cache
 from typing import Optional
 
 from ...utils.host_process import host_env
+from ...utils.paths import xdg_config_home
 
 logger = logging.getLogger(__name__)
 
@@ -145,11 +147,119 @@ def _detect_gnome_layout() -> tuple[str, str]:
     return "", ""
 
 
+def _kconfig_key_name(raw_key: str) -> str:
+    """Strip KConfig type/locale suffixes such as ``[$i]`` from a key name."""
+    key = raw_key.strip()
+    bracket = key.find("[")
+    if bracket != -1:
+        key = key[:bracket]
+    return key.strip()
+
+
+def _read_kconfig_group(path: str, group: str) -> dict[str, str]:
+    """Parse one group from a KConfig/INI-style file into a key/value map."""
+    values: dict[str, str] = {}
+    current = None
+    with open(path, encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line or line.startswith("#") or line.startswith(";"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                current = line[1:-1].strip()
+                continue
+            if current != group or "=" not in line:
+                continue
+            raw_key, _, raw_value = line.partition("=")
+            key = _kconfig_key_name(raw_key)
+            if key:
+                values[key] = raw_value.strip().strip("\"'")
+    return values
+
+
+def _parse_kde_layout_token(token: str) -> tuple[str, str]:
+    """Parse a kxkbrc layout token such as ``de(neo)`` or ``de``."""
+    token = token.strip().strip("\"'")
+    if not token:
+        return "", ""
+    if token.endswith(")") and "(" in token:
+        layout, _, rest = token.partition("(")
+        return layout.strip(), rest[:-1].strip()
+    return token, ""
+
+
+def _csv_fields(raw: str) -> list[str]:
+    return [part.strip() for part in raw.split(",")] if raw else []
+
+
+def _detect_kde_layout() -> tuple[str, str]:
+    """Current XKB layout from KDE Plasma ``kxkbrc`` (works on Wayland).
+
+    Plasma stores the active layout in ``~/.config/kxkbrc`` (``$XDG_CONFIG_HOME``)
+    under ``[Layout]``. ``CurrentLayout`` looks like ``de(neo)``. When that key
+    is missing, ``LayoutList`` + ``VariantList`` + ``LayoutIndex`` identify the
+    same pair.
+
+    ``setxkbmap -query`` is not used: on Wayland it talks to XWayland, not the
+    compositor, and can report a stale or default US map (see
+    ``ibus_engine.get_current_xkb_layout`` and issue #474).
+    """
+    path = os.path.join(xdg_config_home(), "kxkbrc")
+    try:
+        values = _read_kconfig_group(path, "Layout")
+    except FileNotFoundError:
+        return "", ""
+    except OSError as e:
+        logger.debug("kxkbrc layout query failed: %s", e)
+        return "", ""
+
+    current = values.get("CurrentLayout", "")
+    layout, variant = _parse_kde_layout_token(current)
+    if layout and variant:
+        return layout, variant
+
+    layouts = _csv_fields(values.get("LayoutList", ""))
+    variants = _csv_fields(values.get("VariantList", ""))
+    index_raw = values.get("LayoutIndex", "").strip()
+    index = 0
+    if index_raw:
+        try:
+            index = int(index_raw)
+        except ValueError:
+            logger.debug("Ignoring invalid kxkbrc LayoutIndex=%r", index_raw)
+            index = 0
+    if layouts:
+        if index < 0 or index >= len(layouts):
+            logger.debug("kxkbrc LayoutIndex=%s out of range for LayoutList", index)
+            if not layout:
+                return "", ""
+        else:
+            listed_layout = layouts[index]
+            listed_variant = variants[index] if index < len(variants) else ""
+            if not layout:
+                layout = listed_layout
+            if not variant:
+                # CurrentLayout=de with VariantList=neo at the same index.
+                if not listed_layout or listed_layout == layout:
+                    variant = listed_variant
+    return (layout, variant) if layout else ("", "")
+
+
+def _detect_active_layout() -> tuple[str, str]:
+    """Best-effort active XKB layout from the session (Wayland-safe)."""
+    layout, variant = _detect_gnome_layout()
+    if layout:
+        return layout, variant
+    layout, variant = _detect_kde_layout()
+    if layout:
+        return layout, variant
+    return "", ""
+
+
 @lru_cache(maxsize=1)
 def get_active_char_to_evdev_map() -> Optional[dict[str, int]]:
     """Cached char→evdev map for the active layout; None → use US KEY_* names."""
-    layout, variant = _detect_gnome_layout()
-    # ponytail: GNOME gsettings only; add setxkbmap/localectl if non-GNOME reports land
+    layout, variant = _detect_active_layout()
     if not layout or (layout == "us" and not variant):
         return None
     char_map = build_char_to_evdev_map(layout, variant)

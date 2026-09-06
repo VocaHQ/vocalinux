@@ -68,6 +68,18 @@ def test_xkb_fr_a_is_key_q():
     assert char_map["q"] == ecodes.KEY_A
 
 
+def test_xkb_de_neo_v_is_key_w():
+    """German Neo v2: Latin v is physical KEY_W=17, KEY_V=47 types p (#787)."""
+    char_map = build_char_to_evdev_map("de", "neo")
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    assert char_map["v"] == 17
+    assert char_map["p"] == 47
+    evdev = pytest.importorskip("evdev")
+    assert char_map["v"] == evdev.ecodes.KEY_W
+    assert char_map["p"] == evdev.ecodes.KEY_V
+
+
 # --- layout_key_map coverage: detection, cache, error paths ---
 
 
@@ -170,13 +182,74 @@ def test_detect_gnome_layout_nonzero_exit(monkeypatch):
     assert lkm._detect_gnome_layout() == ("", "")
 
 
+def test_detect_kde_layout_current_layout_neo(tmp_path, monkeypatch):
+    (tmp_path / "kxkbrc").write_text("[Layout]\nCurrentLayout=de(neo)\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_list_and_index(tmp_path, monkeypatch):
+    (tmp_path / "kxkbrc").write_text(
+        "[Layout]\nLayoutList=us,de\nVariantList=,neo\nLayoutIndex=1\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_current_layout_without_variant_uses_lists(tmp_path, monkeypatch):
+    (tmp_path / "kxkbrc").write_text(
+        "[Layout]\nCurrentLayout=de\nLayoutList=de\nVariantList=neo\nLayoutIndex=0\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("", "")
+
+
+def test_detect_kde_layout_quoted_and_kconfig_suffix(tmp_path, monkeypatch):
+    (tmp_path / "kxkbrc").write_text(
+        '[Layout]\nCurrentLayout[$i]="de(neo)"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("de", "neo")
+
+
+def test_detect_kde_layout_index_out_of_range(tmp_path, monkeypatch):
+    (tmp_path / "kxkbrc").write_text(
+        "[Layout]\nLayoutList=de\nVariantList=neo\nLayoutIndex=9\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert lkm._detect_kde_layout() == ("", "")
+
+
+def test_detect_active_layout_prefers_gnome_over_kde(monkeypatch):
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", "oss"))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
+    assert lkm._detect_active_layout() == ("fr", "oss")
+
+
+def test_detect_active_layout_falls_back_to_kde(monkeypatch):
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
+    assert lkm._detect_active_layout() == ("de", "neo")
+
+
 def test_get_active_map_us_is_none(monkeypatch):
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("us", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
     assert lkm.get_active_char_to_evdev_map() is None
 
 
 def test_get_active_map_empty_layout(monkeypatch):
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
     assert lkm.get_active_char_to_evdev_map() is None
 
 
@@ -194,6 +267,16 @@ def test_get_active_map_when_build_fails(monkeypatch):
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("fr", ""))
     monkeypatch.setattr(lkm, "build_char_to_evdev_map", lambda *_a, **_k: None)
     assert lkm.get_active_char_to_evdev_map() is None
+
+
+def test_get_active_map_uses_kde_when_gnome_empty(monkeypatch):
+    monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
+    monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("de", "neo"))
+    char_map = lkm.get_active_char_to_evdev_map()
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    assert char_map["v"] == 17
+    assert char_map["p"] == 47
 
 
 def test_build_skips_keys_with_no_levels(monkeypatch):

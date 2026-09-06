@@ -615,8 +615,8 @@ class TestTextInjector(unittest.TestCase):
 
         `ydotool type` emits positional evdev keycodes that get re-interpreted
         through the active keyboard layout (assumed US QWERTY), so typing ASCII
-        is scrambled on non-US layouts (e.g. AZERTY). Clipboard paste (Ctrl+V)
-        is layout-independent, so it is used unconditionally for ydotool.
+        is scrambled on non-US layouts (e.g. AZERTY). Clipboard paste is used
+        unconditionally for ydotool so the payload is not typed key-by-key.
         """
         mock_which.side_effect = lambda x: x in ("ydotool", "wl-copy")
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -755,9 +755,15 @@ class TestTextInjector(unittest.TestCase):
                 "wtype must NOT use clipboard-paste workaround",
             )
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_legacy_uses_named_sequence(self, mock_which, mock_run):
+    def test_ydotool_ctrl_v_command_legacy_uses_named_sequence(
+        self, mock_which, mock_run, _mock_map
+    ):
         """Distro ydotool 0.1.x expects ctrl+v, not keycode:value."""
         mock_which.return_value = "/usr/bin/ydotool"
         mock_run.return_value = MagicMock(
@@ -776,8 +782,12 @@ class TestTextInjector(unittest.TestCase):
         self.assertEqual(cmd, ["ydotool", "key", "ctrl+v"])
         self.assertEqual(injector._ydotool_ctrl_v_command(), ["ydotool", "key", "ctrl+v"])
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_flatpak_uses_keycodes(self, mock_which):
+    def test_ydotool_ctrl_v_command_flatpak_uses_keycodes(self, mock_which, _mock_map):
         """Flatpak pins ydotool 1.0.4; always use keycode:value form."""
         mock_which.return_value = "/app/bin/ydotool"
         injector = TextInjector.__new__(TextInjector)
@@ -785,9 +795,13 @@ class TestTextInjector(unittest.TestCase):
             cmd = injector._ydotool_ctrl_v_command()
         self.assertEqual(cmd, ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_v1_help_uses_keycodes(self, mock_which, mock_run):
+    def test_ydotool_ctrl_v_command_v1_help_uses_keycodes(self, mock_which, mock_run, _mock_map):
         """Host ydotool 1.x (no plus-sequence help) uses press/release keycodes."""
         mock_which.return_value = "/usr/local/bin/ydotool"
         mock_run.return_value = MagicMock(returncode=0, stdout="Usage: key N:1 N:0 ...", stderr="")
@@ -796,9 +810,15 @@ class TestTextInjector(unittest.TestCase):
         cmd = injector._ydotool_ctrl_v_command()
         self.assertEqual(cmd, ["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_unknown_help_defaults_legacy(self, mock_which, mock_run):
+    def test_ydotool_ctrl_v_command_unknown_help_defaults_legacy(
+        self, mock_which, mock_run, _mock_map
+    ):
         """Unrecognized help text prefers named ctrl+v (safe on 0.1.x)."""
         mock_which.return_value = "/usr/bin/ydotool"
         mock_run.return_value = MagicMock(returncode=0, stdout="mystery help", stderr="")
@@ -807,9 +827,15 @@ class TestTextInjector(unittest.TestCase):
         cmd = injector._ydotool_ctrl_v_command()
         self.assertEqual(cmd, ["ydotool", "key", "ctrl+v"])
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_probe_error_defaults_legacy(self, mock_which, mock_run):
+    def test_ydotool_ctrl_v_command_probe_error_defaults_legacy(
+        self, mock_which, mock_run, _mock_map
+    ):
         """If key --help fails, default to legacy named sequence."""
         mock_which.return_value = "/usr/bin/ydotool"
         mock_run.side_effect = OSError("no ydotool")
@@ -818,8 +844,12 @@ class TestTextInjector(unittest.TestCase):
         cmd = injector._ydotool_ctrl_v_command()
         self.assertEqual(cmd, ["ydotool", "key", "ctrl+v"])
 
+    @patch(
+        "vocalinux.ui.keyboard_backends.layout_key_map.get_active_char_to_evdev_map",
+        return_value=None,
+    )
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ydotool_ctrl_v_command_app_prefix_uses_keycodes(self, mock_which):
+    def test_ydotool_ctrl_v_command_app_prefix_uses_keycodes(self, mock_which, _mock_map):
         """/app/bin/ydotool (Flatpak path) always uses 1.x keycodes without FLATPAK_ID."""
         mock_which.return_value = "/app/bin/ydotool"
         injector = TextInjector.__new__(TextInjector)
