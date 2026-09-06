@@ -114,6 +114,8 @@ parts:
       craftctl default
       version="$(python3 -c "import pathlib, re; t = pathlib.Path('${CRAFT_PART_SRC}/src/vocalinux/version.py').read_text(); m = re.search(r'__version__\\s*=\\s*[\\'\"]([^\\'\"]+)', t); assert m, 'version not found'; print(m.group(1))")"
       craftctl set version="$version"
+      # PyGObject/GI provided by gnome extension.
+      sed -i '/^[[:space:]]*"PyGObject/d' "${CRAFT_PART_SRC}/pyproject.toml"
     override-build: |
       craftctl default
       install -Dm644 "${CRAFT_PROJECT_DIR}/snap/gui/vocalinux.desktop" \

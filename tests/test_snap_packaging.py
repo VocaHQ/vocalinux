@@ -31,6 +31,19 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     assert SNAP_PNG.stat().st_size > 0
 
 
+def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
+    """Pip must not build PyGObject; GI comes from the gnome extension."""
+    text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    doc = yaml.safe_load(text)
+    override_pull = doc["parts"]["vocalinux"]["override-pull"]
+    assert "PyGObject" in override_pull
+    assert "pyproject.toml" in override_pull
+    assert "gnome extension" in override_pull
+    stage = doc["parts"]["vocalinux"].get("stage-packages") or []
+    assert "python3-gi" not in stage
+    assert "python3-gi-cairo" not in stage
+
+
 def test_release_publishes_snap_to_edge_and_candidate() -> None:
     """v* tags must ship the snap to the store, not attach it to GitHub."""
     text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
