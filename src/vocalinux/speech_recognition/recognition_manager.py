@@ -1804,17 +1804,10 @@ class SpeechRecognitionManager:
                 self._download_progress_callback = file_progress(index, filename)
                 self._stream_model_download(url, temp_file)
 
-                # Verify before the rename: the bundle is pinned to a revision,
-                # so a short file means a truncated download rather than an
-                # upstream change, and must not reach a path that
-                # is_model_downloaded() would report as installed.
-                expected_size = parakeet.expected_file_size(self.model_size, filename)
-                actual_size = os.path.getsize(temp_file)
-                if expected_size is not None and actual_size != expected_size:
-                    raise RuntimeError(
-                        f"{filename} downloaded {actual_size} bytes, expected "
-                        f"{expected_size}. The download was truncated; try again."
-                    )
+                # Verify before the rename, as the whisper.cpp downloader does:
+                # sherpa-onnx loads these through native code, so an unverified
+                # file must never reach a path is_model_downloaded() trusts.
+                verify_model_file(temp_file, parakeet.manifest_key(self.model_size, filename))
 
                 os.rename(temp_file, dest_path)
                 temp_file = None
@@ -1832,7 +1825,7 @@ class SpeechRecognitionManager:
                     "Check your network and try again."
                 ) from e
             raise RuntimeError(f"Failed to download Parakeet model: {e}") from e
-        except (OSError, RuntimeError, ValueError) as e:
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
             logger.error(f"An error occurred during Parakeet model download: {e}")
             if temp_file and os.path.exists(temp_file):
                 os.remove(temp_file)
