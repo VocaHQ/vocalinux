@@ -145,7 +145,9 @@ def test_packaging_readme_covers_store_strategy() -> None:
     assert "edge" in lower and "stable" in lower
     assert "audio-record" in lower
     assert "human" in lower or "maintainer" in lower
-    assert "not yet" in lower or "not published" in lower
+    # Listing may already be live; README must still describe channels + maintainer upload path.
+    assert ("edge" in lower and "stable" in lower) or "not yet" in lower or "not published" in lower
+    assert "snapcraft.io/vocalinux" in text or "upload" in lower
 
 
 def test_snapcraft_metadata_matches_project(snapcraft_doc: dict) -> None:

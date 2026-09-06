@@ -13,7 +13,7 @@ The cross-distribution compatibility improvements have been implemented in phase
 | **Phase 5** | ✅ **Complete** | **Fixed remaining hardcoded GI_TYPELIB_PATH values in install.sh and CI workflow** |
 | **Phase 6** | ✅ **Complete** | **Added wrapper script verification tests, updated documentation** |
 | **Phase 7** | ✅ **Complete** | **Flatpak packaging (whisper.cpp engine) for universal distribution support — see [`packaging/flatpak/`](../packaging/flatpak/README.md). Not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).** |
-| Phase 8 | 🚧 In progress | Snap packaging recipe in-repo (`snap/snapcraft.yaml`); **not on Snap Store yet** — see [packaging/snap/README.md](../packaging/snap/README.md) |
+| Phase 8 | 🚧 In progress | Snap recipe in-repo + Store listing live ([snapcraft.io/vocalinux](https://snapcraft.io/vocalinux)); refreshing `edge`→`candidate`→`stable` to 0.16.2 — see [packaging/snap/README.md](../packaging/snap/README.md) |
 
 ## Technical Implementation
 

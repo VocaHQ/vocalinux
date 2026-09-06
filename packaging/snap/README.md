@@ -11,23 +11,24 @@ GUI assets: [`snap/gui/`](../../snap/gui/)
 | Item | State |
 |------|--------|
 | Snapcraft recipe in-repo | Yes (`snap/snapcraft.yaml`) |
-| Published on Snap Store | **Not yet** (requires maintainer Snapcraft login + name ownership) |
+| Published on Snap Store | **Yes** — [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (publisher `jatinkrmalik`). Current public channel: `latest/edge` @ 0.14.0-beta (rev 6). Refresh via upload; **do not** `snapcraft register`. |
 | Intended first channel | `edge`, then promote to `stable` after validation |
 | Confinement | `strict` (first ship) |
 | Default engine | whisper.cpp (`pywhispercpp`); VOSK may install via project deps; OpenAI Whisper/torch **not** bundled |
 
-Until the store listing exists, prefer the [install script](../../docs/INSTALL.md) or
-PyPI. After publish:
+Listing already exists. Install the testing channel today; promote a new
+0.16.2 build through `candidate` → `stable` after QA:
 
 ```bash
-# Testing channel (first publish target)
+# Current public testing channel (refresh after upload)
 sudo snap install vocalinux --edge
+# After candidate/stable promotion:
+# sudo snap install vocalinux --candidate
+# sudo snap install vocalinux
 
-# After promotion
-sudo snap install vocalinux
-
-# Microphone (if not auto-connected)
+# Microphone / hotkeys if not auto-connected
 sudo snap connect vocalinux:audio-record
+sudo snap connect vocalinux:raw-input   # global shortcuts
 ```
 
 ## Strategy (how we publish)
@@ -41,17 +42,30 @@ sudo snap connect vocalinux:audio-record
 
 ### Human-only Snap Store steps (maintainer)
 
-These cannot be finished without a Snapcraft account that owns the name:
+Name **`vocalinux` is already registered** and the listing is live
+([snapcraft.io/vocalinux/listing](https://snapcraft.io/vocalinux/listing)).
+Do **not** run `snapcraft register vocalinux`.
 
-1. Create / log in at [snapcraft.io](https://snapcraft.io/) (`snapcraft login`).
-2. Register the name if free: `snapcraft register vocalinux`.
-3. Build a release snap (local or CI): `snapcraft pack` from a clean tree.
-4. Upload: `snapcraft upload --release=edge vocalinux_*.snap` (or upload then `snapcraft release`).
-5. Fill store listing: description, screenshots, license, contact, category.
-6. Test on a real Ubuntu desktop: install `--edge`, mic permission, tray, dictate into another app.
-7. Promote to `candidate` / `stable` when ready: `snapcraft release vocalinux <rev> stable`.
-8. Add the Snap Store badge to the README once the public listing is live.
-9. Optional later: CI with a Snap Store export token for continuous `edge` publishes.
+1. `snapcraft login` as publisher `jatinkrmalik` (Ubuntu One).
+2. From a clean checkout of this branch/tag: `snapcraft pack`
+   (produces `vocalinux_0.16.2_amd64.snap` when `version.py` is 0.16.2).
+3. Upload without releasing, then release deliberately:
+   ```bash
+   snapcraft upload vocalinux_*.snap          # prints revision N
+   snapcraft release vocalinux N edge        # replace stale 0.14.0-beta edge
+   snapcraft release vocalinux N candidate   # QA gate
+   # after desktop QA:
+   snapcraft release vocalinux N stable
+   ```
+   Or one-shot edge: `snapcraft upload --release=edge vocalinux_*.snap`.
+4. Update Store listing metadata to match this recipe: **AGPL-3.0** license,
+   VocaHQ links (`https://github.com/VocaHQ/vocalinux`), screenshots, summary.
+5. Desktop QA on Ubuntu: tray, mic, model download, type into gedit/browser;
+   optional `sudo snap connect vocalinux:raw-input` for hotkeys.
+6. Flip README/INSTALL copy from “edge-only / not on stable yet” once `stable`
+   has the 0.16.2 revision; add the Snap Store badge if missing.
+7. Optional later: CI with a Snap Store export token for continuous `edge`
+   publishes (token stays out of git).
 
 ### Channel path
 
@@ -102,6 +116,15 @@ real-device testing, escalate deliberately:
 
 ## Local build
 
+Helper (pack / upload-edge / promote revision) once `snapcraft` is logged in:
+
+```bash
+./scripts/snap-store-refresh.sh              # pack only
+./scripts/snap-store-refresh.sh upload-edge  # pack + upload + release edge
+./scripts/snap-store-refresh.sh promote N    # release rev N to candidate
+```
+
+
 Requirements:
 
 - `snapcraft` (classic): `sudo snap install snapcraft --classic`
@@ -148,39 +171,41 @@ plugs, and staged injection helpers. It does **not** replace a real `snapcraft p
 | Models | network + app data dir | network + `~/snap/vocalinux/` |
 | Store | Flathub (separate track) | Snap Store |
 
-## Maintainer checklist (publish day)
+## Maintainer checklist (refresh existing listing)
 
-- [ ] `snapcraft login`
-- [ ] `snapcraft register vocalinux` (if name still free)
-- [ ] Version in `src/vocalinux/version.py` matches the release you intend to ship
-- [ ] `snapcraft pack` succeeds on amd64 (and arm64 if you support it)
-- [ ] Upload to `edge` and install with `sudo snap install vocalinux --edge`
-- [ ] Verify: tray icon, mic permission, model download, type into gedit/browser
-- [ ] Store listing assets uploaded
-- [ ] Promote to `stable` when satisfied
-- [ ] README Snap badge + docs flipped from “not published yet” to live commands
+- [ ] `snapcraft login` as `jatinkrmalik` (listing already owned — no register)
+- [ ] Version in `src/vocalinux/version.py` is the release you intend (0.16.2)
+- [ ] `snapcraft pack` succeeds on amd64 (arm64 optional later)
+- [ ] `snapcraft upload` → `release … edge` (replace rev 6 / 0.14.0-beta)
+- [ ] `snapcraft release … candidate` and install `--candidate` for QA
+- [ ] Verify: tray, mic, model download, type into gedit/browser; raw-input if testing hotkeys
+- [ ] Listing metadata: AGPL-3.0, VocaHQ URLs, screenshots current
+- [ ] `snapcraft release … stable` when candidate QA passes
+- [ ] README/INSTALL: document `snap install vocalinux` once stable is current
 
 ## Ordered Snap Store deploy steps (human + in-repo)
 
-**Already automated / in-repo (no Snapcraft login required):**
+**Already automated / in-repo:**
 
-1. `snap/snapcraft.yaml` (strict, gnome extension, plugs, ALSA→Pulse, version from `version.py`)
+1. `snap/snapcraft.yaml` (strict, gnome extension, plugs, ALSA→Pulse, version from `version.py` = 0.16.2 + AGPL metadata)
 2. GUI assets under `snap/gui/` + ALSA conf under `snap/local/`
 3. Structural CI coverage via `tests/test_snap_packaging.py`
-4. Install/README/DISTRO copy that states Snap is **not published yet**
-5. Runtime helpers for snap: `raw-input` hints, evdev `/proc` fallback, `wtype` + `paplay` staged
+4. Runtime helpers: `raw-input` hints, evdev `/proc` fallback, staged `wtype` + `paplay`
+5. Docs that point at the live listing and the edge→candidate→stable refresh path
 
-**Jatin must do once on a machine with Snapcraft auth (cannot be done by agents):**
+**Jatin must do on a machine with Snapcraft auth (box browser login OK):**
 
-1. `snapcraft login` (Canonical/Ubuntu One account that will own the listing)
-2. `snapcraft register vocalinux` (or claim the name if already reserved)
-3. On a clean checkout of the release tag/commit: `snapcraft pack`
-4. `snapcraft upload --release=edge vocalinux_*.snap` (or upload then `snapcraft release <rev> edge`)
-5. Connect plugs on a test Ubuntu desktop install and QA: tray, mic, model download, type into gedit/browser, optional `sudo snap connect vocalinux:raw-input` for hotkeys
-6. Upload Store listing assets (icon, screenshots, description, category, license AGPL-3.0, links to https://github.com/VocaHQ/vocalinux)
-7. When edge QA passes: `snapcraft release vocalinux <rev> candidate` (optional) then `stable`
-8. Flip README/INSTALL from “not published yet” to live `snap install` + add the Snap Store badge
-9. Optional later: add a CI job with a Snap Store export token for continuous `edge` publishes (token stays out of git)
+1. `snapcraft login` (publisher already owns `vocalinux` — **skip register**)
+2. `git checkout` this PR branch / release tag; `snapcraft pack`
+3. `snapcraft upload vocalinux_0.16.2_*.snap` → note revision **N**
+4. `snapcraft release vocalinux N edge` (supersede store 0.14.0-beta rev 6)
+5. `snapcraft release vocalinux N candidate` → `sudo snap install vocalinux --candidate` QA
+6. Update listing at https://snapcraft.io/vocalinux/listing (AGPL-3.0, screenshots, links)
+7. `snapcraft release vocalinux N stable` after QA
+8. Optional: export token for CI edge publishes later
 
-**Channel policy:** `edge` first while `grade: devel`; set `grade: stable` in the recipe before promoting a build intended for `stable`.
+**Channel policy:** keep `grade: devel` while only on `edge`/`candidate`; set
+`grade: stable` in the recipe before a build intended primarily for `stable`
+(store policy). First refresh can stay `devel` on edge/candidate, then a
+follow-up pack with `grade: stable` for the stable promotion if required.
 
