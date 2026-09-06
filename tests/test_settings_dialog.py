@@ -683,7 +683,9 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
             source_code,
         )
         self.assertIn("self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)", source_code)
-        self.assertIn("Gtk.ComboBoxText.new_with_entry()", source_code)
+        self.assertIn("self.language_combo = SearchablePicker()", source_code)
+        # SearchablePicker opens a popover with a search entry above the list,
+        # so typing works while the list is open, which no combo dropdown allows.
         self.assertIn("_attach_language_combo_search", source_code)
 
     def test_whispercpp_recommendation_uses_language_for_specialization(self):
@@ -791,7 +793,7 @@ class TestLanguageComboSearch(unittest.TestCase):
         with open(source_path, "r") as f:
             source_code = f.read()
 
-        self.assertIn("Gtk.ComboBoxText.new_with_entry()", source_code)
+        self.assertIn("self.language_combo = SearchablePicker()", source_code)
         self.assertIn("Gtk.EntryCompletion()", source_code)
         self.assertIn("completion.set_text_column(0)", source_code)
         self.assertIn("Search languages…", source_code)

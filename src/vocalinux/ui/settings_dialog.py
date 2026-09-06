@@ -30,7 +30,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 # Need GLib for idle_add
-from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
@@ -290,6 +290,8 @@ def _style_combo(combo: Gtk.ComboBox, width: int = _CONTROL_WIDTH) -> Gtk.ComboB
     combo.set_size_request(width, -1)
     combo.set_halign(Gtk.Align.END)
     combo.set_hexpand(False)
+    if not isinstance(combo, Gtk.ComboBox):
+        return combo  # a SearchablePicker sizes its own button
     combo.set_popup_fixed_width(False)
     for cell in combo.get_cells():
         cell.set_property("ellipsize", Pango.EllipsizeMode.END)
@@ -1005,7 +1007,9 @@ def _combo_text_rows(combo: Gtk.ComboBoxText) -> list:
 
     Gtk.ComboBoxText stores display text in column 0 and the id in column 1.
     """
-    model = combo.get_model()
+    # A SearchablePicker keeps its rows in base_model (ComboBoxText column order);
+    # resolve typed text against every row, not only the ones currently shown.
+    model = getattr(combo, "base_model", None) or combo.get_model()
     if not model:
         return []
     return [(row[1], row[0]) for row in model]
@@ -1020,14 +1024,174 @@ def _combo_completion_match(completion, key, tree_iter, *_args) -> bool:
     return _combo_text_matches_query(key, row[1], row[0])
 
 
+class SearchablePicker(Gtk.Box):
+    """A picker you can type into while its list is open.
+
+    A GtkComboBox dropdown takes the keyboard for its own first-letter jump the
+    moment it opens, so nothing typed reaches a filter. This one opens a popover
+    holding a search entry, focused on open, above the list; every keystroke
+    narrows the rows, Enter takes the first match, a click takes that row.
+
+    Keeps the handful of GtkComboBoxText methods the dialog relies on, so it
+    drops in where one stood. ``base_model`` mirrors the ComboBoxText store —
+    display text in column 0, id in column 1 — for the shared row helpers.
+    """
+
+    __gsignals__ = {"changed": (GObject.SignalFlags.RUN_FIRST, None, ())}
+
+    _LIST_HEIGHT = 300
+
+    def __init__(self):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        self.base_model = []
+        self._active_id = None
+        self._rows_by_id = {}
+
+        self._label = Gtk.Label(xalign=0)
+        self._label.set_ellipsize(Pango.EllipsizeMode.END)
+        arrow = Gtk.Image.new_from_icon_name("pan-down-symbolic", Gtk.IconSize.BUTTON)
+        button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        button_box.pack_start(self._label, True, True, 0)
+        button_box.pack_end(arrow, False, False, 0)
+        self._button = Gtk.Button()
+        self._button.add(button_box)
+        self._button.connect("clicked", self._on_button_clicked)
+        self.pack_start(self._button, True, True, 0)
+
+        self._search = Gtk.SearchEntry()
+        self._search.set_placeholder_text("Type to search…")
+        self._search.connect("search-changed", self._on_search_changed)
+        self._search.connect("activate", self._on_search_activate)
+
+        self._list = Gtk.ListBox()
+        self._list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._list.set_filter_func(self._row_is_visible)
+        self._list.connect("row-activated", self._on_row_activated)
+
+        scroller = Gtk.ScrolledWindow()
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_size_request(-1, self._LIST_HEIGHT)
+        scroller.add(self._list)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        content.set_border_width(6)
+        content.pack_start(self._search, False, False, 0)
+        content.pack_start(scroller, True, True, 0)
+        content.show_all()
+
+        self._popover = Gtk.Popover.new(self._button)
+        self._popover.set_position(Gtk.PositionType.BOTTOM)
+        self._popover.add(content)
+        self._popover.connect("closed", self._on_popover_closed)
+
+    # -- GtkComboBoxText-compatible surface --------------------------------
+
+    def append(self, item_id, text):
+        """Add a row, taking the arguments in GtkComboBoxText order."""
+        self.base_model.append([text, item_id])
+        row = Gtk.ListBoxRow()
+        label = Gtk.Label(label=text, xalign=0)
+        label.set_margin_top(6)
+        label.set_margin_bottom(6)
+        label.set_margin_start(8)
+        label.set_margin_end(8)
+        row.add(label)
+        row.item_id = item_id
+        row.item_text = text
+        row.show_all()
+        self._list.add(row)
+        self._rows_by_id[item_id] = row
+
+    def remove_all(self):
+        self.base_model.clear()
+        self._rows_by_id.clear()
+        for row in list(self._list.get_children()):
+            self._list.remove(row)
+        self._active_id = None
+        self._label.set_text("")
+
+    def get_model(self):
+        return self.base_model
+
+    def get_active_id(self):
+        return self._active_id
+
+    def get_active_text(self):
+        row = self._rows_by_id.get(self._active_id)
+        return row.item_text if row is not None else None
+
+    def set_active_id(self, item_id) -> bool:
+        row = self._rows_by_id.get(item_id)
+        if row is None:
+            return False
+        self._select(item_id, row.item_text)
+        return True
+
+    def set_active(self, index):
+        if 0 <= index < len(self.base_model):
+            text, item_id = self.base_model[index]
+            self._select(item_id, text)
+
+    def get_child(self):
+        """The search entry, for callers that hook a ComboBoxText's entry."""
+        return self._search
+
+    # -- behaviour ---------------------------------------------------------
+
+    def _select(self, item_id, text):
+        changed = item_id != self._active_id
+        self._active_id = item_id
+        self._label.set_text(text or "")
+        if changed:
+            self.emit("changed")
+
+    def _on_button_clicked(self, _button):
+        self._search.set_text("")
+        self._list.invalidate_filter()
+        self._popover.show_all()
+        self._popover.popup()
+        self._search.grab_focus()
+
+    def _on_popover_closed(self, _popover):
+        self._search.set_text("")
+        self._list.invalidate_filter()
+
+    def _row_is_visible(self, row):
+        needle = (self._search.get_text() or "").strip()
+        if not needle:
+            return True
+        # Same rule the typed-text resolver uses, so the list and Enter agree.
+        return _combo_text_matches_query(needle, row.item_id, row.item_text)
+
+    def _on_search_changed(self, _entry):
+        self._list.invalidate_filter()
+
+    def _first_visible_row(self):
+        for row in self._list.get_children():
+            if row.get_visible() and row.get_child_visible() and self._row_is_visible(row):
+                return row
+        return None
+
+    def _on_search_activate(self, _entry):
+        row = self._first_visible_row()
+        if row is not None:
+            self._on_row_activated(self._list, row)
+
+    def _on_row_activated(self, _listbox, row):
+        self._popover.popdown()
+        self._select(row.item_id, row.item_text)
+
+
 def _attach_language_combo_search(combo: Gtk.ComboBoxText) -> None:
     """Filter language choices as the user types in a ComboBoxText entry."""
+    if isinstance(combo, SearchablePicker):
+        return  # the picker filters its own list; a completion popup would fight it
     entry = combo.get_child()
     if entry is None:
         return
     entry.set_placeholder_text("Search languages…")
     completion = Gtk.EntryCompletion()
-    completion.set_model(combo.get_model())
+    completion.set_model(getattr(combo, "base_model", None) or combo.get_model())
     # ComboBoxText store: column 0 is display text, column 1 is id.
     completion.set_text_column(0)
     completion.set_inline_completion(False)
@@ -2710,7 +2874,7 @@ class SettingsDialog(Gtk.Dialog):
         group.add_row(self.model_variant_row)
 
         # Language selection (searchable: type to filter the 30+ language list)
-        self.language_combo = Gtk.ComboBoxText.new_with_entry()
+        self.language_combo = SearchablePicker()
         _style_combo(self.language_combo)
         self.language_combo.set_tooltip_text(LANGUAGE_TOOLTIP)
         _prevent_scroll_on_hover(self.language_combo)
