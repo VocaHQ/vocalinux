@@ -173,7 +173,7 @@ class ConfigManager:
         """Ensure the configuration directory exists."""
         os.makedirs(CONFIG_DIR, exist_ok=True)
 
-    def _seed_language_from_system(self):
+    def _seed_language_from_system(self) -> None:
         """Start a first run from the language the system points at (#777).
 
         Only applied when there is no config file yet, so a saved choice — including

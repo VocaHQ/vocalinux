@@ -132,6 +132,17 @@ def test_language_env_beats_lang_when_both_set():
     assert detected == "pl"
 
 
+def test_language_env_skips_unsupported_preferences():
+    """An unsupported first LANGUAGE pref must not hide a later supported one."""
+    with patch.object(sl, "detect_keyboard_layout", return_value="us"):
+        detected = sl.detect_system_language(
+            SUPPORTED_LANGUAGES,
+            {"LANG": "en_US.UTF-8", "LANGUAGE": "xx:pl:en"},
+        )
+
+    assert detected == "pl"
+
+
 def test_language_env_czech_is_not_treated_as_c():
     with patch.object(sl, "detect_keyboard_layout", return_value="us"):
         detected = sl.detect_system_language(

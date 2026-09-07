@@ -135,13 +135,39 @@ def detect_keyboard_layout() -> Optional[str]:
 
 
 def detect_locale_language(environ: Optional[dict] = None) -> Optional[str]:
-    """Return the first locale value the environment offers, or None."""
+    """Return the first locale value the environment offers, or None.
+
+    LANGUAGE is returned intact (a colon-separated preference list). Mapping
+    that list onto a supported catalogue entry happens in
+    ``_language_from_locale_env``.
+    """
     environ = os.environ if environ is None else environ
     for name in _LOCALE_ENV_VARS:
         value = environ.get(name)
         if value:
-            # LANGUAGE may hold a colon-separated preference list.
-            return value.split(":")[0]
+            return value
+    return None
+
+
+def _language_from_locale_env(
+    environ: dict, supported: set[str] | dict
+) -> Optional[str]:
+    """Map the first locale env var onto a catalogue entry.
+
+    LANGUAGE is a colon-separated preference list: each entry is tried through
+    ``_language_for_locale`` until one is supported. LC_ALL, LC_MESSAGES, and
+    LANG are single values and are not walked as lists.
+    """
+    for name in _LOCALE_ENV_VARS:
+        value = environ.get(name)
+        if not value:
+            continue
+        candidates = value.split(":") if name == "LANGUAGE" else (value,)
+        for candidate in candidates:
+            mapped = _language_for_locale(candidate, supported)
+            if mapped:
+                return mapped
+        return None
     return None
 
 
@@ -162,12 +188,11 @@ def detect_system_language(
             logger.info(f"Language {layout_language} taken from keyboard layout {layout!r}")
             return layout_language
 
-    locale_value = detect_locale_language(environ)
-    if locale_value:
-        locale_language = _language_for_locale(locale_value, supported)
-        if locale_language:
-            logger.info(f"Language {locale_language} taken from locale {locale_value!r}")
-            return locale_language
+    environ = os.environ if environ is None else environ
+    locale_language = _language_from_locale_env(environ, supported)
+    if locale_language:
+        logger.info(f"Language {locale_language} taken from locale environment")
+        return locale_language
 
     if layout_language:
         logger.info(f"Language {layout_language} taken from keyboard layout {layout!r}")
