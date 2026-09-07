@@ -56,9 +56,7 @@ from ..utils.whisper_model_info import (  # noqa: E402
     whisper_model_file,
 )
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
-from ..utils.whispercpp_model_info import (
-    WHISPERCPP_MODEL_INFO,
-)
+from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO
 from ..utils.whispercpp_model_info import delete_model as delete_whispercpp_model
 from ..utils.whispercpp_model_info import (
     detect_compute_backend,
@@ -4714,16 +4712,30 @@ class SettingsDialog(Gtk.Dialog):
         language_id = self.language_combo.get_active_id() or self.language
         return _default_whispercpp_variant_for_size(model_size, language_id)
 
-    def _on_apply_recommendation(self, _button):
-        """Set both pickers to the model the card is offering."""
+    def _on_apply_recommendation(self, _button) -> None:
+        """Set both pickers to the model the card is offering.
+
+        Size and specialization must land under ``_populating_models`` so
+        ``_on_model_changed`` does not auto-apply the default size variant
+        (e.g. full ``large``) before the intended target (e.g. turbo q5_0).
+        """
         target = getattr(self, "_recommended_target_model", None)
         if not target or target not in WHISPERCPP_MODEL_INFO:
             return
 
         model_size = get_whispercpp_model_size(target)
-        self.model_combo.set_active_id(model_size)
-        self._populate_whispercpp_variant_options(model_size, target)
-        self.model_variant_combo.set_active_id(target)
+        self._populating_models = True
+        try:
+            self.model_combo.set_active_id(model_size)
+            self._populate_whispercpp_variant_options(model_size, target)
+            self.model_variant_combo.set_active_id(target)
+            self._sync_language_options_for_selected_model()
+        finally:
+            self._populating_models = False
+
+        self._update_model_info()
+        self._refresh_unused_downloads()
+        self._auto_apply_settings()
 
     def _is_selected_whispercpp_model_english_only(self) -> bool:
         """Return whether the selected model is a whisper.cpp English-only variant."""
@@ -5288,8 +5300,13 @@ class SettingsDialog(Gtk.Dialog):
             self.language_warning.set_markup("")
             self.language_warning.hide()
 
-    def _on_language_changed(self, widget):
-        """Handle language selection change."""
+    def _on_language_changed(self, widget) -> None:
+        """Handle language selection change.
+
+        Repaint the recommendation card after the size list rebuilds so
+        ``_recommended_target_model`` / ★ / "Use it" track EN→non-EN flips
+        instead of applying a stale English-only target.
+        """
         if self._processing_language_change:
             return
 
@@ -5306,6 +5323,7 @@ class SettingsDialog(Gtk.Dialog):
             self.language = lang_code
             self._populate_model_options()
             self._update_language_warning()
+            self._update_model_info()
             self._auto_apply_settings()
         finally:
             self._processing_language_change = False
