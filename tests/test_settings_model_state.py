@@ -1,7 +1,11 @@
 """Tests for keeping the saved model in step with the engine that runs it."""
 
+from __future__ import annotations
+
 import importlib
 import sys
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -48,7 +52,7 @@ def dialog_class(settings_dialog):
     return settings_dialog.SettingsDialog
 
 
-def _dialog_stub():
+def _dialog_stub() -> Mock:
     """A stand-in ``self`` for calling dialog methods without building the UI."""
     dialog = Mock()
     dialog._applying_settings = False
@@ -65,30 +69,40 @@ def _dialog_stub():
 class _InlineThread:
     """Run the download worker on the calling thread, in call order."""
 
-    def __init__(self, target=None, daemon=None, **kwargs):
+    def __init__(
+        self,
+        target: Callable[..., Any] | None = None,
+        daemon: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         self._target = target
 
-    def start(self):
+    def start(self) -> None:
         self._target()
 
 
 class _DeferredThread:
     """Record the worker without running it, so the apply-guard stays held."""
 
-    def __init__(self, target=None, daemon=None, **kwargs):
+    def __init__(
+        self,
+        target: Callable[..., Any] | None = None,
+        daemon: bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         self.target = target
 
-    def start(self):
+    def start(self) -> None:
         pass
 
 
-def _glib_stub(idle_calls):
+def _glib_stub(idle_calls: list[tuple[Any, tuple[Any, ...]]]) -> MagicMock:
     glib = MagicMock()
     glib.idle_add.side_effect = lambda func, *args: idle_calls.append((func, args))
     return glib
 
 
-def _already_downloaded_settings():
+def _already_downloaded_settings() -> dict[str, str]:
     return {
         "engine": "vosk",
         "model_size": "small",
@@ -96,7 +110,11 @@ def _already_downloaded_settings():
     }
 
 
-def _run_finish_idle(dialog, dialog_class, idle_calls):
+def _run_finish_idle(
+    dialog: Mock,
+    dialog_class: type[Any],
+    idle_calls: list[tuple[Any, tuple[Any, ...]]],
+) -> None:
     """Invoke the scheduled apply-guard release (Mock dialogs have no real method)."""
     finish = dialog_class._finish_auto_apply
     ran = False
@@ -181,7 +199,12 @@ def test_apply_guard_blocks_a_second_auto_apply_while_a_worker_is_in_flight(
     workers = []
 
     class _CaptureThread(_DeferredThread):
-        def __init__(self, target=None, daemon=None, **kwargs):
+        def __init__(
+            self,
+            target: Callable[..., Any] | None = None,
+            daemon: bool | None = None,
+            **kwargs: Any,
+        ) -> None:
             super().__init__(target=target, daemon=daemon, **kwargs)
             workers.append(self)
 
@@ -209,6 +232,67 @@ def test_apply_guard_blocks_a_second_auto_apply_while_a_worker_is_in_flight(
 
         dialog_class._auto_apply_settings(dialog)
         assert len(workers) == 2
+
+
+def test_apply_settings_returns_false_while_guard_held(dialog_class: type[Any]) -> None:
+    """A held apply-guard must no-op apply_settings without touching the engine."""
+    dialog = _dialog_stub()
+    dialog._applying_settings = True
+
+    result = dialog_class.apply_settings(dialog)
+
+    assert result is False
+    dialog.get_selected_settings.assert_not_called()
+    dialog._apply_settings_internal.assert_not_called()
+    dialog.speech_engine.try_begin_download.assert_not_called()
+
+
+@pytest.mark.parametrize("settings_differ", [False, True])
+def test_test_click_blocked_while_settings_are_applying(
+    settings_dialog: Any, dialog_class: type[Any], settings_differ: bool
+) -> None:
+    """Test must not start a second apply or recognition while a worker holds the guard.
+
+    UI matching the saved config is not enough: the live engine may still be
+    mid-reconfigure. Differing settings are the other race — apply_settings
+    itself must not be entered.
+    """
+    dialog = _dialog_stub()
+    dialog._applying_settings = True
+    dialog.test_buffer = Mock()
+    dialog.test_output_revealer = Mock()
+    dialog.config_manager.get_settings.return_value = {
+        "speech_recognition": {
+            "engine": "whisper_cpp",
+            "model_size": "tiny",
+            "silence_timeout": 2.0,
+            "vad_sensitivity": 3,
+        }
+    }
+    dialog.get_selected_settings.return_value = {
+        "engine": "vosk" if settings_differ else "whisper_cpp",
+        "model_size": "small" if settings_differ else "tiny",
+        "silence_timeout": 2.0,
+        "vad_sensitivity": 3,
+    }
+    dialog.speech_engine.engine = "whisper_cpp"
+    dialog.speech_engine.model_size = "tiny"
+    # Real apply_settings (not a dummy True): if Test skipped its own guard,
+    # the apply-guard would still return False.
+    dialog.apply_settings = Mock(side_effect=dialog_class.apply_settings.__get__(dialog))
+
+    with patch.object(settings_dialog.threading, "Thread") as thread_cls:
+        dialog_class._on_test_clicked(dialog, None)
+
+    dialog.test_output_revealer.set_reveal_child.assert_called_with(True)
+    message = dialog.test_buffer.set_text.call_args[0][0]
+    assert "still applying" in message.lower()
+    dialog.apply_settings.assert_not_called()
+    dialog.get_selected_settings.assert_not_called()
+    dialog._apply_settings_internal.assert_not_called()
+    dialog.speech_engine.start_recognition.assert_not_called()
+    thread_cls.assert_not_called()
+    assert dialog._test_active is False
 
 
 def test_download_path_resyncs_when_the_apply_reports_failure(settings_dialog, dialog_class):
@@ -382,7 +466,7 @@ def test_closing_the_dialog_resyncs_an_engine_that_was_never_applied(settings_di
     dialog._resync_engine_ui_if_unapplied.assert_called_once()
 
 
-def _download_setup(dialog):
+def _download_setup(dialog: Mock) -> None:
     """A model that is not on disk, so the apply goes down the download path."""
     dialog.get_selected_settings.return_value = {
         "engine": "whisper_cpp",

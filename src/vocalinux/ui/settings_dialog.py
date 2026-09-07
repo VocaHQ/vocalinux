@@ -5518,7 +5518,7 @@ class SettingsDialog(Gtk.Dialog):
 
             logger.info(f"Auto-applying settings: {settings}")
 
-            def apply_already_downloaded():
+            def apply_already_downloaded() -> None:
                 try:
                     self._apply_settings_internal(settings, raise_errors=True)
                     logger.info("Settings auto-applied successfully")
@@ -5660,6 +5660,13 @@ class SettingsDialog(Gtk.Dialog):
         """Handle click on the test button."""
         if self._test_active:
             logger.warning("Test already in progress.")
+            return
+
+        if self._applying_settings:
+            # The live engine may still be mid-reconfigure even when the UI
+            # already matches the saved config. Do not apply or start a test.
+            self.test_output_revealer.set_reveal_child(True)
+            self.test_buffer.set_text("Settings are still applying. Try Test again in a moment.")
             return
 
         current_config = self.config_manager.get_settings().get("speech_recognition", {})
@@ -5821,8 +5828,12 @@ For now, the engine has been reverted to VOSK."""
         self._populate_model_options()
         self._update_engine_specific_ui()
 
-    def apply_settings(self):
+    def apply_settings(self) -> bool:
         """Apply the selected settings."""
+        if self._applying_settings:
+            logger.warning("Ignoring apply_settings(); another apply is already in progress")
+            return False
+
         settings = self.get_selected_settings()
         logger.info(f"Applying settings: {settings}")
 
@@ -5846,7 +5857,7 @@ For now, the engine has been reverted to VOSK."""
                 # Same guard as in _auto_apply_settings: one download at a time.
                 self._show_download_busy_dialog()
                 self._resync_model_ui_from_config()
-                return
+                return False
             download_dialog = ModelDownloadDialog(
                 self,
                 model_name,

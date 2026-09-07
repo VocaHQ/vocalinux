@@ -65,6 +65,7 @@ def _text_buffer():
 def _dialog_for_test(*, start_return, model_ready=True, is_auto_paused=False):
     dialog = Mock()
     dialog._test_active = False
+    dialog._applying_settings = False
     dialog.test_button = Mock()
     dialog.test_output_revealer = Mock()
     dialog.test_buffer = _text_buffer()
