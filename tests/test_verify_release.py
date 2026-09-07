@@ -111,6 +111,30 @@ def test_a_release_missing_a_distribution_names_it():
     ]
 
 
+def test_an_extra_pypi_distribution_fails(monkeypatch):
+    """A differently-named wheel on PyPI would otherwise go unchecked."""
+    import io
+    import urllib.request
+
+    wheel = "vocalinux-0.16.2-py3-none-any.whl"
+    sdist = "vocalinux-0.16.2.tar.gz"
+    extra = "vocalinux-0.16.2-extra.whl"
+    payload = {
+        "urls": [
+            {"filename": wheel, "digests": {"sha256": "aa"}},
+            {"filename": sdist, "digests": {"sha256": "bb"}},
+            {"filename": extra, "digests": {"sha256": "cc"}},
+        ]
+    }
+
+    def fake_urlopen(url, timeout=None):
+        return io.StringIO(json.dumps(payload))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    problems = verify.check_pypi("0.16.2", {wheel: "aa", sdist: "bb"})
+    assert f"{extra} is on PyPI but not on the release" in problems
+
+
 def test_github_digests_are_read_without_their_algorithm_prefix():
     stored, undigested = verify.asset_digests(
         [{"name": "a.AppImage", "digest": "sha256:AABB"}, {"name": "b.snap"}]

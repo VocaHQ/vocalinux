@@ -189,6 +189,9 @@ def check_pypi(version: str, stored: dict[str, str]) -> list[str]:
             problems.append(f"{name} is on the release but not on PyPI")
         elif published[name] != digest:
             problems.append(f"{name}: PyPI serves {published[name]}, the release serves {digest}")
+    for name in sorted(published):
+        if name.endswith(PYPI_SUFFIXES) and name not in expected:
+            problems.append(f"{name} is on PyPI but not on the release")
     return problems
 
 
