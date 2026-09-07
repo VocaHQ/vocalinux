@@ -5647,6 +5647,36 @@ class SettingsDialog(Gtk.Dialog):
             return primary
         return "auto"
 
+    def _on_disk_stand_in(self, variant: str, size: str, language: str) -> str:
+        """Prefer a downloaded weight of the same size over fetching a sibling.
+
+        Flipping the "other languages" switch swapped base for base.en, or back:
+        same size, different weights, and a modal download each way, blocking the
+        window for it. A same-size weight already on disk that can serve the
+        language stands in instead; the info card still offers the better variant
+        as a download, it just no longer forces it.
+        """
+        if is_whispercpp_model_downloaded(variant):
+            return variant
+        wants_english = _language_is_english(language)
+        candidates = [
+            name
+            for name in get_whispercpp_model_variants(size)
+            if is_whispercpp_model_downloaded(name)
+            and (wants_english or not is_english_only_whispercpp_model(name))
+        ]
+        if not candidates:
+            return variant
+
+        def rank(name: str) -> tuple:
+            # Closest to what was derived: English-only first when English is
+            # wanted, the plain multilingual next, quantized ones last.
+            english_first = 0 if wants_english and is_english_only_whispercpp_model(name) else 1
+            quantized = 1 if "-q" in name else 0
+            return (english_first, quantized, name)
+
+        return min(candidates, key=rank)
+
     def _apply_simple_choice(self):
         """Drive the advanced controls from the simple questions.
 
@@ -5664,6 +5694,7 @@ class SettingsDialog(Gtk.Dialog):
         recommended, _ = self._get_recommended_whispercpp_model_for_language()
         size = size_for_priority(get_whispercpp_model_size(recommended), priority)
         variant = _default_whispercpp_variant_for_size(size, language) or size
+        variant = self._on_disk_stand_in(variant, size, language)
 
         self.model_combo.set_active_id(size)
         self._populate_whispercpp_variant_options(size, variant)

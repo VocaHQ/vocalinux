@@ -64,6 +64,8 @@ def _dialog_stub(language="pl", multi=False, priority=BALANCED, recommended="sma
     dialog._simple_decoding_language.side_effect = (
         lambda: _sd().SettingsDialog._simple_decoding_language(dialog)
     )
+    # Disk lookups are covered separately; here the derived variant stands.
+    dialog._on_disk_stand_in.side_effect = lambda variant, size, language: variant
     return dialog
 
 
@@ -461,3 +463,72 @@ def test_restoring_after_auto_detect_falls_back_to_a_real_language(settings_dial
     dialog._set_combo_active_id_or_first.assert_called_once_with(
         dialog.simple_language_combo, "en-us"
     )
+
+
+# --- reuse what is on disk instead of downloading a sibling ---------------
+
+
+def _with_disk(settings_dialog, downloaded):
+    return (
+        patch.object(
+            settings_dialog,
+            "is_whispercpp_model_downloaded",
+            side_effect=lambda name: name in downloaded,
+        ),
+        patch.object(
+            settings_dialog,
+            "get_whispercpp_model_variants",
+            return_value=["base", "base.en", "base-q5_1", "base.en-q5_1", "base-q8_0"],
+        ),
+    )
+
+
+def test_a_same_size_weight_on_disk_stands_in_for_a_missing_sibling(settings_dialog, dialog_class):
+    """Reported: switching the other-languages switch off went from base to
+    base.en and sat through a 141 MB modal download for the same size."""
+    on_disk, variants = _with_disk(settings_dialog, ["base"])
+    with on_disk, variants:
+        chosen = dialog_class._on_disk_stand_in(Mock(), "base.en", "base", "en-us")
+    assert chosen == "base"
+
+
+def test_the_derived_variant_is_kept_when_it_is_already_on_disk(settings_dialog, dialog_class):
+    on_disk, variants = _with_disk(settings_dialog, ["base", "base.en"])
+    with on_disk, variants:
+        assert dialog_class._on_disk_stand_in(Mock(), "base.en", "base", "en-us") == "base.en"
+
+
+def test_english_only_weights_never_stand_in_for_another_language(settings_dialog, dialog_class):
+    on_disk, variants = _with_disk(settings_dialog, ["base.en"])
+    with on_disk, variants:
+        assert dialog_class._on_disk_stand_in(Mock(), "base", "base", "pl") == "base"
+
+
+def test_english_only_weights_never_stand_in_for_detection(settings_dialog, dialog_class):
+    on_disk, variants = _with_disk(settings_dialog, ["base.en"])
+    with on_disk, variants:
+        assert dialog_class._on_disk_stand_in(Mock(), "base", "base", "auto") == "base"
+
+
+def test_nothing_of_that_size_on_disk_means_the_derived_variant_and_a_download(
+    settings_dialog, dialog_class
+):
+    on_disk, variants = _with_disk(settings_dialog, ["medium.en"])
+    with on_disk, variants:
+        assert dialog_class._on_disk_stand_in(Mock(), "base.en", "base", "en-us") == "base.en"
+
+
+def test_a_plain_weight_is_preferred_over_a_quantized_one(settings_dialog, dialog_class):
+    on_disk, variants = _with_disk(settings_dialog, ["base-q5_1", "base"])
+    with on_disk, variants:
+        assert dialog_class._on_disk_stand_in(Mock(), "base.en", "base", "en-us") == "base"
+
+
+def test_simple_mode_consults_the_disk_before_settling_on_a_variant(settings_dialog, dialog_class):
+    dialog = _dialog_stub(language="en-us", multi=False, priority=BALANCED, recommended="small")
+    dialog._on_disk_stand_in.side_effect = lambda variant, size, language: "small"
+
+    dialog_class._apply_simple_choice(dialog)
+
+    dialog._on_disk_stand_in.assert_called_once_with("small.en", "small", "en-us")
+    dialog.model_variant_combo.set_active_id.assert_called_once_with("small")
