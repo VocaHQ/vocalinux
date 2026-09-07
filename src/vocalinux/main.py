@@ -401,8 +401,7 @@ def main():
     language = recognition_manager.normalize_language_for_engine(engine, language)
     if language != resolved_language:
         logger.info(
-            "Parakeet ignores catalog language; using language=auto "
-            f"(was {resolved_language})"
+            "Parakeet ignores catalog language; using language=auto " f"(was {resolved_language})"
         )
 
     if cli_model_set:

@@ -57,6 +57,8 @@ def _dialog_stub():
     dialog._test_active = False
     dialog._populating_models = False
     dialog.language = "en-us"
+    dialog._last_non_parakeet_language = None
+    dialog._engine_for_language_memory = None
     # The real attribute is an enum member; a bare "idle" string would compare
     # unequal and send every test down the stop_recognition + sleep(0.5) branch.
     dialog.speech_engine.state = RecognitionState.IDLE
@@ -418,13 +420,62 @@ def test_parakeet_engine_change_forces_language_auto(dialog_class):
     """A leftover catalog language from another engine must not stick in memory."""
     dialog = _dialog_stub()
     dialog.language = "en-us"
+    dialog._engine_for_language_memory = "whisper"
     dialog.engine_combo.get_active_text.return_value = "Parakeet"
     dialog.language_combo.get_active_id.return_value = "fr"
 
     dialog_class._on_engine_changed(dialog, None)
 
     assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "fr"
+    assert dialog._engine_for_language_memory == "parakeet"
     dialog._sync_language_options_for_selected_model.assert_called_once_with("auto")
+
+
+def test_parakeet_reentry_does_not_clobber_remembered_language(dialog_class):
+    """A second Parakeet changed signal must not replace memory with forced auto."""
+    dialog = _dialog_stub()
+    dialog.language = "auto"
+    dialog._last_non_parakeet_language = "fr"
+    dialog._engine_for_language_memory = "parakeet"
+    dialog.engine_combo.get_active_text.return_value = "Parakeet"
+    dialog.language_combo.get_active_id.return_value = "auto"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "fr"
+
+
+def test_leaving_parakeet_restores_remembered_language(dialog_class):
+    """Whisper/cpp language must survive a round-trip through Parakeet."""
+    dialog = _dialog_stub()
+    dialog.language = "auto"
+    dialog._last_non_parakeet_language = "fr"
+    dialog._engine_for_language_memory = "parakeet"
+    dialog.engine_combo.get_active_text.return_value = "Whisper"
+    dialog.language_combo.get_active_id.return_value = "auto"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "fr"
+    assert dialog._last_non_parakeet_language == "fr"
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("fr")
+
+
+def test_leaving_parakeet_to_vosk_maps_unsupported_remembered_language(dialog_class):
+    """Restored auto/non-Vosk languages must fall back to en-us on Vosk."""
+    dialog = _dialog_stub()
+    dialog.language = "auto"
+    dialog._last_non_parakeet_language = "auto"
+    dialog._engine_for_language_memory = "parakeet"
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+    dialog.language_combo.get_active_id.return_value = "auto"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "en-us"
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("en-us")
 
 
 def test_parakeet_language_sync_forces_auto(dialog_class):
@@ -439,6 +490,7 @@ def test_parakeet_language_sync_forces_auto(dialog_class):
     dialog_class._sync_language_options_for_selected_model(dialog, "de")
 
     assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "de"
     dialog._set_combo_active_id_or_first.assert_any_call(dialog.language_combo, "auto")
 
 
@@ -487,8 +539,9 @@ def test_speech_manager_reconfigure_to_parakeet_normalizes_language():
 
     from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 
-    with patch.object(SpeechRecognitionManager, "_init_vosk"), patch.object(
-        SpeechRecognitionManager, "_init_parakeet"
+    with (
+        patch.object(SpeechRecognitionManager, "_init_vosk"),
+        patch.object(SpeechRecognitionManager, "_init_parakeet"),
     ):
         manager = SpeechRecognitionManager(
             engine="vosk",
@@ -516,8 +569,9 @@ def test_speech_manager_reconfigure_to_parakeet_clears_leftover_without_language
 
     from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 
-    with patch.object(SpeechRecognitionManager, "_init_whispercpp"), patch.object(
-        SpeechRecognitionManager, "_init_parakeet"
+    with (
+        patch.object(SpeechRecognitionManager, "_init_whispercpp"),
+        patch.object(SpeechRecognitionManager, "_init_parakeet"),
     ):
         manager = SpeechRecognitionManager(
             engine="whisper_cpp",

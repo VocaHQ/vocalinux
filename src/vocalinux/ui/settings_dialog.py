@@ -1694,6 +1694,11 @@ class SettingsDialog(Gtk.Dialog):
         self._processing_language_change = (
             False  # Flag to prevent recursive language change handling
         )
+        # Last Whisper/whisper.cpp/Vosk/remote language across Parakeet visits.
+        # Parakeet forces language=auto for honesty; this restores the preference
+        # when the user leaves Parakeet without a lying visible picker.
+        self._last_non_parakeet_language = None
+        self._engine_for_language_memory = None
         self._applying_settings = False  # Flag to prevent recursive settings application
         self._advanced_prompt_dirty = False
         self._about_release_url = ""
@@ -4498,6 +4503,14 @@ class SettingsDialog(Gtk.Dialog):
         settings = self._get_current_settings()
         self.current_engine = settings["engine"]
         self.language = settings["language"]
+        if self.current_engine == "parakeet":
+            # Config may already be auto; keep any non-auto leftover as restore seed.
+            self._last_non_parakeet_language = (
+                self.language if self.language and self.language != "auto" else None
+            )
+        else:
+            self._last_non_parakeet_language = self.language
+        self._engine_for_language_memory = self.current_engine
         self.current_model_size = settings["model_size"]
         self.current_vad = settings.get("vad_sensitivity", 3)
         self.current_silence = settings.get("silence_timeout", 2.0)
@@ -4732,6 +4745,10 @@ class SettingsDialog(Gtk.Dialog):
         engine = self._get_selected_engine()
         if engine == "parakeet":
             # Coverage is the model (v2-english vs v3-european), not this picker.
+            # Remember a non-auto preferred leftover, but never clobber memory with
+            # the forced auto that follows an engine switch into Parakeet.
+            if preferred_language and preferred_language != "auto":
+                self._last_non_parakeet_language = preferred_language
             self.language = "auto"
             language_to_keep = "auto"
         else:
@@ -4756,6 +4773,8 @@ class SettingsDialog(Gtk.Dialog):
                 self.language = (
                     self.language_combo.get_active_id() or self._default_language_for_engine(engine)
                 )
+                if self.language:
+                    self._last_non_parakeet_language = self.language
         finally:
             self._processing_language_change = False
 
@@ -5128,16 +5147,38 @@ class SettingsDialog(Gtk.Dialog):
         programmatic = self._initializing or self._applying_settings
 
         current_lang = None if self._applying_settings else self.language_combo.get_active_id()
+        previous_engine = self._engine_for_language_memory
         if engine == "parakeet":
+            # Force auto for honesty, but remember the prior catalog preference so
+            # leaving Parakeet can restore Whisper/cpp language instead of auto.
+            # Only capture on entry: a re-fired changed signal while already on
+            # Parakeet would otherwise overwrite memory with the forced auto.
+            if previous_engine != "parakeet":
+                remembered = current_lang or self.language
+                if remembered:
+                    self._last_non_parakeet_language = remembered
             self.language = "auto"
-        elif current_lang:
-            if engine == "vosk" and (
-                current_lang == "auto" or not SUPPORTED_LANGUAGES.get(current_lang, {}).get("vosk")
-            ):
-                self.language = "en-us"
-            elif engine in ["whisper", "whisper_cpp", "remote_api"] and not current_lang:
-                self.language = "auto"
+        elif current_lang is None and self._applying_settings:
+            # Programmatic resync must not rewrite the language the user picked.
+            pass
+        else:
+            if current_lang and current_lang != "auto":
+                chosen = current_lang
+            elif self._last_non_parakeet_language:
+                chosen = self._last_non_parakeet_language
+            else:
+                chosen = current_lang or self.language or self._default_language_for_engine(engine)
 
+            if engine == "vosk" and (
+                chosen == "auto" or not SUPPORTED_LANGUAGES.get(chosen, {}).get("vosk")
+            ):
+                chosen = "en-us"
+
+            self.language = chosen
+            if chosen:
+                self._last_non_parakeet_language = chosen
+
+        self._engine_for_language_memory = engine
         self._populate_model_options()
         self._sync_language_options_for_selected_model(self.language)
         self._update_engine_specific_ui()
@@ -5294,6 +5335,8 @@ class SettingsDialog(Gtk.Dialog):
         self._processing_language_change = True
         try:
             self.language = lang_code
+            if _engine_from_display(engine) != "parakeet":
+                self._last_non_parakeet_language = lang_code
             self._populate_model_options()
             self._update_language_warning()
             self._auto_apply_settings()
