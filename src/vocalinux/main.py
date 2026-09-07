@@ -82,7 +82,7 @@ def parse_arguments():
     parser.add_argument(
         "--engine",
         type=str,
-        choices=["vosk", "whisper", "whisper_cpp", "remote_api"],
+        choices=["vosk", "whisper", "whisper_cpp", "parakeet", "remote_api"],
         help="Speech recognition engine to use (whisper_cpp recommended for best performance)",
     )
     parser.add_argument("--wayland", action="store_true", help="Force Wayland compatibility mode")
@@ -393,6 +393,16 @@ def main():
     else:
         language = saved_settings.get("language", args.language)
         logger.info(f"Using language={language} (from saved config)")
+
+    # Parakeet coverage is the model, not a catalog language. Normalize after
+    # CLI vs saved resolution so --language / stale config cannot leave an
+    # unused value on SpeechRecognitionManager.
+    resolved_language = language
+    language = recognition_manager.normalize_language_for_engine(engine, language)
+    if language != resolved_language:
+        logger.info(
+            "Parakeet ignores catalog language; using language=auto " f"(was {resolved_language})"
+        )
 
     if cli_model_set:
         model_size = args.model

@@ -82,6 +82,7 @@ DEFAULT_CONFIG = {
         "simple_second_language": "",
         # Whether the Advanced island under the simple questions is left open.
         "show_advanced": False,
+        "parakeet_model_size": "v3-european",  # Parakeet TDT 0.6B v3 (25 European languages)
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 2.0,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech
