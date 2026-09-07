@@ -513,6 +513,110 @@ def test_whisper_parakeet_vosk_whisper_preserves_unsupported_language(dialog_cla
     dialog._sync_language_options_for_selected_model.assert_called_with("el")
 
 
+def test_vosk_parakeet_whisper_preserves_unsupported_language(dialog_class):
+    """Entering Parakeet from coerced Vosk must not record en-us as memory."""
+    dialog = _dialog_stub()
+    dialog.language = "el"
+    dialog._last_non_parakeet_language = "el"
+    dialog._engine_for_language_memory = "whisper"
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+    dialog.language_combo.get_active_id.return_value = "el"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "en-us"
+    assert dialog._last_non_parakeet_language == "el"
+    assert dialog._engine_for_language_memory == "vosk"
+
+    # Combo still shows Vosk's en-us fallback; Parakeet entry must keep Greek.
+    dialog.engine_combo.get_active_text.return_value = "Parakeet"
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "el"
+    assert dialog._engine_for_language_memory == "parakeet"
+
+    dialog.engine_combo.get_active_text.return_value = "Whisper"
+    dialog.language_combo.get_active_id.return_value = "auto"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "el"
+    assert dialog._last_non_parakeet_language == "el"
+    dialog._sync_language_options_for_selected_model.assert_called_with("el")
+
+
+def test_vosk_parakeet_whisper_preserves_auto_language(dialog_class):
+    """Entering Parakeet from coerced Vosk must not record en-us over auto."""
+    dialog = _dialog_stub()
+    dialog.language = "auto"
+    dialog._last_non_parakeet_language = "auto"
+    dialog._engine_for_language_memory = "whisper"
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+    dialog.language_combo.get_active_id.return_value = "auto"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "en-us"
+    assert dialog._last_non_parakeet_language == "auto"
+    assert dialog._engine_for_language_memory == "vosk"
+
+    dialog.engine_combo.get_active_text.return_value = "Parakeet"
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "auto"
+    assert dialog._engine_for_language_memory == "parakeet"
+
+    dialog.engine_combo.get_active_text.return_value = "Whisper"
+    dialog.language_combo.get_active_id.return_value = "auto"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "auto"
+    dialog._sync_language_options_for_selected_model.assert_called_with("auto")
+
+
+def test_vosk_whisper_preserves_auto_language(dialog_class):
+    """Leaving Vosk for Whisper must restore auto, not the coerced en-us combo."""
+    dialog = _dialog_stub()
+    dialog.language = "auto"
+    dialog._last_non_parakeet_language = "auto"
+    dialog._engine_for_language_memory = "whisper"
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+    dialog.language_combo.get_active_id.return_value = "auto"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "en-us"
+    assert dialog._last_non_parakeet_language == "auto"
+
+    dialog.engine_combo.get_active_text.return_value = "Whisper"
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "auto"
+    dialog._sync_language_options_for_selected_model.assert_called_with("auto")
+
+
+def test_vosk_language_sync_does_not_clobber_unsupported_memory(dialog_class):
+    """Vosk combo fallback to en-us must not overwrite a remembered catalog language."""
+    dialog = _dialog_stub()
+    dialog.language = "en-us"
+    dialog._last_non_parakeet_language = "el"
+    dialog._get_selected_engine.return_value = "vosk"
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog._set_combo_active_id_or_first.return_value = True
+    dialog._default_language_for_engine.return_value = "en-us"
+
+    dialog_class._sync_language_options_for_selected_model(dialog, "en-us")
+
+    assert dialog.language == "en-us"
+    assert dialog._last_non_parakeet_language == "el"
+
+
 def test_parakeet_language_sync_forces_auto(dialog_class):
     """Sync must not keep a preferred or combo language for Parakeet."""
     dialog = _dialog_stub()

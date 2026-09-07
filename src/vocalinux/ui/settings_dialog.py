@@ -247,6 +247,25 @@ def _language_is_english(language_id: str) -> bool:
     return SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
 
 
+def _vosk_display_is_coerced_fallback(
+    previous_engine: Optional[str],
+    displayed: Optional[str],
+    remembered: Optional[str],
+) -> bool:
+    """Return whether ``displayed`` is Vosk's en-us stand-in for ``remembered``.
+
+    Vosk has no auto-detect and no model for some catalog languages (e.g. Greek).
+    Those selections are shown as en-us; that fallback is not a user preference
+    and must not replace ``remembered`` (including auto).
+    """
+    return (
+        previous_engine == "vosk"
+        and displayed == "en-us"
+        and bool(remembered)
+        and remembered != "en-us"
+    )
+
+
 def _recommended_whispercpp_variant_for_language(
     recommended_model: str,
     reason: str,
@@ -4774,7 +4793,9 @@ class SettingsDialog(Gtk.Dialog):
                 self.language = (
                     self.language_combo.get_active_id() or self._default_language_for_engine(engine)
                 )
-                if self.language:
+                if self.language and not _vosk_display_is_coerced_fallback(
+                    engine, self.language, self._last_non_parakeet_language
+                ):
                     self._last_non_parakeet_language = self.language
         finally:
             self._processing_language_change = False
@@ -5161,7 +5182,12 @@ class SettingsDialog(Gtk.Dialog):
             # Parakeet would otherwise overwrite memory with the forced auto.
             if previous_engine != "parakeet":
                 remembered = current_lang or self.language
-                if remembered:
+                # Vosk may still display coerced en-us for an unsupported
+                # catalog language. Entering Parakeet must not record that
+                # fallback over the pre-coercion preference (e.g. Greek or auto).
+                if remembered and not _vosk_display_is_coerced_fallback(
+                    previous_engine, remembered, self._last_non_parakeet_language
+                ):
                     self._last_non_parakeet_language = remembered
             self.language = "auto"
         elif current_lang is None and self._applying_settings:
@@ -5173,11 +5199,8 @@ class SettingsDialog(Gtk.Dialog):
             if (
                 current_lang
                 and current_lang != "auto"
-                and not (
-                    previous_engine == "vosk"
-                    and current_lang == "en-us"
-                    and self._last_non_parakeet_language
-                    and self._last_non_parakeet_language not in ("auto", "en-us")
+                and not _vosk_display_is_coerced_fallback(
+                    previous_engine, current_lang, self._last_non_parakeet_language
                 )
             ):
                 chosen = current_lang
