@@ -5619,10 +5619,12 @@ class SettingsDialog(Gtk.Dialog):
         Switching modes must not change the model on its own, so the priority is
         read back from the size already chosen rather than reset to a default.
 
-        A leftover simple multi answer that would decode to auto must not be
-        restored over a pinned Advanced language: the next simple edit would
-        silently replace the pin. Two English answers still pin English, so
-        that configuration is kept.
+        A leftover simple multi answer is restored only when it still decodes
+        to the live Advanced language. Otherwise the next simple edit would
+        silently replace it: a named second language over a pin becomes auto,
+        and two English answers over Advanced auto pin English. Two English
+        answers still pin English, so that configuration is kept on an English
+        pin and dropped when Advanced is auto.
         """
         language = self.language_combo.get_active_id() or self.language or "auto"
         is_auto = language == "auto"
@@ -5633,28 +5635,29 @@ class SettingsDialog(Gtk.Dialog):
         try:
             if is_auto:
                 self.simple_multi_switch.set_active(True)
-                if not self.simple_language_combo.get_active_id():
+                primary = self.simple_language_combo.get_active_id()
+                if not primary:
                     self.simple_language_combo.set_active_id("en-us")
-                if stored_second:
-                    self.simple_second_language_combo.set_active_id(stored_second)
-                else:
-                    # Detection with no named second language is the "any" answer.
-                    self.simple_second_language_combo.set_active_id("auto")
+                    primary = "en-us"
             else:
                 self.simple_language_combo.set_active_id(language)
-                keeps_pin = bool(stored_second) and (
-                    _decode_simple_languages(language, True, stored_second) == language
-                )
-                if keeps_pin:
+                primary = language
+
+            keeps_live = bool(stored_second) and (
+                _decode_simple_languages(primary, True, stored_second) == language
+            )
+            if keeps_live:
+                if not is_auto:
                     self.simple_multi_switch.set_active(True)
-                    self.simple_second_language_combo.set_active_id(stored_second)
-                else:
+                self.simple_second_language_combo.set_active_id(stored_second)
+            else:
+                if not is_auto:
                     self.simple_multi_switch.set_active(False)
-                    if stored_second:
-                        self.config_manager.set("speech_recognition", "simple_second_language", "")
-                    # Reset so turning the switch on later starts from "any", not
-                    # a stale pick that Advanced already superseded.
-                    self.simple_second_language_combo.set_active_id("auto")
+                if stored_second:
+                    self.config_manager.set("speech_recognition", "simple_second_language", "")
+                # Reset so turning the switch on later starts from "any", not a
+                # stale pick that Advanced already superseded.
+                self.simple_second_language_combo.set_active_id("auto")
 
             recommended, _ = self._get_recommended_whispercpp_model_for_language()
             current = self._get_selected_whispercpp_model()
