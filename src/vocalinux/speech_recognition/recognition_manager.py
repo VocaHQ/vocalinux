@@ -1778,7 +1778,7 @@ class SpeechRecognitionManager:
             logger.error(f"Error in whisper.cpp transcription: {e} ({audio_info})", exc_info=True)
             return ""
 
-    def _download_parakeet_model(self):
+    def _download_parakeet_model(self) -> None:
         """Download the Parakeet model files with progress tracking."""
         import requests
 
@@ -1794,8 +1794,8 @@ class SpeechRecognitionManager:
         outer_callback = self._download_progress_callback
         total_files = len(parakeet.MODEL_FILES)
 
-        def file_progress(index, name):
-            def report(fraction, speed, status):
+        def file_progress(index: int, name: str) -> Callable[[float, float, str], None]:
+            def report(fraction: float, speed: float, status: str) -> None:
                 if outer_callback:
                     outer_callback(
                         (index + fraction) / total_files,
@@ -1897,7 +1897,7 @@ class SpeechRecognitionManager:
                 logger.info("Removed the unverified model file; it will be downloaded again")
         return verified
 
-    def _init_parakeet(self):
+    def _init_parakeet(self) -> None:
         """Initialize the Parakeet speech recognition engine."""
         try:
             import sherpa_onnx
@@ -1970,23 +1970,33 @@ class SpeechRecognitionManager:
 
     def _transcribe_with_parakeet(self, audio_buffer: list[bytes]) -> str:
         """Transcribe 16-bit PCM chunks (16kHz) with Parakeet."""
-        import numpy as np
+        try:
+            import numpy as np
 
-        if not audio_buffer:
-            return ""
-
-        audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
-        audio_float = audio_data.astype(np.float32) / 32768.0
-
-        # Lock model access to prevent a race with reconfigure() setting self.model to None
-        with self._model_lock:
-            if self.model is None:
-                logger.warning("Model is None during transcription, returning empty result")
+            if not audio_buffer:
                 return ""
-            stream = self.model.create_stream()
-            stream.accept_waveform(16000, audio_float)
-            self.model.decode_stream(stream)
-            return stream.result.text.strip()
+
+            audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
+            audio_float = audio_data.astype(np.float32) / 32768.0
+
+            # Lock model access to prevent a race with reconfigure() setting self.model to None
+            with self._model_lock:
+                if self.model is None:
+                    logger.warning("Model is None during transcription, returning empty result")
+                    return ""
+                stream = self.model.create_stream()
+                stream.accept_waveform(16000, audio_float)
+                self.model.decode_stream(stream)
+                return stream.result.text.strip()
+
+        except Exception as e:
+            audio_info = (
+                f"audio buffer: {len(audio_buffer)} chunks"
+                if audio_buffer
+                else "empty audio buffer"
+            )
+            logger.error(f"Error in Parakeet transcription: {e} ({audio_info})", exc_info=True)
+            return ""
 
     def _init_remote_api(self):
         """Initialize remote API speech recognition engine.

@@ -417,6 +417,22 @@ class TestTranscribeWhisper(unittest.TestCase):
         self.assertEqual(result, "")
 
 
+class TestTranscribeParakeet(unittest.TestCase):
+    def test_transcribe_create_stream_exception(self):
+        mgr = _make_manager()
+        mgr.model = MagicMock()
+        mgr.model.create_stream.side_effect = RuntimeError("decode boom")
+
+        mock_np = MagicMock()
+        mock_np.frombuffer.return_value = MagicMock()
+        mock_np.frombuffer.return_value.astype.return_value = MagicMock()
+
+        with patch.dict("sys.modules", {"numpy": mock_np}):
+            result = mgr._transcribe_with_parakeet([b"\x00\x00" * 512])
+        self.assertEqual(result, "")
+        mgr.model.create_stream.assert_called_once()
+
+
 class TestInitVosk(unittest.TestCase):
     def test_init_vosk_model_exists(self):
         mgr = _make_manager(engine="vosk")
