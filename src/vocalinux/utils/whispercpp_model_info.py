@@ -127,6 +127,23 @@ def get_model_variants(model_size: str) -> list[str]:
     return list(MODEL_VARIANTS_BY_SIZE.get(model_size.lower(), []))
 
 
+def default_variant_for_size(model_size: str, language_is_english: bool) -> Optional[str]:
+    """Return the default specialization for a size bucket and language."""
+    variants = get_model_variants(model_size)
+    if not variants:
+        return None
+
+    english_variant = f"{model_size}.en"
+    if language_is_english and english_variant in variants:
+        return english_variant
+
+    standard_variant = "large" if model_size == "large" else model_size
+    if standard_variant in variants:
+        return standard_variant
+
+    return variants[0]
+
+
 def is_english_only_model(model_name: str) -> bool:
     """Return whether a whisper.cpp model variant is English-only."""
     return ".en" in model_name.lower()
