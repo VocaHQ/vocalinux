@@ -149,9 +149,7 @@ def detect_locale_language(environ: Optional[dict] = None) -> Optional[str]:
     return None
 
 
-def _language_from_locale_env(
-    environ: dict, supported: set[str] | dict
-) -> Optional[str]:
+def _language_from_locale_env(environ: dict, supported: set[str] | dict) -> Optional[str]:
     """Map the first locale env var onto a catalogue entry.
 
     LANGUAGE is a colon-separated preference list: each entry is tried through
