@@ -1045,7 +1045,7 @@ class SearchablePicker(Gtk.Box):
 
     def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        self.base_model: list = []
+        self.base_model: list[list] = []
         self._active_id: Optional[str] = None
         self._rows_by_id: dict = {}
 
@@ -1105,6 +1105,7 @@ class SearchablePicker(Gtk.Box):
         self._rows_by_id[item_id] = row
 
     def remove_all(self) -> None:
+        """Drop every row and clear the active selection."""
         self.base_model.clear()
         self._rows_by_id.clear()
         for row in list(self._list.get_children()):
@@ -1113,16 +1114,20 @@ class SearchablePicker(Gtk.Box):
         self._label.set_text("")
 
     def get_model(self) -> list:
+        """The ComboBoxText-shaped store: [display text, id] per row."""
         return self.base_model
 
     def get_active_id(self) -> Optional[str]:
+        """The id of the selected row, or None."""
         return self._active_id
 
     def get_active_text(self) -> Optional[str]:
+        """The display text of the selected row, or None."""
         row = self._rows_by_id.get(self._active_id)
         return row.item_text if row is not None else None
 
     def set_active_id(self, item_id: Optional[str]) -> bool:
+        """Select by id; False if that id is not in the list."""
         row = self._rows_by_id.get(item_id)
         if row is None:
             return False
@@ -1130,11 +1135,12 @@ class SearchablePicker(Gtk.Box):
         return True
 
     def set_active(self, index: int) -> None:
+        """Select by store index; no-op if the index is out of range."""
         if 0 <= index < len(self.base_model):
             text, item_id = self.base_model[index]
             self._select(item_id, text)
 
-    def get_child(self):
+    def get_child(self) -> Gtk.SearchEntry:
         """The search entry, for callers that hook a ComboBoxText's entry."""
         return self._search
 
@@ -1147,34 +1153,34 @@ class SearchablePicker(Gtk.Box):
         if changed:
             self.emit("changed")
 
-    def _on_button_clicked(self, _button) -> None:
+    def _on_button_clicked(self, _button: Gtk.Button) -> None:
         self._search.set_text("")
         self._list.invalidate_filter()
         self._popover.show_all()
         self._popover.popup()
         self._search.grab_focus()
 
-    def _on_popover_closed(self, _popover) -> None:
+    def _on_popover_closed(self, _popover: Gtk.Popover) -> None:
         self._search.set_text("")
         self._list.invalidate_filter()
 
-    def _row_is_visible(self, row) -> bool:
+    def _row_is_visible(self, row: Gtk.ListBoxRow) -> bool:
         needle = (self._search.get_text() or "").strip()
         if not needle:
             return True
         # Same rule the typed-text resolver uses, so the list and Enter agree.
         return _combo_text_matches_query(needle, row.item_id, row.item_text)
 
-    def _on_search_changed(self, _entry) -> None:
+    def _on_search_changed(self, _entry: Gtk.SearchEntry) -> None:
         self._list.invalidate_filter()
 
-    def _first_visible_row(self):
+    def _first_visible_row(self) -> Optional[Gtk.ListBoxRow]:
         for row in self._list.get_children():
             if row.get_visible() and row.get_child_visible() and self._row_is_visible(row):
                 return row
         return None
 
-    def _on_search_activate(self, _entry) -> None:
+    def _on_search_activate(self, _entry: Gtk.SearchEntry) -> None:
         # Empty (or whitespace-only) Enter must not grab the first store row and
         # auto-apply a language the user never chose. First-match only after a
         # non-empty filter.
@@ -1185,7 +1191,7 @@ class SearchablePicker(Gtk.Box):
         if row is not None:
             self._on_row_activated(self._list, row)
 
-    def _on_row_activated(self, _listbox, row) -> None:
+    def _on_row_activated(self, _listbox: Gtk.ListBox, row: Gtk.ListBoxRow) -> None:
         self._popover.popdown()
         self._select(row.item_id, row.item_text)
 

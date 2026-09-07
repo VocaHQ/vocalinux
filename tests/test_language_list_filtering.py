@@ -7,6 +7,7 @@ with a search entry above the list instead; every keystroke narrows the rows.
 
 import importlib
 import sys
+from typing import Any, Optional
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -40,14 +41,16 @@ def settings_dialog():
             del vocalinux.ui.settings_dialog
 
 
-def _row(item_id, text):
+def _row(item_id: str, text: str) -> Mock:
     row = Mock()
     row.item_id = item_id
     row.item_text = text
     return row
 
 
-def _picker_stub(settings_dialog, typed="", rows=(), active=None):
+def _picker_stub(
+    settings_dialog: Any, typed: str = "", rows: tuple = (), active: Optional[str] = None
+) -> Mock:
     """A stand-in ``self``: GTK is mocked, the picker's own logic is not."""
     picker = Mock()
     picker.base_model = [[text, item_id] for item_id, text in rows]
