@@ -50,6 +50,10 @@ def _dialog_stub(language: str = "en-us") -> Mock:
     dialog.language_combo.get_active_id.return_value = language
     dialog._populating_models = False
     dialog._processing_language_change = False
+    # Plain Mock attrs are truthy; these guards must be real False or the
+    # language-changed handler returns before updating dialog.language.
+    dialog._initializing = False
+    dialog._applying_settings = False
     return dialog
 
 

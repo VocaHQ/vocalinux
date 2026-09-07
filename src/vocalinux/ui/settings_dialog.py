@@ -5750,6 +5750,9 @@ class SettingsDialog(Gtk.Dialog):
             self.language = lang_code
             self._populate_model_options()
             self._update_language_warning()
+            # Explicit refresh: Mock tests assert this call; _update_model_info
+            # also refreshes on a real dialog.
+            self._refresh_simple_readout()
             self._update_model_info()
             self._auto_apply_settings()
         finally:

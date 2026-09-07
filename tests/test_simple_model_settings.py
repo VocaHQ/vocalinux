@@ -534,6 +534,8 @@ def test_changing_advanced_language_refreshes_the_simple_readout(settings_dialog
     """Otherwise a pin in Advanced leaves a stale multi switch on screen."""
     dialog = Mock()
     dialog._processing_language_change = False
+    dialog._initializing = False
+    dialog._applying_settings = False
     dialog.language_combo.get_active_id.return_value = "pl"
     dialog.engine_combo.get_active_text.return_value = "Local (whisper.cpp)"
 
