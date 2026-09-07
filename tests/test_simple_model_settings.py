@@ -383,8 +383,9 @@ def test_auto_detect_shows_up_as_the_other_languages_switch(settings_dialog, dia
     dialog.simple_multi_switch.set_active.assert_called_once_with(True)
 
 
+@pytest.mark.parametrize("stale_second", ["auto", "en-us"])
 def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_pin(
-    settings_dialog, dialog_class
+    settings_dialog, dialog_class, stale_second
 ):
     """A leftover simple second answer must not override a pinned Advanced language.
 
@@ -394,7 +395,7 @@ def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_
     dialog = Mock()
     dialog.language = "pl"
     dialog.language_combo.get_active_id.return_value = "pl"
-    dialog.config_manager.get.return_value = "auto"  # stale leftover
+    dialog.config_manager.get.return_value = stale_second
     dialog._get_recommended_whispercpp_model_for_language.return_value = ("small", "reason")
     dialog._get_selected_whispercpp_model.return_value = "small"
 
@@ -402,9 +403,7 @@ def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_
 
     dialog.simple_multi_switch.set_active.assert_called_once_with(False)
     dialog.simple_language_combo.set_active_id.assert_called_once_with("pl")
-    dialog.config_manager.set.assert_called_with(
-        "speech_recognition", "simple_second_language", ""
-    )
+    dialog.config_manager.set.assert_called_with("speech_recognition", "simple_second_language", "")
     dialog.simple_second_language_combo.set_active_id.assert_called_with("auto")
 
     # Widgets after sync: multi off, main language pinned. A later simple apply
@@ -413,8 +412,8 @@ def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_
     dialog.simple_language_combo.get_active_id.return_value = "pl"
     dialog.simple_second_language_combo.get_active_id.return_value = "auto"
     dialog.simple_priority_combo.get_active_id.return_value = BALANCED
-    dialog._simple_decoding_language.side_effect = (
-        lambda: dialog_class._simple_decoding_language(dialog)
+    dialog._simple_decoding_language.side_effect = lambda: dialog_class._simple_decoding_language(
+        dialog
     )
     dialog._on_disk_stand_in.side_effect = lambda variant, size, language: variant
 
@@ -424,9 +423,42 @@ def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_
     assert dialog.language == "pl"
 
 
-def test_changing_advanced_language_refreshes_the_simple_readout(
-    settings_dialog, dialog_class
-):
+def test_two_english_second_language_survives_sync_from_a_pin(settings_dialog, dialog_class):
+    """en-US plus en-IN still pins English; sync must not treat that as leftover auto.
+
+    Dropping the switch and wiping ``simple_second_language`` on every pinned
+    readout would forget the second English answer the next time settings open.
+    """
+    dialog = Mock()
+    dialog.language = "en-us"
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog.config_manager.get.return_value = "en-in"
+    dialog._get_recommended_whispercpp_model_for_language.return_value = ("small.en", "reason")
+    dialog._get_selected_whispercpp_model.return_value = "small.en"
+
+    dialog_class._sync_simple_from_advanced(dialog)
+
+    dialog.simple_multi_switch.set_active.assert_called_once_with(True)
+    dialog.simple_language_combo.set_active_id.assert_called_once_with("en-us")
+    dialog.simple_second_language_combo.set_active_id.assert_called_once_with("en-in")
+    dialog.config_manager.set.assert_not_called()
+
+    dialog.simple_multi_switch.get_active.return_value = True
+    dialog.simple_language_combo.get_active_id.return_value = "en-us"
+    dialog.simple_second_language_combo.get_active_id.return_value = "en-in"
+    dialog.simple_priority_combo.get_active_id.return_value = BALANCED
+    dialog._simple_decoding_language.side_effect = lambda: dialog_class._simple_decoding_language(
+        dialog
+    )
+    dialog._on_disk_stand_in.side_effect = lambda variant, size, language: variant
+
+    dialog_class._apply_simple_choice(dialog)
+
+    dialog._set_combo_active_id_or_first.assert_called_once_with(dialog.language_combo, "en-us")
+    assert dialog.language == "en-us"
+
+
+def test_changing_advanced_language_refreshes_the_simple_readout(settings_dialog, dialog_class):
     """Otherwise a pin in Advanced leaves a stale multi switch on screen."""
     dialog = Mock()
     dialog._processing_language_change = False

@@ -249,6 +249,25 @@ def _language_is_english(language_id: str) -> bool:
     return SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
 
 
+def _decode_simple_languages(primary: str, wants_second: bool, secondary: Optional[str]) -> str:
+    """Resolve the two simple language answers into what the engine accepts.
+
+    whisper takes one language or none, so naming a second language has to mean
+    automatic detection. The one exception is two English entries — en-US plus
+    en-IN, say — where English can still be pinned and the English-only weights,
+    which are the same size and better at English, stay available.
+    """
+    if not wants_second:
+        return primary
+    if not secondary or secondary == primary:
+        return primary
+    if secondary == "auto":
+        return "auto"
+    if _language_is_english(primary) and _language_is_english(secondary):
+        return primary
+    return "auto"
+
+
 def _recommended_whispercpp_variant_for_language(
     recommended_model: str,
     reason: str,
@@ -5600,9 +5619,10 @@ class SettingsDialog(Gtk.Dialog):
         Switching modes must not change the model on its own, so the priority is
         read back from the size already chosen rather than reset to a default.
 
-        A pinned Advanced language must win over a leftover simple multi answer:
-        restoring the switch and ``simple_second_language`` would make the next
-        simple edit decode to auto and silently replace the pin.
+        A leftover simple multi answer that would decode to auto must not be
+        restored over a pinned Advanced language: the next simple edit would
+        silently replace the pin. Two English answers still pin English, so
+        that configuration is kept.
         """
         language = self.language_combo.get_active_id() or self.language or "auto"
         is_auto = language == "auto"
@@ -5621,13 +5641,20 @@ class SettingsDialog(Gtk.Dialog):
                     # Detection with no named second language is the "any" answer.
                     self.simple_second_language_combo.set_active_id("auto")
             else:
-                self.simple_multi_switch.set_active(False)
                 self.simple_language_combo.set_active_id(language)
-                if stored_second:
-                    self.config_manager.set("speech_recognition", "simple_second_language", "")
-                # Reset so turning the switch on later starts from "any", not a
-                # stale pick that Advanced already superseded.
-                self.simple_second_language_combo.set_active_id("auto")
+                keeps_pin = bool(stored_second) and (
+                    _decode_simple_languages(language, True, stored_second) == language
+                )
+                if keeps_pin:
+                    self.simple_multi_switch.set_active(True)
+                    self.simple_second_language_combo.set_active_id(stored_second)
+                else:
+                    self.simple_multi_switch.set_active(False)
+                    if stored_second:
+                        self.config_manager.set("speech_recognition", "simple_second_language", "")
+                    # Reset so turning the switch on later starts from "any", not
+                    # a stale pick that Advanced already superseded.
+                    self.simple_second_language_combo.set_active_id("auto")
 
             recommended, _ = self._get_recommended_whispercpp_model_for_language()
             current = self._get_selected_whispercpp_model()
@@ -5640,25 +5667,13 @@ class SettingsDialog(Gtk.Dialog):
         self._update_simple_visibility()
 
     def _simple_decoding_language(self) -> str:
-        """Resolve the two simple language answers into what the engine accepts.
-
-        whisper takes one language or none, so naming a second language has to mean
-        automatic detection. The one exception is two English entries — en-US plus
-        en-IN, say — where English can still be pinned and the English-only weights,
-        which are the same size and better at English, stay available.
-        """
+        """Resolve the two simple language answers into what the engine accepts."""
         primary = self.simple_language_combo.get_active_id() or "en-us"
-        if not self.simple_multi_switch.get_active():
-            return primary
-
-        secondary = self.simple_second_language_combo.get_active_id()
-        if not secondary or secondary == primary:
-            return primary
-        if secondary == "auto":
-            return "auto"
-        if _language_is_english(primary) and _language_is_english(secondary):
-            return primary
-        return "auto"
+        return _decode_simple_languages(
+            primary,
+            self.simple_multi_switch.get_active(),
+            self.simple_second_language_combo.get_active_id(),
+        )
 
     def _on_disk_stand_in(self, variant: str, size: str, language: str) -> str:
         """Prefer a downloaded weight of the same size over fetching a sibling.
