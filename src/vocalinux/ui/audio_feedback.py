@@ -4,12 +4,12 @@ Audio feedback module for Vocalinux.
 This module provides audio feedback for various recognition states.
 """
 
+import hashlib
 import logging
 import os
 import shutil
 import subprocess
 import sys
-import tempfile
 import threading
 import wave
 from pathlib import Path  # noqa: F401
@@ -149,20 +149,25 @@ def _prerolled_sound_path(sound_path: str, preroll_ms: int = _SINK_WAKE_PREROLL_
             cached = _preroll_cache.get(key)
             if cached is not None and os.path.isfile(cached):
                 return cached
-            fd, tmp_path = tempfile.mkstemp(
-                prefix="preroll-", suffix=".wav", dir=_preroll_cache_dir()
-            )
-            os.close(fd)
+            digest = hashlib.sha256(
+                f"{abs_path}\0{mtime_ns}\0{preroll_ms}".encode("utf-8")
+            ).hexdigest()
+            dest = os.path.join(_preroll_cache_dir(), f"{digest[:16]}.wav")
+            if os.path.isfile(dest):
+                _preroll_cache[key] = dest
+                return dest
+            partial = dest + ".partial"
             try:
-                _write_preroll_wav(abs_path, tmp_path, preroll_ms)
+                _write_preroll_wav(abs_path, partial, preroll_ms)
+                os.replace(partial, dest)
             except Exception:
                 try:
-                    os.unlink(tmp_path)
+                    os.unlink(partial)
                 except OSError:
                     pass
                 raise
-            _preroll_cache[key] = tmp_path
-            return tmp_path
+            _preroll_cache[key] = dest
+            return dest
     except Exception as exc:
         logger.warning("Could not prepend audio preroll for %s: %s", sound_path, exc)
         return sound_path

@@ -2,11 +2,10 @@
 Tests for the audio feedback functionality.
 """
 
+import importlib
 import os
 import sys
-import tempfile
 import unittest
-import wave
 from unittest.mock import patch
 
 import pytest
@@ -15,9 +14,26 @@ import pytest
 AUDIO_FEEDBACK_MODULE = "vocalinux.ui.audio_feedback"
 
 
+def _reload_stdlib(*names: str) -> None:
+    """Load real stdlib modules, ignoring MagicMock entries in sys.modules."""
+    for name in names:
+        sys.modules.pop(name, None)
+        sys.modules[name] = importlib.import_module(name)
+
+
+# Other test modules replace tempfile/wave in sys.modules with MagicMock at
+# import time and never put them back. Reload the real stdlib modules so this
+# file can write WAV fixtures and so audio_feedback can reimport a real wave.
+_reload_stdlib("tempfile", "wave")
+tempfile = importlib.import_module("tempfile")
+wave = importlib.import_module("wave")
+
+
 @pytest.fixture(autouse=True)
 def reset_audio_module():
     """Reset the audio_feedback module before each test to allow proper testing."""
+    _reload_stdlib("tempfile", "wave")
+
     # Remove the mock that conftest installs
     if AUDIO_FEEDBACK_MODULE in sys.modules:
         del sys.modules[AUDIO_FEEDBACK_MODULE]
