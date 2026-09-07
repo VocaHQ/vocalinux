@@ -2,10 +2,11 @@
 Tests for the audio feedback functionality.
 """
 
-import importlib
 import os
 import sys
+import tempfile
 import unittest
+import wave
 from unittest.mock import patch
 
 import pytest
@@ -13,37 +14,43 @@ import pytest
 # We need to use absolute paths for patching in module scope
 AUDIO_FEEDBACK_MODULE = "vocalinux.ui.audio_feedback"
 
-
-def _reload_stdlib(*names: str) -> None:
-    """Load real stdlib modules, ignoring MagicMock entries in sys.modules."""
-    for name in names:
-        sys.modules.pop(name, None)
-        sys.modules[name] = importlib.import_module(name)
-
-
-# Other test modules replace tempfile/wave in sys.modules with MagicMock at
-# import time and never put them back. Reload the real stdlib modules so this
-# file can write WAV fixtures and so audio_feedback can reimport a real wave.
-_reload_stdlib("tempfile", "wave")
-tempfile = importlib.import_module("tempfile")
-wave = importlib.import_module("wave")
+# Pytest collects files in command-line order, so this module may import after
+# tests that replace tempfile/wave in sys.modules with MagicMock. Rebind to
+# the real stdlib modules for WAV fixtures. Leave real tempfile in sys.modules
+# so a later `from tempfile import TemporaryDirectory` is not a MagicMock.
+# Do not pop tempfile in the per-test fixture below.
+if getattr(tempfile, "__name__", None) != "tempfile":
+    sys.modules.pop("tempfile", None)
+    import tempfile
+if getattr(wave, "__name__", None) != "wave":
+    sys.modules.pop("wave", None)
+    import wave
 
 
 @pytest.fixture(autouse=True)
 def reset_audio_module():
     """Reset the audio_feedback module before each test to allow proper testing."""
-    _reload_stdlib("tempfile", "wave")
+    # Sibling tests replace sys.modules["wave"] with a MagicMock. Pin the real
+    # module this file imported so a reimported audio_feedback gets wave.open.
+    previous_wave = sys.modules.get("wave")
+    sys.modules["wave"] = wave
 
     # Remove the mock that conftest installs
     if AUDIO_FEEDBACK_MODULE in sys.modules:
         del sys.modules[AUDIO_FEEDBACK_MODULE]
 
-    yield
+    try:
+        yield
+    finally:
+        if previous_wave is None:
+            sys.modules.pop("wave", None)
+        else:
+            sys.modules["wave"] = previous_wave
 
-    # Restore the mock after test for other tests that need it
-    from conftest import mock_audio_feedback
+        # Restore the mock after test for other tests that need it
+        from conftest import mock_audio_feedback
 
-    sys.modules[AUDIO_FEEDBACK_MODULE] = mock_audio_feedback
+        sys.modules[AUDIO_FEEDBACK_MODULE] = mock_audio_feedback
 
 
 def _write_test_wav(

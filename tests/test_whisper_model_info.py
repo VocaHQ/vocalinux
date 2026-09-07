@@ -8,10 +8,18 @@ dialog that reported "large" as missing no matter how often it was fetched.
 """
 
 import os
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+
+# test_recognition_manager / test_speech_recognition replace sys.modules
+# ["tempfile"] with a MagicMock at import time and never put it back. Bind
+# TemporaryDirectory from the real stdlib module even when that happens.
+if not isinstance(TemporaryDirectory, type):
+    sys.modules.pop("tempfile", None)
+    from tempfile import TemporaryDirectory
 
 from vocalinux.utils.whisper_model_info import (
     WHISPER_MODEL_SIZES,
