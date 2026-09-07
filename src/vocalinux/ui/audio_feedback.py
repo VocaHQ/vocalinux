@@ -9,6 +9,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import wave
 from pathlib import Path  # noqa: F401
@@ -58,6 +59,14 @@ START_SOUND = _resource_manager.get_sound_path("start_recording")
 STOP_SOUND = _resource_manager.get_sound_path("stop_recording")
 ERROR_SOUND = _resource_manager.get_sound_path("error")
 
+# Silent lead-in so a suspended PipeWire/WirePlumber sink can wake before the
+# audible cue. Applied in the same WAV (one player process), not as a second
+# stream. See #800.
+_SINK_WAKE_PREROLL_MS = 100
+_REAL_AUDIO_PLAYERS = frozenset({"paplay", "aplay", "play", "mplayer"})
+_preroll_lock = threading.Lock()
+_preroll_cache: dict[tuple[str, int, int], str] = {}
+
 
 def _is_sound_effects_enabled() -> bool:
     try:
@@ -90,6 +99,73 @@ def _wav_duration_seconds(sound_path: str) -> float:
             return frames / float(rate)
     except Exception:
         return 0.35
+
+
+def _pcm_silence(nframes: int, nchannels: int, sampwidth: int) -> bytes:
+    """Return PCM bytes of silence matching the source sample format."""
+    if nframes < 1 or nchannels < 1 or sampwidth < 1:
+        raise ValueError("invalid PCM parameters for silence")
+    if sampwidth == 1:
+        # 8-bit WAV is unsigned; 0x80 is the zero point.
+        return bytes([0x80]) * (nframes * nchannels)
+    return b"\x00" * (nframes * nchannels * sampwidth)
+
+
+def _preroll_cache_dir() -> str:
+    cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
+    path = os.path.join(cache_home, "vocalinux", "audio-preroll")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _write_preroll_wav(source_path: str, dest_path: str, preroll_ms: int) -> None:
+    """Write ``source_path`` with ``preroll_ms`` of leading silence to ``dest_path``."""
+    with wave.open(source_path, "rb") as src:
+        nchannels = src.getnchannels()
+        sampwidth = src.getsampwidth()
+        framerate = src.getframerate()
+        if nchannels < 1 or sampwidth < 1 or framerate < 1:
+            raise ValueError(
+                f"invalid WAV parameters: channels={nchannels} "
+                f"sampwidth={sampwidth} framerate={framerate}"
+            )
+        audio = src.readframes(src.getnframes())
+    preroll_frames = max(1, int(round(framerate * preroll_ms / 1000.0)))
+    silence = _pcm_silence(preroll_frames, nchannels, sampwidth)
+    with wave.open(dest_path, "wb") as dst:
+        dst.setnchannels(nchannels)
+        dst.setsampwidth(sampwidth)
+        dst.setframerate(framerate)
+        dst.writeframes(silence + audio)
+
+
+def _prerolled_sound_path(sound_path: str, preroll_ms: int = _SINK_WAKE_PREROLL_MS) -> str:
+    """Return a cached WAV with silent preroll, or ``sound_path`` on failure."""
+    try:
+        abs_path = os.path.abspath(sound_path)
+        mtime_ns = os.stat(abs_path).st_mtime_ns
+        key = (abs_path, mtime_ns, preroll_ms)
+        with _preroll_lock:
+            cached = _preroll_cache.get(key)
+            if cached is not None and os.path.isfile(cached):
+                return cached
+            fd, tmp_path = tempfile.mkstemp(
+                prefix="preroll-", suffix=".wav", dir=_preroll_cache_dir()
+            )
+            os.close(fd)
+            try:
+                _write_preroll_wav(abs_path, tmp_path, preroll_ms)
+            except Exception:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+            _preroll_cache[key] = tmp_path
+            return tmp_path
+    except Exception as exc:
+        logger.warning("Could not prepend audio preroll for %s: %s", sound_path, exc)
+        return sound_path
 
 
 def _get_audio_player():
@@ -126,7 +202,7 @@ def _get_audio_player():
     return None, []
 
 
-def _play_sound_file(sound_path):
+def _play_sound_file(sound_path: str) -> bool:
     """
     Play a sound file using the best available player.
 
@@ -158,31 +234,35 @@ def _play_sound_file(sound_path):
         logger.info(f"CI mode: Simulating playing sound {sound_path}")
         return True
 
+    playback_path = sound_path
+    if player in _REAL_AUDIO_PLAYERS:
+        playback_path = _prerolled_sound_path(sound_path)
+
     try:
         if player == "paplay":
             subprocess.Popen(
-                [player, sound_path],
+                [player, playback_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=host_env(),
             )
         elif player == "aplay":
             subprocess.Popen(
-                [player, "-q", sound_path],
+                [player, "-q", playback_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=host_env(),
             )
         elif player == "mplayer":
             subprocess.Popen(
-                [player, "-really-quiet", sound_path],
+                [player, "-really-quiet", playback_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=host_env(),
             )
         elif player == "play":
             subprocess.Popen(
-                [player, "-q", sound_path],
+                [player, "-q", playback_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 env=host_env(),
