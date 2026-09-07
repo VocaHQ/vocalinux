@@ -21,6 +21,7 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
@@ -81,6 +82,18 @@ def resolve_whisper_language(language: str) -> Optional[str]:
     # Legacy fallback for codes not present in the catalog.
     if language == "en-us":
         return "en"
+    return language
+
+
+def normalize_language_for_engine(engine: str, language: str) -> str:
+    """Return the language the given engine actually consumes.
+
+    Parakeet coverage is the model (v2-english vs v3-european), not a catalog
+    language. Any leftover CLI or saved code is dropped so callers cannot store
+    an unconsumed value.
+    """
+    if engine == "parakeet":
+        return "auto"
     return language
 
 
@@ -982,7 +995,7 @@ class SpeechRecognitionManager:
         """
         self.engine = engine
         self.model_size = model_size
-        self.language = language
+        self.language = normalize_language_for_engine(engine, language)
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
         self.state = RecognitionState.IDLE
         self.audio_thread = None
@@ -1076,7 +1089,7 @@ class SpeechRecognitionManager:
         os.makedirs(MODELS_DIR, exist_ok=True)
 
         logger.info(
-            f"Initializing speech recognition with {engine} engine, {language} language and {model_size} model"
+            f"Initializing speech recognition with {engine} engine, {self.language} language and {model_size} model"
         )
 
         # Initialize the selected speech recognition engine
@@ -1086,6 +1099,8 @@ class SpeechRecognitionManager:
             self._init_whisper()
         elif engine == "whisper_cpp":
             self._init_whispercpp()
+        elif engine == "parakeet":
+            self._init_parakeet()
         elif engine == "remote_api":
             self._init_remote_api()
         else:
@@ -1762,6 +1777,216 @@ class SpeechRecognitionManager:
             )
             logger.error(f"Error in whisper.cpp transcription: {e} ({audio_info})", exc_info=True)
             return ""
+
+    def _download_parakeet_model(self):
+        """Download the Parakeet model files with progress tracking."""
+        import requests
+
+        self._download_cancelled = False
+
+        model_dir = parakeet.get_model_path(self.model_size)
+        os.makedirs(model_dir, exist_ok=True)
+        logger.info(f"Downloading Parakeet '{self.model_size}' model to {model_dir}")
+
+        # _stream_model_download reports 0..1 per file, so remap each file into
+        # its own slice of the bundle: the bar advances once across the whole
+        # download instead of restarting for each of the four files.
+        outer_callback = self._download_progress_callback
+        total_files = len(parakeet.MODEL_FILES)
+
+        def file_progress(index, name):
+            def report(fraction, speed, status):
+                if outer_callback:
+                    outer_callback(
+                        (index + fraction) / total_files,
+                        speed,
+                        f"{name} ({index + 1}/{total_files}) - {status}",
+                    )
+
+            return report
+
+        temp_file = None
+        try:
+            for index, filename in enumerate(parakeet.MODEL_FILES):
+                dest_path = os.path.join(model_dir, filename)
+                key = parakeet.manifest_key(self.model_size, filename)
+                # Existence is not enough: a leftover or copied-in file must
+                # still match its pin. Verify, and only skip the download when
+                # the digest is good.
+                if os.path.exists(dest_path):
+                    try:
+                        verify_model_file(dest_path, key)
+                        continue
+                    except ChecksumError as error:
+                        logger.error(
+                            "Existing Parakeet model file at %s is not trustworthy: %s",
+                            dest_path,
+                            error,
+                        )
+                        if expected_for(key) is None:
+                            raise
+                        try:
+                            os.remove(dest_path)
+                        except OSError as remove_error:
+                            logger.error("Could not remove %s: %s", dest_path, remove_error)
+                            raise
+                        logger.info(
+                            "Removed the unverified model file; it will be downloaded again"
+                        )
+                temp_file = dest_path + ".tmp"
+                url = parakeet.get_model_file_url(self.model_size, filename)
+                self._download_progress_callback = file_progress(index, filename)
+                self._stream_model_download(url, temp_file)
+
+                # Verify before the rename, as the whisper.cpp downloader does:
+                # sherpa-onnx loads these through native code, so an unverified
+                # file must never reach a path is_model_downloaded() trusts.
+                verify_model_file(temp_file, key)
+
+                os.rename(temp_file, dest_path)
+                temp_file = None
+
+        # RequestException=Exception under the test mocks; do not catch
+        # Timeout separately (it is not a real exception type there).
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download the Parakeet model: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            msg = str(e).lower()
+            if "timeout" in msg or type(e).__name__ == "Timeout":
+                raise RuntimeError(
+                    "Model download timed out (Hugging Face may be slow or unavailable). "
+                    "Check your network and try again."
+                ) from e
+            raise RuntimeError(f"Failed to download Parakeet model: {e}") from e
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
+            logger.error(f"An error occurred during Parakeet model download: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
+        finally:
+            self._download_progress_callback = outer_callback
+
+        logger.info("Parakeet model downloaded successfully")
+        if self._download_progress_callback:
+            self._download_progress_callback(1.0, 0, "Complete!")
+
+    @staticmethod
+    def _parakeet_model_is_verified(model_size: str, model_dir: str) -> bool:
+        """Hash each bundle file against its pin. Delete only a digest/size mismatch.
+
+        An unpinned name is refused, not deleted. If remove fails, return False
+        so the caller does not hand the files to sherpa-onnx.
+        """
+        verified = True
+        for filename in parakeet.MODEL_FILES:
+            path = os.path.join(model_dir, filename)
+            key = parakeet.manifest_key(model_size, filename)
+            try:
+                verify_model_file(path, key)
+            except ChecksumError as error:
+                logger.error("Parakeet model file at %s is not trustworthy: %s", path, error)
+                verified = False
+                if expected_for(key) is None:
+                    continue
+                try:
+                    os.remove(path)
+                except OSError as remove_error:
+                    logger.error("Could not remove %s: %s", path, remove_error)
+                    return False
+                logger.info("Removed the unverified model file; it will be downloaded again")
+        return verified
+
+    def _init_parakeet(self):
+        """Initialize the Parakeet speech recognition engine."""
+        try:
+            import sherpa_onnx
+
+            # Validate model size for Parakeet
+            valid_models = list(parakeet.PARAKEET_MODEL_INFO.keys())
+            if self.model_size not in valid_models:
+                logger.warning(
+                    f"Model size '{self.model_size}' not valid for Parakeet. "
+                    f"Valid options: {valid_models}. Using '{parakeet.RECOMMENDED_MODEL}' instead."
+                )
+                self.model_size = parakeet.RECOMMENDED_MODEL
+
+            model_dir = parakeet.get_model_path(self.model_size)
+
+            # A bundle that is merely present did not necessarily come through
+            # the download path: files could be copied in, or left over from a
+            # cancelled download. sherpa-onnx loads these through native code,
+            # so hash them here; a failure demotes the bundle to "not downloaded".
+            if parakeet.is_model_downloaded(
+                self.model_size
+            ) and not self._parakeet_model_is_verified(self.model_size, model_dir):
+                if parakeet.is_model_downloaded(self.model_size):
+                    logger.error(
+                        "Refusing to load unverified Parakeet model at %s",
+                        model_dir,
+                    )
+                    self._model_initialized = False
+                    if self._defer_download:
+                        return
+                    raise RuntimeError(f"Parakeet model at {model_dir} failed verification")
+
+            if not parakeet.is_model_downloaded(self.model_size):
+                if self._defer_download:
+                    logger.info(
+                        f"Parakeet model '{self.model_size}' not found at {model_dir}. "
+                        "Will download when needed."
+                    )
+                    self._model_initialized = False
+                    return  # Don't block startup
+                else:
+                    logger.info(f"Downloading Parakeet '{self.model_size}' model...")
+                    self._download_parakeet_model()
+
+            # NOTE: do not take _model_lock here. It is a non-reentrant Lock and
+            # reconfigure()/reinitialize_after_resume() already hold it when they
+            # call this, so acquiring it would deadlock the caller.
+            self.model = None
+            self.model = sherpa_onnx.OfflineRecognizer.from_transducer(
+                encoder=os.path.join(model_dir, "encoder.int8.onnx"),
+                decoder=os.path.join(model_dir, "decoder.int8.onnx"),
+                joiner=os.path.join(model_dir, "joiner.int8.onnx"),
+                tokens=os.path.join(model_dir, "tokens.txt"),
+                model_type="nemo_transducer",
+                feature_dim=128,
+                num_threads=4,
+            )
+            self._model_initialized = True
+            logger.info(f"Loaded Parakeet model from {model_dir}")
+
+        except ImportError as e:
+            logger.error(f"Failed to import sherpa-onnx: {e}")
+            logger.error("Please install it with 'pip install sherpa-onnx'")
+            self.state = RecognitionState.ERROR
+            raise
+        except (FileNotFoundError, RuntimeError, OSError) as e:
+            logger.error(f"Failed to initialize Parakeet engine: {e}", exc_info=True)
+            self.state = RecognitionState.ERROR
+            raise
+
+    def _transcribe_with_parakeet(self, audio_buffer: list[bytes]) -> str:
+        """Transcribe 16-bit PCM chunks (16kHz) with Parakeet."""
+        import numpy as np
+
+        if not audio_buffer:
+            return ""
+
+        audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
+        audio_float = audio_data.astype(np.float32) / 32768.0
+
+        # Lock model access to prevent a race with reconfigure() setting self.model to None
+        with self._model_lock:
+            if self.model is None:
+                logger.warning("Model is None during transcription, returning empty result")
+                return ""
+            stream = self.model.create_stream()
+            stream.accept_waveform(16000, audio_float)
+            self.model.decode_stream(stream)
+            return stream.result.text.strip()
 
     def _init_remote_api(self):
         """Initialize remote API speech recognition engine.
@@ -3017,6 +3242,9 @@ class SpeechRecognitionManager:
         elif self.engine == "whisper_cpp":
             text = self._transcribe_with_whispercpp(audio_buffer)
 
+        elif self.engine == "parakeet":
+            text = self._transcribe_with_parakeet(audio_buffer)
+
         elif self.engine == "remote_api":
             # Snapshot the HTTP session under lock to prevent race with
             # reconfigure() / reinitialize_after_resume() which close/recreate
@@ -3203,6 +3431,13 @@ class SpeechRecognitionManager:
             self.language = language
             restart_needed = True
 
+        # Parakeet never consumes catalog language. Apply after engine/language
+        # updates so switching TO parakeet also clears a leftover code.
+        normalized_language = normalize_language_for_engine(self.engine, self.language)
+        if normalized_language != self.language:
+            self.language = normalized_language
+            restart_needed = True
+
         # Update VOSK specific params if provided
         if vad_sensitivity is not None:
             self.vad_sensitivity = max(1, min(5, int(vad_sensitivity)))
@@ -3289,6 +3524,8 @@ class SpeechRecognitionManager:
                         self._init_whisper()
                     elif self.engine == "whisper_cpp":
                         self._init_whispercpp()
+                    elif self.engine == "parakeet":
+                        self._init_parakeet()
                     elif self.engine == "remote_api":
                         self._init_remote_api()
                     else:
@@ -3516,6 +3753,8 @@ class SpeechRecognitionManager:
                     self._init_whisper()
                 elif self.engine == "whisper_cpp":
                     self._init_whispercpp()
+                elif self.engine == "parakeet":
+                    self._init_parakeet()
                 elif self.engine == "remote_api":
                     self._init_remote_api()
                 else:

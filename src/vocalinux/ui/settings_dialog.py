@@ -34,6 +34,7 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
@@ -149,6 +150,9 @@ ENGINE_MODELS = {
     "whisper_cpp": [
         *WHISPERCPP_MODEL_SIZES,
     ],  # whisper.cpp top-level size buckets; variants are selected separately
+    "parakeet": [
+        *parakeet.MODEL_SIZES,
+    ],  # Parakeet TDT 0.6B int8 bundles
     "remote_api": [],  # Remote API does not need local models
 }
 
@@ -166,6 +170,7 @@ ENGINE_DISPLAY_NAMES = {
     "vosk": "Vosk",
     "whisper": "Whisper",
     "whisper_cpp": "whisper.cpp",
+    "parakeet": "Parakeet",
     "remote_api": "Remote API",
 }
 
@@ -242,6 +247,25 @@ def _model_specialization_display_name(model_name: str) -> str:
 def _language_is_english(language_id: str) -> bool:
     """Return whether a language ID maps to English for Whisper."""
     return SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
+
+
+def _vosk_display_is_coerced_fallback(
+    previous_engine: Optional[str],
+    displayed: Optional[str],
+    remembered: Optional[str],
+) -> bool:
+    """Return whether ``displayed`` is Vosk's en-us stand-in for ``remembered``.
+
+    Vosk has no auto-detect and no model for some catalog languages (e.g. Greek).
+    Those selections are shown as en-us; that fallback is not a user preference
+    and must not replace ``remembered`` (including auto).
+    """
+    return (
+        previous_engine == "vosk"
+        and displayed == "en-us"
+        and bool(remembered)
+        and remembered != "en-us"
+    )
 
 
 def _recommended_whispercpp_variant_for_language(
@@ -621,7 +645,13 @@ def get_available_engines():
     Detect which speech recognition engines are available/installed.
     Returns a dictionary of engine_name -> availability (bool).
     """
-    engines = {"vosk": False, "whisper": False, "whisper_cpp": False, "remote_api": False}
+    engines = {
+        "vosk": False,
+        "whisper": False,
+        "whisper_cpp": False,
+        "parakeet": False,
+        "remote_api": False,
+    }
 
     # Check VOSK
     try:
@@ -644,6 +674,14 @@ def get_available_engines():
         from pywhispercpp.model import Model
 
         engines["whisper_cpp"] = True
+    except ImportError:
+        pass
+
+    # Check Parakeet (sherpa-onnx)
+    try:
+        import sherpa_onnx  # noqa: F401
+
+        engines["parakeet"] = True
     except ImportError:
         pass
 
@@ -1453,6 +1491,10 @@ def recommended_model_for_engine(
     elif engine == "vosk":
         model_id, reason = _get_recommended_vosk_model()
         size_mb = VOSK_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    elif engine == "parakeet":
+        model_id = parakeet.RECOMMENDED_MODEL
+        reason = parakeet.RECOMMENDED_REASON
+        size_mb = parakeet.PARAKEET_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
     else:
         # Remote API transcribes server-side; there is nothing to download.
         return None
@@ -1892,6 +1934,12 @@ class SettingsDialog(Gtk.Dialog):
         self._processing_language_change = (
             False  # Flag to prevent recursive language change handling
         )
+        # Last user catalog-language preference across Parakeet visits and across
+        # engine-coerced fallbacks (e.g. Vosk forcing en-us for Greek). Parakeet
+        # forces language=auto for honesty; this restores the preference when the
+        # user returns to Whisper/cpp. Do not store engine-coerced fallbacks here.
+        self._last_non_parakeet_language = None
+        self._engine_for_language_memory = None
         self._applying_settings = False  # Flag to prevent recursive settings application
         self._advanced_prompt_dirty = False
         self._about_release_url = ""
@@ -4708,6 +4756,14 @@ class SettingsDialog(Gtk.Dialog):
         settings = self._get_current_settings()
         self.current_engine = settings["engine"]
         self.language = settings["language"]
+        if self.current_engine == "parakeet":
+            # Config may already be auto; keep any non-auto leftover as restore seed.
+            self._last_non_parakeet_language = (
+                self.language if self.language and self.language != "auto" else None
+            )
+        else:
+            self._last_non_parakeet_language = self.language
+        self._engine_for_language_memory = self.current_engine
         self.current_model_size = settings["model_size"]
         self.current_vad = settings.get("vad_sensitivity", 3)
         self.current_silence = settings.get("silence_timeout", 2.0)
@@ -5003,9 +5059,18 @@ class SettingsDialog(Gtk.Dialog):
     def _sync_language_options_for_selected_model(self, preferred_language: Optional[str] = None):
         """Refresh language options and keep the current model/language pair valid."""
         engine = self._get_selected_engine()
-        language_to_keep = (
-            preferred_language or self.language_combo.get_active_id() or self.language
-        )
+        if engine == "parakeet":
+            # Coverage is the model (v2-english vs v3-european), not this picker.
+            # Remember a non-auto preferred leftover, but never clobber memory with
+            # the forced auto that follows an engine switch into Parakeet.
+            if preferred_language and preferred_language != "auto":
+                self._last_non_parakeet_language = preferred_language
+            self.language = "auto"
+            language_to_keep = "auto"
+        else:
+            language_to_keep = (
+                preferred_language or self.language_combo.get_active_id() or self.language
+            )
 
         self._processing_language_change = True
         try:
@@ -5018,9 +5083,16 @@ class SettingsDialog(Gtk.Dialog):
                 fallback_language = self._default_language_for_engine(engine)
                 self._set_combo_active_id_or_first(self.language_combo, fallback_language)
 
-            self.language = (
-                self.language_combo.get_active_id() or self._default_language_for_engine(engine)
-            )
+            if engine == "parakeet":
+                self.language = "auto"
+            else:
+                self.language = (
+                    self.language_combo.get_active_id() or self._default_language_for_engine(engine)
+                )
+                if self.language and not _vosk_display_is_coerced_fallback(
+                    engine, self.language, self._last_non_parakeet_language
+                ):
+                    self._last_non_parakeet_language = self.language
         finally:
             self._processing_language_change = False
 
@@ -5058,6 +5130,8 @@ class SettingsDialog(Gtk.Dialog):
             smallest_model = None
             if engine == "whisper":
                 recommended_model, _ = _get_recommended_whisper_model()
+            elif engine == "parakeet":
+                recommended_model = parakeet.RECOMMENDED_MODEL
             else:
                 recommended_model, _ = _get_recommended_vosk_model()
 
@@ -5069,6 +5143,9 @@ class SettingsDialog(Gtk.Dialog):
                     elif engine == "vosk" and size in VOSK_MODEL_INFO:
                         info = VOSK_MODEL_INFO[size]
                         is_downloaded = _is_vosk_model_downloaded(size, self.language)
+                    elif engine == "parakeet":
+                        info = parakeet.PARAKEET_MODEL_INFO[size]
+                        is_downloaded = parakeet.is_model_downloaded(size)
                     else:
                         is_downloaded = False
                         info = {"size_mb": 0}
@@ -5216,6 +5293,9 @@ class SettingsDialog(Gtk.Dialog):
             size = (self.model_combo.get_active_id() or "").lower()
             language = self.language_combo.get_active_id() or self.language
             return vosk_model_dirname(size, language)
+        if engine == "parakeet":
+            model_id = self.model_combo.get_active_id()
+            return model_id.lower() if model_id else None
         return None
 
     def _list_unused_downloads(self) -> list[tuple[str, str, str]]:
@@ -5270,6 +5350,16 @@ class SettingsDialog(Gtk.Dialog):
                         f"{lang_name} · {_model_display_name(model.size)}",
                         _format_size(model.size_mb),
                         model.dirname == active_id,
+                    )
+                )
+        elif engine == "parakeet":
+            for name in parakeet.list_downloaded_models():
+                items.append(
+                    (
+                        name,
+                        _model_display_name(name),
+                        _format_size(parakeet.PARAKEET_MODEL_INFO[name]["size_mb"]),
+                        name == active_id,
                     )
                 )
 
@@ -5356,6 +5446,8 @@ class SettingsDialog(Gtk.Dialog):
             _delete_whisper_model(model_id)
         elif engine == "vosk":
             delete_vosk_model(model_id)
+        elif engine == "parakeet":
+            parakeet.delete_model(model_id)
         else:
             raise ValueError(f"No local models to delete for engine {engine}")
 
@@ -5404,16 +5496,71 @@ class SettingsDialog(Gtk.Dialog):
         programmatic = self._initializing or self._applying_settings
 
         current_lang = None if self._applying_settings else self.language_combo.get_active_id()
-        if current_lang:
-            if engine == "vosk" and (
-                current_lang == "auto" or not SUPPORTED_LANGUAGES.get(current_lang, {}).get("vosk")
+        previous_engine = self._engine_for_language_memory
+        # When Vosk coerces an unsupported language to en-us, keep the user
+        # preference in memory and re-apply it after sync (which would otherwise
+        # write the coerced active value back into memory).
+        preserve_language_memory = None
+        vosk_coerced = False
+        if engine == "parakeet":
+            # Force auto for honesty, but remember the prior catalog preference so
+            # leaving Parakeet can restore Whisper/cpp language instead of auto.
+            # Only capture on entry: a re-fired changed signal while already on
+            # Parakeet would otherwise overwrite memory with the forced auto.
+            if previous_engine != "parakeet":
+                remembered = current_lang or self.language
+                # Vosk may still display coerced en-us for an unsupported
+                # catalog language. Entering Parakeet must not record that
+                # fallback over the pre-coercion preference (e.g. Greek or auto).
+                if remembered and not _vosk_display_is_coerced_fallback(
+                    previous_engine, remembered, self._last_non_parakeet_language
+                ):
+                    self._last_non_parakeet_language = remembered
+            self.language = "auto"
+        elif current_lang is None and self._applying_settings:
+            # Programmatic resync must not rewrite the language the user picked.
+            pass
+        else:
+            # Prefer remembered preference over a prior engine's coerced active
+            # value (Vosk en-us for Greek). Trust the combo for other engines.
+            if (
+                current_lang
+                and current_lang != "auto"
+                and not _vosk_display_is_coerced_fallback(
+                    previous_engine, current_lang, self._last_non_parakeet_language
+                )
             ):
-                self.language = "en-us"
-            elif engine in ["whisper", "whisper_cpp", "remote_api"] and not current_lang:
-                self.language = "auto"
+                chosen = current_lang
+            elif self._last_non_parakeet_language:
+                chosen = self._last_non_parakeet_language
+            else:
+                chosen = current_lang or self.language or self._default_language_for_engine(engine)
 
+            if engine == "vosk" and (
+                chosen == "auto" or not SUPPORTED_LANGUAGES.get(chosen, {}).get("vosk")
+            ):
+                # Keep the pre-coercion preference (including auto) so sync cannot
+                # persist Vosk's en-us fallback as the remembered Whisper language.
+                preserve_language_memory = (
+                    chosen
+                    if chosen and chosen != "auto"
+                    else (self._last_non_parakeet_language or "auto")
+                )
+                chosen = "en-us"
+                vosk_coerced = True
+
+            self.language = chosen
+            # Never store the coerced en-us fallback as the user preference.
+            if vosk_coerced:
+                self._last_non_parakeet_language = preserve_language_memory
+            elif chosen:
+                self._last_non_parakeet_language = chosen
+
+        self._engine_for_language_memory = engine
         self._populate_model_options()
         self._sync_language_options_for_selected_model(self.language)
+        if vosk_coerced and preserve_language_memory is not None:
+            self._last_non_parakeet_language = preserve_language_memory
         self._update_engine_specific_ui()
         self._update_model_info()
         self._update_voice_commands_for_engine()
@@ -5519,7 +5666,7 @@ class SettingsDialog(Gtk.Dialog):
                     continue
                 is_downloaded = _is_vosk_model_downloaded("small", lang_code)
                 display_text += " ✓" if is_downloaded else " ↓"
-            elif engine in ["whisper", "whisper_cpp", "remote_api"]:
+            elif engine in ["whisper", "whisper_cpp", "parakeet", "remote_api"]:
                 if english_only_whispercpp and lang_info.get("whisper") != "en":
                     continue
                 # Both Whisper and whisper.cpp support auto-detect
@@ -5532,6 +5679,11 @@ class SettingsDialog(Gtk.Dialog):
 
     def _update_language_warning(self):
         """Update language help text for the selected engine/model/language."""
+        if self._get_selected_engine() == "parakeet":
+            self.language_warning.set_markup("")
+            self.language_warning.hide()
+            return
+
         lang_code = self.language_combo.get_active_id()
         lang_info = SUPPORTED_LANGUAGES.get(lang_code, {})
 
@@ -5574,6 +5726,8 @@ class SettingsDialog(Gtk.Dialog):
         self._processing_language_change = True
         try:
             self.language = lang_code
+            if _engine_from_display(engine) != "parakeet":
+                self._last_non_parakeet_language = lang_code
             self._populate_model_options()
             self._update_language_warning()
             self._update_model_info()
@@ -5636,6 +5790,11 @@ class SettingsDialog(Gtk.Dialog):
         self._update_model_info()
         self._refresh_unused_downloads()
         self._update_language_warning()
+        if engine == "parakeet":
+            self.language_row.hide()
+            self.language_warning.hide()
+        else:
+            self.language_row.show_all()
         self._update_model_picker_tooltips()
         self._update_advanced_tab_sensitivity()
 
@@ -5708,6 +5867,14 @@ class SettingsDialog(Gtk.Dialog):
             info = VOSK_MODEL_INFO[model_name]
             is_downloaded = _is_vosk_model_downloaded(model_name, self.language)
             recommended, reason = _get_recommended_vosk_model()
+            extra_info = f"Size: {_format_size(info['size_mb'])}"
+        elif engine == "parakeet":
+            if model_name not in parakeet.PARAKEET_MODEL_INFO:
+                self.model_info_card.hide()
+                return
+            info = parakeet.PARAKEET_MODEL_INFO[model_name]
+            is_downloaded = parakeet.is_model_downloaded(model_name)
+            recommended, reason = parakeet.RECOMMENDED_MODEL, parakeet.RECOMMENDED_REASON
             extra_info = f"Size: {_format_size(info['size_mb'])}"
         else:
             self.model_info_card.hide()
@@ -5789,6 +5956,9 @@ class SettingsDialog(Gtk.Dialog):
             elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
                 needs_download = True
                 model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+            elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
+                needs_download = True
+                model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
 
             if needs_download:
                 if not self.speech_engine.try_begin_download():
@@ -6003,7 +6173,10 @@ class SettingsDialog(Gtk.Dialog):
                 model_variant = ""
         else:
             model_size = model_id.lower() if model_id else "small"
-        language = language_id if language_id else self._default_language_for_engine(engine)
+        if engine == "parakeet":
+            language = "auto"
+        else:
+            language = language_id if language_id else self._default_language_for_engine(engine)
 
         vad = int(self.vad_spin.get_value())
         silence = self.silence_spin.get_value()
@@ -6242,6 +6415,9 @@ For now, the engine has been reverted to VOSK."""
         elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
             needs_download = True
             model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+        elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
+            needs_download = True
+            model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
 
         if needs_download:
             if not self.speech_engine.try_begin_download():

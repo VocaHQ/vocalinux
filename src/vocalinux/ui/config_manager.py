@@ -77,6 +77,7 @@ DEFAULT_CONFIG = {
         # the variant is then derived from the selected language, because a bare size
         # name ("medium") is indistinguishable from the multilingual variant id.
         "whisper_cpp_model_variant": "",
+        "parakeet_model_size": "v3-european",  # Parakeet TDT 0.6B v3 (25 European languages)
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 2.0,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech

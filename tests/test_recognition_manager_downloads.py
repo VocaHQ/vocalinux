@@ -11,7 +11,6 @@ import base64
 import os
 import sys
 import time
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -25,7 +24,14 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
-from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, expected_for
+from vocalinux.utils.model_checksums import (
+    VERIFICATION_STAMP_NAME,
+    ChecksumError,
+    expected_for,
+)
+from vocalinux.utils.model_checksums import verify_model_file as verify_model_file_real
+from vocalinux.utils.parakeet_model_info import MODEL_FILES as PARAKEET_MODEL_FILES
+from vocalinux.utils.parakeet_model_info import manifest_key as parakeet_manifest_key
 
 
 def _make_manager(engine="whisper_cpp", **kw):
@@ -33,20 +39,25 @@ def _make_manager(engine="whisper_cpp", **kw):
     with patch.object(SpeechRecognitionManager, "_init_vosk"):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
             with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
-                mgr = SpeechRecognitionManager(
-                    engine=engine, model_size="small", language="en-us", defer_download=True, **kw
-                )
-                # Ensure vosk_model_map is set (normally done in _init_vosk)
-                if not hasattr(mgr, "vosk_model_map"):
-                    # The names _init_vosk() would pick for en-us. They have to be
-                    # real: the download path looks each one up in the checksum
-                    # manifest to stamp the tree it extracts.
-                    mgr.vosk_model_map = {
-                        "small": "vosk-model-small-en-us-0.15",
-                        "medium": "vosk-model-en-us-0.22",
-                        "large": "vosk-model-en-us-0.22",
-                    }
-                return mgr
+                with patch.object(SpeechRecognitionManager, "_init_parakeet"):
+                    mgr = SpeechRecognitionManager(
+                        engine=engine,
+                        model_size="small",
+                        language="en-us",
+                        defer_download=True,
+                        **kw,
+                    )
+                    # Ensure vosk_model_map is set (normally done in _init_vosk)
+                    if not hasattr(mgr, "vosk_model_map"):
+                        # The names _init_vosk() would pick for en-us. They have to be
+                        # real: the download path looks each one up in the checksum
+                        # manifest to stamp the tree it extracts.
+                        mgr.vosk_model_map = {
+                            "small": "vosk-model-small-en-us-0.15",
+                            "medium": "vosk-model-en-us-0.22",
+                            "large": "vosk-model-en-us-0.22",
+                        }
+                    return mgr
 
 
 # A real zip, embedded rather than built here: by the time this module is
@@ -629,6 +640,168 @@ class TestWhispercppRejectsAnUnverifiedModelOnDisk:
         assert model.exists(), "a missing pin is not a reason to delete the file"
         load.assert_not_called()
         assert manager._model_initialized is False
+
+
+class TestParakeetRejectsAnUnverifiedModelOnDisk:
+    """Wiring test: the hash has to happen where the model is picked up.
+
+    _download_parakeet_model verifies before its rename, so the exposure is a
+    bundle that never came through it: files copied in, or left over from a
+    cancelled download. sherpa-onnx loads these through native code. Without
+    this the files go to OfflineRecognizer.from_transducer as-is.
+    """
+
+    @staticmethod
+    def _write_bundle(tmp_path, payload=b"not the model that is pinned"):
+        model_dir = tmp_path / "v3-european"
+        model_dir.mkdir()
+        for name in PARAKEET_MODEL_FILES:
+            (model_dir / name).write_bytes(payload)
+        return model_dir
+
+    def test_a_model_that_fails_its_pin_is_removed_and_not_loaded(self, tmp_path):
+        model_dir = self._write_bundle(tmp_path)
+
+        manager = _make_manager(engine="parakeet")
+        manager.model_size = "v3-european"
+        manager._defer_download = True
+
+        mock_sherpa = MagicMock()
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.parakeet.get_model_path",
+                return_value=str(model_dir),
+            ):
+                manager._init_parakeet()
+
+        for name in PARAKEET_MODEL_FILES:
+            assert not (model_dir / name).exists(), "an unverifiable model must not stay on disk"
+        mock_sherpa.OfflineRecognizer.from_transducer.assert_not_called()
+        assert manager._model_initialized is False
+
+    def test_a_model_that_cannot_be_deleted_is_still_not_loaded(self, tmp_path):
+        model_dir = self._write_bundle(tmp_path)
+
+        manager = _make_manager(engine="parakeet")
+        manager.model_size = "v3-european"
+        manager._defer_download = False
+
+        mock_sherpa = MagicMock()
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.parakeet.get_model_path",
+                return_value=str(model_dir),
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.os.remove",
+                    side_effect=OSError("read-only"),
+                ):
+                    with pytest.raises(RuntimeError, match="failed verification"):
+                        manager._init_parakeet()
+
+        for name in PARAKEET_MODEL_FILES:
+            assert (model_dir / name).exists()
+        mock_sherpa.OfflineRecognizer.from_transducer.assert_not_called()
+
+    def test_an_unpinned_model_is_refused_not_deleted(self, tmp_path):
+        """Parakeet pins are constructed keys; simulate a missing pin for one file."""
+        model_dir = self._write_bundle(tmp_path, payload=b"bytes")
+        unpinned_name = PARAKEET_MODEL_FILES[0]
+        unpinned_key = parakeet_manifest_key("v3-european", unpinned_name)
+
+        def fake_verify(path, filename=None):
+            key = filename or os.path.basename(path)
+            if key == unpinned_key:
+                raise ChecksumError(f"No checksum is pinned for {key}")
+            verify_model_file_real(path, filename)
+
+        def fake_expected(filename):
+            if os.path.basename(filename) == unpinned_key:
+                return None
+            return expected_for(filename)
+
+        manager = _make_manager(engine="parakeet")
+        manager.model_size = "v3-european"
+        manager._defer_download = True
+
+        mock_sherpa = MagicMock()
+        with patch.dict("sys.modules", {"sherpa_onnx": mock_sherpa}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.parakeet.get_model_path",
+                return_value=str(model_dir),
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.verify_model_file",
+                    side_effect=fake_verify,
+                ):
+                    with patch(
+                        "vocalinux.speech_recognition.recognition_manager.expected_for",
+                        side_effect=fake_expected,
+                    ):
+                        manager._init_parakeet()
+
+        assert (
+            model_dir / unpinned_name
+        ).exists(), "a missing pin is not a reason to delete the file"
+        mock_sherpa.OfflineRecognizer.from_transducer.assert_not_called()
+        assert manager._model_initialized is False
+
+
+class TestParakeetDownloadVerifiesExistingFiles:
+    """Existence is not a pin: a leftover dest must still match its digest.
+
+    A previous continue-on-exists skipped verification and left a copied-in or
+    truncated file for sherpa-onnx to load. OfflineRecognizer is not involved
+    here; this is the download loop only.
+    """
+
+    def test_an_existing_file_that_fails_its_pin_is_redownloaded(self, tmp_path):
+        manager = _make_manager(engine="parakeet")
+        manager.model_size = "v3-european"
+        model_dir = tmp_path / "v3-european"
+        model_dir.mkdir()
+
+        encoder_name = PARAKEET_MODEL_FILES[0]
+        encoder = model_dir / encoder_name
+        encoder.write_bytes(b"not the encoder that is pinned")
+        encoder_key = parakeet_manifest_key("v3-european", encoder_name)
+
+        streamed = []
+        verify_calls = []
+
+        def fake_stream(url, dest_path):
+            streamed.append(dest_path)
+            with open(dest_path, "wb") as handle:
+                handle.write(b"good-enough")
+
+        def fake_verify(path, filename=None):
+            verify_calls.append((path, filename))
+            # Existing dests fail; freshly streamed temps pass.
+            if not str(path).endswith(".tmp"):
+                raise ChecksumError("digest mismatch")
+
+        mock_requests = MagicMock()
+        mock_requests.exceptions.RequestException = Exception
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.parakeet.get_model_path",
+                return_value=str(model_dir),
+            ):
+                with patch.object(manager, "_stream_model_download", side_effect=fake_stream):
+                    with patch(
+                        "vocalinux.speech_recognition.recognition_manager.verify_model_file",
+                        side_effect=fake_verify,
+                    ):
+                        manager._download_parakeet_model()
+
+        assert any(
+            path == str(encoder) and filename == encoder_key for path, filename in verify_calls
+        ), "an existing dest must be hashed, not skipped because it is already on disk"
+        assert any(
+            os.path.basename(path) == encoder_name + ".tmp" for path in streamed
+        ), "an existing bad file must be removed and re-downloaded"
+        assert encoder.read_bytes() == b"good-enough"
 
 
 class TestAudioReconnection:

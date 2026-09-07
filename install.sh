@@ -365,7 +365,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --interactive, -i  Force interactive mode (default)"
             echo "  --auto           Non-interactive automatic installation"
-            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, remote_api"
+            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, remote_api"
             echo "  --dev            Install in development mode with all dev dependencies"
             echo "  --test           Run tests after installation"
             echo "  --venv-dir=PATH  Specify custom virtual environment directory"
@@ -2913,6 +2913,7 @@ engine_import_module() {
         vosk) echo "vosk" ;;
         whisper) echo "whisper" ;;
         whisper_cpp) echo "pywhispercpp.model" ;;
+        parakeet) echo "sherpa_onnx" ;;
         *) echo "" ;;
     esac
 }
@@ -2922,6 +2923,7 @@ engine_pip_name() {
         vosk) echo "vosk" ;;
         whisper) echo "openai-whisper" ;;
         whisper_cpp) echo "pywhispercpp" ;;
+        parakeet) echo "sherpa-onnx" ;;
         *) echo "" ;;
     esac
 }
@@ -3510,6 +3512,34 @@ FALLBACK_CONFIG
 }
 VOSK_CONFIG
                 fi
+                ;;
+
+            parakeet)
+                print_info "Installing Parakeet (sherpa-onnx)..."
+                print_info "Parakeet runs NVIDIA NeMo ASR models on CPU."
+
+                # sherpa-onnx is an optional extra; install it alongside the base package
+                pip_install_extras_skip_pygobject "$PIP_LOG_FILE" parakeet || {
+                    print_error "Failed to install the parakeet engine"
+                    return 1
+                }
+
+                # config_manager merges the remaining defaults, but a file with no
+                # shortcuts section reads as a pre-push-to-talk config and gets
+                # pinned back to ctrl+ctrl/toggle, so seed that section too.
+                mkdir -p "$CONFIG_DIR"
+                if [ ! -f "$CONFIG_DIR/config.json" ]; then
+                    cat > "$CONFIG_DIR/config.json" << 'PARAKEET_CONFIG'
+{
+    "shortcuts": {
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
+    }
+}
+PARAKEET_CONFIG
+                fi
+                set_configured_engine "$CONFIG_DIR/config.json" parakeet ||
+                    print_warning "Could not point $CONFIG_DIR/config.json at the parakeet engine."
                 ;;
 
             remote_api)
@@ -4592,6 +4622,10 @@ EOF
         vosk)
             ENGINE_DISPLAY_NAME="VOSK"
             BACKEND_INFO="Lightweight"
+            ;;
+        parakeet)
+            ENGINE_DISPLAY_NAME="Parakeet"
+            BACKEND_INFO="CPU"
             ;;
         remote_api)
             ENGINE_DISPLAY_NAME="Remote API"
