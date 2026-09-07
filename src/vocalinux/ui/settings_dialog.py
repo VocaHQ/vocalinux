@@ -4730,9 +4730,14 @@ class SettingsDialog(Gtk.Dialog):
     def _sync_language_options_for_selected_model(self, preferred_language: Optional[str] = None):
         """Refresh language options and keep the current model/language pair valid."""
         engine = self._get_selected_engine()
-        language_to_keep = (
-            preferred_language or self.language_combo.get_active_id() or self.language
-        )
+        if engine == "parakeet":
+            # Coverage is the model (v2-english vs v3-european), not this picker.
+            self.language = "auto"
+            language_to_keep = "auto"
+        else:
+            language_to_keep = (
+                preferred_language or self.language_combo.get_active_id() or self.language
+            )
 
         self._processing_language_change = True
         try:
@@ -4745,9 +4750,12 @@ class SettingsDialog(Gtk.Dialog):
                 fallback_language = self._default_language_for_engine(engine)
                 self._set_combo_active_id_or_first(self.language_combo, fallback_language)
 
-            self.language = (
-                self.language_combo.get_active_id() or self._default_language_for_engine(engine)
-            )
+            if engine == "parakeet":
+                self.language = "auto"
+            else:
+                self.language = (
+                    self.language_combo.get_active_id() or self._default_language_for_engine(engine)
+                )
         finally:
             self._processing_language_change = False
 
@@ -5120,14 +5128,14 @@ class SettingsDialog(Gtk.Dialog):
         programmatic = self._initializing or self._applying_settings
 
         current_lang = None if self._applying_settings else self.language_combo.get_active_id()
-        if current_lang:
+        if engine == "parakeet":
+            self.language = "auto"
+        elif current_lang:
             if engine == "vosk" and (
                 current_lang == "auto" or not SUPPORTED_LANGUAGES.get(current_lang, {}).get("vosk")
             ):
                 self.language = "en-us"
-            elif (
-                engine in ["whisper", "whisper_cpp", "parakeet", "remote_api"] and not current_lang
-            ):
+            elif engine in ["whisper", "whisper_cpp", "remote_api"] and not current_lang:
                 self.language = "auto"
 
         self._populate_model_options()
@@ -5246,6 +5254,11 @@ class SettingsDialog(Gtk.Dialog):
 
     def _update_language_warning(self):
         """Update language help text for the selected engine/model/language."""
+        if self._get_selected_engine() == "parakeet":
+            self.language_warning.set_markup("")
+            self.language_warning.hide()
+            return
+
         lang_code = self.language_combo.get_active_id()
         lang_info = SUPPORTED_LANGUAGES.get(lang_code, {})
 
@@ -5342,6 +5355,11 @@ class SettingsDialog(Gtk.Dialog):
         self._update_model_info()
         self._refresh_unused_downloads()
         self._update_language_warning()
+        if engine == "parakeet":
+            self.language_row.hide()
+            self.language_warning.hide()
+        else:
+            self.language_row.show_all()
         self._update_model_picker_tooltips()
         self._update_advanced_tab_sensitivity()
 
@@ -5654,7 +5672,10 @@ class SettingsDialog(Gtk.Dialog):
             model_size = self._get_selected_whispercpp_model()
         else:
             model_size = model_id.lower() if model_id else "small"
-        language = language_id if language_id else self._default_language_for_engine(engine)
+        if engine == "parakeet":
+            language = "auto"
+        else:
+            language = language_id if language_id else self._default_language_for_engine(engine)
 
         vad = int(self.vad_spin.get_value())
         silence = self.silence_spin.get_value()

@@ -1,6 +1,7 @@
 """Tests for keeping the saved model in step with the engine that runs it."""
 
 import importlib
+import inspect
 import sys
 from unittest.mock import MagicMock, Mock, patch
 
@@ -340,3 +341,112 @@ def test_settings_releases_the_engine_once_the_download_is_over(
 
     dialog.speech_engine.try_begin_download.assert_called_once_with()
     dialog.speech_engine.end_download.assert_called_once_with()
+
+
+def _dialog_for_engine_ui(engine_text: str):
+    """Stub widgets that `_update_engine_specific_ui` show/hides."""
+    dialog = _dialog_stub()
+    dialog.engine_combo.get_active_text.return_value = engine_text
+    return dialog
+
+
+def _dialog_for_selected_settings(engine_text: str, language_id: str, model_id: str = "small"):
+    """Stub combos and spins so `get_selected_settings` can run unbound."""
+    dialog = _dialog_stub()
+    dialog.engine_combo.get_active_text.return_value = engine_text
+    dialog.model_combo.get_active_id.return_value = model_id
+    dialog.language_combo.get_active_id.return_value = language_id
+    dialog.vad_spin.get_value.return_value = 3
+    dialog.silence_spin.get_value.return_value = 2.0
+    dialog.advanced_no_timestamps_switch.get_active.return_value = False
+    dialog.advanced_no_context_switch.get_active.return_value = False
+    prompt = dialog.advanced_initial_prompt_buffer
+    prompt.get_text.return_value = ""
+    prompt.get_start_iter.return_value = Mock()
+    prompt.get_end_iter.return_value = Mock()
+    dialog.advanced_temperature_spin.get_value.return_value = 0.0
+    dialog.advanced_temperature_inc_spin.get_value.return_value = 0.2
+    dialog.advanced_entropy_thold_spin.get_value.return_value = 2.4
+    dialog.advanced_logprob_thold_spin.get_value.return_value = -1.0
+    dialog.advanced_no_speech_thold_spin.get_value.return_value = 0.6
+    dialog.gpu_device_combo.get_active_id.return_value = None
+    return dialog
+
+
+def test_parakeet_hides_the_language_picker(dialog_class):
+    """Parakeet language coverage is the model, so the picker must not stay shown."""
+    dialog = _dialog_for_engine_ui("Parakeet")
+
+    dialog_class._update_engine_specific_ui(dialog)
+
+    dialog.language_row.hide.assert_called()
+    dialog.language_row.show_all.assert_not_called()
+    dialog.language_warning.hide.assert_called()
+
+
+def test_non_parakeet_shows_the_language_picker(dialog_class):
+    """Switching away from Parakeet must bring the language row back."""
+    dialog = _dialog_for_engine_ui("whisper.cpp")
+
+    dialog_class._update_engine_specific_ui(dialog)
+
+    dialog.language_row.show_all.assert_called()
+    dialog.language_row.hide.assert_not_called()
+
+
+def test_parakeet_selected_settings_force_language_auto(dialog_class):
+    """A leftover combo language must not be written as if Parakeet used it."""
+    dialog = _dialog_for_selected_settings("Parakeet", "fr", model_id="v3-european")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["engine"] == "parakeet"
+    assert settings["language"] == "auto"
+
+
+def test_whisper_selected_settings_keep_combo_language(dialog_class):
+    """Non-Parakeet engines still persist the language the combo reports."""
+    dialog = _dialog_for_selected_settings("Whisper", "fr", model_id="small")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["engine"] == "whisper"
+    assert settings["language"] == "fr"
+
+
+def test_parakeet_engine_change_forces_language_auto(dialog_class):
+    """A leftover catalog language from another engine must not stick in memory."""
+    dialog = _dialog_stub()
+    dialog.language = "en-us"
+    dialog.engine_combo.get_active_text.return_value = "Parakeet"
+    dialog.language_combo.get_active_id.return_value = "fr"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("auto")
+
+
+def test_parakeet_language_sync_forces_auto(dialog_class):
+    """Sync must not keep a preferred or combo language for Parakeet."""
+    dialog = _dialog_stub()
+    dialog.language = "en-us"
+    dialog._get_selected_engine.return_value = "parakeet"
+    dialog.language_combo.get_active_id.return_value = "fr"
+    dialog._set_combo_active_id_or_first.return_value = True
+    dialog._default_language_for_engine.return_value = "auto"
+
+    dialog_class._sync_language_options_for_selected_model(dialog, "de")
+
+    assert dialog.language == "auto"
+    dialog._set_combo_active_id_or_first.assert_any_call(dialog.language_combo, "auto")
+
+
+def test_parakeet_recognition_does_not_consume_language():
+    """Parakeet models do not take a Whisper-style language argument."""
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    init_src = inspect.getsource(SpeechRecognitionManager._init_parakeet)
+    transcribe_src = inspect.getsource(SpeechRecognitionManager._transcribe_with_parakeet)
+    assert "self.language" not in init_src
+    assert "self.language" not in transcribe_src
