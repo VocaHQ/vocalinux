@@ -475,7 +475,42 @@ def test_leaving_parakeet_to_vosk_maps_unsupported_remembered_language(dialog_cl
     dialog_class._on_engine_changed(dialog, None)
 
     assert dialog.language == "en-us"
+    # Coercion must not invent a user preference of en-us over remembered auto.
+    assert dialog._last_non_parakeet_language == "auto"
     dialog._sync_language_options_for_selected_model.assert_called_once_with("en-us")
+
+
+def test_whisper_parakeet_vosk_whisper_preserves_unsupported_language(dialog_class):
+    """Vosk en-us fallback must not erase Whisper Greek across the round-trip."""
+    dialog = _dialog_stub()
+    dialog.language = "el"
+    dialog._last_non_parakeet_language = "el"
+    dialog._engine_for_language_memory = "whisper"
+    dialog.engine_combo.get_active_text.return_value = "Parakeet"
+    dialog.language_combo.get_active_id.return_value = "el"
+
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "auto"
+    assert dialog._last_non_parakeet_language == "el"
+    assert dialog._engine_for_language_memory == "parakeet"
+
+    dialog.engine_combo.get_active_text.return_value = "Vosk"
+    dialog.language_combo.get_active_id.return_value = "auto"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "en-us"
+    assert dialog._last_non_parakeet_language == "el"
+    assert dialog._engine_for_language_memory == "vosk"
+
+    dialog.engine_combo.get_active_text.return_value = "Whisper"
+    # Combo still shows Vosk's coerced en-us; memory must win for Whisper.
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    dialog_class._on_engine_changed(dialog, None)
+
+    assert dialog.language == "el"
+    assert dialog._last_non_parakeet_language == "el"
+    dialog._sync_language_options_for_selected_model.assert_called_with("el")
 
 
 def test_parakeet_language_sync_forces_auto(dialog_class):

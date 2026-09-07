@@ -1694,9 +1694,10 @@ class SettingsDialog(Gtk.Dialog):
         self._processing_language_change = (
             False  # Flag to prevent recursive language change handling
         )
-        # Last Whisper/whisper.cpp/Vosk/remote language across Parakeet visits.
-        # Parakeet forces language=auto for honesty; this restores the preference
-        # when the user leaves Parakeet without a lying visible picker.
+        # Last user catalog-language preference across Parakeet visits and across
+        # engine-coerced fallbacks (e.g. Vosk forcing en-us for Greek). Parakeet
+        # forces language=auto for honesty; this restores the preference when the
+        # user returns to Whisper/cpp. Do not store engine-coerced fallbacks here.
         self._last_non_parakeet_language = None
         self._engine_for_language_memory = None
         self._applying_settings = False  # Flag to prevent recursive settings application
@@ -5148,6 +5149,11 @@ class SettingsDialog(Gtk.Dialog):
 
         current_lang = None if self._applying_settings else self.language_combo.get_active_id()
         previous_engine = self._engine_for_language_memory
+        # When Vosk coerces an unsupported language to en-us, keep the user
+        # preference in memory and re-apply it after sync (which would otherwise
+        # write the coerced active value back into memory).
+        preserve_language_memory = None
+        vosk_coerced = False
         if engine == "parakeet":
             # Force auto for honesty, but remember the prior catalog preference so
             # leaving Parakeet can restore Whisper/cpp language instead of auto.
@@ -5162,7 +5168,18 @@ class SettingsDialog(Gtk.Dialog):
             # Programmatic resync must not rewrite the language the user picked.
             pass
         else:
-            if current_lang and current_lang != "auto":
+            # Prefer remembered preference over a prior engine's coerced active
+            # value (Vosk en-us for Greek). Trust the combo for other engines.
+            if (
+                current_lang
+                and current_lang != "auto"
+                and not (
+                    previous_engine == "vosk"
+                    and current_lang == "en-us"
+                    and self._last_non_parakeet_language
+                    and self._last_non_parakeet_language not in ("auto", "en-us")
+                )
+            ):
                 chosen = current_lang
             elif self._last_non_parakeet_language:
                 chosen = self._last_non_parakeet_language
@@ -5172,15 +5189,28 @@ class SettingsDialog(Gtk.Dialog):
             if engine == "vosk" and (
                 chosen == "auto" or not SUPPORTED_LANGUAGES.get(chosen, {}).get("vosk")
             ):
+                # Keep the pre-coercion preference (including auto) so sync cannot
+                # persist Vosk's en-us fallback as the remembered Whisper language.
+                preserve_language_memory = (
+                    chosen
+                    if chosen and chosen != "auto"
+                    else (self._last_non_parakeet_language or "auto")
+                )
                 chosen = "en-us"
+                vosk_coerced = True
 
             self.language = chosen
-            if chosen:
+            # Never store the coerced en-us fallback as the user preference.
+            if vosk_coerced:
+                self._last_non_parakeet_language = preserve_language_memory
+            elif chosen:
                 self._last_non_parakeet_language = chosen
 
         self._engine_for_language_memory = engine
         self._populate_model_options()
         self._sync_language_options_for_selected_model(self.language)
+        if vosk_coerced and preserve_language_memory is not None:
+            self._last_non_parakeet_language = preserve_language_memory
         self._update_engine_specific_ui()
         self._update_model_info()
         self._update_voice_commands_for_engine()
