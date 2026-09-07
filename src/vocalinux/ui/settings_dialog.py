@@ -34,6 +34,13 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..utils.model_choice import (
+    BALANCED,
+    PRIORITIES,
+    PRIORITY_LABELS,
+    priority_for_size,
+    size_for_priority,
+)
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
@@ -242,6 +249,25 @@ def _model_specialization_display_name(model_name: str) -> str:
 def _language_is_english(language_id: str) -> bool:
     """Return whether a language ID maps to English for Whisper."""
     return SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
+
+
+def _decode_simple_languages(primary: str, wants_second: bool, secondary: Optional[str]) -> str:
+    """Resolve the two simple language answers into what the engine accepts.
+
+    whisper takes one language or none, so naming a second language has to mean
+    automatic detection. The one exception is two English entries — en-US plus
+    en-IN, say — where English can still be pinned and the English-only weights,
+    which are the same size and better at English, stay available.
+    """
+    if not wants_second:
+        return primary
+    if not secondary or secondary == primary:
+        return primary
+    if secondary == "auto":
+        return "auto"
+    if _language_is_english(primary) and _language_is_english(secondary):
+        return primary
+    return "auto"
 
 
 def _recommended_whispercpp_variant_for_language(
@@ -1889,6 +1915,18 @@ class SettingsDialog(Gtk.Dialog):
         self._test_result = ""
         self._initializing = True  # Flag to prevent auto-apply during initialization
         self._populating_models = False  # Flag to prevent model change handler during population
+        # Guards the simple-mode widgets while they are being pointed at the
+        # live configuration, so syncing them does not look like a user edit.
+        self._simple_syncing = False
+        # Set while simple mode steers the advanced controls, so their own change
+        # handlers do not each trigger a separate engine reload.
+        self._simple_driving = False
+        self.advanced_box = None
+        self.advanced_island = None
+        self.advanced_expander = None
+        self.simple_page = None
+        self.simple_group = None
+        self.engine_group = None
         self._processing_language_change = (
             False  # Flag to prevent recursive language change handling
         )
@@ -2003,6 +2041,7 @@ class SettingsDialog(Gtk.Dialog):
         # Build UI sections into their topic pages
         self._build_shortcuts_section()
         self._build_recognition_section()
+        self._build_simple_model_section()
         self._build_engine_section()
         self._build_remote_server_section()
         self._build_audio_section()
@@ -2036,6 +2075,13 @@ class SettingsDialog(Gtk.Dialog):
             self.navigate_to_page(self._initial_page)
         else:
             self.sidebar_listbox.select_row(self.sidebar_listbox.get_row_at_index(0))
+
+        # Restore the saved mode and point the simple questions at the live model
+        # before the first visibility pass, so nothing flashes the wrong group.
+        self._sync_simple_from_advanced()
+        self.advanced_expander.set_expanded(
+            bool(self.config_manager.get("speech_recognition", "show_advanced", False))
+        )
 
         # Then update visibility of engine-specific elements
         self._update_engine_specific_ui()
@@ -2889,9 +2935,134 @@ class SettingsDialog(Gtk.Dialog):
         self._tone_preview_kind = "stop" if kind == "start" else "start"
         self._sync_tone_preview_button(tone_id)
 
+    def _build_simple_model_section(self):
+        """Build the simple questions and the Advanced reveal (#779)."""
+        self.simple_group = PreferencesGroup(title="What you dictate")
+
+        # Searchable, like the advanced row: over thirty languages is too many to
+        # scroll, and a list you cannot type into is a step backwards.
+        self.simple_language_combo = SearchablePicker()
+        _style_combo(self.simple_language_combo)
+        _prevent_scroll_on_hover(self.simple_language_combo)
+        for language_id, info in SUPPORTED_LANGUAGES.items():
+            # Auto-detect is the switch below, not a language you speak.
+            if language_id != "auto":
+                self.simple_language_combo.append(language_id, info["name"])
+        _attach_language_combo_search(self.simple_language_combo)
+        simple_language_entry = self.simple_language_combo.get_child()
+        if simple_language_entry is not None:
+            simple_language_entry.connect("activate", self._on_simple_language_entry_activate)
+            simple_language_entry.connect(
+                "focus-out-event", self._on_simple_language_entry_focus_out
+            )
+        self.simple_language_row = PreferenceRow(
+            title="Main language",
+            subtitle="Type to search, or pick from the list",
+            widget=self.simple_language_combo,
+            keywords=("language", "speak"),
+        )
+        self.simple_group.add_row(self.simple_language_row)
+
+        # The engine takes one language or none, so this is the only other option
+        # that exists. A second language field would promise something it cannot do.
+        self.simple_multi_switch = Gtk.Switch()
+        self.simple_multi_switch.set_valign(Gtk.Align.CENTER)
+        self.simple_multi_row = PreferenceRow(
+            title="I also dictate whole texts in other languages",
+            subtitle="Detects the language per utterance; can be wrong on short ones",
+            widget=self.simple_multi_switch,
+            keywords=("multilingual", "auto", "detect"),
+        )
+        self.simple_group.add_row(self.simple_multi_row)
+
+        self.simple_second_language_combo = SearchablePicker()
+        _style_combo(self.simple_second_language_combo)
+        _prevent_scroll_on_hover(self.simple_second_language_combo)
+        # First entry is the multilingual answer: any language, detected per
+        # utterance. Naming one specific second language means the same thing
+        # to the engine, but lets the user say which one they had in mind.
+        self.simple_second_language_combo.append("auto", "Any language (auto-detect)")
+        for language_id, info in SUPPORTED_LANGUAGES.items():
+            if language_id != "auto":
+                self.simple_second_language_combo.append(language_id, info["name"])
+        _attach_language_combo_search(self.simple_second_language_combo)
+        # SearchablePicker already emits "changed" on Enter/row pick; do not also
+        # hook activate or a single choice would apply twice.
+        self.simple_second_language_row = PreferenceRow(
+            title="Other language",
+            # Honest about what the engine does: whisper takes one language or
+            # none, so any second language means detection per utterance.
+            subtitle="Recognition detects the language of each utterance",
+            widget=self.simple_second_language_combo,
+            keywords=("second", "language", "other"),
+        )
+        self.simple_second_language_row.set_no_show_all(True)
+        self.simple_group.add_row(self.simple_second_language_row)
+
+        self.simple_priority_combo = Gtk.ComboBoxText()
+        _style_combo(self.simple_priority_combo)
+        _prevent_scroll_on_hover(self.simple_priority_combo)
+        for priority in PRIORITIES:
+            self.simple_priority_combo.append(priority, PRIORITY_LABELS[priority])
+        self.simple_priority_row = PreferenceRow(
+            title="Priority",
+            subtitle="Balanced follows what your hardware can run",
+            widget=self.simple_priority_combo,
+            keywords=("speed", "accuracy", "priority"),
+        )
+        self.simple_group.add_row(self.simple_priority_row)
+
+        # The simple card and, under it, the info card the engine section adds.
+        self.simple_page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.simple_page.pack_start(self.simple_group, False, False, 0)
+        self.content_box.pack_start(self.simple_page, False, False, 0)
+
+        # Advanced is its own island under the simple card: collapsed to a
+        # header by default, expanding in place. Not a second window — that went
+        # wrong twice on KWin/Wayland: transient for the dialog it crashed the
+        # compositor (findModal recursion, tag kwin-crash-repro); standing alone
+        # it could not be raised above the dialog at all. Both cards visible at
+        # once also makes the expanded rows a readout of what the simple answers
+        # resolved to.
+        self.advanced_island = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.advanced_island.get_style_context().add_class("preferences-group")
+
+        self.advanced_expander = Gtk.Expander()
+        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title = Gtk.Label(label="Advanced", xalign=0)
+        title.get_style_context().add_class("preferences-group-title")
+        subtitle = Gtk.Label(
+            label="Engine, model size, specialization, downloads and the remote server",
+            xalign=0,
+            wrap=True,
+        )
+        subtitle.get_style_context().add_class("preference-row-subtitle")
+        header.pack_start(title, False, False, 0)
+        header.pack_start(subtitle, False, False, 0)
+        self.advanced_expander.set_label_widget(header)
+        self.advanced_expander.set_margin_top(12)
+        self.advanced_expander.set_margin_bottom(12)
+        self.advanced_expander.set_margin_start(16)
+        self.advanced_expander.set_margin_end(16)
+
+        # Everything the detailed view holds is packed in here; the sections
+        # built after this one append to it.
+        self.advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.advanced_box.set_margin_top(8)
+        self.advanced_expander.add(self.advanced_box)
+        self.advanced_island.pack_start(self.advanced_expander, False, False, 0)
+        self.content_box.pack_start(self.advanced_island, False, False, 0)
+
+        self.advanced_expander.connect("notify::expanded", self._on_advanced_expanded)
+        self.simple_language_combo.connect("changed", self._on_simple_choice_changed)
+        self.simple_second_language_combo.connect("changed", self._on_simple_choice_changed)
+        self.simple_multi_switch.connect("notify::active", self._on_simple_choice_changed)
+        self.simple_priority_combo.connect("changed", self._on_simple_choice_changed)
+
     def _build_engine_section(self):
         """Build the Speech Engine section."""
         group = PreferencesGroup(title="Speech Engine")
+        self.engine_group = group
 
         # Engine selection
         self.engine_combo = Gtk.ComboBoxText()
@@ -2948,7 +3119,8 @@ class SettingsDialog(Gtk.Dialog):
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
         group.add_row(self.language_row)
 
-        self.content_box.pack_start(group, False, False, 0)
+        # Lives inside the revealer built above, so the Advanced switch slides it out.
+        self.advanced_box.pack_start(group, False, False, 0)
 
         # Model info card (shown below the group)
         self.model_info_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -2988,7 +3160,9 @@ class SettingsDialog(Gtk.Dialog):
         self.language_warning.set_no_show_all(True)
         self.model_info_card.pack_start(self.language_warning, False, False, 0)
 
-        self.content_box.pack_start(self.model_info_card, False, False, 0)
+        # On the page, under the simple questions: it is the only feedback that a
+        # priority or language change did anything, and what it will cost.
+        self.simple_page.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
@@ -3027,7 +3201,7 @@ class SettingsDialog(Gtk.Dialog):
             "notify::expanded", lambda *_args: self._fit_unused_downloads_height()
         )
         self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
-        self.content_box.pack_start(self.unused_models_group, False, False, 0)
+        self.advanced_box.pack_start(self.unused_models_group, False, False, 0)
 
         # Connect signals
         self.engine_combo.connect("changed", self._on_engine_changed)
@@ -4588,14 +4762,14 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.remote_server_group.add_row(remote_test_row)
 
-        self.content_box.pack_start(self.remote_server_group, False, False, 0)
+        self.advanced_box.pack_start(self.remote_server_group, False, False, 0)
 
         # Status label below the group
         self.remote_status_label = Gtk.Label(label="", use_markup=True, xalign=0)
         self.remote_status_label.set_margin_start(16)
         self.remote_status_label.set_margin_top(4)
         self.remote_status_label.get_style_context().add_class("status-info")
-        self.content_box.pack_start(self.remote_status_label, False, False, 0)
+        self.advanced_box.pack_start(self.remote_status_label, False, False, 0)
 
         # Load saved values into the widgets
         saved_url = self.config_manager.get("speech_recognition", "remote_api_url", "")
@@ -5611,6 +5785,232 @@ class SettingsDialog(Gtk.Dialog):
             self._processing_language_change = False
         return False
 
+    def _sync_simple_from_advanced(self) -> None:
+        """Point the simple questions at the configuration that is actually live.
+
+        Switching modes must not change the model on its own, so the priority is
+        read back from the size already chosen rather than reset to a default.
+
+        A leftover simple multi answer is restored only when it still decodes
+        to the live Advanced language. Otherwise the next simple edit would
+        silently replace it: a named second language over a pin becomes auto,
+        and two English answers over Advanced auto pin English. Two English
+        answers still pin English, so that configuration is kept on an English
+        pin and dropped when Advanced is auto.
+        """
+        language = self.language_combo.get_active_id() or self.language or "auto"
+        is_auto = language == "auto"
+
+        stored_second = self.config_manager.get("speech_recognition", "simple_second_language", "")
+
+        self._simple_syncing = True
+        try:
+            if is_auto:
+                self.simple_multi_switch.set_active(True)
+                primary = self.simple_language_combo.get_active_id()
+                if not primary:
+                    self.simple_language_combo.set_active_id("en-us")
+                    primary = "en-us"
+            else:
+                self.simple_language_combo.set_active_id(language)
+                primary = language
+
+            keeps_live = bool(stored_second) and (
+                _decode_simple_languages(primary, True, stored_second) == language
+            )
+            if keeps_live:
+                if not is_auto:
+                    self.simple_multi_switch.set_active(True)
+                self.simple_second_language_combo.set_active_id(stored_second)
+            else:
+                if not is_auto:
+                    self.simple_multi_switch.set_active(False)
+                if stored_second:
+                    self.config_manager.set("speech_recognition", "simple_second_language", "")
+                # Reset so turning the switch on later starts from "any", not a
+                # stale pick that Advanced already superseded.
+                self.simple_second_language_combo.set_active_id("auto")
+
+            recommended, _ = self._get_recommended_whispercpp_model_for_language()
+            current = self._get_selected_whispercpp_model()
+            priority = priority_for_size(
+                get_whispercpp_model_size(recommended), get_whispercpp_model_size(current)
+            )
+            self.simple_priority_combo.set_active_id(priority)
+        finally:
+            self._simple_syncing = False
+        self._update_simple_visibility()
+
+    def _simple_decoding_language(self) -> str:
+        """Resolve the two simple language answers into what the engine accepts."""
+        primary = self.simple_language_combo.get_active_id() or "en-us"
+        return _decode_simple_languages(
+            primary,
+            self.simple_multi_switch.get_active(),
+            self.simple_second_language_combo.get_active_id(),
+        )
+
+    def _on_disk_stand_in(self, variant: str, size: str, language: str) -> str:
+        """Prefer a downloaded weight of the same size over fetching a sibling.
+
+        Flipping the "other languages" switch swapped base for base.en, or back:
+        same size, different weights, and a modal download each way, blocking the
+        window for it. A same-size weight already on disk that can serve the
+        language stands in instead; the info card still offers the better variant
+        as a download, it just no longer forces it.
+        """
+        if is_whispercpp_model_downloaded(variant):
+            return variant
+        wants_english = _language_is_english(language)
+        candidates = [
+            name
+            for name in get_whispercpp_model_variants(size)
+            if is_whispercpp_model_downloaded(name)
+            and (wants_english or not is_english_only_whispercpp_model(name))
+        ]
+        if not candidates:
+            return variant
+
+        def rank(name: str) -> tuple:
+            # Closest to what was derived: English-only first when English is
+            # wanted, the plain multilingual next, quantized ones last.
+            english_first = 0 if wants_english and is_english_only_whispercpp_model(name) else 1
+            quantized = 1 if "-q" in name else 0
+            return (english_first, quantized, name)
+
+        return min(candidates, key=rank)
+
+    def _apply_simple_choice(self) -> None:
+        """Drive the advanced controls from the simple questions.
+
+        Simple mode deliberately steers the existing widgets instead of writing the
+        configuration itself, so applying, downloading and the info card keep going
+        through exactly one code path.
+        """
+        language = self._simple_decoding_language()
+        priority = self.simple_priority_combo.get_active_id() or BALANCED
+
+        self.engine_combo.set_active_id("whisper_cpp")
+        self._set_combo_active_id_or_first(self.language_combo, language)
+        self.language = language
+
+        recommended, _ = self._get_recommended_whispercpp_model_for_language()
+        size = size_for_priority(get_whispercpp_model_size(recommended), priority)
+        variant = _default_whispercpp_variant_for_size(size, language) or size
+        variant = self._on_disk_stand_in(variant, size, language)
+
+        self.model_combo.set_active_id(size)
+        self._populate_whispercpp_variant_options(size, variant)
+        self.model_variant_combo.set_active_id(variant)
+
+    def _on_advanced_expanded(self, expander, _param) -> None:
+        """Expand or collapse the advanced island, remembering the choice."""
+        expanded = expander.get_expanded()
+        if expanded:
+            self.advanced_box.show_all()
+            # Per-engine visibility has to run after show_all, which would
+            # otherwise reveal rows the active engine does not use.
+            self._update_engine_specific_ui()
+        else:
+            self._sync_simple_from_advanced()
+        if not self._initializing:
+            self.config_manager.set("speech_recognition", "show_advanced", expanded)
+            self.config_manager.save_settings()
+
+    def _refresh_simple_readout(self) -> None:
+        """Keep the simple answers describing the live model.
+
+        With both cards on screen, a change made in the advanced rows has to show
+        in the simple ones too, or the two would contradict each other. Skipped
+        while simple mode is itself steering the advanced rows, and during init.
+        """
+        if self._initializing or self._simple_driving or self._simple_syncing:
+            return
+        self._sync_simple_from_advanced()
+
+    def _on_simple_choice_changed(self, *_args) -> None:
+        """React to one of the simple questions changing.
+
+        Driving the four advanced controls emits "changed" on each of them, and
+        every one of those handlers ends in _auto_apply_settings, so a single pick
+        used to reconfigure the engine up to four times and freeze the window while
+        each reload ran. Suppress those while steering, then apply exactly once.
+        """
+        if self._initializing or self._simple_syncing or self._applying_settings:
+            return
+        if self._simple_driving:
+            return
+
+        # Turning the switch on with nothing picked yet means "any language";
+        # otherwise the switch alone would visibly do nothing.
+        if (
+            self.simple_multi_switch.get_active()
+            and not self.simple_second_language_combo.get_active_id()
+        ):
+            self._simple_syncing = True
+            try:
+                self.simple_second_language_combo.set_active_id("auto")
+            finally:
+                self._simple_syncing = False
+
+        self._simple_driving = True
+        try:
+            self._apply_simple_choice()
+        finally:
+            self._simple_driving = False
+
+        second = (
+            self.simple_second_language_combo.get_active_id()
+            if self.simple_multi_switch.get_active()
+            else ""
+        )
+        self.config_manager.set("speech_recognition", "simple_second_language", second or "")
+        self._update_simple_visibility()
+        self._auto_apply_settings()
+
+    def _commit_or_restore_simple_language_entry(self) -> bool:
+        """Resolve text typed into the simple language box, or restore the last pick."""
+        if self._initializing or self._simple_syncing:
+            return False
+        if self.simple_language_combo.get_active_id():
+            return False
+
+        entry = self.simple_language_combo.get_child()
+        typed = entry.get_text() if entry is not None else ""
+        match_id = _resolve_combo_text_query(typed, _combo_text_rows(self.simple_language_combo))
+        if match_id:
+            self.simple_language_combo.set_active_id(match_id)
+            return False
+
+        # Restoring the same language must not re-apply settings.
+        self._simple_syncing = True
+        try:
+            fallback = self.language if self.language != "auto" else "en-us"
+            self._set_combo_active_id_or_first(self.simple_language_combo, fallback)
+        finally:
+            self._simple_syncing = False
+        return False
+
+    def _on_simple_language_entry_activate(self, _entry):
+        self._commit_or_restore_simple_language_entry()
+
+    def _on_simple_language_entry_focus_out(self, _entry, _event):
+        return self._commit_or_restore_simple_language_entry()
+
+    def _update_simple_visibility(self) -> None:
+        """Show the simple questions, with the second language only when asked for."""
+        self.simple_group.show_all()
+        wants_second = self.simple_multi_switch.get_active()
+        # show_all() is a no-op on a widget flagged no_show_all, so the flag has
+        # to be cleared before showing and restored after hiding — the same
+        # dance _set_custom_shortcut_row_visible does.
+        if wants_second:
+            self.simple_second_language_row.set_no_show_all(False)
+            self.simple_second_language_row.show_all()
+        else:
+            self.simple_second_language_row.hide()
+            self.simple_second_language_row.set_no_show_all(True)
+
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
         engine_text = self.engine_combo.get_active_text()
@@ -5632,6 +6032,8 @@ class SettingsDialog(Gtk.Dialog):
                 self.model_variant_row.hide()
             self.remote_server_group.hide()
             self.remote_status_label.hide()
+
+        self._update_simple_visibility()
 
         self._update_model_info()
         self._refresh_unused_downloads()
@@ -5666,6 +6068,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _update_model_info(self):
         """Update the model info card display."""
+        self._refresh_simple_readout()
         engine_text = self.engine_combo.get_active_text()
         if not engine_text:
             self.model_info_card.hide()
@@ -5766,6 +6169,11 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         if self._populating_models:
+            return
+
+        # Simple mode is mid-way through steering the advanced controls; it applies
+        # once itself when it is done.
+        if self._simple_driving:
             return
 
         self._applying_settings = True
