@@ -5,6 +5,7 @@ workflow that is worth pinning. Asserting that the yml says what the yml says
 is the antipattern verify_release.py exists to work around.
 """
 
+import importlib
 import importlib.util
 import json
 import re
@@ -115,16 +116,15 @@ def test_an_extra_pypi_distribution_fails(monkeypatch):
     """A differently-named wheel on PyPI would otherwise go unchecked."""
     import io
     import sys
-    from unittest.mock import MagicMock
 
     # urllib.request imports tempfile. test_recognition_manager.py and
     # test_speech_recognition.py leave a MagicMock in sys.modules, which
-    # makes that import raise a metaclass conflict.
-    if isinstance(sys.modules.get("tempfile"), MagicMock):
-        monkeypatch.delitem(sys.modules, "tempfile")
-        for name in ("urllib.response", "urllib.error", "urllib.request"):
-            if name in sys.modules:
-                monkeypatch.delitem(sys.modules, name)
+    # makes that import raise a metaclass conflict. Drop the mock first:
+    # import_module would otherwise return it.
+    sys.modules.pop("tempfile", None)
+    sys.modules["tempfile"] = importlib.import_module("tempfile")
+    for name in [key for key in sys.modules if key == "urllib" or key.startswith("urllib.")]:
+        del sys.modules[name]
 
     import urllib.request
 
