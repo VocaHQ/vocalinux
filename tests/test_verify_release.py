@@ -114,6 +114,18 @@ def test_a_release_missing_a_distribution_names_it():
 def test_an_extra_pypi_distribution_fails(monkeypatch):
     """A differently-named wheel on PyPI would otherwise go unchecked."""
     import io
+    import sys
+    from unittest.mock import MagicMock
+
+    # urllib.request imports tempfile. test_recognition_manager.py and
+    # test_speech_recognition.py leave a MagicMock in sys.modules, which
+    # makes that import raise a metaclass conflict.
+    if isinstance(sys.modules.get("tempfile"), MagicMock):
+        monkeypatch.delitem(sys.modules, "tempfile")
+        for name in ("urllib.response", "urllib.error", "urllib.request"):
+            if name in sys.modules:
+                monkeypatch.delitem(sys.modules, name)
+
     import urllib.request
 
     wheel = "vocalinux-0.16.2-py3-none-any.whl"
@@ -132,7 +144,7 @@ def test_an_extra_pypi_distribution_fails(monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     problems = verify.check_pypi("0.16.2", {wheel: "aa", sdist: "bb"})
-    assert f"{extra} is on PyPI but not on the release" in problems
+    assert problems == [f"{extra} is on PyPI but not on the release"]
 
 
 def test_github_digests_are_read_without_their_algorithm_prefix():
