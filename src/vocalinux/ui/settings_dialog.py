@@ -5119,6 +5119,8 @@ class SettingsDialog(Gtk.Dialog):
         """Handle changes in the selected model."""
         if self._populating_models:
             return
+        if self._initializing or self._applying_settings:
+            return
 
         if self._get_selected_engine() == "whisper_cpp":
             model_size = self.model_combo.get_active_id()
@@ -5137,6 +5139,8 @@ class SettingsDialog(Gtk.Dialog):
     def _on_model_variant_changed(self, widget):
         """Handle changes in the selected whisper.cpp specialization."""
         if self._populating_models:
+            return
+        if self._initializing or self._applying_settings:
             return
 
         self._sync_language_options_for_selected_model()
@@ -5223,6 +5227,8 @@ class SettingsDialog(Gtk.Dialog):
     def _on_language_changed(self, widget):
         """Handle language selection change."""
         if self._processing_language_change:
+            return
+        if self._initializing or self._applying_settings:
             return
 
         lang_code = self.language_combo.get_active_id()
@@ -5475,7 +5481,7 @@ class SettingsDialog(Gtk.Dialog):
                                 # False return must not be read as success: it
                                 # means nothing was saved and the pickers still
                                 # show settings the engine never took.
-                                GLib.idle_add(self._resync_model_ui_from_config)
+                                GLib.idle_add(self._idle_resync_model_ui_from_config)
                                 GLib.idle_add(
                                     download_dialog.set_complete,
                                     False,
@@ -5491,7 +5497,7 @@ class SettingsDialog(Gtk.Dialog):
                         # The settings were never saved, so the previously working
                         # model is still the configured one; put the pickers back on
                         # it so the UI matches the config and a retry is possible.
-                        GLib.idle_add(self._resync_model_ui_from_config)
+                        GLib.idle_add(self._idle_resync_model_ui_from_config)
                         if "cancelled" in error_msg.lower():
                             GLib.idle_add(
                                 download_dialog.set_complete,
@@ -5524,7 +5530,7 @@ class SettingsDialog(Gtk.Dialog):
                     logger.info("Settings auto-applied successfully")
                 except Exception as e:
                     logger.error(f"Failed to auto-apply settings: {e}")
-                    GLib.idle_add(self._resync_model_ui_from_config)
+                    GLib.idle_add(self._idle_resync_model_ui_from_config)
                 finally:
                     GLib.idle_add(self._finish_auto_apply)
 
@@ -5541,6 +5547,27 @@ class SettingsDialog(Gtk.Dialog):
     def _finish_auto_apply(self) -> bool:
         """Release the apply-guard after an already-downloaded worker finishes."""
         self._applying_settings = False
+        if not self._dialog_is_alive():
+            return False
+        try:
+            saved = self.config_manager.get_settings().get("speech_recognition", {})
+            selected = self.get_selected_settings()
+            if (
+                saved.get("engine") != selected.get("engine")
+                or saved.get("model_size") != selected.get("model_size")
+                or saved.get("language") != selected.get("language")
+            ):
+                # A second pick while the worker ran moved the combos; the
+                # worker still saved the first snapshot. Put the pickers back.
+                self._resync_model_ui_from_config()
+        except Exception as e:
+            logger.debug(f"Could not check pickers against the config: {e}")
+        return False
+
+    def _idle_resync_model_ui_from_config(self) -> bool:
+        """Main-loop resync from a worker thread; no-op if the dialog is gone."""
+        if self._dialog_is_alive():
+            self._resync_model_ui_from_config()
         return False
 
     def _resync_model_ui_from_config(self):
@@ -5885,7 +5912,7 @@ For now, the engine has been reverted to VOSK."""
                         if applied:
                             GLib.idle_add(download_dialog.set_complete, True, "")
                         else:
-                            GLib.idle_add(self._resync_model_ui_from_config)
+                            GLib.idle_add(self._idle_resync_model_ui_from_config)
                             GLib.idle_add(
                                 download_dialog.set_complete,
                                 False,
@@ -5900,7 +5927,7 @@ For now, the engine has been reverted to VOSK."""
                     error_msg = str(e)
                     # Nothing was saved, so the config still names the previous
                     # engine and model; put the pickers back on them.
-                    GLib.idle_add(self._resync_model_ui_from_config)
+                    GLib.idle_add(self._idle_resync_model_ui_from_config)
                     if "cancelled" in error_msg.lower():
                         GLib.idle_add(download_dialog.set_complete, False, "Download cancelled")
                     elif engine == "whisper" and "no module named" in error_msg.lower():

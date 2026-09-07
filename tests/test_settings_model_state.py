@@ -161,7 +161,7 @@ def test_failed_auto_apply_resyncs_the_pickers_with_the_config(settings_dialog, 
         dialog_class._auto_apply_settings(dialog)
 
     dialog._save_selected_settings.assert_not_called()
-    assert (dialog._resync_model_ui_from_config, ()) in idle_calls
+    assert (dialog._idle_resync_model_ui_from_config, ()) in idle_calls
     assert dialog._applying_settings is True
     _run_finish_idle(dialog, dialog_class, idle_calls)
     assert dialog._applying_settings is False
@@ -232,6 +232,74 @@ def test_apply_guard_blocks_a_second_auto_apply_while_a_worker_is_in_flight(
 
         dialog_class._auto_apply_settings(dialog)
         assert len(workers) == 2
+
+
+def test_second_pick_during_apply_resyncs_ui_when_the_worker_finishes(
+    settings_dialog, dialog_class
+):
+    """A second pick while the worker runs must not leave the combos on the unapplied model."""
+    dialog = _dialog_stub()
+    first = _already_downloaded_settings()
+    dialog.get_selected_settings.return_value = first
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": dict(first)}
+    idle_calls = []
+    workers = []
+
+    class _CaptureThread(_DeferredThread):
+        def __init__(
+            self,
+            target: Callable[..., Any] | None = None,
+            daemon: bool | None = None,
+            **kwargs: Any,
+        ) -> None:
+            super().__init__(target=target, daemon=daemon, **kwargs)
+            workers.append(self)
+
+    with (
+        patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _CaptureThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+        assert dialog._applying_settings is True
+        assert len(workers) == 1
+
+        dialog.get_selected_settings.return_value = {
+            "engine": "vosk",
+            "model_size": "medium",
+            "language": "en-us",
+        }
+        dialog_class._auto_apply_settings(dialog)
+        assert len(workers) == 1
+
+        workers[0].target()
+        dialog._apply_settings_internal.assert_called_once_with(first, raise_errors=True)
+        assert dialog._applying_settings is True
+
+        _run_finish_idle(dialog, dialog_class, idle_calls)
+
+    dialog._resync_model_ui_from_config.assert_called_once()
+    assert dialog._applying_settings is False
+
+
+def test_matching_selection_on_finish_does_not_resync(settings_dialog, dialog_class):
+    """No picker churn when the combos still match what the worker saved."""
+    dialog = _dialog_stub()
+    settings = _already_downloaded_settings()
+    dialog.get_selected_settings.return_value = settings
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": dict(settings)}
+    idle_calls = []
+
+    with (
+        patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+
+    _run_finish_idle(dialog, dialog_class, idle_calls)
+    dialog._resync_model_ui_from_config.assert_not_called()
+    assert dialog._applying_settings is False
 
 
 def test_apply_settings_returns_false_while_guard_held(dialog_class: type[Any]) -> None:
@@ -322,7 +390,7 @@ def test_download_path_resyncs_when_the_apply_reports_failure(settings_dialog, d
 
     modal = modal_class.return_value
     scheduled = [(func, args) for func, args in idle_calls]
-    assert (dialog._resync_model_ui_from_config, ()) in scheduled
+    assert (dialog._idle_resync_model_ui_from_config, ()) in scheduled
     assert (modal.set_complete, (True, "")) not in scheduled
     assert any(func is modal.set_complete and args[0] is False for func, args in scheduled)
     dialog._save_selected_settings.assert_not_called()
@@ -348,7 +416,7 @@ def test_download_path_resyncs_when_the_download_is_cancelled(settings_dialog, d
         dialog_class._auto_apply_settings(dialog)
 
     modal = modal_class.return_value
-    assert (dialog._resync_model_ui_from_config, ()) in idle_calls
+    assert (dialog._idle_resync_model_ui_from_config, ()) in idle_calls
     assert (modal.set_complete, (False, "Download cancelled")) in idle_calls
 
 
@@ -371,6 +439,25 @@ def test_modal_close_resyncs_an_engine_that_never_applied(settings_dialog, dialo
         dialog_class._auto_apply_settings(dialog)
 
     dialog._resync_engine_ui_if_unapplied.assert_called_once()
+
+
+def test_idle_resync_skips_a_destroyed_dialog(dialog_class):
+    """Worker-thread idle callbacks must not touch widgets after close."""
+    dialog = _dialog_stub()
+    dialog._dialog_is_alive.return_value = False
+
+    assert dialog_class._idle_resync_model_ui_from_config(dialog) is False
+
+    dialog._resync_model_ui_from_config.assert_not_called()
+
+
+def test_idle_resync_runs_when_the_dialog_is_alive(dialog_class):
+    dialog = _dialog_stub()
+    dialog._dialog_is_alive.return_value = True
+
+    assert dialog_class._idle_resync_model_ui_from_config(dialog) is False
+
+    dialog._resync_model_ui_from_config.assert_called_once_with()
 
 
 def test_unapplied_engine_is_resynced_when_it_differs_from_the_config(dialog_class):
