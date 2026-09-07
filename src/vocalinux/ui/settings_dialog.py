@@ -4712,7 +4712,7 @@ class SettingsDialog(Gtk.Dialog):
         language_id = self.language_combo.get_active_id() or self.language
         return _default_whispercpp_variant_for_size(model_size, language_id)
 
-    def _on_apply_recommendation(self, _button) -> None:
+    def _on_apply_recommendation(self, _button: Any) -> None:
         """Set both pickers to the model the card is offering.
 
         Size and specialization must land under ``_populating_models`` so
@@ -5300,7 +5300,7 @@ class SettingsDialog(Gtk.Dialog):
             self.language_warning.set_markup("")
             self.language_warning.hide()
 
-    def _on_language_changed(self, widget) -> None:
+    def _on_language_changed(self, widget: Any) -> None:
         """Handle language selection change.
 
         Repaint the recommendation card after the size list rebuilds so
