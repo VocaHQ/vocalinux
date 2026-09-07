@@ -34,6 +34,7 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.model_choice import (
     BALANCED,
     PRIORITIES,
@@ -41,7 +42,6 @@ from ..utils.model_choice import (
     priority_for_size,
     size_for_priority,
 )
-from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.paths import models_dir  # noqa: E402
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
