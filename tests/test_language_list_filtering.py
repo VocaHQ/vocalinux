@@ -120,6 +120,44 @@ def test_enter_with_nothing_matching_selects_nothing(settings_dialog):
     picker._on_row_activated.assert_not_called()
 
 
+def test_enter_with_empty_search_selects_nothing(settings_dialog):
+    """Open picker (search cleared); bare Enter must keep the current language.
+
+    Every row is visible when the needle is empty, so first-visible would be the
+    first store row and would auto-apply a language the user never chose.
+    """
+    picker = _picker_stub(settings_dialog, typed="", rows=LANGS, active="pl")
+    for row in picker._list.get_children.return_value:
+        row.get_visible.return_value = True
+        row.get_child_visible.return_value = True
+    picker._first_visible_row.side_effect = (
+        lambda: settings_dialog.SearchablePicker._first_visible_row(picker)
+    )
+
+    settings_dialog.SearchablePicker._on_search_activate(picker, picker._search)
+
+    picker._on_row_activated.assert_not_called()
+    picker._first_visible_row.assert_not_called()
+    picker.emit.assert_not_called()
+    assert picker._active_id == "pl"
+
+
+def test_enter_with_whitespace_search_selects_nothing(settings_dialog):
+    """Whitespace-only is still an empty filter after strip."""
+    picker = _picker_stub(settings_dialog, typed="   ", rows=LANGS, active="ja")
+    for row in picker._list.get_children.return_value:
+        row.get_visible.return_value = True
+        row.get_child_visible.return_value = True
+    picker._first_visible_row.side_effect = (
+        lambda: settings_dialog.SearchablePicker._first_visible_row(picker)
+    )
+
+    settings_dialog.SearchablePicker._on_search_activate(picker, picker._search)
+
+    picker._on_row_activated.assert_not_called()
+    assert picker._active_id == "ja"
+
+
 def test_selecting_by_id_reports_whether_the_row_exists(settings_dialog):
     """_set_combo_active_id_or_first relies on the boolean to fall back."""
     picker = _picker_stub(settings_dialog, rows=LANGS)
