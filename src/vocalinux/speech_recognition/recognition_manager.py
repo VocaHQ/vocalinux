@@ -1989,7 +1989,7 @@ class SpeechRecognitionManager:
                 self.model.decode_stream(stream)
                 return stream.result.text.strip()
 
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError) as e:
             audio_info = (
                 f"audio buffer: {len(audio_buffer)} chunks"
                 if audio_buffer
