@@ -64,13 +64,19 @@ def _dialog_stub(settings_dialog: Any, language: str, pinned_variant: str = "") 
     return dialog
 
 
-def _selection_dialog(settings_dialog: Any, language: str, selected_variant: str) -> Mock:
+def _selection_dialog(
+    settings_dialog: Any,
+    language: str,
+    selected_variant: str,
+    pinned_variant: str = "",
+) -> Mock:
     """A stand-in ``self`` for ``get_selected_settings`` whisper.cpp pin tests."""
     dialog = Mock()
     dialog.engine_combo.get_active_text.return_value = "whisper.cpp"
     dialog.model_combo.get_active_id.return_value = "medium"
     dialog.language_combo.get_active_id.return_value = language
     dialog.language = language
+    dialog.config_manager.get_model_variant_for_engine.return_value = pinned_variant
     dialog._get_selected_whispercpp_model.return_value = selected_variant
     dialog._get_default_whispercpp_variant_for_size.side_effect = (
         lambda size: settings_dialog._default_whispercpp_variant_for_size(size, language)
@@ -163,6 +169,42 @@ def test_deliberate_multilingual_while_english_pins_bare_size(
 
     assert settings["model_size"] == "medium"
     assert settings["model_variant"] == "medium"
+
+
+def test_explicit_multilingual_pin_survives_non_english_auto_save(
+    settings_dialog: Any, dialog_class: Any
+) -> None:
+    """A multilingual pin must not clear when it matches the new language default."""
+    dialog = _selection_dialog(settings_dialog, "pl", "medium", pinned_variant="medium")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["model_size"] == "medium"
+    assert settings["model_variant"] == "medium"
+
+
+def test_stale_english_only_pin_matching_derived_still_clears(
+    settings_dialog: Any, dialog_class: Any
+) -> None:
+    """A leftover ``{size}.en`` pin that equals the English default must clear."""
+    dialog = _selection_dialog(settings_dialog, "en-us", "medium.en", pinned_variant="medium.en")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["model_size"] == "medium.en"
+    assert settings["model_variant"] == ""
+
+
+def test_unpinned_non_english_derived_selection_stays_unpinned(
+    settings_dialog: Any, dialog_class: Any
+) -> None:
+    """Polish + multilingual with an empty pin must stay unpinned on auto-save."""
+    dialog = _selection_dialog(settings_dialog, "pl", "medium")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["model_size"] == "medium"
+    assert settings["model_variant"] == ""
 
 
 def test_unpinned_plain_en_id_rederives_for_a_new_language(

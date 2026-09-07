@@ -56,7 +56,10 @@ from ..utils.whisper_model_info import (  # noqa: E402
     whisper_model_file,
 )
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
-from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, default_variant_for_size
+from ..utils.whispercpp_model_info import (
+    WHISPERCPP_MODEL_INFO,
+    default_variant_for_size,
+)
 from ..utils.whispercpp_model_info import delete_model as delete_whispercpp_model
 from ..utils.whispercpp_model_info import (
     detect_compute_backend,
@@ -5603,12 +5606,22 @@ class SettingsDialog(Gtk.Dialog):
             selected = self._get_selected_whispercpp_model()
             size = get_whispercpp_model_size(selected)
             derived = self._get_default_whispercpp_variant_for_size(size)
-            # Full id for reconfigure/download. Only a deliberate specialization
-            # (including multilingual while English) becomes a pin; a language-
-            # derived default stays unpinned so a later language change can
-            # re-derive.
+            # Full id for reconfigure/download. Pin deliberate specializations
+            # (including multilingual while English). A language-derived default
+            # stays unpinned so a later language change can re-derive — except
+            # when an existing bare-size pin already matches the selection: that
+            # is a deliberate multilingual pin that became the new language's
+            # default, and must survive so returning to English still honours it.
             model_size = selected
-            model_variant = "" if selected == derived else selected
+            existing_pin = (
+                self.config_manager.get_model_variant_for_engine("whisper_cpp") or ""
+            ).lower()
+            if selected != derived:
+                model_variant = selected
+            elif existing_pin == selected and selected in WHISPERCPP_MODEL_SIZES:
+                model_variant = selected
+            else:
+                model_variant = ""
         else:
             model_size = model_id.lower() if model_id else "small"
         language = language_id if language_id else self._default_language_for_engine(engine)
