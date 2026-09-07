@@ -5758,11 +5758,11 @@ class SettingsDialog(Gtk.Dialog):
         finally:
             self._processing_language_change = False
 
-    def _on_language_entry_activate(self, entry):
+    def _on_language_entry_activate(self, entry: Any) -> None:
         """Commit a unique typed match when Enter is pressed in the language entry."""
         self._commit_or_restore_language_entry()
 
-    def _on_language_entry_focus_out(self, entry, event):
+    def _on_language_entry_focus_out(self, entry: Any, event: Any) -> bool:
         """Commit or restore the language after the entry loses focus."""
         # Defer so a completion click can set the active id before we restore.
         GLib.idle_add(self._commit_or_restore_language_entry)
@@ -5994,10 +5994,10 @@ class SettingsDialog(Gtk.Dialog):
             self._simple_syncing = False
         return False
 
-    def _on_simple_language_entry_activate(self, _entry):
+    def _on_simple_language_entry_activate(self, _entry: Any) -> None:
         self._commit_or_restore_simple_language_entry()
 
-    def _on_simple_language_entry_focus_out(self, _entry, _event):
+    def _on_simple_language_entry_focus_out(self, _entry: Any, _event: Any) -> bool:
         return self._commit_or_restore_simple_language_entry()
 
     def _update_simple_visibility(self) -> None:
