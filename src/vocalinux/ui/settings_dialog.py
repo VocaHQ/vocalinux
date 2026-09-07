@@ -5545,23 +5545,15 @@ class SettingsDialog(Gtk.Dialog):
                 self._applying_settings = False
 
     def _finish_auto_apply(self) -> bool:
-        """Release the apply-guard after an already-downloaded worker finishes."""
+        """Release the apply-guard after an already-downloaded worker finishes.
+
+        Always resync while the dialog is alive: handlers early-return during
+        apply, so selected settings can still match the saved config even when
+        a combo (whisper.cpp size) has already moved.
+        """
         self._applying_settings = False
-        if not self._dialog_is_alive():
-            return False
-        try:
-            saved = self.config_manager.get_settings().get("speech_recognition", {})
-            selected = self.get_selected_settings()
-            if (
-                saved.get("engine") != selected.get("engine")
-                or saved.get("model_size") != selected.get("model_size")
-                or saved.get("language") != selected.get("language")
-            ):
-                # A second pick while the worker ran moved the combos; the
-                # worker still saved the first snapshot. Put the pickers back.
-                self._resync_model_ui_from_config()
-        except Exception as e:
-            logger.debug(f"Could not check pickers against the config: {e}")
+        if self._dialog_is_alive():
+            self._resync_model_ui_from_config()
         return False
 
     def _idle_resync_model_ui_from_config(self) -> bool:
@@ -5579,9 +5571,8 @@ class SettingsDialog(Gtk.Dialog):
         signal.
         """
         try:
-            saved_engine = (
-                self.config_manager.get_settings().get("speech_recognition", {}).get("engine")
-            )
+            sr_config = self.config_manager.get_settings().get("speech_recognition", {})
+            saved_engine = sr_config.get("engine")
             if saved_engine:
                 display = _engine_display_name(saved_engine)
                 if self.engine_combo.get_active_text() != display:
@@ -5595,6 +5586,9 @@ class SettingsDialog(Gtk.Dialog):
                     finally:
                         self._applying_settings = was_applying
             self._populate_model_options()
+            saved_language = sr_config.get("language")
+            if saved_language:
+                self._sync_language_options_for_selected_model(saved_language)
             self._update_model_info()
         except Exception as e:  # pragma: no cover - UI resync must never mask the original error
             logger.debug(f"Could not resync model pickers: {e}")

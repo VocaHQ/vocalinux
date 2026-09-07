@@ -282,8 +282,8 @@ def test_second_pick_during_apply_resyncs_ui_when_the_worker_finishes(
     assert dialog._applying_settings is False
 
 
-def test_matching_selection_on_finish_does_not_resync(settings_dialog, dialog_class):
-    """No picker churn when the combos still match what the worker saved."""
+def test_matching_selection_on_finish_still_resyncs(settings_dialog, dialog_class):
+    """Finish always resyncs pickers, even when selected settings still match saved."""
     dialog = _dialog_stub()
     settings = _already_downloaded_settings()
     dialog.get_selected_settings.return_value = settings
@@ -298,7 +298,7 @@ def test_matching_selection_on_finish_does_not_resync(settings_dialog, dialog_cl
         dialog_class._auto_apply_settings(dialog)
 
     _run_finish_idle(dialog, dialog_class, idle_calls)
-    dialog._resync_model_ui_from_config.assert_not_called()
+    dialog._resync_model_ui_from_config.assert_called_once()
     assert dialog._applying_settings is False
 
 
@@ -492,6 +492,80 @@ def test_resync_puts_the_engine_picker_back_on_the_saved_engine(dialog_class):
 
     dialog.engine_combo.set_active_id.assert_called_once_with("Vosk")
     dialog._populate_model_options.assert_called_once()
+    dialog._sync_language_options_for_selected_model.assert_not_called()
+    assert dialog._applying_settings is False
+
+
+def test_resync_restores_language_from_saved_config(dialog_class):
+    """Language combo is restored from the saved config after model options rebuild."""
+    dialog = _dialog_stub()
+    dialog.config_manager.get_settings.return_value = {
+        "speech_recognition": {
+            "engine": "whisper_cpp",
+            "model_size": "tiny",
+            "language": "fr",
+        }
+    }
+    dialog.engine_combo.get_active_text.return_value = "whisper.cpp"
+
+    dialog_class._resync_model_ui_from_config(dialog)
+
+    dialog._populate_model_options.assert_called_once()
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("fr")
+    dialog._update_model_info.assert_called_once()
+    dialog.engine_combo.set_active_id.assert_not_called()
+
+
+def test_finish_resyncs_whispercpp_size_when_selected_settings_still_report_old_variant(
+    settings_dialog, dialog_class
+):
+    """Whisper.cpp size combo can move while get_selected_settings still reports the old id.
+
+    Handlers early-return while applying, so variant options are not rebuilt.
+    Finish must still resync even though selected vs saved look identical.
+    """
+    dialog = _dialog_stub()
+    saved = {
+        "engine": "whisper_cpp",
+        "model_size": "tiny",
+        "language": "auto",
+    }
+    dialog.get_selected_settings.return_value = dict(saved)
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": dict(saved)}
+    dialog.model_combo.get_active_id.return_value = "tiny"
+    idle_calls = []
+    workers = []
+
+    class _CaptureThread(_DeferredThread):
+        def __init__(
+            self,
+            target: Callable[..., Any] | None = None,
+            daemon: bool | None = None,
+            **kwargs: Any,
+        ) -> None:
+            super().__init__(target=target, daemon=daemon, **kwargs)
+            workers.append(self)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _CaptureThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+        assert dialog._applying_settings is True
+        assert len(workers) == 1
+
+        # Size combo moved to B, but get_selected_settings still returns tiny
+        # because the handler early-returned and skipped variant rebuild.
+        dialog.model_combo.get_active_id.return_value = "small"
+
+        workers[0].target()
+        dialog._apply_settings_internal.assert_called_once_with(saved, raise_errors=True)
+        assert dialog._applying_settings is True
+
+        _run_finish_idle(dialog, dialog_class, idle_calls)
+
+    dialog._resync_model_ui_from_config.assert_called_once()
     assert dialog._applying_settings is False
 
 
