@@ -6,6 +6,7 @@ is the antipattern verify_release.py exists to work around.
 """
 
 import importlib.util
+import json
 import re
 from pathlib import Path
 
@@ -116,3 +117,92 @@ def test_github_digests_are_read_without_their_algorithm_prefix():
     )
     assert stored == {"a.AppImage": "aabb"}
     assert undigested == ["b.snap"]
+
+
+def test_a_null_release_body_fails_notes_without_typeerror():
+    """GitHub serves JSON null for an empty body; that must be notes FAIL."""
+    problems = verify.check_notes(None)
+    assert problems
+    assert all("never mention" in problem for problem in problems)
+
+
+def test_fetch_release_reads_digests_from_the_rest_api(monkeypatch):
+    """`gh release view --json assets` omits digest on gh 2.46; REST does not."""
+
+    class Done:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+        def __init__(self, stdout=""):
+            self.stdout = stdout
+
+    calls = []
+
+    def fake_gh(*args):
+        calls.append(args)
+        assert args[:2] == ("api", "/repos/VocaHQ/vocalinux/releases/tags/v0.16.2")
+        payload = {
+            "tag_name": "v0.16.2",
+            "body": "sha256sum -c and gh attestation verify via SHA256SUMS",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"name": "a.AppImage", "digest": "sha256:AABB"},
+                {"name": "b.snap", "digest": None},
+            ],
+        }
+        return Done(stdout=json.dumps(payload))
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "_gh", fake_gh)
+
+    release = verify.fetch_release("v0.16.2")
+    assert release["tagName"] == "v0.16.2"
+    assert release["body"]
+    assert release["isDraft"] is False
+    assert release["isPrerelease"] is False
+    stored, undigested = verify.asset_digests(release["assets"])
+    assert stored == {"a.AppImage": "aabb"}
+    assert undigested == ["b.snap"]
+    assert all(args[0] == "api" for args in calls)
+    assert not any(args[0] == "release" for args in calls)
+
+
+def test_fetch_release_tries_v_prefix_then_surfaces_api_errors(monkeypatch):
+    class Done:
+        returncode = 1
+        stdout = ""
+        stderr = "HTTP 404: Not Found"
+
+    paths = []
+
+    def fake_gh(*args):
+        paths.append(args[1])
+        return Done()
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "_gh", fake_gh)
+
+    try:
+        verify.fetch_release("0.16.2")
+    except SystemExit as error:
+        message = str(error)
+    else:
+        raise AssertionError("expected SystemExit")
+
+    assert paths == [
+        "/repos/VocaHQ/vocalinux/releases/tags/0.16.2",
+        "/repos/VocaHQ/vocalinux/releases/tags/v0.16.2",
+    ]
+    assert "HTTP 404: Not Found" in message
+    assert "no release found for 0.16.2 or v0.16.2" in message
+
+
+def test_pypi_version_uses_removeprefix_not_lstrip():
+    """lstrip('v') eats every leading v; removeprefix only the tag prefix."""
+    import inspect
+
+    source = inspect.getsource(verify.main)
+    assert 'removeprefix("v")' in source
+    assert 'lstrip("v")' not in source

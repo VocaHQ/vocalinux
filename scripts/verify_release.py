@@ -52,17 +52,46 @@ def repo_slug() -> str:
     return slug or json.loads(_gh_ok("repo", "view", "--json", "nameWithOwner"))["nameWithOwner"]
 
 
+def _release_from_api(payload: dict) -> dict:
+    """Map a Releases REST payload onto the field names the rest of this script uses."""
+    return {
+        "tagName": payload["tag_name"],
+        "body": payload.get("body"),
+        "isDraft": payload["draft"],
+        "isPrerelease": payload["prerelease"],
+        "assets": payload.get("assets") or [],
+    }
+
+
 def fetch_release(tag: str | None) -> dict:
     """The latest stable release, or the one named by tag. `0.16.2` is accepted
-    as well as `v0.16.2`, since that is how the version is usually written."""
-    fields = "tagName,body,isDraft,isPrerelease,assets"
+    as well as `v0.16.2`, since that is how the version is usually written.
+
+    Digests come from the Releases REST API (`gh api`), not `gh release view
+    --json assets`. On gh 2.46 (common in distro packages, and what
+    `just verify-release` often runs) view's asset objects have no digest
+    field at all, so every asset would fail as undigested. The REST payload
+    includes `digest` for assets GitHub stores a hash for.
+    """
+    slug = repo_slug()
     candidates = [tag] + ([f"v{tag}"] if tag and tag[0].isdigit() else [])
+    errors: list[str] = []
     for candidate in candidates:
-        done = _gh("release", "view", *([candidate] if candidate else []), "--json", fields)
+        path = (
+            f"/repos/{slug}/releases/tags/{candidate}"
+            if candidate
+            else f"/repos/{slug}/releases/latest"
+        )
+        done = _gh("api", path)
         if done.returncode == 0:
-            return json.loads(done.stdout)
+            return _release_from_api(json.loads(done.stdout))
+        detail = (done.stderr or done.stdout or "").strip()
+        errors.append(f"{path}: {detail or f'exit {done.returncode}'}")
     named = " or ".join(c for c in candidates if c) or "the latest stable release"
-    raise SystemExit(f"no release found for {named}\nusage: verify_release.py [tag], e.g. v0.16.2")
+    hint = "\n".join(errors)
+    raise SystemExit(
+        f"no release found for {named}\n{hint}\nusage: verify_release.py [tag], e.g. v0.16.2"
+    )
 
 
 def parse_manifest(text: str) -> dict[str, str]:
@@ -123,8 +152,10 @@ def check_provenance(slug: str, manifest: dict[str, str]) -> list[str]:
     return problems
 
 
-def check_notes(body: str) -> list[str]:
-    return [f"the notes never mention `{p}`" for p in NOTES_MUST_MENTION if p not in body]
+def check_notes(body: str | None) -> list[str]:
+    # GitHub returns JSON null for an empty body; treat that as missing notes.
+    text = body or ""
+    return [f"the notes never mention `{p}`" for p in NOTES_MUST_MENTION if p not in text]
 
 
 def check_pypi(version: str, stored: dict[str, str]) -> list[str]:
@@ -193,7 +224,7 @@ def main(argv: list[str]) -> int:
             ("manifest", check_manifest(stored, manifest, undigested)),
             ("provenance", check_provenance(slug, manifest)),
             ("notes", check_notes(release["body"])),
-            ("pypi", check_pypi(tag.lstrip("v"), stored)),
+            ("pypi", check_pypi(tag.removeprefix("v"), stored)),
         ]
 
     ok = report(results)
