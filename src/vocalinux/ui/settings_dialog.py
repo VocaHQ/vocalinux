@@ -1048,7 +1048,7 @@ class SearchablePicker(Gtk.Box):
 
     _LIST_HEIGHT = 300
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.base_model = []
         self._active_id = None
@@ -1093,7 +1093,7 @@ class SearchablePicker(Gtk.Box):
 
     # -- GtkComboBoxText-compatible surface --------------------------------
 
-    def append(self, item_id, text):
+    def append(self, item_id: str, text: str) -> None:
         """Add a row, taking the arguments in GtkComboBoxText order."""
         self.base_model.append([text, item_id])
         row = Gtk.ListBoxRow()
@@ -1109,7 +1109,7 @@ class SearchablePicker(Gtk.Box):
         self._list.add(row)
         self._rows_by_id[item_id] = row
 
-    def remove_all(self):
+    def remove_all(self) -> None:
         self.base_model.clear()
         self._rows_by_id.clear()
         for row in list(self._list.get_children()):
@@ -1117,29 +1117,29 @@ class SearchablePicker(Gtk.Box):
         self._active_id = None
         self._label.set_text("")
 
-    def get_model(self):
+    def get_model(self) -> list:
         return self.base_model
 
-    def get_active_id(self):
+    def get_active_id(self) -> Optional[str]:
         return self._active_id
 
-    def get_active_text(self):
+    def get_active_text(self) -> Optional[str]:
         row = self._rows_by_id.get(self._active_id)
         return row.item_text if row is not None else None
 
-    def set_active_id(self, item_id) -> bool:
+    def set_active_id(self, item_id: Optional[str]) -> bool:
         row = self._rows_by_id.get(item_id)
         if row is None:
             return False
         self._select(item_id, row.item_text)
         return True
 
-    def set_active(self, index):
+    def set_active(self, index: int) -> None:
         if 0 <= index < len(self.base_model):
             text, item_id = self.base_model[index]
             self._select(item_id, text)
 
-    def get_child(self):
+    def get_child(self) -> Gtk.SearchEntry:
         """The search entry, for callers that hook a ComboBoxText's entry."""
         return self._search
 
@@ -2910,9 +2910,8 @@ class SettingsDialog(Gtk.Dialog):
             if language_id != "auto":
                 self.simple_second_language_combo.append(language_id, info["name"])
         _attach_language_combo_search(self.simple_second_language_combo)
-        second_entry = self.simple_second_language_combo.get_child()
-        if second_entry is not None:
-            second_entry.connect("activate", self._on_simple_choice_changed)
+        # SearchablePicker already emits "changed" on Enter/row pick; do not also
+        # hook activate or a single choice would apply twice.
         self.simple_second_language_row = PreferenceRow(
             title="Other language",
             # Honest about what the engine does: whisper takes one language or
@@ -5558,6 +5557,9 @@ class SettingsDialog(Gtk.Dialog):
             self.language = lang_code
             self._populate_model_options()
             self._update_language_warning()
+            # Drop stale simple multi widgets / persisted second when Advanced
+            # pins a language (skipped while simple mode is itself steering).
+            self._refresh_simple_readout()
             self._auto_apply_settings()
         finally:
             self._processing_language_change = False
@@ -5592,11 +5594,15 @@ class SettingsDialog(Gtk.Dialog):
             self._processing_language_change = False
         return False
 
-    def _sync_simple_from_advanced(self):
+    def _sync_simple_from_advanced(self) -> None:
         """Point the simple questions at the configuration that is actually live.
 
         Switching modes must not change the model on its own, so the priority is
         read back from the size already chosen rather than reset to a default.
+
+        A pinned Advanced language must win over a leftover simple multi answer:
+        restoring the switch and ``simple_second_language`` would make the next
+        simple edit decode to auto and silently replace the pin.
         """
         language = self.language_combo.get_active_id() or self.language or "auto"
         is_auto = language == "auto"
@@ -5605,15 +5611,22 @@ class SettingsDialog(Gtk.Dialog):
 
         self._simple_syncing = True
         try:
-            self.simple_multi_switch.set_active(is_auto or bool(stored_second))
-            if not is_auto:
+            if is_auto:
+                self.simple_multi_switch.set_active(True)
+                if not self.simple_language_combo.get_active_id():
+                    self.simple_language_combo.set_active_id("en-us")
+                if stored_second:
+                    self.simple_second_language_combo.set_active_id(stored_second)
+                else:
+                    # Detection with no named second language is the "any" answer.
+                    self.simple_second_language_combo.set_active_id("auto")
+            else:
+                self.simple_multi_switch.set_active(False)
                 self.simple_language_combo.set_active_id(language)
-            elif not self.simple_language_combo.get_active_id():
-                self.simple_language_combo.set_active_id("en-us")
-            if stored_second:
-                self.simple_second_language_combo.set_active_id(stored_second)
-            elif is_auto:
-                # Detection with no named second language is the "any" answer.
+                if stored_second:
+                    self.config_manager.set("speech_recognition", "simple_second_language", "")
+                # Reset so turning the switch on later starts from "any", not a
+                # stale pick that Advanced already superseded.
                 self.simple_second_language_combo.set_active_id("auto")
 
             recommended, _ = self._get_recommended_whispercpp_model_for_language()
@@ -5677,7 +5690,7 @@ class SettingsDialog(Gtk.Dialog):
 
         return min(candidates, key=rank)
 
-    def _apply_simple_choice(self):
+    def _apply_simple_choice(self) -> None:
         """Drive the advanced controls from the simple questions.
 
         Simple mode deliberately steers the existing widgets instead of writing the
@@ -5700,7 +5713,7 @@ class SettingsDialog(Gtk.Dialog):
         self._populate_whispercpp_variant_options(size, variant)
         self.model_variant_combo.set_active_id(variant)
 
-    def _on_advanced_expanded(self, expander, _param):
+    def _on_advanced_expanded(self, expander, _param) -> None:
         """Expand or collapse the advanced island, remembering the choice."""
         expanded = expander.get_expanded()
         if expanded:
@@ -5714,7 +5727,7 @@ class SettingsDialog(Gtk.Dialog):
             self.config_manager.set("speech_recognition", "show_advanced", expanded)
             self.config_manager.save_settings()
 
-    def _refresh_simple_readout(self):
+    def _refresh_simple_readout(self) -> None:
         """Keep the simple answers describing the live model.
 
         With both cards on screen, a change made in the advanced rows has to show
@@ -5725,7 +5738,7 @@ class SettingsDialog(Gtk.Dialog):
             return
         self._sync_simple_from_advanced()
 
-    def _on_simple_choice_changed(self, *_args):
+    def _on_simple_choice_changed(self, *_args) -> None:
         """React to one of the simple questions changing.
 
         Driving the four advanced controls emits "changed" on each of them, and
@@ -5794,7 +5807,7 @@ class SettingsDialog(Gtk.Dialog):
     def _on_simple_language_entry_focus_out(self, _entry, _event):
         return self._commit_or_restore_simple_language_entry()
 
-    def _update_simple_visibility(self):
+    def _update_simple_visibility(self) -> None:
         """Show the simple questions, with the second language only when asked for."""
         self.simple_group.show_all()
         wants_second = self.simple_multi_switch.get_active()

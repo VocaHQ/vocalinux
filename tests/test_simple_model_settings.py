@@ -383,6 +383,61 @@ def test_auto_detect_shows_up_as_the_other_languages_switch(settings_dialog, dia
     dialog.simple_multi_switch.set_active.assert_called_once_with(True)
 
 
+def test_pinned_advanced_language_plus_stale_stored_second_does_not_replace_the_pin(
+    settings_dialog, dialog_class
+):
+    """A leftover simple second answer must not override a pinned Advanced language.
+
+    Sync used to re-enable the multi switch from persisted ``simple_second_language``.
+    The next simple edit then decoded to auto and silently replaced the pin.
+    """
+    dialog = Mock()
+    dialog.language = "pl"
+    dialog.language_combo.get_active_id.return_value = "pl"
+    dialog.config_manager.get.return_value = "auto"  # stale leftover
+    dialog._get_recommended_whispercpp_model_for_language.return_value = ("small", "reason")
+    dialog._get_selected_whispercpp_model.return_value = "small"
+
+    dialog_class._sync_simple_from_advanced(dialog)
+
+    dialog.simple_multi_switch.set_active.assert_called_once_with(False)
+    dialog.simple_language_combo.set_active_id.assert_called_once_with("pl")
+    dialog.config_manager.set.assert_called_with(
+        "speech_recognition", "simple_second_language", ""
+    )
+    dialog.simple_second_language_combo.set_active_id.assert_called_with("auto")
+
+    # Widgets after sync: multi off, main language pinned. A later simple apply
+    # must keep the pin rather than silently writing auto.
+    dialog.simple_multi_switch.get_active.return_value = False
+    dialog.simple_language_combo.get_active_id.return_value = "pl"
+    dialog.simple_second_language_combo.get_active_id.return_value = "auto"
+    dialog.simple_priority_combo.get_active_id.return_value = BALANCED
+    dialog._simple_decoding_language.side_effect = (
+        lambda: dialog_class._simple_decoding_language(dialog)
+    )
+    dialog._on_disk_stand_in.side_effect = lambda variant, size, language: variant
+
+    dialog_class._apply_simple_choice(dialog)
+
+    dialog._set_combo_active_id_or_first.assert_called_once_with(dialog.language_combo, "pl")
+    assert dialog.language == "pl"
+
+
+def test_changing_advanced_language_refreshes_the_simple_readout(
+    settings_dialog, dialog_class
+):
+    """Otherwise a pin in Advanced leaves a stale multi switch on screen."""
+    dialog = Mock()
+    dialog._processing_language_change = False
+    dialog.language_combo.get_active_id.return_value = "pl"
+    dialog.engine_combo.get_active_text.return_value = "Local (whisper.cpp)"
+
+    dialog_class._on_language_changed(dialog, None)
+
+    dialog._refresh_simple_readout.assert_called_once()
+
+
 # --- regressions reported from the installed build -----------------------
 
 
