@@ -1797,8 +1797,30 @@ class SpeechRecognitionManager:
         try:
             for index, filename in enumerate(parakeet.MODEL_FILES):
                 dest_path = os.path.join(model_dir, filename)
+                key = parakeet.manifest_key(self.model_size, filename)
+                # Existence is not enough: a leftover or copied-in file must
+                # still match its pin. Verify, and only skip the download when
+                # the digest is good.
                 if os.path.exists(dest_path):
-                    continue
+                    try:
+                        verify_model_file(dest_path, key)
+                        continue
+                    except ChecksumError as error:
+                        logger.error(
+                            "Existing Parakeet model file at %s is not trustworthy: %s",
+                            dest_path,
+                            error,
+                        )
+                        if expected_for(key) is None:
+                            raise
+                        try:
+                            os.remove(dest_path)
+                        except OSError as remove_error:
+                            logger.error("Could not remove %s: %s", dest_path, remove_error)
+                            raise
+                        logger.info(
+                            "Removed the unverified model file; it will be downloaded again"
+                        )
                 temp_file = dest_path + ".tmp"
                 url = parakeet.get_model_file_url(self.model_size, filename)
                 self._download_progress_callback = file_progress(index, filename)
@@ -1807,7 +1829,7 @@ class SpeechRecognitionManager:
                 # Verify before the rename, as the whisper.cpp downloader does:
                 # sherpa-onnx loads these through native code, so an unverified
                 # file must never reach a path is_model_downloaded() trusts.
-                verify_model_file(temp_file, parakeet.manifest_key(self.model_size, filename))
+                verify_model_file(temp_file, key)
 
                 os.rename(temp_file, dest_path)
                 temp_file = None
@@ -1837,6 +1859,32 @@ class SpeechRecognitionManager:
         if self._download_progress_callback:
             self._download_progress_callback(1.0, 0, "Complete!")
 
+    @staticmethod
+    def _parakeet_model_is_verified(model_size: str, model_dir: str) -> bool:
+        """Hash each bundle file against its pin. Delete only a digest/size mismatch.
+
+        An unpinned name is refused, not deleted. If remove fails, return False
+        so the caller does not hand the files to sherpa-onnx.
+        """
+        verified = True
+        for filename in parakeet.MODEL_FILES:
+            path = os.path.join(model_dir, filename)
+            key = parakeet.manifest_key(model_size, filename)
+            try:
+                verify_model_file(path, key)
+            except ChecksumError as error:
+                logger.error("Parakeet model file at %s is not trustworthy: %s", path, error)
+                verified = False
+                if expected_for(key) is None:
+                    continue
+                try:
+                    os.remove(path)
+                except OSError as remove_error:
+                    logger.error("Could not remove %s: %s", path, remove_error)
+                    return False
+                logger.info("Removed the unverified model file; it will be downloaded again")
+        return verified
+
     def _init_parakeet(self):
         """Initialize the Parakeet speech recognition engine."""
         try:
@@ -1852,6 +1900,23 @@ class SpeechRecognitionManager:
                 self.model_size = parakeet.RECOMMENDED_MODEL
 
             model_dir = parakeet.get_model_path(self.model_size)
+
+            # A bundle that is merely present did not necessarily come through
+            # the download path: files could be copied in, or left over from a
+            # cancelled download. sherpa-onnx loads these through native code,
+            # so hash them here; a failure demotes the bundle to "not downloaded".
+            if parakeet.is_model_downloaded(
+                self.model_size
+            ) and not self._parakeet_model_is_verified(self.model_size, model_dir):
+                if parakeet.is_model_downloaded(self.model_size):
+                    logger.error(
+                        "Refusing to load unverified Parakeet model at %s",
+                        model_dir,
+                    )
+                    self._model_initialized = False
+                    if self._defer_download:
+                        return
+                    raise RuntimeError(f"Parakeet model at {model_dir} failed verification")
 
             if not parakeet.is_model_downloaded(self.model_size):
                 if self._defer_download:

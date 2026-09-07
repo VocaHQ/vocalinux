@@ -29,6 +29,7 @@ from vocalinux.utils.model_checksums import (
     whispercpp_revision,
     write_verification_stamp,
 )
+from vocalinux.utils.parakeet_model_info import MODEL_FILES, PARAKEET_MODEL_INFO, manifest_key
 from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
 from vocalinux.utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
@@ -70,6 +71,21 @@ class TestManifestCoverage(unittest.TestCase):
             missing,
             [],
             "VOSK models without a pinned checksum; "
+            "run `just model-checksums` to refresh the manifest",
+        )
+
+    def test_every_parakeet_model_is_pinned(self):
+        pinned = pinned_filenames()
+        missing = [
+            manifest_key(name, filename)
+            for name in PARAKEET_MODEL_INFO
+            for filename in MODEL_FILES
+            if manifest_key(name, filename) not in pinned
+        ]
+        self.assertEqual(
+            missing,
+            [],
+            "Parakeet models without a pinned checksum; "
             "run `just model-checksums` to refresh the manifest",
         )
 
