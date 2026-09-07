@@ -56,7 +56,9 @@ from ..utils.whisper_model_info import (  # noqa: E402
     whisper_model_file,
 )
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
-from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO
+from ..utils.whispercpp_model_info import (
+    WHISPERCPP_MODEL_INFO,
+)
 from ..utils.whispercpp_model_info import delete_model as delete_whispercpp_model
 from ..utils.whispercpp_model_info import (
     detect_compute_backend,
