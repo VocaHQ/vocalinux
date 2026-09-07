@@ -150,11 +150,13 @@ def detect_locale_language(environ: Optional[dict] = None) -> Optional[str]:
 
 
 def _language_from_locale_env(environ: dict, supported: set[str] | dict) -> Optional[str]:
-    """Map the first locale env var onto a catalogue entry.
+    """Map locale env vars onto a catalogue entry, first supported win.
 
     LANGUAGE is a colon-separated preference list: each entry is tried through
-    ``_language_for_locale`` until one is supported. LC_ALL, LC_MESSAGES, and
-    LANG are single values and are not walked as lists.
+    ``_language_for_locale`` until one is supported. An env var whose values
+    are all unmapped is skipped so a later var (typically LANG) can still
+    win. LC_ALL, LC_MESSAGES, and LANG are single values and are not walked
+    as lists.
     """
     for name in _LOCALE_ENV_VARS:
         value = environ.get(name)
@@ -165,7 +167,7 @@ def _language_from_locale_env(environ: dict, supported: set[str] | dict) -> Opti
             mapped = _language_for_locale(candidate, supported)
             if mapped:
                 return mapped
-        return None
+        continue
     return None
 
 
