@@ -51,14 +51,14 @@ _LOCALE_TO_LANGUAGE = {
     "zh_tw": "zh",
 }
 
-_LOCALE_ENV_VARS = ("LC_ALL", "LC_MESSAGES", "LANG", "LANGUAGE")
+_LOCALE_ENV_VARS = ("LC_ALL", "LC_MESSAGES", "LANGUAGE", "LANG")
 
 
 def _normalise(value: str) -> str:
     return value.strip().lower().replace("-", "_")
 
 
-def _language_for_layout(layout: str, supported) -> Optional[str]:
+def _language_for_layout(layout: str, supported: set[str] | dict) -> Optional[str]:
     layout = _normalise(layout)
     if not layout:
         return None
@@ -66,14 +66,17 @@ def _language_for_layout(layout: str, supported) -> Optional[str]:
     return mapped if mapped in supported else None
 
 
-def _language_for_locale(value: str, supported) -> Optional[str]:
+def _language_for_locale(value: str, supported: set[str] | dict) -> Optional[str]:
     """Map a locale string such as ``pl_PL.UTF-8`` onto a catalogue entry."""
     value = _normalise(value)
-    if not value or value.startswith(("c", "posix")) and "_" not in value:
+    if not value:
         return None
 
     # Strip the encoding and any modifier: pl_pl.utf_8@euro -> pl_pl
     value = re.split(r"[.@]", value, maxsplit=1)[0]
+    # Exact C/POSIX only — startswith("c") wrongly rejects cs/ca/cy.
+    if value in ("c", "posix"):
+        return None
 
     if value in _LOCALE_TO_LANGUAGE:
         candidate = _LOCALE_TO_LANGUAGE[value]
@@ -83,6 +86,9 @@ def _language_for_locale(value: str, supported) -> Optional[str]:
         return value
 
     base = value.split("_", 1)[0]
+    if base in _LOCALE_TO_LANGUAGE:
+        candidate = _LOCALE_TO_LANGUAGE[base]
+        return candidate if candidate in supported else None
     if base == "en":
         return "en-us" if "en-us" in supported else None
     return base if base in supported else None
@@ -128,7 +134,7 @@ def detect_keyboard_layout() -> Optional[str]:
     return chosen.split(",")[0].strip() or None
 
 
-def detect_locale_language(environ=None) -> Optional[str]:
+def detect_locale_language(environ: Optional[dict] = None) -> Optional[str]:
     """Return the first locale value the environment offers, or None."""
     environ = os.environ if environ is None else environ
     for name in _LOCALE_ENV_VARS:
@@ -139,7 +145,9 @@ def detect_locale_language(environ=None) -> Optional[str]:
     return None
 
 
-def detect_system_language(supported, environ=None) -> Optional[str]:
+def detect_system_language(
+    supported: set[str] | dict, environ: Optional[dict] = None
+) -> Optional[str]:
     """Return the language id to start from, or None when nothing is decisive.
 
     A non-English keyboard layout is the strongest signal available and wins.

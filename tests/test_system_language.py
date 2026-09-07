@@ -41,8 +41,16 @@ def test_layouts_map_onto_catalogue_entries(layout, expected):
         ("en_US.UTF-8", "en-us"),
         ("en_GB", "en-us"),
         ("en_IN", "en-in"),
+        ("cs", "cs"),
+        ("cs_CZ.UTF-8", "cs"),
+        ("ca", "ca"),
+        ("ca_ES.UTF-8", "ca"),
+        ("nb_NO", "no"),
+        ("nb_NO.UTF-8", "no"),
+        ("nn_NO", "no"),
         ("C", None),
         ("POSIX", None),
+        ("C.UTF-8", None),
         ("xx_YY", None),
     ],
 )
@@ -111,3 +119,34 @@ def test_a_saved_language_is_never_overwritten(isolated_config):
         manager = cm.ConfigManager()
 
     assert manager.get("speech_recognition", "language") == "auto"
+
+
+def test_language_env_beats_lang_when_both_set():
+    """LANGUAGE is the gettext preference list; LANG must not mask it (#796)."""
+    with patch.object(sl, "detect_keyboard_layout", return_value="us"):
+        detected = sl.detect_system_language(
+            SUPPORTED_LANGUAGES,
+            {"LANG": "en_US.UTF-8", "LANGUAGE": "pl:en"},
+        )
+
+    assert detected == "pl"
+
+
+def test_language_env_czech_is_not_treated_as_c():
+    with patch.object(sl, "detect_keyboard_layout", return_value="us"):
+        detected = sl.detect_system_language(
+            SUPPORTED_LANGUAGES,
+            {"LANG": "en_US.UTF-8", "LANGUAGE": "cs"},
+        )
+
+    assert detected == "cs"
+
+
+def test_nb_no_locale_maps_to_norwegian():
+    with patch.object(sl, "detect_keyboard_layout", return_value="us"):
+        detected = sl.detect_system_language(
+            SUPPORTED_LANGUAGES,
+            {"LANG": "nb_NO.UTF-8"},
+        )
+
+    assert detected == "no"
