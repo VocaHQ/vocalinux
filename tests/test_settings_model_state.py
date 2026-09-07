@@ -59,6 +59,7 @@ def _dialog_stub() -> Mock:
     dialog._initializing = False
     dialog._test_active = False
     dialog._populating_models = False
+    dialog._processing_language_change = False
     dialog.language = "en-us"
     # The real attribute is an enum member; a bare "idle" string would compare
     # unequal and send every test down the stop_recognition + sleep(0.5) branch.
@@ -123,6 +124,30 @@ def _run_finish_idle(
             finish(dialog, *args)
             ran = True
     assert ran, "expected GLib.idle_add of the apply-guard release"
+
+
+def _bind_real(dialog: Mock, dialog_class: type[Any], *names: str) -> None:
+    """Attach production methods so a Mock dialog cannot swallow the call."""
+    for name in names:
+        setattr(dialog, name, getattr(dialog_class, name).__get__(dialog))
+
+
+def _wire_whispercpp_pickers(
+    dialog: Mock, *, size: str, variant: str, language: str
+) -> dict[str, str]:
+    """Enough combo/spin state for real ``get_selected_settings`` on whisper.cpp."""
+    saved = {"engine": "whisper_cpp", "model_size": variant, "language": language}
+    dialog.engine_combo.get_active_text.return_value = "whisper.cpp"
+    dialog.model_combo.get_active_id.return_value = size
+    dialog.model_variant_combo.get_active_id.return_value = variant
+    dialog.language_combo.get_active_id.return_value = language
+    dialog.vad_spin.get_value.return_value = 3
+    dialog.silence_spin.get_value.return_value = 2.0
+    dialog.gpu_device_combo.get_active_id.return_value = None
+    dialog.language = language
+    dialog.config_manager.get_settings.return_value = {"speech_recognition": dict(saved)}
+    dialog._dialog_is_alive.return_value = True
+    return saved
 
 
 def test_settings_persisted_only_after_the_engine_accepts_them(dialog_class):
@@ -516,6 +541,23 @@ def test_resync_restores_language_from_saved_config(dialog_class):
     dialog.engine_combo.set_active_id.assert_not_called()
 
 
+def test_picker_handlers_early_return_while_applying(dialog_class: type[Any]) -> None:
+    """Size, specialization, and language handlers must not rebuild or apply mid-apply."""
+    dialog = _dialog_stub()
+    dialog._applying_settings = True
+    saved_language = dialog.language
+
+    dialog_class._on_model_changed(dialog, None)
+    dialog_class._on_model_variant_changed(dialog, None)
+    dialog_class._on_language_changed(dialog, None)
+
+    dialog._populate_whispercpp_variant_options.assert_not_called()
+    dialog._sync_language_options_for_selected_model.assert_not_called()
+    dialog._populate_model_options.assert_not_called()
+    dialog._auto_apply_settings.assert_not_called()
+    assert dialog.language == saved_language
+
+
 def test_finish_resyncs_whispercpp_size_when_selected_settings_still_report_old_variant(
     settings_dialog, dialog_class
 ):
@@ -525,14 +567,14 @@ def test_finish_resyncs_whispercpp_size_when_selected_settings_still_report_old_
     Finish must still resync even though selected vs saved look identical.
     """
     dialog = _dialog_stub()
-    saved = {
-        "engine": "whisper_cpp",
-        "model_size": "tiny",
-        "language": "auto",
-    }
-    dialog.get_selected_settings.return_value = dict(saved)
-    dialog.config_manager.get_settings.return_value = {"speech_recognition": dict(saved)}
-    dialog.model_combo.get_active_id.return_value = "tiny"
+    _bind_real(
+        dialog,
+        dialog_class,
+        "get_selected_settings",
+        "_get_selected_whispercpp_model",
+        "_resync_model_ui_from_config",
+    )
+    saved = _wire_whispercpp_pickers(dialog, size="tiny", variant="tiny", language="auto")
     idle_calls = []
     workers = []
 
@@ -555,17 +597,69 @@ def test_finish_resyncs_whispercpp_size_when_selected_settings_still_report_old_
         assert dialog._applying_settings is True
         assert len(workers) == 1
 
-        # Size combo moved to B, but get_selected_settings still returns tiny
-        # because the handler early-returned and skipped variant rebuild.
+        # Size combo moved to B; production handler early-returns, so the variant
+        # combo still names the saved id and selected settings still match config.
         dialog.model_combo.get_active_id.return_value = "small"
+        dialog_class._on_model_changed(dialog, None)
+        dialog._populate_whispercpp_variant_options.assert_not_called()
+        dialog._auto_apply_settings.assert_not_called()
+        assert dialog.get_selected_settings()["model_size"] == saved["model_size"]
 
         workers[0].target()
-        dialog._apply_settings_internal.assert_called_once_with(saved, raise_errors=True)
+        applied = dialog._apply_settings_internal.call_args[0][0]
+        assert applied["model_size"] == saved["model_size"]
         assert dialog._applying_settings is True
 
         _run_finish_idle(dialog, dialog_class, idle_calls)
 
-    dialog._resync_model_ui_from_config.assert_called_once()
+    dialog._populate_model_options.assert_called_once()
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("auto")
+    assert dialog._applying_settings is False
+
+
+def test_language_moved_mid_apply_is_restored_from_saved_config(settings_dialog, dialog_class):
+    """A language pick during apply must not stick; finish restores the saved language."""
+    dialog = _dialog_stub()
+    _bind_real(
+        dialog,
+        dialog_class,
+        "get_selected_settings",
+        "_get_selected_whispercpp_model",
+        "_resync_model_ui_from_config",
+    )
+    saved = _wire_whispercpp_pickers(dialog, size="tiny", variant="tiny", language="fr")
+    idle_calls = []
+    workers = []
+
+    class _CaptureThread(_DeferredThread):
+        def __init__(
+            self,
+            target: Callable[..., Any] | None = None,
+            daemon: bool | None = None,
+            **kwargs: Any,
+        ) -> None:
+            super().__init__(target=target, daemon=daemon, **kwargs)
+            workers.append(self)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
+        patch.object(settings_dialog.threading, "Thread", _CaptureThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+        assert dialog._applying_settings is True
+
+        dialog.language_combo.get_active_id.return_value = "en-us"
+        dialog_class._on_language_changed(dialog, None)
+        dialog._populate_model_options.assert_not_called()
+        dialog._auto_apply_settings.assert_not_called()
+        assert dialog.language == saved["language"]
+
+        workers[0].target()
+        _run_finish_idle(dialog, dialog_class, idle_calls)
+
+    dialog._populate_model_options.assert_called_once()
+    dialog._sync_language_options_for_selected_model.assert_called_once_with("fr")
     assert dialog._applying_settings is False
 
 
