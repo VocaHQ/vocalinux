@@ -450,3 +450,99 @@ def test_parakeet_recognition_does_not_consume_language():
     transcribe_src = inspect.getsource(SpeechRecognitionManager._transcribe_with_parakeet)
     assert "self.language" not in init_src
     assert "self.language" not in transcribe_src
+
+
+def test_normalize_language_for_engine_forces_auto_for_parakeet():
+    """CLI/saved non-auto languages must not survive for Parakeet."""
+    from vocalinux.speech_recognition.recognition_manager import (
+        normalize_language_for_engine,
+    )
+
+    assert normalize_language_for_engine("parakeet", "fr") == "auto"
+    assert normalize_language_for_engine("parakeet", "en-us") == "auto"
+    assert normalize_language_for_engine("parakeet", "auto") == "auto"
+    assert normalize_language_for_engine("whisper", "fr") == "fr"
+    assert normalize_language_for_engine("vosk", "en-us") == "en-us"
+
+
+def test_speech_manager_init_normalizes_parakeet_language():
+    """SpeechRecognitionManager must store auto even when constructed with a code."""
+    from unittest.mock import patch
+
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    with patch.object(SpeechRecognitionManager, "_init_parakeet"):
+        manager = SpeechRecognitionManager(
+            engine="parakeet",
+            model_size="v3-european",
+            language="fr",
+            defer_download=True,
+        )
+    assert manager.language == "auto"
+
+
+def test_speech_manager_reconfigure_to_parakeet_normalizes_language():
+    """Switching to Parakeet must clear a leftover catalog language."""
+    from unittest.mock import patch
+
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    with patch.object(SpeechRecognitionManager, "_init_vosk"), patch.object(
+        SpeechRecognitionManager, "_init_parakeet"
+    ):
+        manager = SpeechRecognitionManager(
+            engine="vosk",
+            model_size="small",
+            language="en-us",
+            defer_download=True,
+        )
+        assert manager.language == "en-us"
+        manager.reconfigure(engine="parakeet", model_size="v3-european", language="fr")
+    assert manager.engine == "parakeet"
+    assert manager.language == "auto"
+
+
+def test_main_startup_normalizes_parakeet_language():
+    """CLI/startup path must call the shared Parakeet language normalizer."""
+    from vocalinux import main as main_mod
+
+    src = inspect.getsource(main_mod.main)
+    assert "normalize_language_for_engine" in src
+
+
+def test_speech_manager_reconfigure_to_parakeet_clears_leftover_without_language():
+    """Switching TO Parakeet without a language arg must still drop leftover language."""
+    from unittest.mock import patch
+
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    with patch.object(SpeechRecognitionManager, "_init_whispercpp"), patch.object(
+        SpeechRecognitionManager, "_init_parakeet"
+    ):
+        manager = SpeechRecognitionManager(
+            engine="whisper_cpp",
+            model_size="small",
+            language="de",
+            defer_download=True,
+        )
+        assert manager.language == "de"
+        manager.reconfigure(engine="parakeet", model_size="v3-european", force_download=False)
+    assert manager.engine == "parakeet"
+    assert manager.language == "auto"
+
+
+def test_speech_manager_reconfigure_parakeet_language_arg_stays_auto():
+    """A catalog language passed while already on Parakeet must not stick."""
+    from unittest.mock import patch
+
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    with patch.object(SpeechRecognitionManager, "_init_parakeet"):
+        manager = SpeechRecognitionManager(
+            engine="parakeet",
+            model_size="v3-european",
+            language="auto",
+            defer_download=True,
+        )
+        manager.reconfigure(language="fr", force_download=False)
+    assert manager.language == "auto"

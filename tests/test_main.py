@@ -948,6 +948,108 @@ class TestMainConfigPrecedence(unittest.TestCase):
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
     @patch("vocalinux.ui.tray_indicator.TrayIndicator")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
+    @patch("vocalinux.ui.logging_manager.initialize_logging")
+    def test_cli_language_normalized_for_parakeet(
+        self,
+        mock_init_logging,
+        mock_config_manager,
+        mock_tray,
+        mock_text,
+        mock_speech,
+        mock_action_handler,
+        mock_check_deps,
+    ):
+        """CLI --language must not be stored when --engine is parakeet."""
+        mock_check_deps.return_value = True
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_settings.return_value = {
+            "speech_recognition": {
+                "engine": "whisper_cpp",
+                "model_size": "small",
+                "language": "en-us",
+            },
+            "general": {"first_run": False},
+        }
+        mock_config_manager.return_value = mock_config_instance
+
+        mock_speech.return_value = MagicMock()
+        mock_text.return_value = MagicMock()
+        mock_tray.return_value = MagicMock()
+        mock_action_handler.return_value = MagicMock()
+
+        with patch(
+            "sys.argv",
+            [
+                "vocalinux",
+                "--engine",
+                "parakeet",
+                "--model",
+                "v3-european",
+                "--language",
+                "fr",
+            ],
+        ):
+            with patch("vocalinux.main.logger"):
+                main()
+
+                mock_speech.assert_called_once()
+                call_kwargs = mock_speech.call_args[1]
+                self.assertEqual(call_kwargs["engine"], "parakeet")
+                self.assertEqual(call_kwargs["language"], "auto")
+
+    @patch("vocalinux.main.check_dependencies")
+    @patch("vocalinux.ui.action_handler.ActionHandler")
+    @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
+    @patch("vocalinux.text_injection.text_injector.TextInjector")
+    @patch("vocalinux.ui.tray_indicator.TrayIndicator")
+    @patch("vocalinux.ui.config_manager.get_shared_config_manager")
+    @patch("vocalinux.ui.logging_manager.initialize_logging")
+    def test_saved_language_normalized_for_parakeet(
+        self,
+        mock_init_logging,
+        mock_config_manager,
+        mock_tray,
+        mock_text,
+        mock_speech,
+        mock_action_handler,
+        mock_check_deps,
+    ):
+        """A leftover saved language must not be stored when the engine is parakeet."""
+        mock_check_deps.return_value = True
+
+        mock_config_instance = MagicMock()
+        mock_config_instance.get_settings.return_value = {
+            "speech_recognition": {
+                "engine": "parakeet",
+                "model_size": "v3-european",
+                "language": "de",
+            },
+            "general": {"first_run": False},
+        }
+        mock_config_instance.get_model_size_for_engine.return_value = "v3-european"
+        mock_config_manager.return_value = mock_config_instance
+
+        mock_speech.return_value = MagicMock()
+        mock_text.return_value = MagicMock()
+        mock_tray.return_value = MagicMock()
+        mock_action_handler.return_value = MagicMock()
+
+        with patch("sys.argv", ["vocalinux"]):
+            with patch("vocalinux.main.logger"):
+                main()
+
+                mock_speech.assert_called_once()
+                call_kwargs = mock_speech.call_args[1]
+                self.assertEqual(call_kwargs["engine"], "parakeet")
+                self.assertEqual(call_kwargs["language"], "auto")
+
+    @patch("vocalinux.main.check_dependencies")
+    @patch("vocalinux.ui.action_handler.ActionHandler")
+    @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
+    @patch("vocalinux.text_injection.text_injector.TextInjector")
+    @patch("vocalinux.ui.tray_indicator.TrayIndicator")
     @patch("vocalinux.ui.config_manager.ConfigManager")
     @patch("vocalinux.ui.logging_manager.initialize_logging")
     def test_model_resolved_per_engine_not_from_generic_key(

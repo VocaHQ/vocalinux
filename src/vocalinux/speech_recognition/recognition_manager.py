@@ -85,6 +85,18 @@ def resolve_whisper_language(language: str) -> Optional[str]:
     return language
 
 
+def normalize_language_for_engine(engine: str, language: str) -> str:
+    """Return the language the given engine actually consumes.
+
+    Parakeet coverage is the model (v2-english vs v3-european), not a catalog
+    language. Any leftover CLI or saved code is dropped so callers cannot store
+    an unconsumed value.
+    """
+    if engine == "parakeet":
+        return "auto"
+    return language
+
+
 # ALSA error handler to suppress warnings during PyAudio initialization
 def _setup_alsa_error_handler():
     """Set up an error handler to suppress ALSA warnings."""
@@ -983,7 +995,7 @@ class SpeechRecognitionManager:
         """
         self.engine = engine
         self.model_size = model_size
-        self.language = language
+        self.language = normalize_language_for_engine(engine, language)
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
         self.state = RecognitionState.IDLE
         self.audio_thread = None
@@ -1077,7 +1089,7 @@ class SpeechRecognitionManager:
         os.makedirs(MODELS_DIR, exist_ok=True)
 
         logger.info(
-            f"Initializing speech recognition with {engine} engine, {language} language and {model_size} model"
+            f"Initializing speech recognition with {engine} engine, {self.language} language and {model_size} model"
         )
 
         # Initialize the selected speech recognition engine
@@ -3417,6 +3429,13 @@ class SpeechRecognitionManager:
         # VOSK needs to load a different model for the new language
         if language is not None and language != self.language:
             self.language = language
+            restart_needed = True
+
+        # Parakeet never consumes catalog language. Apply after engine/language
+        # updates so switching TO parakeet also clears a leftover code.
+        normalized_language = normalize_language_for_engine(self.engine, self.language)
+        if normalized_language != self.language:
+            self.language = normalized_language
             restart_needed = True
 
         # Update VOSK specific params if provided
