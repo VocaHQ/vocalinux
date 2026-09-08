@@ -35,12 +35,18 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
-from ..utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO
+from ..utils.faster_whisper_model_info import (
+    FASTER_WHISPER_MODEL_INFO,
+)
+from ..utils.faster_whisper_model_info import delete_model as delete_faster_whisper_model
 from ..utils.faster_whisper_model_info import (  # noqa: E402
     get_recommended_model as get_recommended_faster_whisper_model,
 )
 from ..utils.faster_whisper_model_info import (
     is_model_downloaded as is_faster_whisper_model_downloaded,
+)
+from ..utils.faster_whisper_model_info import (
+    list_downloaded_models as list_downloaded_faster_whisper_models,
 )
 from ..utils.model_choice import (
     BALANCED,
@@ -71,7 +77,10 @@ from ..utils.whisper_model_info import (  # noqa: E402
     whisper_model_file,
 )
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
-from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, default_variant_for_size
+from ..utils.whispercpp_model_info import (
+    WHISPERCPP_MODEL_INFO,
+    default_variant_for_size,
+)
 from ..utils.whispercpp_model_info import delete_model as delete_whispercpp_model
 from ..utils.whispercpp_model_info import (
     detect_compute_backend,
@@ -5567,6 +5576,16 @@ class SettingsDialog(Gtk.Dialog):
                         name == active_id,
                     )
                 )
+        elif engine == "faster_whisper":
+            for name in list_downloaded_faster_whisper_models():
+                items.append(
+                    (
+                        name,
+                        _model_display_name(name),
+                        _format_size(FASTER_WHISPER_MODEL_INFO[name]["size_mb"]),
+                        name == active_id,
+                    )
+                )
 
         return items
 
@@ -5653,6 +5672,8 @@ class SettingsDialog(Gtk.Dialog):
             delete_vosk_model(model_id)
         elif engine == "parakeet":
             parakeet.delete_model(model_id)
+        elif engine == "faster_whisper":
+            delete_faster_whisper_model(model_id)
         else:
             raise ValueError(f"No local models to delete for engine {engine}")
 

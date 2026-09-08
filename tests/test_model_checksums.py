@@ -17,6 +17,11 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from vocalinux.utils import model_checksums
+from vocalinux.utils.faster_whisper_model_info import (
+    FASTER_WHISPER_MODEL_INFO,
+)
+from vocalinux.utils.faster_whisper_model_info import manifest_key as faster_whisper_manifest_key
+from vocalinux.utils.faster_whisper_model_info import model_files as faster_whisper_model_files
 from vocalinux.utils.model_checksums import (
     VERIFICATION_STAMP_NAME,
     ChecksumError,
@@ -86,6 +91,21 @@ class TestManifestCoverage(unittest.TestCase):
             missing,
             [],
             "Parakeet models without a pinned checksum; "
+            "run `just model-checksums` to refresh the manifest",
+        )
+
+    def test_every_faster_whisper_model_is_pinned(self):
+        pinned = pinned_filenames()
+        missing = [
+            faster_whisper_manifest_key(name, filename)
+            for name in FASTER_WHISPER_MODEL_INFO
+            for filename in faster_whisper_model_files(name)
+            if faster_whisper_manifest_key(name, filename) not in pinned
+        ]
+        self.assertEqual(
+            missing,
+            [],
+            "faster-whisper models without a pinned checksum; "
             "run `just model-checksums` to refresh the manifest",
         )
 

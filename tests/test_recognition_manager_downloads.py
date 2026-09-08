@@ -24,6 +24,8 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+from vocalinux.utils.faster_whisper_model_info import manifest_key as faster_whisper_manifest_key
+from vocalinux.utils.faster_whisper_model_info import model_files as faster_whisper_model_files
 from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, ChecksumError, expected_for
 from vocalinux.utils.model_checksums import verify_model_file as verify_model_file_real
 from vocalinux.utils.parakeet_model_info import MODEL_FILES as PARAKEET_MODEL_FILES
@@ -799,6 +801,159 @@ class TestParakeetDownloadVerifiesExistingFiles:
             os.path.basename(path) == encoder_name + ".tmp" for path in streamed
         ), "an existing bad file must be removed and re-downloaded"
         assert encoder.read_bytes() == b"good-enough"
+
+
+class TestFasterWhisperRejectsAnUnverifiedModelOnDisk:
+    """Wiring test: the hash has to happen where the model is picked up."""
+
+    @staticmethod
+    def _write_bundle(tmp_path, payload=b"not the model that is pinned"):
+        model_dir = tmp_path / "tiny"
+        model_dir.mkdir()
+        for name in faster_whisper_model_files("tiny"):
+            (model_dir / name).write_bytes(payload)
+        return model_dir
+
+    def test_a_model_that_fails_its_pin_is_removed_and_not_loaded(self, tmp_path):
+        model_dir = self._write_bundle(tmp_path)
+
+        manager = _make_manager(engine="faster_whisper")
+        manager.model_size = "tiny"
+        manager._defer_download = True
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.faster_whisper.get_model_path",
+            return_value=str(model_dir),
+        ):
+            with patch(
+                "vocalinux.speech_recognition.engines.faster_whisper_engine.FasterWhisperEngine"
+            ) as engine_cls:
+                manager._init_faster_whisper()
+
+        for name in faster_whisper_model_files("tiny"):
+            assert not (model_dir / name).exists(), "an unverifiable model must not stay on disk"
+        engine_cls.assert_not_called()
+        assert manager._model_initialized is False
+
+    def test_a_model_that_cannot_be_deleted_is_still_not_loaded(self, tmp_path):
+        model_dir = self._write_bundle(tmp_path)
+
+        manager = _make_manager(engine="faster_whisper")
+        manager.model_size = "tiny"
+        manager._defer_download = False
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.faster_whisper.get_model_path",
+            return_value=str(model_dir),
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.os.remove",
+                side_effect=OSError("read-only"),
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.engines.faster_whisper_engine.FasterWhisperEngine"
+                ) as engine_cls:
+                    with pytest.raises(RuntimeError, match="failed verification"):
+                        manager._init_faster_whisper()
+
+        for name in faster_whisper_model_files("tiny"):
+            assert (model_dir / name).exists()
+        engine_cls.assert_not_called()
+
+    def test_an_unpinned_model_is_refused_not_deleted(self, tmp_path):
+        """faster-whisper pins are constructed keys; simulate a missing pin for one file."""
+        model_dir = self._write_bundle(tmp_path, payload=b"bytes")
+        unpinned_name = faster_whisper_model_files("tiny")[0]
+        unpinned_key = faster_whisper_manifest_key("tiny", unpinned_name)
+
+        def fake_verify(path, filename=None):
+            key = filename or os.path.basename(path)
+            if key == unpinned_key:
+                raise ChecksumError(f"No checksum is pinned for {key}")
+            verify_model_file_real(path, filename)
+
+        def fake_expected(filename):
+            if os.path.basename(filename) == unpinned_key:
+                return None
+            return expected_for(filename)
+
+        manager = _make_manager(engine="faster_whisper")
+        manager.model_size = "tiny"
+        manager._defer_download = True
+
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.faster_whisper.get_model_path",
+            return_value=str(model_dir),
+        ):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.verify_model_file",
+                side_effect=fake_verify,
+            ):
+                with patch(
+                    "vocalinux.speech_recognition.recognition_manager.expected_for",
+                    side_effect=fake_expected,
+                ):
+                    with patch(
+                        "vocalinux.speech_recognition.engines.faster_whisper_engine.FasterWhisperEngine"
+                    ) as engine_cls:
+                        manager._init_faster_whisper()
+
+        assert (
+            model_dir / unpinned_name
+        ).exists(), "a missing pin is not a reason to delete the file"
+        engine_cls.assert_not_called()
+        assert manager._model_initialized is False
+
+
+class TestFasterWhisperDownloadVerifiesExistingFiles:
+    """Existence is not a pin: a leftover dest must still match its digest."""
+
+    def test_an_existing_file_that_fails_its_pin_is_redownloaded(self, tmp_path):
+        manager = _make_manager(engine="faster_whisper")
+        manager.model_size = "tiny"
+        model_dir = tmp_path / "tiny"
+        model_dir.mkdir()
+
+        first_name = faster_whisper_model_files("tiny")[0]
+        first_file = model_dir / first_name
+        first_file.write_bytes(b"not the file that is pinned")
+        first_key = faster_whisper_manifest_key("tiny", first_name)
+
+        streamed = []
+        verify_calls = []
+
+        def fake_stream(url, dest_path):
+            streamed.append(dest_path)
+            with open(dest_path, "wb") as handle:
+                handle.write(b"good-enough")
+
+        def fake_verify(path, filename=None):
+            verify_calls.append((path, filename))
+            if not str(path).endswith(".tmp"):
+                raise ChecksumError("digest mismatch")
+
+        mock_requests = MagicMock()
+        mock_requests.exceptions.RequestException = Exception
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with patch(
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.get_model_path",
+                return_value=str(model_dir),
+            ):
+                with patch.object(manager, "_stream_model_download", side_effect=fake_stream):
+                    with patch(
+                        "vocalinux.speech_recognition.recognition_manager.verify_model_file",
+                        side_effect=fake_verify,
+                    ):
+                        manager._download_faster_whisper_model()
+
+        assert any(
+            path == str(first_file) and filename == first_key for path, filename in verify_calls
+        ), "an existing dest must be hashed, not skipped because it is already on disk"
+        assert any(
+            os.path.basename(path) == first_name + ".tmp" for path in streamed
+        ), "an existing bad file must be removed and re-downloaded"
+        assert first_file.read_bytes() == b"good-enough"
 
 
 class TestAudioReconnection:

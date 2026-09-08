@@ -1,5 +1,6 @@
 """Tests for the faster-whisper engine backend."""
 
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -14,9 +15,13 @@ from vocalinux.speech_recognition.engines.faster_whisper_engine import FasterWhi
 from vocalinux.utils.faster_whisper_model_info import (
     FASTER_WHISPER_MODEL_INFO,
     get_compute_type,
+    get_model_file_url,
+    get_model_path,
     get_recommended_model,
     is_english_only_model,
     is_model_downloaded,
+    manifest_key,
+    model_files,
 )
 
 
@@ -72,92 +77,66 @@ class TestFasterWhisperModelInfo:
         """Test that unknown models are reported as not downloaded."""
         assert is_model_downloaded("not-a-model") is False
 
-    def test_hf_hub_cache_exception(self):
-        """Test that _hf_hub_cache handles import failures gracefully."""
-        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+    def test_model_files_default_and_large_v3(self):
+        """Most bundles use vocabulary.txt; large-v3 uses vocabulary.json."""
+        assert model_files("tiny") == [
+            "config.json",
+            "model.bin",
+            "tokenizer.json",
+            "vocabulary.txt",
+        ]
+        assert model_files("large-v3") == [
+            "config.json",
+            "model.bin",
+            "preprocessor_config.json",
+            "tokenizer.json",
+            "vocabulary.json",
+        ]
 
-        with patch.dict(sys.modules, {"huggingface_hub": None}):
-            with patch("builtins.__import__", side_effect=ImportError("not found")):
-                assert _hf_hub_cache() is None
+    def test_model_files_unknown_model(self):
+        with pytest.raises(ValueError, match="Unknown faster-whisper model"):
+            model_files("not-a-model")
 
-    def test_hf_hub_cache_none(self):
-        """Test that _hf_hub_cache returns None when HF_HUB_CACHE is unset."""
-        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+    def test_manifest_key_includes_model_name(self):
+        assert manifest_key("tiny", "model.bin") == "faster-whisper-tiny-model.bin"
+        assert (
+            manifest_key("large-v3", "vocabulary.json") == "faster-whisper-large-v3-vocabulary.json"
+        )
 
-        hf_mock = MagicMock()
-        hf_mock.constants.HF_HUB_CACHE = None
-        with patch.dict(sys.modules, {"huggingface_hub": hf_mock}):
-            assert _hf_hub_cache() is None
+    def test_get_model_file_url_uses_pinned_revision(self):
+        url = get_model_file_url("tiny", "model.bin")
+        revision = FASTER_WHISPER_MODEL_INFO["tiny"]["revision"]
+        assert f"/resolve/{revision}/model.bin?download=true" in url
+        assert "Systran/faster-whisper-tiny" in url
 
-    def test_hf_hub_cache_path(self):
-        """Test that _hf_hub_cache returns the cache directory when set."""
-        from vocalinux.utils.faster_whisper_model_info import _hf_hub_cache
+    def test_get_model_file_url_unknown_model(self):
+        with pytest.raises(ValueError, match="Unknown faster-whisper model"):
+            get_model_file_url("not-a-model", "model.bin")
 
-        hf_mock = MagicMock()
-        hf_mock.constants.HF_HUB_CACHE = "/fake/cache"
-        with patch.dict(sys.modules, {"huggingface_hub": hf_mock}):
-            assert _hf_hub_cache() == "/fake/cache"
-
-    def test_is_model_downloaded_exception(self, tmp_path):
-        """Test that is_model_downloaded handles filesystem errors."""
+    def test_is_model_downloaded_missing_files(self, tmp_path):
+        """A partial bundle is not treated as downloaded."""
         with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
+            "vocalinux.utils.faster_whisper_model_info.models_dir",
             return_value=str(tmp_path),
         ):
+            model_dir = get_model_path("tiny")
+            os.makedirs(model_dir, exist_ok=True)
+            with open(os.path.join(model_dir, "model.bin"), "wb") as handle:
+                handle.write(b"partial")
             assert is_model_downloaded("tiny") is False
 
-    def test_is_model_downloaded_via_hf_hub(self):
-        """Test that is_model_downloaded uses huggingface_hub when available."""
-        hf_mock = MagicMock()
-        hf_mock.try_to_load_from_cache.return_value = "/path/to/model.bin"
-        constants_mock = MagicMock()
-        constants_mock.HUGGINGFACE_HUB_CACHE = "/cache"
-        hf_mock.constants = constants_mock
-        with patch.dict(
-            sys.modules,
-            {
-                "huggingface_hub": hf_mock,
-                "huggingface_hub.constants": constants_mock,
-            },
+    def test_is_model_downloaded_complete_bundle(self, tmp_path):
+        """All bundle files under MODELS_DIR count as downloaded."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info.models_dir",
+            return_value=str(tmp_path),
         ):
+            model_dir = get_model_path("tiny")
+            os.makedirs(model_dir, exist_ok=True)
+            for filename in model_files("tiny"):
+                with open(os.path.join(model_dir, filename), "wb") as handle:
+                    handle.write(b"ok")
             assert is_model_downloaded("tiny") is True
-
-    def test_is_model_downloaded_fallback_no_snapshots(self, tmp_path):
-        """Test fallback path when model cache dir has no snapshots directory."""
-        cache_dir = tmp_path / "hub"
-        repo_dir = cache_dir / "models--Systran--faster-whisper-tiny"
-        repo_dir.mkdir(parents=True)
-
-        with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
-            return_value=str(cache_dir),
-        ):
-            assert is_model_downloaded("tiny") is False
-
-    def test_is_model_downloaded_fallback_empty_snapshot(self, tmp_path):
-        """Test fallback path when a snapshot directory lacks model.bin."""
-        cache_dir = tmp_path / "hub"
-        snapshot_dir = cache_dir / "models--Systran--faster-whisper-tiny" / "snapshots" / "abc123"
-        snapshot_dir.mkdir(parents=True)
-
-        with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
-            return_value=str(cache_dir),
-        ):
-            assert is_model_downloaded("tiny") is False
-
-    def test_is_model_downloaded_fallback_exception(self, tmp_path):
-        """Test that fallback filesystem errors are handled gracefully."""
-        cache_dir = tmp_path / "hub"
-        snapshots_dir = cache_dir / "models--Systran--faster-whisper-tiny" / "snapshots"
-        snapshots_dir.mkdir(parents=True)
-
-        with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
-            return_value=str(cache_dir),
-        ):
-            with patch("os.listdir", side_effect=OSError("boom")):
-                assert is_model_downloaded("tiny") is False
 
     def test_get_recommended_model_returns_tuple(self):
         """Test that get_recommended_model returns a model name and reason."""
@@ -165,30 +144,6 @@ class TestFasterWhisperModelInfo:
         assert isinstance(model, str)
         assert isinstance(reason, str)
         assert model in FASTER_WHISPER_MODEL_INFO
-
-    def test_is_model_downloaded_with_cache(self, tmp_path):
-        """Test that a cached model is reported as downloaded via fallback path."""
-        import os
-
-        cache_dir = tmp_path / "hub"
-        repo_dir = cache_dir / "models--Systran--faster-whisper-tiny"
-        snapshot_dir = repo_dir / "snapshots" / "abc123"
-        snapshot_dir.mkdir(parents=True)
-        (snapshot_dir / "model.bin").write_text("model")
-
-        with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
-            return_value=str(cache_dir),
-        ):
-            assert is_model_downloaded("tiny") is True
-
-    def test_is_model_downloaded_no_cache(self):
-        """Test fallback when no cache directory exists."""
-        with patch(
-            "vocalinux.utils.faster_whisper_model_info._hf_hub_cache",
-            return_value=None,
-        ):
-            assert is_model_downloaded("tiny") is False
 
     def test_get_recommended_model_cuda_high_ram(self):
         """Test CUDA recommendation with high RAM."""
@@ -286,6 +241,15 @@ class TestFasterWhisperModelInfo:
 class TestFasterWhisperEngine:
     """Tests for the FasterWhisperEngine class."""
 
+    @pytest.fixture(autouse=True)
+    def _stub_model_path(self, tmp_path):
+        with patch(
+            "vocalinux.speech_recognition.engines.faster_whisper_engine.get_model_path",
+            side_effect=lambda name: str(tmp_path / "faster_whisper" / name),
+        ):
+            self._models_root = tmp_path
+            yield
+
     def _mock_whisper_model(self, segments):
         """Return a mock WhisperModel that yields the given segments."""
         whisper_mock = MagicMock()
@@ -316,7 +280,10 @@ class TestFasterWhisperEngine:
             engine.init()
             assert engine.is_ready()
             whisper_mock.WhisperModel.assert_called_once_with(
-                "tiny", device="cpu", compute_type="int8", local_files_only=True
+                str(self._models_root / "faster_whisper" / "tiny"),
+                device="cpu",
+                compute_type="int8",
+                local_files_only=True,
             )
 
     def test_init_invalid_model_defaults_to_tiny(self):
@@ -519,10 +486,9 @@ class TestRecognitionManagerIntegration:
                 )
                 assert manager.engine == "faster_whisper"
 
-    def test_init_faster_whisper_refuses_uncached_download(self):
-        """Uncached faster-whisper models must not fetch unpinned Hugging Face files."""
+    def test_init_faster_whisper_defers_missing_model(self):
+        """Missing models stay unloaded when download is deferred."""
         from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
-        from vocalinux.utils.model_checksums import ChecksumError
 
         with (
             patch.object(SpeechRecognitionManager, "_init_vosk"),
@@ -530,9 +496,10 @@ class TestRecognitionManagerIntegration:
             patch.object(SpeechRecognitionManager, "_init_whispercpp"),
             patch.object(SpeechRecognitionManager, "_init_parakeet"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager.is_faster_whisper_model_downloaded",
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.is_model_downloaded",
                 return_value=False,
             ),
+            patch.object(SpeechRecognitionManager, "_download_faster_whisper_model") as download,
         ):
             manager = SpeechRecognitionManager(
                 engine="faster_whisper",
@@ -542,9 +509,46 @@ class TestRecognitionManagerIntegration:
             )
             assert manager.engine == "faster_whisper"
             assert manager._model_initialized is False
+            assert manager._faster_whisper_engine is None
+            download.assert_not_called()
+
+    def test_init_faster_whisper_downloads_then_loads(self):
+        """force_download path acquires the bundle, then loads the local snapshot."""
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        engine_instance = MagicMock()
+        engine_instance._model = MagicMock()
+        engine_cls = MagicMock(return_value=engine_instance)
+
+        with (
+            patch.object(SpeechRecognitionManager, "_init_vosk"),
+            patch.object(SpeechRecognitionManager, "_init_whisper"),
+            patch.object(SpeechRecognitionManager, "_init_whispercpp"),
+            patch.object(SpeechRecognitionManager, "_init_parakeet"),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.is_model_downloaded",
+                return_value=False,
+            ),
+            patch(
+                "vocalinux.speech_recognition.engines.faster_whisper_engine.FasterWhisperEngine",
+                engine_cls,
+            ),
+        ):
+            manager = SpeechRecognitionManager(
+                engine="faster_whisper",
+                model_size="tiny",
+                language="en-us",
+                defer_download=True,
+            )
             manager._defer_download = False
-            with pytest.raises(ChecksumError, match="checksum-pinned"):
+            with patch.object(manager, "_download_faster_whisper_model") as download:
                 manager._init_faster_whisper()
+
+        download.assert_called_once()
+        engine_cls.assert_called_once()
+        engine_instance.init.assert_called_once()
+        assert manager._model_initialized is True
+        assert manager._faster_whisper_engine is engine_instance
 
 
 if __name__ == "__main__":

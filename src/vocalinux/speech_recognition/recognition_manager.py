@@ -21,11 +21,8 @@ from typing import Callable, Optional
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..utils import faster_whisper_model_info as faster_whisper
 from ..utils import parakeet_model_info as parakeet
-from ..utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO
-from ..utils.faster_whisper_model_info import (
-    is_model_downloaded as is_faster_whisper_model_downloaded,
-)
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
@@ -1309,7 +1306,127 @@ class SpeechRecognitionManager:
             logger.error(f"Error in Whisper transcription: {e}", exc_info=True)
             return ""
 
-    def _init_faster_whisper(self):
+    def _download_faster_whisper_model(self) -> None:
+        """Download the faster-whisper model files with progress tracking."""
+        import requests
+
+        self._download_cancelled = False
+
+        model_dir = faster_whisper.get_model_path(self.model_size)
+        os.makedirs(model_dir, exist_ok=True)
+        logger.info(f"Downloading faster-whisper '{self.model_size}' model to {model_dir}")
+
+        bundle_files = faster_whisper.model_files(self.model_size)
+        # _stream_model_download reports 0..1 per file, so remap each file into
+        # its own slice of the bundle: the bar advances once across the whole
+        # download instead of restarting for each file.
+        outer_callback = self._download_progress_callback
+        total_files = len(bundle_files)
+
+        def file_progress(index: int, name: str) -> Callable[[float, float, str], None]:
+            def report(fraction: float, speed: float, status: str) -> None:
+                if outer_callback:
+                    outer_callback(
+                        (index + fraction) / total_files,
+                        speed,
+                        f"{name} ({index + 1}/{total_files}) - {status}",
+                    )
+
+            return report
+
+        temp_file = None
+        try:
+            for index, filename in enumerate(bundle_files):
+                dest_path = os.path.join(model_dir, filename)
+                key = faster_whisper.manifest_key(self.model_size, filename)
+                # Existence is not enough: a leftover or copied-in file must
+                # still match its pin. Verify, and only skip the download when
+                # the digest is good.
+                if os.path.exists(dest_path):
+                    try:
+                        verify_model_file(dest_path, key)
+                        continue
+                    except ChecksumError as error:
+                        logger.error(
+                            "Existing faster-whisper model file at %s is not trustworthy: %s",
+                            dest_path,
+                            error,
+                        )
+                        if expected_for(key) is None:
+                            raise
+                        try:
+                            os.remove(dest_path)
+                        except OSError as remove_error:
+                            logger.error("Could not remove %s: %s", dest_path, remove_error)
+                            raise
+                        logger.info(
+                            "Removed the unverified model file; it will be downloaded again"
+                        )
+                temp_file = dest_path + ".tmp"
+                url = faster_whisper.get_model_file_url(self.model_size, filename)
+                self._download_progress_callback = file_progress(index, filename)
+                self._stream_model_download(url, temp_file)
+
+                # Verify before the rename: CTranslate2 loads these through
+                # native code, so an unverified file must never reach a path
+                # is_model_downloaded() trusts.
+                verify_model_file(temp_file, key)
+
+                os.rename(temp_file, dest_path)
+                temp_file = None
+
+        # RequestException=Exception under the test mocks; do not catch
+        # Timeout separately (it is not a real exception type there).
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to download the faster-whisper model: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            msg = str(e).lower()
+            if "timeout" in msg or type(e).__name__ == "Timeout":
+                raise RuntimeError(
+                    "Model download timed out (Hugging Face may be slow or unavailable). "
+                    "Check your network and try again."
+                ) from e
+            raise RuntimeError(f"Failed to download faster-whisper model: {e}") from e
+        except (ChecksumError, OSError, RuntimeError, ValueError) as e:
+            logger.error(f"An error occurred during faster-whisper model download: {e}")
+            if temp_file and os.path.exists(temp_file):
+                os.remove(temp_file)
+            raise
+        finally:
+            self._download_progress_callback = outer_callback
+
+        logger.info("faster-whisper model downloaded successfully")
+        if self._download_progress_callback:
+            self._download_progress_callback(1.0, 0, "Complete!")
+
+    @staticmethod
+    def _faster_whisper_model_is_verified(model_size: str, model_dir: str) -> bool:
+        """Hash each bundle file against its pin. Delete only a digest/size mismatch.
+
+        An unpinned name is refused, not deleted. If remove fails, return False
+        so the caller does not hand the files to CTranslate2.
+        """
+        verified = True
+        for filename in faster_whisper.model_files(model_size):
+            path = os.path.join(model_dir, filename)
+            key = faster_whisper.manifest_key(model_size, filename)
+            try:
+                verify_model_file(path, key)
+            except ChecksumError as error:
+                logger.error("faster-whisper model file at %s is not trustworthy: %s", path, error)
+                verified = False
+                if expected_for(key) is None:
+                    continue
+                try:
+                    os.remove(path)
+                except OSError as remove_error:
+                    logger.error("Could not remove %s: %s", path, remove_error)
+                    return False
+                logger.info("Removed the unverified model file; it will be downloaded again")
+        return verified
+
+    def _init_faster_whisper(self) -> None:
         """Initialize the faster-whisper speech recognition engine."""
         try:
             from .engines.faster_whisper_engine import FasterWhisperEngine
@@ -1320,28 +1437,48 @@ class SpeechRecognitionManager:
             raise
 
         try:
-            if self.model_size not in FASTER_WHISPER_MODEL_INFO:
+            valid_models = list(faster_whisper.FASTER_WHISPER_MODEL_INFO.keys())
+            if self.model_size not in valid_models:
                 logger.warning(
                     f"Model size '{self.model_size}' not valid for faster-whisper. "
-                    f"Using recommended model instead."
+                    f"Valid options: {valid_models}. Using 'tiny' instead."
                 )
                 self.model_size = "tiny"
 
-            if not is_faster_whisper_model_downloaded(self.model_size):
-                if self._defer_download:
-                    logger.info(
-                        "faster-whisper model '%s' is not in the local cache. "
-                        "Will load when needed.",
-                        self.model_size,
+            model_dir = faster_whisper.get_model_path(self.model_size)
+
+            # A bundle that is merely present did not necessarily come through
+            # the download path: files could be copied in, or left over from a
+            # cancelled download. CTranslate2 loads these through native code,
+            # so hash them here; a failure demotes the bundle to "not downloaded".
+            if faster_whisper.is_model_downloaded(
+                self.model_size
+            ) and not self._faster_whisper_model_is_verified(self.model_size, model_dir):
+                if faster_whisper.is_model_downloaded(self.model_size):
+                    logger.error(
+                        "Refusing to load unverified faster-whisper model at %s",
+                        model_dir,
                     )
                     self._model_initialized = False
-                    return
-                raise ChecksumError(
-                    f"faster-whisper model '{self.model_size}' is not checksum-pinned; "
-                    "refusing to download unpinned Hugging Face files. "
-                    "Pins belong in model_checksums.txt (just model-checksums)."
-                )
+                    if self._defer_download:
+                        return
+                    raise RuntimeError(f"faster-whisper model at {model_dir} failed verification")
 
+            if not faster_whisper.is_model_downloaded(self.model_size):
+                if self._defer_download:
+                    logger.info(
+                        f"faster-whisper model '{self.model_size}' not found at {model_dir}. "
+                        "Will download when needed."
+                    )
+                    self._model_initialized = False
+                    return  # Don't block startup
+                else:
+                    logger.info(f"Downloading faster-whisper '{self.model_size}' model...")
+                    self._download_faster_whisper_model()
+
+            # NOTE: do not take _model_lock here. It is a non-reentrant Lock and
+            # reconfigure()/reinitialize_after_resume() already hold it when they
+            # call this, so acquiring it would deadlock the caller.
             self._faster_whisper_engine = FasterWhisperEngine(
                 model_size=self.model_size,
                 language=self.language,

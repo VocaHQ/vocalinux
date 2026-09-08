@@ -15,6 +15,7 @@ from ...utils.faster_whisper_model_info import (
     FASTER_WHISPER_MODEL_INFO,
     _has_torch_cuda,
     get_compute_type,
+    get_model_path,
     get_recommended_model,
 )
 
@@ -51,7 +52,7 @@ class FasterWhisperEngine:
         model_size: Optional[str] = None,
         device: Optional[str] = None,
         language: str = "auto",
-    ):
+    ) -> None:
         """Create a faster-whisper engine instance.
 
         Args:
@@ -99,10 +100,11 @@ class FasterWhisperEngine:
             f"with compute_type={compute_type}"
         )
 
-        # local_files_only: do not let faster-whisper fetch unpinned Hugging Face
-        # snapshots. Checksum-gated download is not wired yet.
+        # Load the checksum-gated snapshot from models_dir. local_files_only
+        # keeps faster-whisper from fetching an unpinned Hugging Face revision.
+        model_dir = get_model_path(self.model_size)
         self._model = WhisperModel(
-            self.model_size,
+            model_dir,
             device=device,
             compute_type=compute_type,
             local_files_only=True,

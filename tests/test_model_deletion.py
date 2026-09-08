@@ -85,6 +85,47 @@ def test_vosk_delete_rejects_unknown_and_missing(tmp_path):
             delete_vosk_model("vosk-model-small-en-us-0.15")
 
 
+def test_faster_whisper_list_and_delete(tmp_path):
+    with patch("vocalinux.utils.faster_whisper_model_info.models_dir", return_value=str(tmp_path)):
+        from vocalinux.utils.faster_whisper_model_info import (
+            delete_model,
+            get_model_path,
+            list_downloaded_models,
+            model_files,
+        )
+
+        assert list_downloaded_models() == []
+
+        tiny = get_model_path("tiny")
+        os.makedirs(tiny, exist_ok=True)
+        for filename in model_files("tiny"):
+            with open(os.path.join(tiny, filename), "wb") as handle:
+                handle.write(b"tiny")
+        base = get_model_path("base")
+        os.makedirs(base, exist_ok=True)
+        with open(os.path.join(base, "model.bin"), "wb") as handle:
+            handle.write(b"partial")
+
+        downloaded = list_downloaded_models()
+        assert downloaded == ["tiny", "base"]
+
+        deleted = delete_model("tiny")
+        assert deleted == tiny
+        assert not os.path.exists(tiny)
+        assert os.path.exists(base)
+        assert list_downloaded_models() == ["base"]
+
+
+def test_faster_whisper_delete_unknown_and_missing(tmp_path):
+    with patch("vocalinux.utils.faster_whisper_model_info.models_dir", return_value=str(tmp_path)):
+        from vocalinux.utils.faster_whisper_model_info import delete_model
+
+        with pytest.raises(ValueError, match="Unknown faster-whisper model"):
+            delete_model("not-a-real-model")
+        with pytest.raises(FileNotFoundError):
+            delete_model("tiny")
+
+
 def test_whisper_list_and_delete(tmp_path):
     cache = tmp_path / "whisper"
     cache.mkdir()

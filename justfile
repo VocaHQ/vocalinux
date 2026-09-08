@@ -159,7 +159,8 @@ lock-check:
 # `lfs` metadata and cost no bandwidth; VOSK is pinned by the bytes we fetch, so
 # every zip not already in the manifest is downloaded. A first run, or any run
 # with --refresh, pulls ~21.9GB and takes ~30 minutes.
-# Run after adding a model to vosk_model_info.py or whispercpp_model_info.py.
+# Run after adding a model to vosk_model_info.py, whispercpp_model_info.py,
+# parakeet_model_info.py or faster_whisper_model_info.py.
 model-checksums: _tooling
     uv run --no-sync python scripts/generate-model-checksums.py
 
