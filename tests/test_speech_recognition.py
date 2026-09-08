@@ -483,10 +483,6 @@ class TestSpeechRecognition(unittest.TestCase):
     def test_process_final_buffer_applies_custom_dictionary(self):
         """Custom dictionary corrections are applied before text callbacks."""
         manager = SpeechRecognitionManager(engine="vosk")
-        # Non-command spoken phrases are applied after CommandProcessor.
-        self.mock_cmd.text_commands = {}
-        self.mock_cmd.action_commands = {}
-        self.mock_cmd.format_commands = {}
         self.mock_cmd.process_text.side_effect = lambda t: (t, [])
 
         mock_recognizer = MagicMock()
@@ -496,7 +492,6 @@ class TestSpeechRecognition(unittest.TestCase):
 
         text_callback = MagicMock()
         manager.register_text_callback(text_callback)
-
         manager.audio_buffer = [b"audio_data1"]
 
         dictionary = [{"spoken": "super base", "replacement": "Supabase"}]
@@ -506,15 +501,14 @@ class TestSpeechRecognition(unittest.TestCase):
         ):
             manager._process_final_buffer()
 
-        self.mock_cmd.process_text.assert_called_once_with("super base is great")
+        masked_arg = self.mock_cmd.process_text.call_args.args[0]
+        self.assertIn("zzdict", masked_arg)
+        self.assertNotIn("super base", masked_arg.lower())
         text_callback.assert_called_once_with("Supabase is great")
 
     def test_process_final_buffer_applies_dictionary_before_commands(self):
-        """Spoken command phrases are remapped before CommandProcessor runs."""
+        """Spoken command phrases are masked so CommandProcessor never sees them."""
         manager = SpeechRecognitionManager(engine="vosk")
-        self.mock_cmd.text_commands = {}
-        self.mock_cmd.action_commands = {"delete that": "delete_last"}
-        self.mock_cmd.format_commands = {}
         self.mock_cmd.process_text.side_effect = lambda t: (t, [])
 
         mock_recognizer = MagicMock()
@@ -526,7 +520,6 @@ class TestSpeechRecognition(unittest.TestCase):
         action_callback = MagicMock()
         manager.register_text_callback(text_callback)
         manager.register_action_callback(action_callback)
-
         manager.audio_buffer = [b"audio_data1"]
 
         dictionary = [{"spoken": "delete that", "replacement": "keep that"}]
@@ -536,16 +529,14 @@ class TestSpeechRecognition(unittest.TestCase):
         ):
             manager._process_final_buffer()
 
-        self.mock_cmd.process_text.assert_called_once_with("keep that")
+        masked_arg = self.mock_cmd.process_text.call_args.args[0]
+        self.assertNotEqual(masked_arg.lower(), "delete that")
         text_callback.assert_called_once_with("keep that")
         action_callback.assert_not_called()
 
     def test_process_final_buffer_dictionary_replacement_does_not_become_command(self):
         """A replacement that equals a reserved command is injected as plain text."""
         manager = SpeechRecognitionManager(engine="vosk")
-        self.mock_cmd.text_commands = {}
-        self.mock_cmd.action_commands = {"delete that": "delete_last"}
-        self.mock_cmd.format_commands = {}
         self.mock_cmd.process_text.side_effect = lambda t: (t, [])
 
         mock_recognizer = MagicMock()
@@ -557,7 +548,6 @@ class TestSpeechRecognition(unittest.TestCase):
         action_callback = MagicMock()
         manager.register_text_callback(text_callback)
         manager.register_action_callback(action_callback)
-
         manager.audio_buffer = [b"audio_data1"]
 
         dictionary = [{"spoken": "wipe last", "replacement": "delete that"}]
@@ -567,7 +557,8 @@ class TestSpeechRecognition(unittest.TestCase):
         ):
             manager._process_final_buffer()
 
-        self.mock_cmd.process_text.assert_called_once_with("wipe last")
+        masked_arg = self.mock_cmd.process_text.call_args.args[0]
+        self.assertNotIn("delete that", masked_arg.lower())
         text_callback.assert_called_once_with("delete that")
         action_callback.assert_not_called()
 
@@ -587,7 +578,6 @@ class TestSpeechRecognition(unittest.TestCase):
         action_callback = MagicMock()
         manager.register_text_callback(text_callback)
         manager.register_action_callback(action_callback)
-
         manager.audio_buffer = [b"audio_data1"]
 
         dictionary = [{"spoken": "super base", "replacement": "Supabase"}]
@@ -601,7 +591,7 @@ class TestSpeechRecognition(unittest.TestCase):
         action_callback.assert_not_called()
 
     def test_process_final_buffer_dictionary_survives_format_commands(self):
-        """Format commands still apply when a nearby phrase is dictionary-corrected."""
+        """Format commands do not destroy dictionary placeholders."""
         from vocalinux.speech_recognition.command_processor import CommandProcessor
 
         manager = SpeechRecognitionManager(engine="vosk")
@@ -623,11 +613,63 @@ class TestSpeechRecognition(unittest.TestCase):
         ):
             manager._process_final_buffer()
 
-        # capitalize applies to "super", then post-dict cannot match "Super base";
-        # with two-phase, commands run on raw first: capitalize super base -> "Super base"
-        # then dictionary may not match "Super base" if case-sensitive on spoken...
-        # apply_dictionary is case-insensitive on spoken, so "Super base" -> Supabase.
         text_callback.assert_called_once_with("Supabase")
+
+    def test_process_final_buffer_hardcoded_command_phrase_is_masked(self):
+        """Hardcoded CommandProcessor phrases are masked before exact-match dispatch."""
+        from vocalinux.speech_recognition.command_processor import CommandProcessor
+
+        manager = SpeechRecognitionManager(engine="vosk")
+        manager.command_processor = CommandProcessor()
+
+        mock_recognizer = MagicMock()
+        mock_recognizer.FinalResult.return_value = '{"text": "select all text"}'
+        mock_recognizer.AcceptWaveform.return_value = True
+        manager.recognizer = mock_recognizer
+
+        text_callback = MagicMock()
+        action_callback = MagicMock()
+        manager.register_text_callback(text_callback)
+        manager.register_action_callback(action_callback)
+        manager.audio_buffer = [b"audio_data1"]
+
+        dictionary = [{"spoken": "select all text", "replacement": "highlight everything"}]
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.load_custom_dictionary",
+            return_value=dictionary,
+        ):
+            manager._process_final_buffer()
+
+        text_callback.assert_called_once_with("highlight everything")
+        action_callback.assert_not_called()
+
+    def test_process_final_buffer_pre_replacement_command_stays_literal(self):
+        """Mapping one reserved phrase to another injects the replacement as text."""
+        from vocalinux.speech_recognition.command_processor import CommandProcessor
+
+        manager = SpeechRecognitionManager(engine="vosk")
+        manager.command_processor = CommandProcessor()
+
+        mock_recognizer = MagicMock()
+        mock_recognizer.FinalResult.return_value = '{"text": "delete that"}'
+        mock_recognizer.AcceptWaveform.return_value = True
+        manager.recognizer = mock_recognizer
+
+        text_callback = MagicMock()
+        action_callback = MagicMock()
+        manager.register_text_callback(text_callback)
+        manager.register_action_callback(action_callback)
+        manager.audio_buffer = [b"audio_data1"]
+
+        dictionary = [{"spoken": "delete that", "replacement": "undo"}]
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.load_custom_dictionary",
+            return_value=dictionary,
+        ):
+            manager._process_final_buffer()
+
+        text_callback.assert_called_once_with("undo")
+        action_callback.assert_not_called()
 
     def test_process_final_buffer_applies_custom_dictionary_without_commands(self):
         """Corrections apply even when voice commands are disabled."""

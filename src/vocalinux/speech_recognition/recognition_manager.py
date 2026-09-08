@@ -39,7 +39,11 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
-from .dictionary_corrector import apply_dictionary, load_custom_dictionary
+from .dictionary_corrector import (
+    load_custom_dictionary,
+    mask_dictionary_phrases,
+    unmask_dictionary_phrases,
+)
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
@@ -3277,29 +3281,17 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
-            # Two-phase dictionary: remap spoken phrases that collide with voice
-            # commands before CommandProcessor, then apply the rest afterward.
-            # That lets "delete that" -> "keep that" avoid dispatch, keeps a
-            # replacement like "delete that" as plain text, and still runs
-            # unrelated commands such as period in the same transcript.
+            # Mask dictionary phrases with word-like sentinels before command
+            # matching, then restore replacements afterward. That covers spoken
+            # command remaps, command-like replacements, hardcoded CommandProcessor
+            # phrases, and unrelated commands in the same transcript, without
+            # letting format commands destroy the placeholders.
             # Re-read config.json each segment so Settings changes apply without
             # a restart.
             dictionary_entries = load_custom_dictionary()
-            pre_entries: list[dict] = []
-            post_entries: list[dict] = []
+            mapping: dict[str, str] = {}
             if dictionary_entries:
-                command_phrases = {
-                    *(k.lower() for k in self.command_processor.text_commands),
-                    *(k.lower() for k in self.command_processor.action_commands),
-                    *(k.lower() for k in self.command_processor.format_commands),
-                }
-                for entry in dictionary_entries:
-                    if entry["spoken"].lower() in command_phrases:
-                        pre_entries.append(entry)
-                    else:
-                        post_entries.append(entry)
-                if pre_entries:
-                    text = apply_dictionary(text, pre_entries)
+                text, mapping = mask_dictionary_phrases(text, dictionary_entries)
 
             if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
@@ -3309,8 +3301,8 @@ class SpeechRecognitionManager:
                 processed_text = text.strip()
                 actions = []
 
-            if post_entries:
-                processed_text = apply_dictionary(processed_text, post_entries)
+            if mapping:
+                processed_text = unmask_dictionary_phrases(processed_text, mapping)
 
             # Call text callbacks with processed text
             logger.debug(

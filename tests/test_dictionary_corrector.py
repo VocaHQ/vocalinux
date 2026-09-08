@@ -11,6 +11,8 @@ from unittest.mock import patch
 from vocalinux.speech_recognition.dictionary_corrector import (
     apply_dictionary,
     load_custom_dictionary,
+    mask_dictionary_phrases,
+    unmask_dictionary_phrases,
 )
 
 
@@ -201,6 +203,21 @@ class TestLoadCustomDictionary(unittest.TestCase):
         with open(config_path, "wb") as f:
             f.write(b"{\xff\xfe invalid")
         self.assertEqual(load_custom_dictionary(), [])
+
+
+class TestMaskDictionaryPhrases(unittest.TestCase):
+    """Word-like sentinels survive CommandProcessor format casing."""
+
+    def test_mask_then_unmask_round_trip(self):
+        entries = [_entry("super base", "Supabase")]
+        masked, mapping = mask_dictionary_phrases("I use super base daily", entries)
+        self.assertIn("zzdict", masked)
+        self.assertEqual(unmask_dictionary_phrases(masked, mapping), "I use Supabase daily")
+
+    def test_unmask_ignores_format_casing(self):
+        entries = [_entry("super base", "Supabase")]
+        masked, mapping = mask_dictionary_phrases("super base", entries)
+        self.assertEqual(unmask_dictionary_phrases(masked.upper(), mapping), "Supabase")
 
 
 if __name__ == "__main__":

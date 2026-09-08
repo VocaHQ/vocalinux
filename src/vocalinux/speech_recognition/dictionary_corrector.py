@@ -83,6 +83,53 @@ def _ordered_entries(entries: list[dict]) -> list[tuple[str, str]]:
     )
 
 
+def mask_dictionary_phrases(text: str, entries: list[dict]) -> tuple[str, dict[str, str]]:
+    """Replace spoken phrases with word-like sentinels CommandProcessor ignores.
+
+    Sentinels use the form ``zzdictNzz`` so format commands that grab the next
+    word-character token still leave a recoverable placeholder, while action/text command regexes
+    cannot match the configured replacement until after unmasking.
+    """
+    if not text or not entries:
+        return text, {}
+
+    ordered = _ordered_entries(entries)
+    if not ordered:
+        return text, {}
+
+    mapping: dict[str, str] = {}
+    masked = text
+    for index, (spoken, replacement) in enumerate(ordered):
+        sentinel = f"zzdict{index}zz"
+        pattern = re.compile(
+            r"(?<!\w)" + re.escape(spoken) + r"(?!\w)",
+            re.IGNORECASE,
+        )
+        if not pattern.search(masked):
+            continue
+        mapping[sentinel] = replacement
+        masked = pattern.sub(sentinel, masked)
+    return masked, mapping
+
+
+def unmask_dictionary_phrases(text: str, mapping: dict[str, str]) -> str:
+    """Restore dictionary replacements after command processing.
+
+    Matching is case-insensitive so capitalize/uppercase/lowercase format
+    commands can alter sentinel casing without losing the replacement.
+    """
+    if not text or not mapping:
+        return text
+    for sentinel, replacement in mapping.items():
+        text = re.sub(
+            re.escape(sentinel),
+            lambda _m, r=replacement: r,
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
 def apply_dictionary(text: str, entries: list[dict]) -> str:
     """Apply dictionary corrections to a transcript.
 
