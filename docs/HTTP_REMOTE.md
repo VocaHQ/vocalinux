@@ -4,14 +4,14 @@ Vocalinux can offload speech recognition to a remote HTTP server instead of runn
 
 Vocalinux speaks two wire formats out of the box:
 
-- **OpenAI-compatible** — `POST /v1/audio/transcriptions` (e.g. OpenAI, [Speaches](https://github.com/speaches-ai/speaches), LocalAI, FunASR/SenseVoice)
-- **whisper.cpp server** — `POST /inference` (the binary shipped with [whisper.cpp](https://github.com/ggerganov/whisper.cpp))
+- **OpenAI-compatible**: `POST /v1/audio/transcriptions` (e.g. OpenAI, [Speaches](https://github.com/speaches-ai/speaches), LocalAI, FunASR/SenseVoice)
+- **whisper.cpp server**: `POST /inference` (the binary shipped with [whisper.cpp](https://github.com/ggerganov/whisper.cpp))
 
-Pick whichever your server exposes — the rest of this guide applies to both.
+Pick whichever your server exposes. The rest of this guide applies to both.
 
-> **Tip — share the server with your phone.** These HTTP formats are open enough that the same self-hosted server can also back mobile dictation apps. On Android, apps like *Dictate* and *Transcribro* speak OpenAI-compatible Whisper; on iOS, Shortcuts-based dictation clients can hit the same endpoint. Run one Whisper server, point your laptop and phone at it, and you get consistent dictation everywhere without uploading audio to a third party.
+> **Tip: share the server with your phone.** These HTTP formats are open enough that the same self-hosted server can also back mobile dictation apps. On Android, apps like *Dictate* and *Transcribro* speak OpenAI-compatible Whisper; on iOS, Shortcuts-based dictation clients can hit the same endpoint. Run one Whisper server, point your laptop and phone at it, and you get consistent dictation everywhere without uploading audio to a third party.
 
-## How It Works
+## How it works
 
 When the **Remote API** engine is active, Vocalinux:
 
@@ -20,9 +20,9 @@ When the **Remote API** engine is active, Vocalinux:
 3. Uploads it using the configured HTTP format.
 4. Reads the transcribed text from the JSON response and types it into the focused window.
 
-No audio is ever written to disk. The local machine still runs the VAD/segmentation logic — only the heavy ASR step is remote.
+No audio is written to disk. VAD and segmentation stay local; only the heavy ASR step is remote.
 
-## Server-Side Setup
+## Server-side setup
 
 You need a server that accepts audio uploads and returns text. Three common setups:
 
@@ -80,10 +80,10 @@ and point Vocalinux at that host.
 
 - The server must be reachable from the client over HTTP or HTTPS.
 - If you bind to `0.0.0.0`, open the port in your firewall (`ufw allow 8080/tcp`, etc.).
-- For anything outside a trusted LAN, terminate TLS in front of the server (Caddy, nginx, Traefik) and require an API key — the audio you upload is private speech.
-- If you plan to also use the server from a mobile dictation app, terminate TLS even on a LAN — most Android and iOS apps refuse cleartext HTTP regardless of network.
+- For anything outside a trusted LAN, terminate TLS in front of the server (Caddy, nginx, Traefik) and require an API key. The audio you upload is private speech.
+- If you also use the server from a mobile dictation app, terminate TLS even on a LAN. Most Android and iOS apps refuse cleartext HTTP.
 
-## Client-Side Setup (Vocalinux)
+## Client-side setup (Vocalinux)
 
 ### Via the Settings dialog
 
@@ -96,7 +96,7 @@ The remote engine is a power-user option in the **Speech Engine** settings.
    - **API Key** (optional): sent as `Authorization: Bearer <key>`. Leave blank if your server doesn't require auth.
    - **API Endpoint**: pick **Whisper.cpp (`/inference`)** or **OpenAI/FunASR (`/v1/audio/transcriptions`)** to match your server.
    - **Model**: model identifier sent to OpenAI-compatible servers. Use `whisper-1` for classic Whisper servers, or `sensevoice` for FunASR/SenseVoice.
-4. Click **Test Connection** — a successful test means the URL is reachable and credentials (if any) are accepted. A failure here is just a warning; Vocalinux will still try again on the first transcription.
+4. Click **Test Connection**. Success means the URL is reachable and credentials (if any) are accepted. A failure here is only a warning; Vocalinux will try again on the first transcription.
 
 Settings auto-save and re-initialise the engine immediately, so you can start dictating as soon as the test passes. Toggling the switch off restores the local engine selected on the Speech Engine page in Settings.
 
@@ -132,11 +132,11 @@ FunASR/SenseVoice example:
 }
 ```
 
-## Wire Protocol Reference
+## Wire protocol reference
 
-If you're writing a custom server, here's exactly what the client sends.
+If you're writing a custom server, this is exactly what the client sends.
 
-### Request — whisper.cpp format (`/inference`)
+### Request (whisper.cpp format, `/inference`)
 
 ```
 POST {server_url}/inference HTTP/1.1
@@ -167,7 +167,7 @@ en
 --boundary--
 ```
 
-### Request — OpenAI-compatible format (`/v1/audio/transcriptions`)
+### Request (OpenAI-compatible format, `/v1/audio/transcriptions`)
 
 ```
 POST {server_url}/v1/audio/transcriptions HTTP/1.1
@@ -271,8 +271,8 @@ compatible response shapes above.
 
 Logs live at `~/.local/share/vocalinux/vocalinux.log` (or wherever your `XDG_DATA_HOME` points). Look for lines tagged `Remote API` for client-side detail.
 
-## Security Notes
+## Security notes
 
 - The API key is stored in plain JSON in `~/.config/vocalinux/config.json`. Treat that file the same way you treat any other secret on disk.
-- Audio is sent as raw WAV — anyone on the wire can hear it. Use HTTPS for any deployment outside a fully trusted network.
+- Audio is sent as raw WAV. Anyone on the wire can hear it, so use HTTPS outside a fully trusted network.
 - Vocalinux does **not** validate TLS certificate pins; standard system trust is used. Self-signed certs require importing the CA into your system trust store.

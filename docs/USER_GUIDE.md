@@ -110,8 +110,8 @@ Pip wheels of pywhispercpp are often CUDA builds. In that case Vocalinux uses CU
 
 Under Settings:
 
-- **Auto-pause apps** — unload the model while listed apps run
-- **Model keep-alive** — unload after idle timeout to free GPU/CPU
+- **Auto-pause apps**: unload the model while listed apps run
+- **Model keep-alive**: unload after idle timeout to free GPU/CPU
 
 ## Tips for better recognition
 

@@ -88,7 +88,7 @@ sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 \
 
 Debian's standard repositories differ from Ubuntu in a few ways that matter for Vocalinux:
 
-**pywhispercpp build prerequisites** — On a clean Debian install the following packages are not
+**pywhispercpp build prerequisites.** On a clean Debian install the following packages are not
 pulled in transitively (unlike Ubuntu) but are required when `pywhispercpp` must be compiled
 from source (e.g. for GPU support):
 
@@ -99,7 +99,7 @@ sudo apt install -y libssl-dev autoconf automake libtool patchelf
 The installer now installs these automatically, but if you hit a CMake error like
 `Could not find OpenSSL` during a manual reinstall, add the above first.
 
-**ydotool** — `ydotool` is not packaged in Debian's standard repos. The installer falls back
+**ydotool.** `ydotool` is not packaged in Debian's standard repos. The installer falls back
 gracefully to IBus or `wtype` for most Wayland compositors. KDE Plasma Wayland users should
 first select **IBus Wayland** in **System Settings -> Keyboard -> Virtual Keyboard**. If you
 specifically need `ydotool` as a fallback, compile it from source:
@@ -112,7 +112,7 @@ sudo cmake --build /tmp/ydotool/build --target install
 sudo systemctl enable --now ydotoold
 ```
 
-**Scoped source builds** — If you need to force `pywhispercpp` to rebuild from source, use the
+**Scoped source builds.** If you need to force `pywhispercpp` to rebuild from source, use the
 package-scoped flag to avoid compiling unrelated deps like NumPy from source (which takes a very
 long time and can fail):
 
@@ -122,7 +122,7 @@ PYWHISPERCPP_CLEAN=1 pip install --force-reinstall --no-binary=pywhispercpp pywh
 deactivate
 ```
 
-**Verifying libwhisper.so resolution** — If Vocalinux starts with
+**Verifying libwhisper.so resolution.** If Vocalinux starts with
 `libwhisper.so.1: cannot open shared object file`, check for unresolved symbols:
 
 ```bash

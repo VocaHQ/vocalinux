@@ -154,19 +154,19 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 #### Sources of truth
 
 - Delta commits: `git log vPREV..HEAD` plus merged PR titles/bodies.
-- Closed issues via PR `Fixes` / `Closes` references only — do not invent issue numbers.
+- Closed issues via PR `Fixes` / `Closes` references only - do not invent issue numbers.
 - Do not invent benchmarks, user counts, testimonials, or features not in the tree.
 
 #### Required structure
 
 1. `# Vocalinux vX.Y.Z` title
 2. One to three plain sentences: what this release is for (no hype)
-3. `## Highlights` — markdown table, about 4–8 rows
-4. `## New Features` — bullets with PR + author; include issue closes when real
-5. `## Bug Fixes` — group by area (IBus, Installer, AUR, Text injection, …)
+3. `## Highlights` - markdown table, about 4-8 rows
+4. `## New Features` - bullets with PR + author; include issue closes when real
+5. `## Bug Fixes` - group by area (IBus, Installer, AUR, Text injection, …)
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
-7. `## Thanks` — external PR authors and issue reporters by `@handle`
-8. `## Install / Upgrade` — `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
+7. `## Thanks` - external PR authors and issue reporters by `@handle`
+8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
 9. `### Verifying what you downloaded` (required, and easy to lose). `release.yml`
    generates it, with `sha256sum -c --ignore-missing SHA256SUMS` and
    `gh attestation verify`. A hand-written body replaces the generated one, so carry
@@ -177,7 +177,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 #### Include / exclude
 
 - **Include:** user-visible features, install/packaging changes, desktop reliability fixes, docs that change user instructions.
-- **Exclude or demote:** Dependabot-only bumps, CI matrix tweaks, agent-env docs, pure refactors — short “CI / maintenance” subsection at most.
+- **Exclude or demote:** Dependabot-only bumps, CI matrix tweaks, agent-env docs, pure refactors - short “CI / maintenance” subsection at most.
 
 #### Attribution and voice
 
@@ -187,7 +187,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 
 #### Website changelog vs GitHub Release
 
-- **Website** (`web/src/app/changelog/page.tsx`): 3–10 concise user-facing bullets for the new entry.
+- **Website** (`web/src/app/changelog/page.tsx`): 3-10 concise user-facing bullets for the new entry.
 - **GitHub Release**: fuller narrative + install block + thanks. Draft in the release-prep **PR body**; paste/edit onto the release after the tag workflow runs (workflow install stub + generated notes are a starting point only).
 
 #### Minor vs patch (reminder)
@@ -375,7 +375,7 @@ git push origin v0.5.0-beta
 
 After pushing the tag, the GitHub Actions workflow will automatically:
 
-1. Build the Python package (wheel and sdist) — **once**, with `SOURCE_DATE_EPOCH`
+1. Build the Python package (wheel and sdist) - **once**, with `SOURCE_DATE_EPOCH`
    pinned to the tagged commit. Every later job downloads that artifact instead of
    rebuilding, so the wheel on PyPI is byte-for-byte the wheel on the release
 2. Build and attach AppImages for x86_64 and aarch64, both from that same wheel
@@ -394,7 +394,7 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 - [ ] Verify GitHub Release was created correctly
 - [ ] Verify `SHA256SUMS` is attached and lists all four artifacts (wheel, sdist,
-      both AppImages) — the release notes tell users to run `sha256sum -c` against it
+      both AppImages) - the release notes tell users to run `sha256sum -c` against it
 - [ ] Verify provenance: `gh attestation verify <artifact> --repo VocaHQ/vocalinux`
 - [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
       matches the line for that wheel in `SHA256SUMS`

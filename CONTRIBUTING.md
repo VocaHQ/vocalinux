@@ -8,10 +8,10 @@ Participation is covered by our [Code of Conduct](CODE_OF_CONDUCT.md). Be respec
 
 ## Ways to contribute
 
-- **Report bugs** — [Open an issue](https://github.com/VocaHQ/vocalinux/issues/new?template=bug_report.md)
-- **Suggest features** — [Feature request](https://github.com/VocaHQ/vocalinux/issues/new?template=feature_request.md) or [Discussions](https://github.com/VocaHQ/vocalinux/discussions)
-- **Improve documentation** — Fixes and clarity are always useful
-- **Fix bugs or add features** — Check [open issues](https://github.com/VocaHQ/vocalinux/issues), especially [`good first issue`](https://github.com/VocaHQ/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
+- **Report bugs** - [Open an issue](https://github.com/VocaHQ/vocalinux/issues/new?template=bug_report.md)
+- **Suggest features** - [Feature request](https://github.com/VocaHQ/vocalinux/issues/new?template=feature_request.md) or [Discussions](https://github.com/VocaHQ/vocalinux/discussions)
+- **Improve documentation** - Fixes and clarity are always useful
+- **Fix bugs or add features** - Check [open issues](https://github.com/VocaHQ/vocalinux/issues), especially [`good first issue`](https://github.com/VocaHQ/vocalinux/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22)
 
 ## Development setup
 
@@ -229,8 +229,8 @@ Maintainers follow [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) (version f
 
 ## Community
 
-- [SUPPORT.md](SUPPORT.md) — where to get help
-- [Discord](https://discord.gg/t6muquAJbm) — fastest place to talk with maintainers and other contributors
+- [SUPPORT.md](SUPPORT.md) - where to get help
+- [Discord](https://discord.gg/t6muquAJbm) - fastest place to talk with maintainers and other contributors
 - [GitHub Discussions](https://github.com/VocaHQ/vocalinux/discussions)
 - [GitHub Issues](https://github.com/VocaHQ/vocalinux/issues)
 - [@vocahq on X](https://x.com/vocahq)
