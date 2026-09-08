@@ -3281,11 +3281,19 @@ class SpeechRecognitionManager:
             # transcript before command matching, so a corrected phrase cannot
             # be consumed as a voice command. Re-read config.json each segment
             # so Settings changes apply without a restart.
+            original_text = text
             dictionary_entries = load_custom_dictionary()
             if dictionary_entries:
                 text = apply_dictionary(text, dictionary_entries)
 
-            if self._voice_commands_enabled:
+            # Dictionary is for wording, not synthesizing voice commands. If it
+            # rewrote this transcript, inject the corrected text and skip
+            # CommandProcessor so a replacement like "delete that" cannot fire
+            # delete_last.
+            if dictionary_entries and text != original_text:
+                processed_text = text.strip()
+                actions = []
+            elif self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
             else:
