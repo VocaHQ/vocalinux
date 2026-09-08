@@ -1,7 +1,7 @@
 # Local VocaGateway from Vocalinux (optional)
 
 Vocalinux can start a **local** [VocaGateway](https://github.com/VocaHQ/vocagateway)
-container from **Settings → Speech Engine**, next to Remote Server. This is an
+container from **Settings → Speech Model → Advanced**, next to Remote Server. This is an
 optional power-user path. It is **not** on-device processing: microphone audio
 still leaves the desktop client and is transcribed by the gateway process on
 your machine (or LAN).
