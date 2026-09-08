@@ -49,7 +49,8 @@ Use this checklist for every release:
 - [ ] `pyproject.toml` - Confirm `Development Status` classifier and `requires-python` are correct for this release phase
 
 ### Documentation
-- [ ] `README.md` - Update release announcement and status references
+- [ ] `README.md` - Update short current-release blurb (not full notes)
+- [ ] `CHANGELOG.md` - Point "Current stable" at the new tag
 - [ ] `docs/INSTALL.md` - Verify install examples use `main/install.sh` (not version-pinned raw URLs)
 - [ ] `docs/UPDATE.md` - Add "What's New" section for new version
 - [ ] `SECURITY.md` - Update supported versions table

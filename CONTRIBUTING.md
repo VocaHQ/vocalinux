@@ -229,6 +229,7 @@ Maintainers follow [docs/RELEASE_PROCESS.md](docs/RELEASE_PROCESS.md) (version f
 
 ## Community
 
+- [SUPPORT.md](SUPPORT.md) — where to get help
 - [Discord](https://discord.gg/t6muquAJbm) — fastest place to talk with maintainers and other contributors
 - [GitHub Discussions](https://github.com/VocaHQ/vocalinux/discussions)
 - [GitHub Issues](https://github.com/VocaHQ/vocalinux/issues)

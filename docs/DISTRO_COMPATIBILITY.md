@@ -545,6 +545,8 @@ If you successfully get Vocalinux working on an unsupported or experimental dist
 ## See also
 
 - [Installation guide](INSTALL.md)
+- [Manual / PyPI install](INSTALL_MANUAL.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 - [User guide](USER_GUIDE.md)
 - [Update guide](UPDATE.md)
 - [GitHub issue tracker](https://github.com/VocaHQ/vocalinux/issues)

@@ -220,7 +220,9 @@ Full history: https://github.com/VocaHQ/vocalinux/releases
 ## Need help?
 
 - [Installation guide](INSTALL.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
 - [User guide](USER_GUIDE.md)
+- [Support](../SUPPORT.md)
 - [Report issues](https://github.com/VocaHQ/vocalinux/issues)
 - [Discussions](https://github.com/VocaHQ/vocalinux/discussions)
 - [Discord](https://discord.gg/t6muquAJbm)

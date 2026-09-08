@@ -277,8 +277,12 @@ Neural VAD (Silero) is used when `onnxruntime` is available; install via `pip in
 | Document | Description |
 |----------|-------------|
 | [Installation](docs/INSTALL.md) | Installer, AppImage, AUR, Flatpak, Snap, running |
+| [Manual / PyPI install](docs/INSTALL_MANUAL.md) | Package lists and pip workflows |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common failures |
 | [User guide](docs/USER_GUIDE.md) | Dictation, engines, models, tips |
 | [Update guide](docs/UPDATE.md) | Upgrade steps and release notes |
+| [Changelog](CHANGELOG.md) | Release history pointers |
+| [Support](SUPPORT.md) | Where to get help |
 | [Distribution compatibility](docs/DISTRO_COMPATIBILITY.md) | Distro matrix and session notes |
 | [Remote HTTP API](docs/HTTP_REMOTE.md) | Offload transcription to a server |
 | [Contributing](CONTRIBUTING.md) | Dev setup, style, PR process |
