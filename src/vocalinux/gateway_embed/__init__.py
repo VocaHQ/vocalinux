@@ -6,11 +6,15 @@ https://github.com/VocaHQ/vocagateway on the same Linux box via podman
 desktop client and goes to the local gateway container.
 """
 
+import logging
+
 from .manager import GatewayEmbedManager, get_gateway_embed_manager
 from .preset import remote_api_preset_from_pairing
 from .runtime import ContainerRuntime, detect_container_runtime
 from .status import GatewayStatus
 from .urls import is_loopback_url, reject_loopback_url
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "ContainerRuntime",

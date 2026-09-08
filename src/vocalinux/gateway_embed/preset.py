@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Mapping
 
 from .urls import reject_loopback_url
+
+logger = logging.getLogger(__name__)
 
 GATEWAY_TRANSCRIPTIONS_ENDPOINT = "/v1/audio/transcriptions"
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import socket
 import threading
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from .health import probe_health
 from .pairing import PairingInfo, fetch_pairing
@@ -343,7 +343,7 @@ class GatewayEmbedManager:
         self._emit(status, detail)
         return status
 
-    def use_this_gateway(self, config_manager) -> dict[str, str]:
+    def use_this_gateway(self, config_manager: Any) -> dict[str, str]:
         """Fill remote_api_* from the current pairing (Ready or Pairable)."""
         info = self._pairing
         if info is None or not info.token:
