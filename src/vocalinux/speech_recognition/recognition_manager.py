@@ -1134,6 +1134,45 @@ class SpeechRecognitionManager:
         else:
             raise ValueError(f"Unsupported speech recognition engine: {self.engine}")
 
+    # Every live field ``reconfigure()`` can write. A failed engine switch
+    # restores this set so dictation matches the persisted config, not the
+    # attempted-but-unsaved Settings values.
+    _RECONFIGURE_STATE_ATTRS: tuple[str, ...] = (
+        "engine",
+        "model_size",
+        "language",
+        "vad_sensitivity",
+        "silence_timeout",
+        "audio_device_index",
+        "audio_device_name",
+        "_voice_commands_preference",
+        "_voice_commands_enabled",
+        "stop_sound_guard_ms",
+        "whispercpp_no_timestamps",
+        "whispercpp_no_context",
+        "whispercpp_initial_prompt",
+        "whispercpp_temperature",
+        "whispercpp_temperature_inc",
+        "whispercpp_entropy_thold",
+        "whispercpp_logprob_thold",
+        "whispercpp_no_speech_thold",
+        "whispercpp_n_threads",
+        "whispercpp_gpu_device",
+        "remote_api_url",
+        "remote_api_key",
+        "remote_api_endpoint",
+        "remote_api_model",
+    )
+
+    def _snapshot_reconfigure_state(self) -> dict[str, object]:
+        """Copy every live setting ``reconfigure()`` is about to mutate."""
+        return {name: getattr(self, name) for name in self._RECONFIGURE_STATE_ATTRS}
+
+    def _restore_reconfigure_state(self, previous: dict[str, object]) -> None:
+        """Write a ``_snapshot_reconfigure_state`` result back onto the manager."""
+        for name, value in previous.items():
+            setattr(self, name, value)
+
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
         # VOSK doesn't support auto-detect, so fall back to en-us for "auto"
@@ -3655,36 +3694,10 @@ class SpeechRecognitionManager:
             f"audio_device={audio_device_index}, audio_device_name={audio_device_name}"
         )
 
-        whispercpp_attrs = (
-            "whispercpp_no_timestamps",
-            "whispercpp_no_context",
-            "whispercpp_initial_prompt",
-            "whispercpp_temperature",
-            "whispercpp_temperature_inc",
-            "whispercpp_entropy_thold",
-            "whispercpp_logprob_thold",
-            "whispercpp_no_speech_thold",
-            "whispercpp_n_threads",
-            "whispercpp_gpu_device",
+        whispercpp_attrs = tuple(
+            name for name in self._RECONFIGURE_STATE_ATTRS if name.startswith("whispercpp_")
         )
-        # Snapshot every live field this method can mutate so a failed init
-        # cannot keep unsaved audio/VAD/API settings on the restored engine.
-        previous = {
-            "engine": self.engine,
-            "model_size": self.model_size,
-            "language": self.language,
-            "vad_sensitivity": self.vad_sensitivity,
-            "silence_timeout": self.silence_timeout,
-            "audio_device_index": self.audio_device_index,
-            "audio_device_name": self.audio_device_name,
-            "_voice_commands_preference": self._voice_commands_preference,
-            "stop_sound_guard_ms": self.stop_sound_guard_ms,
-            **{name: getattr(self, name) for name in whispercpp_attrs},
-            "remote_api_url": self.remote_api_url,
-            "remote_api_key": self.remote_api_key,
-            "remote_api_endpoint": self.remote_api_endpoint,
-            "remote_api_model": self.remote_api_model,
-        }
+        previous = self._snapshot_reconfigure_state()
 
         restart_needed = force_reinit
         old_engine = self.engine
@@ -3787,11 +3800,11 @@ class SpeechRecognitionManager:
                 except Exception as e:
                     logger.error(f"Failed to re-initialize speech engine: {e}", exc_info=True)
                     # Settings reverts the pickers to the saved engine on failure.
-                    # Reload that engine so dictation is not left on the failed
-                    # backend in ERROR while the UI shows the previous one.
-                    for name, value in previous.items():
-                        setattr(self, name, value)
-                    self._voice_commands_enabled = self._resolve_voice_commands_enabled()
+                    # Restore every mutated live field, then reload that engine
+                    # so dictation is not left on the failed backend in ERROR
+                    # with unsaved VAD/device/API knobs while the UI shows the
+                    # previous configuration.
+                    self._restore_reconfigure_state(previous)
                     self._defer_download = True
                     try:
                         self._init_selected_engine()

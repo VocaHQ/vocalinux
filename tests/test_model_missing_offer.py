@@ -382,6 +382,10 @@ def _reconfigure_manager():
     # reconfigure() dispatches through _init_selected_engine(); bind the real
     # method so force_reinit still reaches _init_whispercpp on this mock.
     manager._init_selected_engine = lambda: manager_class._init_selected_engine(manager)
+    manager._snapshot_reconfigure_state = lambda: manager_class._snapshot_reconfigure_state(manager)
+    manager._restore_reconfigure_state = lambda previous: manager_class._restore_reconfigure_state(
+        manager, previous
+    )
     return manager_class, manager
 
 

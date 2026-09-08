@@ -1023,6 +1023,8 @@ class TestFailedReconfigureRestoresPreviousEngine:
         manager._voice_commands_preference = False
         manager.stop_sound_guard_ms = 200
         manager.whispercpp_n_threads = 4
+        manager.whispercpp_gpu_device = 0
+        manager.whispercpp_no_timestamps = True
         manager.remote_api_url = "http://old"
         manager.remote_api_key = "old-key"
         manager.remote_api_endpoint = "/inference"
@@ -1045,6 +1047,8 @@ class TestFailedReconfigureRestoresPreviousEngine:
                         voice_commands_enabled=True,
                         stop_sound_guard_ms=50,
                         whispercpp_n_threads=1,
+                        whispercpp_gpu_device=2,
+                        whispercpp_no_timestamps=False,
                         remote_api_url="http://new",
                         remote_api_key="new-key",
                         remote_api_endpoint="/v1/audio",
@@ -1055,6 +1059,7 @@ class TestFailedReconfigureRestoresPreviousEngine:
 
         assert manager.engine == "whisper_cpp"
         assert manager.model_size == "tiny"
+        assert manager.language == "en-us"
         assert manager.vad_sensitivity == 2
         assert manager.silence_timeout == 1.5
         assert manager.audio_device_index == 1
@@ -1063,6 +1068,8 @@ class TestFailedReconfigureRestoresPreviousEngine:
         assert manager._voice_commands_enabled is False
         assert manager.stop_sound_guard_ms == 200
         assert manager.whispercpp_n_threads == 4
+        assert manager.whispercpp_gpu_device == 0
+        assert manager.whispercpp_no_timestamps is True
         assert manager.remote_api_url == "http://old"
         assert manager.remote_api_key == "old-key"
         assert manager.remote_api_endpoint == "/inference"
