@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import gi
 
@@ -1141,7 +1141,7 @@ class TrayIndicator:
             item.hide()
         return False
 
-    def _on_stop_local_gateway_clicked(self, widget):
+    def _on_stop_local_gateway_clicked(self, widget: Any) -> None:
         """Stop a gateway started by this Vocalinux session."""
         manager = get_gateway_embed_manager()
         if manager.managed_by_us:

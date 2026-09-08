@@ -4849,7 +4849,7 @@ class SettingsDialog(Gtk.Dialog):
         self.remote_server_group.hide()
         self.remote_status_label.hide()
 
-    def _build_gateway_embed_section(self):
+    def _build_gateway_embed_section(self) -> None:
         """Optional local VocaGateway controls (podman-first). Lives on the Advanced island."""
         self._gateway_manager = get_gateway_embed_manager()
         lan_publish = bool(self.config_manager.get("gateway_embed", "lan_publish", False))
@@ -5064,7 +5064,7 @@ class SettingsDialog(Gtk.Dialog):
             self.gateway_qr_image.hide()
             self.gateway_qr_image.clear()
 
-    def _pixbuf_from_svg_bytes(self, data: bytes):
+    def _pixbuf_from_svg_bytes(self, data: bytes) -> Any:
         """Best-effort SVG to GdkPixbuf; returns None when loaders are missing."""
         try:
             from gi.repository import GdkPixbuf
@@ -5076,7 +5076,7 @@ class SettingsDialog(Gtk.Dialog):
         except Exception:
             return None
 
-    def _on_gateway_run_clicked(self, widget):
+    def _on_gateway_run_clicked(self, widget: Any) -> None:
         if not self._gateway_manager.available:
             return
         status = self._gateway_manager.status
@@ -5096,7 +5096,7 @@ class SettingsDialog(Gtk.Dialog):
             self._gateway_manager.lan_publish = lan
             self._gateway_manager.start_async(lan_publish=lan)
 
-    def _on_gateway_lan_toggled(self, widget, _pspec=None):
+    def _on_gateway_lan_toggled(self, widget: Any, _pspec: Any = None) -> None:
         if getattr(self, "_initializing", False):
             return
         active = bool(self.gateway_lan_switch.get_active())
@@ -5106,7 +5106,7 @@ class SettingsDialog(Gtk.Dialog):
         self._gateway_manager.apply_lan_publish(active)
         self._update_gateway_pairing_widgets()
 
-    def _on_gateway_use_clicked(self, widget):
+    def _on_gateway_use_clicked(self, widget: Any) -> None:
         try:
             preset = self._gateway_manager.use_this_gateway(self.config_manager)
         except Exception as exc:

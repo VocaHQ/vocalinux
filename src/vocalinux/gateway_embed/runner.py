@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from vocalinux.utils.host_process import host_env
 
@@ -38,7 +38,7 @@ _IMAGE_RE = re.compile(
 )
 
 
-def _default_run(*args, **kwargs):
+def _default_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
     """Run a host binary with AppImage library paths stripped."""
     env = kwargs.pop("env", None)
     return subprocess.run(*args, env=host_env(env), **kwargs)
@@ -175,7 +175,7 @@ class GatewayRunner:
         *,
         run: Callable[..., subprocess.CompletedProcess] = _default_run,
         lazy_runtime: bool = True,
-    ):
+    ) -> None:
         self.sandbox = sandbox if sandbox is not None else detect_sandbox()
         self._run = run
         self._lock = threading.RLock()
