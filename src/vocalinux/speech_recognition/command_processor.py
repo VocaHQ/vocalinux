@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # Replacements that should attach to the preceding word (no leading space).
 _ATTACH_LEFT_REPLACEMENTS = {".", ",", "?", "!", ";", ":"}
 
+# Eat spaces/tabs around attach-left punctuation, but never a newline that a
+# line-break command just inserted (``\s*`` would collapse "new line" + "period").
+_ATTACH_LEFT_WS = r"[^\S\n]*"
+
 # Base English text commands (always present).
 _BASE_TEXT_COMMANDS = {
     # Line commands
@@ -279,9 +283,9 @@ class CommandProcessor:
                 cmd_pattern = r"\b" + re.escape(cmd) + r"\b"
                 if re.search(cmd_pattern, processed_text, re.IGNORECASE):
                     if replacement in _ATTACH_LEFT_REPLACEMENTS:
-                        # Punctuation: drop the space before the spoken phrase
+                        # Punctuation: drop horizontal space before the spoken phrase
                         processed_text = re.sub(
-                            r"\s*" + cmd_pattern + r"\s*",
+                            _ATTACH_LEFT_WS + cmd_pattern + _ATTACH_LEFT_WS,
                             replacement,
                             processed_text,
                             flags=re.IGNORECASE,

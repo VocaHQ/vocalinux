@@ -424,6 +424,70 @@ class TestLocalizedTextCommands(unittest.TestCase):
         processor.set_language("auto")
         self.assertNotIn("virgola", processor.text_commands)
 
+    def test_localized_newline_then_punctuation_keeps_break(self):
+        """Attach-left punctuation must not eat a preceding command-inserted newline."""
+        fr = CommandProcessor(language="fr")
+        result, _ = fr.process_text("bonjour nouvelle ligne point")
+        self.assertEqual(result, "bonjour \n.")
+        result, _ = fr.process_text("bonjour nouvelle ligne virgule")
+        self.assertEqual(result, "bonjour \n,")
+
+        it = CommandProcessor(language="it")
+        result, _ = it.process_text("ciao nuova riga punto")
+        self.assertEqual(result, "ciao \n.")
+
+    def test_localized_punctuation_then_newline_keeps_break(self):
+        """Attach-left trailing whitespace must not eat a following newline."""
+        fr = CommandProcessor(language="fr")
+        result, _ = fr.process_text("bonjour point nouvelle ligne")
+        self.assertEqual(result, "bonjour.\n")
+
+    def test_french_apostrophe_forms_map_to_question_mark(self):
+        """ASCII and typographic apostrophes in 'point d'interrogation' both yield '?'."""
+        fr = CommandProcessor(language="fr")
+        ascii_result, _ = fr.process_text("vrai point d'interrogation")
+        self.assertEqual(ascii_result, "vrai?")
+        self.assertNotIn("interrogation", ascii_result)
+
+        typographic_result, _ = fr.process_text("vrai point d\u2019interrogation")
+        self.assertEqual(typographic_result, "vrai?")
+        self.assertNotIn("interrogation", typographic_result)
+        self.assertNotIn(".", typographic_result)
+
+    def test_french_apostrophe_forms_map_to_exclamation(self):
+        """ASCII and typographic apostrophes in 'point d'exclamation' both yield '!'."""
+        fr = CommandProcessor(language="fr")
+        ascii_result, _ = fr.process_text("bravo point d'exclamation")
+        self.assertEqual(ascii_result, "bravo!")
+
+        typographic_result, _ = fr.process_text("bravo point d\u2019exclamation")
+        self.assertEqual(typographic_result, "bravo!")
+        self.assertNotIn("exclamation", typographic_result)
+
+    def test_locale_phrases_are_not_partially_replaced(self):
+        """Longer aliases must win over embedded shorter ones in every locale."""
+        from vocalinux.speech_recognition.command_phrases import (
+            _TEXT_COMMAND_ALIASES,
+            text_command_aliases_for,
+        )
+
+        for lang, phrases in _TEXT_COMMAND_ALIASES.items():
+            processor = CommandProcessor(language=lang)
+            for phrase, replacement in phrases.items():
+                result, _ = processor.process_text(phrase)
+                self.assertEqual(
+                    result,
+                    replacement,
+                    msg=f"{lang}: {phrase!r} -> {result!r}, expected {replacement!r}",
+                )
+
+            aliases = text_command_aliases_for(lang)
+            for apostrophe in ("'", "\u2019", "`"):
+                question = f"point d{apostrophe}interrogation"
+                if question in aliases:
+                    result, _ = processor.process_text(f"vrai {question}")
+                    self.assertEqual(result, "vrai?", msg=f"{lang}: {question!r}")
+
 
 class TestCommandPhrases(unittest.TestCase):
     """Catalog id mapping for localized command aliases."""
@@ -438,3 +502,13 @@ class TestCommandPhrases(unittest.TestCase):
         self.assertEqual(normalize_command_language("auto"), "en")
         self.assertEqual(normalize_command_language(None), "en")
         self.assertEqual(normalize_command_language("fr"), "fr")
+
+    def test_french_aliases_include_apostrophe_variants(self):
+        """French question/exclamation phrases exist for ASCII, U+2019, and backtick."""
+        from vocalinux.speech_recognition.command_phrases import text_command_aliases_for
+
+        aliases = text_command_aliases_for("fr")
+        for apostrophe in ("'", "\u2019", "`"):
+            self.assertEqual(aliases[f"point d{apostrophe}interrogation"], "?")
+            self.assertEqual(aliases[f"point d{apostrophe}exclamation"], "!")
+        self.assertEqual(aliases["point"], ".")

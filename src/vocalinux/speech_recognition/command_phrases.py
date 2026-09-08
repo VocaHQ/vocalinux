@@ -11,6 +11,9 @@ from typing import Optional
 
 from vocalinux.utils.vosk_model_info import SUPPORTED_LANGUAGES
 
+# ASR may emit ASCII, typographic (U+2019), or backtick apostrophes in elisions.
+_APOSTROPHE_CHARS = ("'", "\u2019", "`")
+
 # Phrase → replacement. Longer phrases must be listed before shorter ones that
 # share a prefix (e.g. "punto interrogativo" before "punto") so callers can
 # rely on insertion order when sorting is skipped.
@@ -32,8 +35,10 @@ _TEXT_COMMAND_ALIASES: dict[str, dict[str, str]] = {
     },
     "fr": {
         "point d'interrogation": "?",
+        "point d\u2019interrogation": "?",
         "point d interrogation": "?",
         "point d'exclamation": "!",
+        "point d\u2019exclamation": "!",
         "point d exclamation": "!",
         "nouveau paragraphe": "\n\n",
         "nouvelle ligne": "\n",
@@ -160,6 +165,24 @@ _ENGLISH_EXTRA: dict[str, str] = {
 }
 
 
+def _swap_apostrophes(phrase: str, apostrophe: str) -> str:
+    """Replace every apostrophe-like character in ``phrase`` with ``apostrophe``."""
+    for src in _APOSTROPHE_CHARS:
+        phrase = phrase.replace(src, apostrophe)
+    return phrase
+
+
+def _expand_apostrophe_aliases(aliases: dict[str, str]) -> dict[str, str]:
+    """Duplicate apostrophe-containing phrases with ASCII, U+2019, and backtick."""
+    expanded = dict(aliases)
+    for phrase, replacement in aliases.items():
+        if not any(ch in phrase for ch in _APOSTROPHE_CHARS):
+            continue
+        for apostrophe in _APOSTROPHE_CHARS:
+            expanded.setdefault(_swap_apostrophes(phrase, apostrophe), replacement)
+    return expanded
+
+
 def normalize_command_language(language: Optional[str]) -> str:
     """Map a catalog / Whisper language id to a phrase-alias key.
 
@@ -186,4 +209,4 @@ def text_command_aliases_for(language: Optional[str]) -> dict[str, str]:
     code = normalize_command_language(language)
     if code != "en":
         aliases.update(_TEXT_COMMAND_ALIASES.get(code, {}))
-    return aliases
+    return _expand_apostrophe_aliases(aliases)
