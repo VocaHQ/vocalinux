@@ -102,6 +102,35 @@ class TestRuntimeDetector(unittest.TestCase):
         self.assertEqual(info.kind, ContainerRuntime.NONE)
         self.assertIn("podman", info.hint.lower())
 
+    def test_engine_without_compose_is_unavailable(self):
+        def lookup(name):
+            return {"podman": "/usr/bin/podman"}.get(name)
+
+        def probe(argv, **_kwargs):
+            # Engine probes succeed; the compose plugin probe (argv[1]=="compose") fails.
+            return (
+                bool(argv)
+                and argv[0] == "/usr/bin/podman"
+                and len(argv) > 1
+                and argv[1] in {"info", "version"}
+            )
+
+        info = detect_container_runtime(path_lookup=lookup, probe=probe)
+        self.assertEqual(info.kind, ContainerRuntime.PODMAN)
+        self.assertEqual(info.compose_args, ())
+        self.assertIn("compose", info.hint.lower())
+
+        from vocalinux.gateway_embed.runner import GatewayRunner
+
+        runner = GatewayRunner(
+            runtime=info,
+            sandbox=detect_sandbox({}),
+            run=MagicMock(),
+        )
+        self.assertFalse(runner.available)
+        self.assertEqual(runner.unavailable_hint, info.hint)
+        self.assertNotIn("No container runtime", runner.unavailable_hint)
+
 
 class TestStatusMachine(unittest.TestCase):
     def test_ready_beats_pairable(self):

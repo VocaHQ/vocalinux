@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import secrets
 
 from vocalinux.utils.paths import config_dir
+
+logger = logging.getLogger(__name__)
 
 # Keep pin explicit: never float on latest.
 GATEWAY_RELEASE_TAG = "v0.1.0"

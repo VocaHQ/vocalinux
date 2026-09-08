@@ -60,7 +60,7 @@ def _compose_argv(
     legacy_path = path_lookup(legacy)
     if legacy_path and probe([legacy_path, "version"]):
         return (legacy_path,)
-    return (binary, "compose")
+    return ()
 
 
 def detect_container_runtime(
@@ -71,21 +71,39 @@ def detect_container_runtime(
     """Prefer podman, fall back to docker, else none with an install hint."""
     podman = path_lookup("podman")
     if podman and (probe([podman, "info"]) or probe([podman, "version"])):
+        compose_args = _compose_argv(
+            podman, ContainerRuntime.PODMAN, path_lookup=path_lookup, probe=probe
+        )
         return RuntimeInfo(
             kind=ContainerRuntime.PODMAN,
             binary=podman,
-            compose_args=_compose_argv(
-                podman, ContainerRuntime.PODMAN, path_lookup=path_lookup, probe=probe
+            compose_args=compose_args,
+            hint=(
+                ""
+                if compose_args
+                else (
+                    "podman is installed but Compose is missing. "
+                    "Install the Compose plugin or podman-compose, then reopen Settings."
+                )
             ),
         )
 
     docker = path_lookup("docker")
     if docker and (probe([docker, "info"]) or probe([docker, "version"])):
+        compose_args = _compose_argv(
+            docker, ContainerRuntime.DOCKER, path_lookup=path_lookup, probe=probe
+        )
         return RuntimeInfo(
             kind=ContainerRuntime.DOCKER,
             binary=docker,
-            compose_args=_compose_argv(
-                docker, ContainerRuntime.DOCKER, path_lookup=path_lookup, probe=probe
+            compose_args=compose_args,
+            hint=(
+                ""
+                if compose_args
+                else (
+                    "docker is installed but Compose is missing. "
+                    "Install the Compose plugin or docker-compose, then reopen Settings."
+                )
             ),
         )
 
