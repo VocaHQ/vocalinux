@@ -218,10 +218,10 @@ def read_wm_class(
     focus, KWin points XWayland's _NET_ACTIVE_WINDOW at a property-less window
     that ``xdotool getactivewindow`` still reports as the active window.
 
-    ``xprop`` reads the property safely, so it is the primary source. xdotool
-    is used only when xprop is missing *and* the window looks like a real
-    client (it has a pid or a title), which is never true of the placeholder
-    window that triggers the crash.
+    ``xprop`` reads the property safely, so it is the primary source. When
+    xprop is missing and ``xdotool_fallback`` is true, xdotool is used even
+    for class-only clients (no title, no pid). A property-less placeholder
+    may then abort the child; ``_run_text`` swallows that failure.
     """
     if not window_id:
         return ""
@@ -245,7 +245,7 @@ def _focused_window_x11() -> Optional[FocusedWindow]:
         return None
     title = _run_text(["xdotool", "getwindowname", window_id], env)
     pid = _run_text(["xdotool", "getwindowpid", window_id], env)
-    wm_class = read_wm_class(window_id, env, xdotool_fallback=bool(title or pid))
+    wm_class = read_wm_class(window_id, env, xdotool_fallback=True)
     return FocusedWindow(
         wm_class=wm_class,
         title=title,

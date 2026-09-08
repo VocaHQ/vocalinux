@@ -2392,9 +2392,9 @@ class TextInjector:
             window_name = result.stdout.strip()
             logger.info(f"Target window: '{window_name}' (ID: {window_id})")
 
-            # Get window class. Not via xdotool: getwindowclassname aborts on
-            # windows that carry no WM_CLASS (see focused_window.read_wm_class).
-            window_class = read_wm_class(window_id, env, xdotool_fallback=bool(window_name))
+            # Prefer xprop; xdotool classname is last-resort when xprop is missing
+            # (see focused_window.read_wm_class).
+            window_class = read_wm_class(window_id, env, xdotool_fallback=True)
             logger.debug(f"Window class: {window_class}")
 
             # Get window PID
