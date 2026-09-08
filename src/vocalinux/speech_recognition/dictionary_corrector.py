@@ -69,6 +69,60 @@ def load_custom_dictionary() -> list[dict]:
     return entries
 
 
+def _ordered_entries(entries: list[dict]) -> list[tuple[str, str]]:
+    """Return validated (spoken, replacement) pairs, longest phrase first."""
+    valid_entries = [
+        (str(e.get("spoken", "")).strip(), str(e.get("replacement", "")).strip())
+        for e in entries
+        if isinstance(e, dict)
+        and str(e.get("spoken", "")).strip()
+        and str(e.get("replacement", "")).strip()
+    ]
+    return sorted(
+        valid_entries, key=lambda pair: (len(pair[0].split()), len(pair[0])), reverse=True
+    )
+
+
+def mask_dictionary_phrases(text: str, entries: list[dict]) -> tuple[str, dict[str, str]]:
+    """Replace spoken phrases with sentinels that CommandProcessor will ignore.
+
+    Returns:
+        (masked_text, mapping) where mapping sends each sentinel to its
+        configured replacement. Apply ``unmask_dictionary_phrases`` after
+        command processing so replacements never fire as voice commands, while
+        unrelated commands in the same transcript still run.
+    """
+    if not text or not entries:
+        return text, {}
+
+    ordered = _ordered_entries(entries)
+    if not ordered:
+        return text, {}
+
+    mapping: dict[str, str] = {}
+    masked = text
+    for index, (spoken, replacement) in enumerate(ordered):
+        sentinel = f"\ufff0{index}\ufff1"
+        pattern = re.compile(
+            r"(?<!\w)" + re.escape(spoken) + r"(?!\w)",
+            re.IGNORECASE,
+        )
+        if not pattern.search(masked):
+            continue
+        mapping[sentinel] = replacement
+        masked = pattern.sub(sentinel, masked)
+    return masked, mapping
+
+
+def unmask_dictionary_phrases(text: str, mapping: dict[str, str]) -> str:
+    """Restore dictionary replacements after command processing."""
+    if not text or not mapping:
+        return text
+    for sentinel, replacement in mapping.items():
+        text = text.replace(sentinel, replacement)
+    return text
+
+
 def apply_dictionary(text: str, entries: list[dict]) -> str:
     """Apply dictionary corrections to a transcript.
 
@@ -89,21 +143,12 @@ def apply_dictionary(text: str, entries: list[dict]) -> str:
     if not text or not entries:
         return text
 
-    valid_entries = [
-        (str(e.get("spoken", "")).strip(), str(e.get("replacement", "")).strip())
-        for e in entries
-        if isinstance(e, dict)
-        and str(e.get("spoken", "")).strip()
-        and str(e.get("replacement", "")).strip()
-    ]
-    if not valid_entries:
+    ordered = _ordered_entries(entries)
+    if not ordered:
         return text
 
-    # Longest first (word count, then length) so multi-word phrases take
-    # priority over shorter overlapping ones in the alternation.
-    ordered = sorted(
-        valid_entries, key=lambda pair: (len(pair[0].split()), len(pair[0])), reverse=True
-    )
+    # Longest first already applied in _ordered_entries so multi-word phrases
+    # take priority over shorter overlapping ones in the alternation.
 
     pattern = re.compile(
         r"(?<!\w)(?:" + "|".join(re.escape(spoken) for spoken, _ in ordered) + r")(?!\w)",

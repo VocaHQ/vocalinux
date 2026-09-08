@@ -39,7 +39,7 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
-from .dictionary_corrector import apply_dictionary, load_custom_dictionary
+from .dictionary_corrector import load_custom_dictionary, mask_dictionary_phrases, unmask_dictionary_phrases
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
@@ -3277,29 +3277,26 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
-            # Apply user-configured custom dictionary corrections to the raw
-            # transcript before command matching, so a corrected phrase cannot
-            # be consumed as a voice command. Re-read config.json each segment
+            # Mask dictionary phrases with sentinels before command matching so
+            # a spoken command-like phrase can be remapped, a replacement that
+            # equals a reserved command stays plain text, and unrelated commands
+            # in the same transcript still run. Re-read config.json each segment
             # so Settings changes apply without a restart.
-            original_text = text
             dictionary_entries = load_custom_dictionary()
+            mapping: dict[str, str] = {}
             if dictionary_entries:
-                text = apply_dictionary(text, dictionary_entries)
+                text, mapping = mask_dictionary_phrases(text, dictionary_entries)
 
-            # Dictionary is for wording, not synthesizing voice commands. If it
-            # rewrote this transcript, inject the corrected text and skip
-            # CommandProcessor so a replacement like "delete that" cannot fire
-            # delete_last.
-            if dictionary_entries and text != original_text:
-                processed_text = text.strip()
-                actions = []
-            elif self._voice_commands_enabled:
+            if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
             else:
                 # Voice commands disabled - pass text through directly (Whisper handles punctuation)
                 processed_text = text.strip()
                 actions = []
+
+            if mapping:
+                processed_text = unmask_dictionary_phrases(processed_text, mapping)
 
             # Call text callbacks with processed text
             logger.debug(
