@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 import wave
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -73,12 +74,12 @@ def _write_test_wav(
     return path
 
 
-def _popen_argv(mock_popen) -> list:
+def _popen_argv(mock_popen: Any) -> list[str]:
     args, _kwargs = mock_popen.call_args
     return list(args[0])
 
 
-def _assert_played_wav(argv: list, player: str, extra_flags: tuple[str, ...] = ()) -> str:
+def _assert_played_wav(argv: list[str], player: str, extra_flags: tuple[str, ...] = ()) -> str:
     """Assert player argv shape and return the wav path that was played."""
     assert argv[0] == player
     assert argv[1 : 1 + len(extra_flags)] == list(extra_flags)

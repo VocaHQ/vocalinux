@@ -160,7 +160,7 @@ def _prerolled_sound_path(sound_path: str, preroll_ms: int = _SINK_WAKE_PREROLL_
             try:
                 _write_preroll_wav(abs_path, partial, preroll_ms)
                 os.replace(partial, dest)
-            except Exception:
+            except (OSError, ValueError, wave.Error):
                 try:
                     os.unlink(partial)
                 except OSError:
@@ -168,7 +168,7 @@ def _prerolled_sound_path(sound_path: str, preroll_ms: int = _SINK_WAKE_PREROLL_
                 raise
             _preroll_cache[key] = dest
             return dest
-    except Exception as exc:
+    except (OSError, ValueError, wave.Error) as exc:
         logger.warning("Could not prepend audio preroll for %s: %s", sound_path, exc)
         return sound_path
 
