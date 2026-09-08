@@ -181,38 +181,51 @@ class GatewayEmbedManager:
         thread.start()
 
     def _republish_worker(self) -> None:
+        succeeded = False
         try:
             with self._lock:
+                published = bool(self.lan_publish)
                 self._emit(
                     GatewayStatus.STARTING,
                     "Updating LAN publish so the pairing URL matches…",
                 )
-            public_url = _guess_lan_url() if self.lan_publish else None
-            if self.lan_publish and not public_url:
+            public_url = _guess_lan_url() if published else None
+            if published and not public_url:
                 logger.info("LAN republish enabled but LAN IP could not be guessed")
-            result = self.runner.republish(lan_publish=self.lan_publish, public_url=public_url)
+            result = self.runner.republish(lan_publish=published, public_url=public_url)
             if not result.ok:
                 self._emit(
                     GatewayStatus.ERROR,
                     result.message or "Could not update LAN publish. Stop and Run again.",
                 )
                 return
-            self._compose_lan_publish = self.lan_publish
+            self._compose_lan_publish = published
             self._pairing = None
             self.refresh_status()
+            succeeded = True
         finally:
             with self._lock:
                 self._republish_started = False
+        if succeeded:
+            self._reconcile_lan_after_compose()
 
     def _effective_lan_for_pairing(self) -> bool:
         """True only when desired LAN matches what compose actually published."""
         return bool(self.lan_publish) and self._compose_lan_publish is True
 
+    def _reconcile_lan_after_compose(self) -> None:
+        """If Allow LAN moved during start/republish, match compose to the switch."""
+        if not self.runner.managed_by_us:
+            return
+        if self._compose_lan_publish != bool(self.lan_publish):
+            self.apply_lan_publish(self.lan_publish)
+
     def _start_worker(self) -> None:
         with self._lock:
+            published = bool(self.lan_publish)
             self._emit(GatewayStatus.STARTING, "Fetching VocaGateway v0.1.0 and starting compose…")
-        public_url = _guess_lan_url() if self.lan_publish else None
-        if self.lan_publish and not public_url:
+        public_url = _guess_lan_url() if published else None
+        if published and not public_url:
             # Still start with 0.0.0.0 publish; user can set PUBLIC_URL later.
             logger.info("LAN publish enabled but LAN IP could not be guessed")
 
@@ -221,7 +234,7 @@ class GatewayEmbedManager:
 
             self.runner.ensure_runtime()
             self._token = ensure_token_file()
-            result = self.runner.start(lan_publish=self.lan_publish, public_url=public_url)
+            result = self.runner.start(lan_publish=published, public_url=public_url)
         except Exception as exc:  # noqa: BLE001
             self.runner.managed_by_us = False
             self._emit(GatewayStatus.ERROR, str(exc))
@@ -231,9 +244,10 @@ class GatewayEmbedManager:
             self._emit(GatewayStatus.ERROR, result.message)
             return
 
-        self._compose_lan_publish = self.lan_publish
+        self._compose_lan_publish = published
         self._start_polling()
         self.refresh_status()
+        self._reconcile_lan_after_compose()
 
     def _stop_worker(self) -> None:
         self._stop_polling()
@@ -327,6 +341,11 @@ class GatewayEmbedManager:
                 detail = (
                     "LAN is on in settings, but publish still needs a restart. "
                     "Stop and Run again (or wait for republish) before pairing a phone."
+                )
+            elif not self.lan_publish and self._compose_lan_publish is True:
+                detail = (
+                    "LAN is off in settings, but publish is still open on the LAN. "
+                    "Wait for republish to finish (or Stop and Run again)."
                 )
             else:
                 detail = "Gateway process is up. Download a model in the WebUI to become Ready."
