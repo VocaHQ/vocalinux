@@ -483,6 +483,85 @@ class TestLanPublishGate(unittest.TestCase):
         self.assertTrue(manager.lan_publish)
         self.assertFalse(manager._republish_started)
 
+    def test_start_worker_snapshots_lan_if_switch_flips_mid_start(self):
+        from vocalinux.gateway_embed.runner import RunnerResult
+
+        manager, runner = self._manager()
+        manager.lan_publish = True
+        manager._compose_lan_publish = None
+
+        def fake_start(*, lan_publish, public_url=None):
+            self.assertTrue(lan_publish)
+            manager.lan_publish = False
+            runner.managed_by_us = True
+            return RunnerResult(ok=True, message="started")
+
+        with patch("threading.Thread") as fake_thread:
+            fake_thread.return_value = MagicMock()
+            with patch(
+                "vocalinux.gateway_embed.paths_embed.ensure_token_file",
+                return_value="t" * 32,
+            ):
+                with patch.object(runner, "ensure_runtime"):
+                    with patch.object(runner, "start", side_effect=fake_start):
+                        with patch.object(manager, "_start_polling"):
+                            with patch.object(manager, "refresh_status"):
+                                manager._start_worker()
+
+        self.assertIs(manager._compose_lan_publish, True)
+        self.assertFalse(manager.lan_publish)
+        self.assertTrue(manager._republish_started)
+
+    def test_republish_worker_snapshots_lan_if_switch_flips_mid_republish(self):
+        from vocalinux.gateway_embed.runner import RunnerResult
+
+        manager, runner = self._manager()
+        runner.managed_by_us = True
+        manager.lan_publish = True
+        manager._compose_lan_publish = False
+        manager._republish_started = True
+
+        def fake_republish(*, lan_publish, public_url=None):
+            self.assertTrue(lan_publish)
+            manager.lan_publish = False
+            return RunnerResult(ok=True, message="republished")
+
+        with patch("threading.Thread") as fake_thread:
+            fake_thread.return_value = MagicMock()
+            with patch.object(runner, "republish", side_effect=fake_republish):
+                with patch.object(manager, "refresh_status"):
+                    manager._republish_worker()
+
+        self.assertIs(manager._compose_lan_publish, True)
+        self.assertFalse(manager.lan_publish)
+        self.assertTrue(manager._republish_started)
+
+    def test_live_detail_warns_when_lan_off_but_compose_still_open(self):
+        from vocalinux.gateway_embed.pairing import PairingInfo
+
+        manager, runner = self._manager()
+        runner.managed_by_us = True
+        manager.lan_publish = False
+        manager._compose_lan_publish = True
+        manager._token = "t" * 32
+
+        def fake_fetch(base_url, token, *, public_url=None, fetch_qr=True, timeout=3.0):
+            return PairingInfo(
+                version=1,
+                url="http://127.0.0.1:8765",
+                token=token,
+                display_url=None,
+                raw_payload={"v": 1, "url": "http://127.0.0.1:8765", "token": token},
+            )
+
+        with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+            health.return_value = MagicMock(live=True, ready=False, error="")
+            with patch("vocalinux.gateway_embed.manager.fetch_pairing", side_effect=fake_fetch):
+                status = manager.refresh_status()
+        self.assertEqual(status, GatewayStatus.LIVE)
+        self.assertIn("still open on the LAN", manager.status_detail)
+        self.assertFalse(manager._effective_lan_for_pairing())
+
     def test_omits_bridge_public_url_from_env(self):
         import tempfile
 
