@@ -116,6 +116,7 @@ pip install --upgrade pip setuptools wheel
 
 pip install .                 # standard
 pip install ".[whisper]"      # OpenAI Whisper extra
+pip install ".[faster_whisper]"  # Faster Whisper (CTranslate2)
 pip install ".[parakeet]"     # Parakeet (sherpa-onnx)
 pip install ".[vad]"          # neural VAD
 pip install -e ".[dev,vad]"   # development
@@ -147,6 +148,7 @@ source ~/.local/share/vocalinux-pypi/venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install vocalinux
 # vosk engine: pip install "vocalinux[vosk]"
+# faster-whisper: pip install "vocalinux[faster_whisper]"
 # parakeet engine: pip install "vocalinux[parakeet]"
 vocalinux
 ```

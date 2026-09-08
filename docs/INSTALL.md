@@ -38,6 +38,7 @@ The installer:
 ./install.sh                              # Interactive (recommended)
 ./install.sh --auto                       # Defaults: whisper.cpp
 ./install.sh --auto --engine=whisper      # OpenAI Whisper
+./install.sh --auto --engine=faster_whisper  # Faster Whisper (CPU)
 ./install.sh --auto --engine=vosk         # VOSK only
 ./install.sh --auto --engine=parakeet     # Parakeet (CPU)
 ./install.sh --auto --engine=remote_api   # Remote HTTP API
@@ -49,13 +50,14 @@ The installer:
 |--------|-------------|-----------------|
 | **whisper.cpp** (default) | Best default; Vulkan GPU | ~1-2 min, ~74MB model |
 | **Whisper** (OpenAI) | PyTorch / CUDA | ~5-10 min, large download |
+| **Faster Whisper** | CPU Whisper via CTranslate2 / INT8 | Model sizes like OpenAI Whisper |
 | **VOSK** | Low RAM / minimal | ~30 sec, ~40MB |
 | **Parakeet** | CPU; 25 European languages | Model ~639MB |
 | **Remote API** | User-configured HTTP server | No local model |
 
 Useful flags: `--tag=TAG`, `--skip-models`, `--rebuild-whispercpp`, `--no-rebuild-whispercpp`, `--venv-dir=PATH`, `--test`.
 
-`--engine=NAME` accepts `whisper_cpp` (default), `whisper`, `vosk`, `parakeet`, `remote_api`.
+`--engine=NAME` accepts `whisper_cpp` (default), `whisper`, `faster_whisper`, `vosk`, `parakeet`, `remote_api`.
 
 ### What the installer does
 

@@ -78,6 +78,7 @@ Open **Settings → Speech Model**. The page starts with a simple setup (languag
 |--------|----------|-----|-----------|
 | **whisper.cpp** (default) | Most users | Vulkan (AMD, Intel, NVIDIA) | ~74MB default model |
 | **Whisper** (OpenAI) | PyTorch/CUDA workflows | NVIDIA/CUDA | Large (PyTorch stack) |
+| **Faster Whisper** | CPU Whisper (CTranslate2 / INT8) | Optional CUDA | Similar model sizes to Whisper |
 | **VOSK** | Low RAM / older machines | CPU | ~40MB |
 | **Parakeet** | CPU dictation; 25 European languages | CPU | ~639MB v3-european |
 | **Remote API** | Offload to a server | N/A (server-side) | Opt-in; see [HTTP_REMOTE.md](HTTP_REMOTE.md) |
@@ -128,6 +129,7 @@ vocalinux --help
 vocalinux --version
 vocalinux --debug
 vocalinux --engine whisper_cpp
+vocalinux --engine faster_whisper
 vocalinux --engine parakeet
 vocalinux --model medium.en-q5_0
 vocalinux --wayland

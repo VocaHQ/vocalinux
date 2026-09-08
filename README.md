@@ -29,7 +29,7 @@
 
 </div>
 
-Vocalinux turns speech into typed text in whatever app has focus. It is a free, AGPL-3.0-licensed desktop app for X11 and Wayland. After you download a model, local engines (whisper.cpp by default, plus OpenAI Whisper, VOSK, and Parakeet) run speech-to-text on your machine. An optional remote HTTP API is off unless you configure it.
+Vocalinux turns speech into typed text in whatever app has focus. It is a free, AGPL-3.0-licensed desktop app for X11 and Wayland. After you download a model, local engines (whisper.cpp by default, plus OpenAI Whisper, Faster Whisper, VOSK, and Parakeet) run speech-to-text on your machine. An optional remote HTTP API is off unless you configure it.
 
 No Voca account is required. Models download once. After that, speech-to-text stays on your machine.
 
@@ -39,7 +39,7 @@ No Voca account is required. Models download once. After that, speech-to-text st
 
 - **On-device after model download**: Local engines; speech-to-text stays on your machine
 - **X11 and Wayland**: Text injection via xdotool, IBus, wtype, ydotool, or clipboard fallback
-- **Several engines**: whisper.cpp (default), OpenAI Whisper, VOSK, Parakeet, plus optional remote HTTP API
+- **Several engines**: whisper.cpp (default), OpenAI Whisper, Faster Whisper, VOSK, Parakeet, plus optional remote HTTP API
 - **GPU acceleration**: Vulkan for AMD, Intel, and NVIDIA with whisper.cpp
 - **Toggle or push-to-talk**: New installs default to hold Right Alt; existing configs keep their shortcut
 - **System tray + settings**: Searchable sidebar, Speech Model simple setup with Advanced as an island, status icons, audio feedback
@@ -48,7 +48,7 @@ No Voca account is required. Models download once. After that, speech-to-text st
 
 ## Screenshots
 
-Vocalinux in action. Settings gallery shots may lag the newest UI. Full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
+Vocalinux in action. Full gallery on the [website screenshots page](https://vocalinux.com/screenshots/).
 
 ### Product
 
@@ -125,6 +125,7 @@ The installer detects hardware, recommends an engine, downloads a default model 
 |--------|-------------|
 | **whisper.cpp** (default) | Best default; Vulkan GPU on AMD, Intel, and NVIDIA |
 | **Whisper** (OpenAI) | PyTorch path; NVIDIA/CUDA |
+| **Faster Whisper** | CPU-friendly Whisper via CTranslate2 / INT8 |
 | **VOSK** | Low RAM / minimal footprint |
 | **Parakeet** | CPU; NVIDIA NeMo ASR via sherpa-onnx; 25 European languages |
 | **Remote API** | Offload to a server you configure |
@@ -134,6 +135,7 @@ Non-interactive options:
 ```bash
 bash /tmp/vl.sh --auto                              # whisper.cpp defaults
 bash /tmp/vl.sh --auto --engine=whisper             # OpenAI Whisper
+bash /tmp/vl.sh --auto --engine=faster_whisper      # Faster Whisper (CPU)
 bash /tmp/vl.sh --auto --engine=vosk                # VOSK only
 bash /tmp/vl.sh --auto --engine=parakeet            # Parakeet (CPU)
 ```
@@ -252,6 +254,7 @@ vocalinux --version
 vocalinux --debug
 vocalinux --engine whisper_cpp    # default
 vocalinux --engine whisper
+vocalinux --engine faster_whisper
 vocalinux --engine vosk
 vocalinux --engine parakeet
 vocalinux --engine remote_api
@@ -312,7 +315,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the two-venv layout, `just` recipes, 
 
 ## Roadmap
 
-Shipped: graphical settings, multi-language support, whisper.cpp default, Vulkan GPU, Wayland/IBus, Flatpak packaging, AppImage, in-app update checker, Parakeet engine, Snap recipe.
+Shipped: graphical settings, multi-language support, whisper.cpp default, Vulkan GPU, Wayland/IBus, Flatpak packaging, AppImage, in-app update checker, Parakeet and Faster Whisper engines, Snap recipe.
 
 Planned:
 
