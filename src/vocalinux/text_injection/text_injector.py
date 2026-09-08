@@ -697,7 +697,7 @@ class TextInjector:
                 self._ibus_init_failed = True
             logger.warning(f"IBus initialization failed: {e}, continuing with fallback")
 
-    def _get_clipboard_tools(self, x11_only: bool = False):
+    def _get_clipboard_tools(self, x11_only: bool = False) -> list:
         tools = []
         # Prefer wl-copy on Wayland (including Flatpak with --socket=wayland),
         # unless x11_only is set: a paste that lands via xdotool (XWayland) reads

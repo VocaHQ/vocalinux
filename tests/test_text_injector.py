@@ -1409,7 +1409,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 if env_backup is not None:
                     os.environ["DISPLAY"] = env_backup
 
-    def test_inject_with_xdotool_xwayland_prefers_x11_clipboard_paste(self):
+    def test_inject_with_xdotool_xwayland_prefers_x11_clipboard_paste(self) -> None:
         """XWayland fallback must paste via xclip + xdotool ctrl+v, not `xdotool
         type` (#657, and the 2026-08-17 review on PR #680).
 
@@ -1469,7 +1469,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 "must not fall back to layout-dependent xdotool type when paste succeeds",
             )
 
-    def test_inject_with_xdotool_xwayland_falls_back_to_ydotool_without_x11_clipboard(self):
+    def test_inject_with_xdotool_xwayland_falls_back_to_ydotool_without_x11_clipboard(self) -> None:
         """No xclip/xsel installed (but ydotool is): the fallback still pastes
         via ydotool rather than typing, since that remains layout-independent."""
 
@@ -1503,7 +1503,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 "must not fall back to layout-dependent xdotool type when paste succeeds",
             )
 
-    def test_inject_with_xdotool_xwayland_falls_back_without_any_paste_tool(self):
+    def test_inject_with_xdotool_xwayland_falls_back_without_any_paste_tool(self) -> None:
         """Neither xclip/xsel nor ydotool installed: keeps typing via xdotool."""
 
         def which_side_effect(cmd):
@@ -1526,7 +1526,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 "should fall back to xdotool type when no clipboard-paste tool exists",
             )
 
-    def test_inject_text_appimage_scenario_recovers_through_xclip_paste(self):
+    def test_inject_text_appimage_scenario_recovers_through_xclip_paste(self) -> None:
         """Reproduces the #657 report through inject_text(), not the fallback
         method directly (2026-08-17 review on PR #680): AppImage packaging
         does not bundle ydotool, so `_try_recover_from_fallback()` must find
@@ -1565,7 +1565,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 "must not fall through to the layout-dependent type path when the paste succeeds",
             )
 
-    def test_inject_with_xdotool_xwayland_uses_terminal_paste_chord(self):
+    def test_inject_with_xdotool_xwayland_uses_terminal_paste_chord(self) -> None:
         """XWayland xclip paste must still use Ctrl+Shift+V in terminals (#734)."""
 
         def which_side_effect(cmd):
