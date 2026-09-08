@@ -1010,6 +1010,65 @@ class TestFailedReconfigureRestoresPreviousEngine:
         assert manager.engine == "whisper_cpp"
         assert manager.state == RecognitionState.ERROR
 
+    def test_failed_switch_restores_live_settings_not_just_engine(self):
+        """Unsaved VAD/device/API fields must roll back with the previous engine."""
+        manager = _make_manager(engine="whisper_cpp")
+        manager.engine = "whisper_cpp"
+        manager.model_size = "tiny"
+        manager.language = "en-us"
+        manager.vad_sensitivity = 2
+        manager.silence_timeout = 1.5
+        manager.audio_device_index = 1
+        manager.audio_device_name = "Built-in Mic"
+        manager._voice_commands_preference = False
+        manager.stop_sound_guard_ms = 200
+        manager.whispercpp_n_threads = 4
+        manager.remote_api_url = "http://old"
+        manager.remote_api_key = "old-key"
+        manager.remote_api_endpoint = "/inference"
+        manager.remote_api_model = "whisper-1"
+        manager._model_initialized = True
+        manager.state = RecognitionState.IDLE
+
+        with patch.object(
+            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        ):
+            with patch.object(manager, "_init_whispercpp") as restore_init:
+                with pytest.raises(RuntimeError, match="download failed"):
+                    manager.reconfigure(
+                        engine="faster_whisper",
+                        model_size="tiny",
+                        vad_sensitivity=5,
+                        silence_timeout=4.0,
+                        audio_device_index=9,
+                        audio_device_name="USB Mic",
+                        voice_commands_enabled=True,
+                        stop_sound_guard_ms=50,
+                        whispercpp_n_threads=1,
+                        remote_api_url="http://new",
+                        remote_api_key="new-key",
+                        remote_api_endpoint="/v1/audio",
+                        remote_api_model="sensevoice",
+                        force_download=True,
+                    )
+                restore_init.assert_called_once()
+
+        assert manager.engine == "whisper_cpp"
+        assert manager.model_size == "tiny"
+        assert manager.vad_sensitivity == 2
+        assert manager.silence_timeout == 1.5
+        assert manager.audio_device_index == 1
+        assert manager.audio_device_name == "Built-in Mic"
+        assert manager._voice_commands_preference is False
+        assert manager._voice_commands_enabled is False
+        assert manager.stop_sound_guard_ms == 200
+        assert manager.whispercpp_n_threads == 4
+        assert manager.remote_api_url == "http://old"
+        assert manager.remote_api_key == "old-key"
+        assert manager.remote_api_endpoint == "/inference"
+        assert manager.remote_api_model == "whisper-1"
+        assert manager.state != RecognitionState.ERROR
+
 
 class TestAudioReconnection:
     """Test audio reconnection logic."""

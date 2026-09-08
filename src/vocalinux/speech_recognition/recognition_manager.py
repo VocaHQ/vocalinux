@@ -3655,10 +3655,38 @@ class SpeechRecognitionManager:
             f"audio_device={audio_device_index}, audio_device_name={audio_device_name}"
         )
 
+        whispercpp_attrs = (
+            "whispercpp_no_timestamps",
+            "whispercpp_no_context",
+            "whispercpp_initial_prompt",
+            "whispercpp_temperature",
+            "whispercpp_temperature_inc",
+            "whispercpp_entropy_thold",
+            "whispercpp_logprob_thold",
+            "whispercpp_no_speech_thold",
+            "whispercpp_n_threads",
+            "whispercpp_gpu_device",
+        )
+        # Snapshot every live field this method can mutate so a failed init
+        # cannot keep unsaved audio/VAD/API settings on the restored engine.
+        previous = {
+            "engine": self.engine,
+            "model_size": self.model_size,
+            "language": self.language,
+            "vad_sensitivity": self.vad_sensitivity,
+            "silence_timeout": self.silence_timeout,
+            "audio_device_index": self.audio_device_index,
+            "audio_device_name": self.audio_device_name,
+            "_voice_commands_preference": self._voice_commands_preference,
+            "stop_sound_guard_ms": self.stop_sound_guard_ms,
+            **{name: getattr(self, name) for name in whispercpp_attrs},
+            "remote_api_url": self.remote_api_url,
+            "remote_api_key": self.remote_api_key,
+            "remote_api_endpoint": self.remote_api_endpoint,
+            "remote_api_model": self.remote_api_model,
+        }
+
         restart_needed = force_reinit
-        previous_engine = self.engine
-        previous_model_size = self.model_size
-        previous_language = self.language
         old_engine = self.engine
         if engine is not None and engine != self.engine:
             self.engine = engine
@@ -3704,18 +3732,7 @@ class SpeechRecognitionManager:
         if "stop_sound_guard_ms" in kwargs:
             self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", self.stop_sound_guard_ms)
 
-        for param_name in (
-            "whispercpp_no_timestamps",
-            "whispercpp_no_context",
-            "whispercpp_initial_prompt",
-            "whispercpp_temperature",
-            "whispercpp_temperature_inc",
-            "whispercpp_entropy_thold",
-            "whispercpp_logprob_thold",
-            "whispercpp_no_speech_thold",
-            "whispercpp_n_threads",
-            "whispercpp_gpu_device",
-        ):
+        for param_name in whispercpp_attrs:
             if param_name in kwargs:
                 setattr(self, param_name, kwargs[param_name])
                 restart_needed = True
@@ -3772,9 +3789,8 @@ class SpeechRecognitionManager:
                     # Settings reverts the pickers to the saved engine on failure.
                     # Reload that engine so dictation is not left on the failed
                     # backend in ERROR while the UI shows the previous one.
-                    self.engine = previous_engine
-                    self.model_size = previous_model_size
-                    self.language = previous_language
+                    for name, value in previous.items():
+                        setattr(self, name, value)
                     self._voice_commands_enabled = self._resolve_voice_commands_enabled()
                     self._defer_download = True
                     try:

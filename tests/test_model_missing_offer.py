@@ -373,12 +373,16 @@ def test_engine_without_a_handler_keeps_its_own_notification():
 def _reconfigure_manager():
     from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 
+    manager_class = SpeechRecognitionManager
     manager = MagicMock()
     manager.engine = "whisper_cpp"
     manager.model_size = "tiny"
     manager.language = "en-us"
     manager._defer_download = True
-    return SpeechRecognitionManager, manager
+    # reconfigure() dispatches through _init_selected_engine(); bind the real
+    # method so force_reinit still reaches _init_whispercpp on this mock.
+    manager._init_selected_engine = lambda: manager_class._init_selected_engine(manager)
+    return manager_class, manager
 
 
 def test_force_reinit_reinitializes_an_engine_that_did_not_change():
