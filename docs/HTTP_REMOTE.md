@@ -13,7 +13,7 @@ Pick whichever your server exposes — the rest of this guide applies to both.
 
 ## Local VocaGateway (optional)
 
-On Linux you can start an optional local [VocaGateway](https://github.com/VocaHQ/vocagateway) from **Settings → Speech Engine** (podman-first, docker fallback). That path uses the same Remote API settings described below, with endpoint `/v1/audio/transcriptions`. It is **not** on-device recognition: audio goes to the gateway container on your machine. Details: [GATEWAY_EMBED.md](GATEWAY_EMBED.md).
+On Linux you can start an optional local [VocaGateway](https://github.com/VocaHQ/vocagateway) from **Settings → Speech Model → Advanced** (podman-first, docker fallback). That path uses the same Remote API settings described below, with endpoint `/v1/audio/transcriptions`. It is **not** on-device recognition: audio goes to the gateway container on your machine. Details: [GATEWAY_EMBED.md](GATEWAY_EMBED.md).
 
 ## How It Works
 
