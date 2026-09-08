@@ -1117,6 +1117,23 @@ class SpeechRecognitionManager:
             return self.engine == "vosk"
         return bool(self._voice_commands_preference)
 
+    def _init_selected_engine(self) -> None:
+        """Initialize whichever engine ``self.engine`` currently names."""
+        if self.engine == "vosk":
+            self._init_vosk()
+        elif self.engine == "whisper":
+            self._init_whisper()
+        elif self.engine == "whisper_cpp":
+            self._init_whispercpp()
+        elif self.engine == "parakeet":
+            self._init_parakeet()
+        elif self.engine == "faster_whisper":
+            self._init_faster_whisper()
+        elif self.engine == "remote_api":
+            self._init_remote_api()
+        else:
+            raise ValueError(f"Unsupported speech recognition engine: {self.engine}")
+
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
         # VOSK doesn't support auto-detect, so fall back to en-us for "auto"
@@ -3639,6 +3656,9 @@ class SpeechRecognitionManager:
         )
 
         restart_needed = force_reinit
+        previous_engine = self.engine
+        previous_model_size = self.model_size
+        previous_language = self.language
         old_engine = self.engine
         if engine is not None and engine != self.engine:
             self.engine = engine
@@ -3745,25 +3765,32 @@ class SpeechRecognitionManager:
                         self._http_session.close()
                     self._http_session = None
                 try:
-                    if self.engine == "vosk":
-                        self._init_vosk()
-                    elif self.engine == "whisper":
-                        self._init_whisper()
-                    elif self.engine == "whisper_cpp":
-                        self._init_whispercpp()
-                    elif self.engine == "parakeet":
-                        self._init_parakeet()
-                    elif self.engine == "faster_whisper":
-                        self._init_faster_whisper()
-                    elif self.engine == "remote_api":
-                        self._init_remote_api()
-                    else:
-                        raise ValueError(f"Unsupported engine during reconfigure: {self.engine}")
+                    self._init_selected_engine()
                     logger.info("Speech engine re-initialized successfully.")
                 except Exception as e:
                     logger.error(f"Failed to re-initialize speech engine: {e}", exc_info=True)
-                    self._update_state(RecognitionState.ERROR)
-                    # Re-raise or handle appropriately
+                    # Settings reverts the pickers to the saved engine on failure.
+                    # Reload that engine so dictation is not left on the failed
+                    # backend in ERROR while the UI shows the previous one.
+                    self.engine = previous_engine
+                    self.model_size = previous_model_size
+                    self.language = previous_language
+                    self._voice_commands_enabled = self._resolve_voice_commands_enabled()
+                    self._defer_download = True
+                    try:
+                        self._init_selected_engine()
+                        if self.state == RecognitionState.ERROR:
+                            self._update_state(RecognitionState.IDLE)
+                        logger.info(
+                            "Restored previous speech engine %s after failed reconfigure",
+                            self.engine,
+                        )
+                    except Exception:
+                        logger.error(
+                            "Failed to restore previous speech engine after reconfigure",
+                            exc_info=True,
+                        )
+                        self._update_state(RecognitionState.ERROR)
                     raise
                 finally:
                     self._defer_download = old_defer

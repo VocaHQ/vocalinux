@@ -23,6 +23,7 @@ if "gi" not in sys.modules:
 if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
+from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 from vocalinux.utils.faster_whisper_model_info import manifest_key as faster_whisper_manifest_key
 from vocalinux.utils.faster_whisper_model_info import model_files as faster_whisper_model_files
@@ -954,6 +955,60 @@ class TestFasterWhisperDownloadVerifiesExistingFiles:
             os.path.basename(path) == first_name + ".tmp" for path in streamed
         ), "an existing bad file must be removed and re-downloaded"
         assert first_file.read_bytes() == b"good-enough"
+
+
+class TestFailedReconfigureRestoresPreviousEngine:
+    """A failed faster-whisper switch must not discard the live engine.
+
+    Settings reverts the pickers to the saved config on error. If reconfigure
+    keeps faster-whisper in ERROR after releasing whisper.cpp, dictation is
+    dead until restart even though the UI shows the old engine.
+    """
+
+    def test_failed_faster_whisper_download_reloads_previous_engine(self):
+        manager = _make_manager(engine="whisper_cpp")
+        manager.engine = "whisper_cpp"
+        manager.model_size = "tiny"
+        manager._model_initialized = True
+        manager.state = RecognitionState.IDLE
+
+        with patch.object(
+            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        ):
+            with patch.object(manager, "_init_whispercpp") as restore_init:
+                with pytest.raises(RuntimeError, match="download failed"):
+                    manager.reconfigure(
+                        engine="faster_whisper",
+                        model_size="tiny",
+                        force_download=True,
+                    )
+                restore_init.assert_called_once()
+
+        assert manager.engine == "whisper_cpp"
+        assert manager.model_size == "tiny"
+        assert manager.state != RecognitionState.ERROR
+
+    def test_restore_failure_stays_in_error(self):
+        manager = _make_manager(engine="whisper_cpp")
+        manager.engine = "whisper_cpp"
+        manager.model_size = "tiny"
+        manager.state = RecognitionState.IDLE
+
+        with patch.object(
+            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        ):
+            with patch.object(
+                manager, "_init_whispercpp", side_effect=RuntimeError("restore failed")
+            ):
+                with pytest.raises(RuntimeError, match="download failed"):
+                    manager.reconfigure(
+                        engine="faster_whisper",
+                        model_size="tiny",
+                        force_download=True,
+                    )
+
+        assert manager.engine == "whisper_cpp"
+        assert manager.state == RecognitionState.ERROR
 
 
 class TestAudioReconnection:
