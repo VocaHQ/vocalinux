@@ -11,8 +11,6 @@ from unittest.mock import patch
 from vocalinux.speech_recognition.dictionary_corrector import (
     apply_dictionary,
     load_custom_dictionary,
-    mask_dictionary_phrases,
-    unmask_dictionary_phrases,
 )
 
 
@@ -198,19 +196,11 @@ class TestLoadCustomDictionary(unittest.TestCase):
         self._write_config({"text_injection": "nope"})
         self.assertEqual(load_custom_dictionary(), [])
 
-
-
-class TestMaskDictionaryPhrases(unittest.TestCase):
-    """Sentinel masking keeps replacements out of CommandProcessor."""
-
-    def test_mask_then_unmask_round_trip(self):
-        entries = [_entry("super base", "Supabase")]
-        masked, mapping = mask_dictionary_phrases("I use super base daily", entries)
-        self.assertNotIn("super base", masked.lower())
-        self.assertEqual(unmask_dictionary_phrases(masked, mapping), "I use Supabase daily")
-
-    def test_mask_empty_is_noop(self):
-        self.assertEqual(mask_dictionary_phrases("hello", []), ("hello", {}))
+    def test_invalid_encoding_returns_empty(self):
+        config_path = os.path.join(self.temp_dir.name, "config.json")
+        with open(config_path, "wb") as f:
+            f.write(b"{\xff\xfe invalid")
+        self.assertEqual(load_custom_dictionary(), [])
 
 
 if __name__ == "__main__":

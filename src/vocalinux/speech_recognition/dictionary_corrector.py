@@ -35,9 +35,9 @@ def load_custom_dictionary() -> list[dict]:
         config_path = os.path.join(config_dir(), "config.json")
         if not os.path.exists(config_path):
             return []
-        with open(config_path, "r") as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             config = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
         logger.debug(f"Could not read {CONFIG_KEY} setting: {e}")
         return []
 
@@ -81,46 +81,6 @@ def _ordered_entries(entries: list[dict]) -> list[tuple[str, str]]:
     return sorted(
         valid_entries, key=lambda pair: (len(pair[0].split()), len(pair[0])), reverse=True
     )
-
-
-def mask_dictionary_phrases(text: str, entries: list[dict]) -> tuple[str, dict[str, str]]:
-    """Replace spoken phrases with sentinels that CommandProcessor will ignore.
-
-    Returns:
-        (masked_text, mapping) where mapping sends each sentinel to its
-        configured replacement. Apply ``unmask_dictionary_phrases`` after
-        command processing so replacements never fire as voice commands, while
-        unrelated commands in the same transcript still run.
-    """
-    if not text or not entries:
-        return text, {}
-
-    ordered = _ordered_entries(entries)
-    if not ordered:
-        return text, {}
-
-    mapping: dict[str, str] = {}
-    masked = text
-    for index, (spoken, replacement) in enumerate(ordered):
-        sentinel = f"\ufff0{index}\ufff1"
-        pattern = re.compile(
-            r"(?<!\w)" + re.escape(spoken) + r"(?!\w)",
-            re.IGNORECASE,
-        )
-        if not pattern.search(masked):
-            continue
-        mapping[sentinel] = replacement
-        masked = pattern.sub(sentinel, masked)
-    return masked, mapping
-
-
-def unmask_dictionary_phrases(text: str, mapping: dict[str, str]) -> str:
-    """Restore dictionary replacements after command processing."""
-    if not text or not mapping:
-        return text
-    for sentinel, replacement in mapping.items():
-        text = text.replace(sentinel, replacement)
-    return text
 
 
 def apply_dictionary(text: str, entries: list[dict]) -> str:
