@@ -99,10 +99,13 @@ class FasterWhisperEngine:
             f"with compute_type={compute_type}"
         )
 
+        # local_files_only: do not let faster-whisper fetch unpinned Hugging Face
+        # snapshots. Checksum-gated download is not wired yet.
         self._model = WhisperModel(
             self.model_size,
             device=device,
             compute_type=compute_type,
+            local_files_only=True,
         )
         self._model_initialized = True
         logger.info("faster-whisper engine initialized successfully.")
@@ -137,14 +140,15 @@ class FasterWhisperEngine:
             logger.warning("faster-whisper engine is not initialized")
             return ""
 
-        if not audio_buffer:
+        model = self._model
+        if model is None or not audio_buffer:
             return ""
 
         try:
             audio_data = np.frombuffer(b"".join(audio_buffer), dtype=np.int16)
             audio_float = audio_data.astype(np.float32) / 32768.0
 
-            segments, _info = self._model.transcribe(
+            segments, _info = model.transcribe(
                 audio_float,
                 language=self._normalize_language(),
                 task="transcribe",

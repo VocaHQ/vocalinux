@@ -67,7 +67,7 @@ def normalize_sound_effect_tone(tone: Any) -> str:
 # Default configuration
 DEFAULT_CONFIG = {
     "speech_recognition": {  # Changed section name
-        "engine": "whisper_cpp",  # "vosk", "whisper", "whisper_cpp", or "faster_whisper" - whisper_cpp is default for best performance
+        "engine": "whisper_cpp",  # whisper_cpp is default; vosk/whisper/parakeet/faster_whisper/remote_api are optional
         "language": "auto",  # Auto-detect language (Whisper/whisper.cpp only)
         "model_size": "tiny",  # Current model size (for backward compatibility)
         "vosk_model_size": "small",  # Default model for VOSK engine

@@ -1253,10 +1253,10 @@ EOF
     echo ""
     echo "  ┌───────────────────────────────────────────────────────────────┐"
     echo "  │  4. FASTER-WHISPER                                          │"
-    echo "  │     • PyTorch/CTranslate2-based Whisper implementation        │"
+    echo "  │     • Optional CTranslate2 Whisper backend                     │"
     echo "  │     • Fast on CPU with INT8 quantization                      │"
     echo "  │     • Best performance on NVIDIA GPUs (CUDA)                │"
-    echo "  │     • Models download automatically on first use              │"
+    echo "  │     • Hugging Face models stay checksum-gated (not auto-dl)  │"
     echo "  └───────────────────────────────────────────────────────────────┘"
     echo ""
     echo "  ┌───────────────────────────────────────────────────────────────┐"
@@ -1562,7 +1562,7 @@ fi
 if [[ "$NON_INTERACTIVE" == "yes" ]] && [[ -z "$SELECTED_ENGINE" ]]; then
     SELECTED_ENGINE="whisper_cpp"
     print_info "Automatic mode: Installing with whisper.cpp (default engine)"
-    print_info "For other engines, use: --engine=whisper, --engine=faster_whisper, --engine=vosk, or --engine=remote_api"
+    print_info "For other engines, use: --engine=whisper, --engine=vosk, --engine=parakeet, --engine=faster_whisper, or --engine=remote_api"
 fi
 
 
@@ -2926,6 +2926,7 @@ engine_import_module() {
         whisper) echo "whisper" ;;
         whisper_cpp) echo "pywhispercpp.model" ;;
         parakeet) echo "sherpa_onnx" ;;
+        faster_whisper) echo "faster_whisper" ;;
         *) echo "" ;;
     esac
 }
@@ -2936,6 +2937,7 @@ engine_pip_name() {
         whisper) echo "openai-whisper" ;;
         whisper_cpp) echo "pywhispercpp" ;;
         parakeet) echo "sherpa-onnx" ;;
+        faster_whisper) echo "faster-whisper" ;;
         *) echo "" ;;
     esac
 }
@@ -3626,47 +3628,30 @@ REMOTE_CONFIG
 
             faster_whisper)
                 print_info "Installing Faster-Whisper engine..."
-                print_info "This engine uses PyTorch + CTranslate2 and downloads models on first use."
+                print_info "This engine uses CTranslate2 for fast CPU inference."
 
-                if [[ "$HAS_NVIDIA_GPU" == "yes" ]]; then
-                    print_info "NVIDIA GPU detected - installing PyTorch with CUDA support..."
-                    print_info "Note: This may download ~2GB of CUDA runtime packages"
-                    if pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --log "$PIP_LOG_FILE" 2>&1; then
-                        print_success "PyTorch installed successfully"
-                    else
-                        print_warning "Failed to install PyTorch with CUDA; faster-whisper will still work on CPU"
+                if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" faster_whisper; then
+                    mkdir -p "$CONFIG_DIR"
+                    if [ ! -f "$CONFIG_DIR/config.json" ]; then
+                        cat > "$CONFIG_DIR/config.json" << 'FASTER_WHISPER_CONFIG'
+{
+    "shortcuts": {
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
+    }
+}
+FASTER_WHISPER_CONFIG
                     fi
-                fi
-
-                print_info "Installing faster-whisper package..."
-                if pip install "faster-whisper>=1.0.0" --log "$PIP_LOG_FILE" 2>&1; then
-                    if "$VENV_DIR/bin/python" -c "import faster_whisper" 2>/dev/null; then
-                        print_success "Faster-Whisper installed and verified successfully"
-                    else
-                        print_warning "faster-whisper package installed but import failed"
-                        print_warning "The engine may still work after a system restart"
-                    fi
+                    set_configured_engine "$CONFIG_DIR/config.json" faster_whisper ||
+                        print_warning "Could not point $CONFIG_DIR/config.json at the faster_whisper engine."
                 else
-                    print_error "Failed to install faster-whisper package"
+                    print_error "Failed to install the faster-whisper engine"
                     print_error "Falling back to whisper.cpp (recommended engine)"
                     install_cpu_pywhispercpp "$PIP_LOG_FILE" || {
                         print_error "Failed to install whisper.cpp fallback"
                         return 1
                     }
                     SELECTED_ENGINE="whisper_cpp"
-                fi
-
-                local FASTER_CONFIG_FILE="$CONFIG_DIR/config.json"
-                if [ ! -f "$FASTER_CONFIG_FILE" ]; then
-                    mkdir -p "$CONFIG_DIR"
-                    cat > "$FASTER_CONFIG_FILE" << 'FASTER_WHISPER_CONFIG'
-{
-    "speech_recognition": {
-        "engine": "faster_whisper",
-        "model_size": "tiny"
-    }
-}
-FASTER_WHISPER_CONFIG
                 fi
                 ;;
         esac

@@ -1,8 +1,10 @@
 """Faster-Whisper model information for Vocalinux.
 
-This module provides model metadata for the faster-whisper backend. Models are
-downloaded automatically by faster-whisper on first use and cached in the
-HuggingFace cache directory.
+Metadata for the optional faster-whisper backend (CTranslate2). Hugging Face
+CTranslate2 snapshots are not pinned in ``model_checksums.txt`` yet, so Vocalinux
+refuses to download them. A model already present in the Hugging Face cache can
+still be loaded. Pin the artifacts with ``just model-checksums`` before enabling
+downloads.
 """
 
 import logging

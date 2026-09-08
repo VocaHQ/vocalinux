@@ -24,11 +24,7 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
-from vocalinux.utils.model_checksums import (
-    VERIFICATION_STAMP_NAME,
-    ChecksumError,
-    expected_for,
-)
+from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, ChecksumError, expected_for
 from vocalinux.utils.model_checksums import verify_model_file as verify_model_file_real
 from vocalinux.utils.parakeet_model_info import MODEL_FILES as PARAKEET_MODEL_FILES
 from vocalinux.utils.parakeet_model_info import manifest_key as parakeet_manifest_key
@@ -40,13 +36,14 @@ def _make_manager(engine="whisper_cpp", **kw):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
             with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
                 with patch.object(SpeechRecognitionManager, "_init_parakeet"):
-                    mgr = SpeechRecognitionManager(
-                        engine=engine,
-                        model_size="small",
-                        language="en-us",
-                        defer_download=True,
-                        **kw,
-                    )
+                    with patch.object(SpeechRecognitionManager, "_init_faster_whisper"):
+                        mgr = SpeechRecognitionManager(
+                            engine=engine,
+                            model_size="small",
+                            language="en-us",
+                            defer_download=True,
+                            **kw,
+                        )
                     # Ensure vosk_model_map is set (normally done in _init_vosk)
                     if not hasattr(mgr, "vosk_model_map"):
                         # The names _init_vosk() would pick for en-us. They have to be

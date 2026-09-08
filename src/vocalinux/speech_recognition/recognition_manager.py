@@ -23,6 +23,9 @@ from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
 from ..utils import parakeet_model_info as parakeet
 from ..utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO
+from ..utils.faster_whisper_model_info import (
+    is_model_downloaded as is_faster_whisper_model_downloaded,
+)
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
     ChecksumError,
@@ -1324,6 +1327,21 @@ class SpeechRecognitionManager:
                 )
                 self.model_size = "tiny"
 
+            if not is_faster_whisper_model_downloaded(self.model_size):
+                if self._defer_download:
+                    logger.info(
+                        "faster-whisper model '%s' is not in the local cache. "
+                        "Will load when needed.",
+                        self.model_size,
+                    )
+                    self._model_initialized = False
+                    return
+                raise ChecksumError(
+                    f"faster-whisper model '{self.model_size}' is not checksum-pinned; "
+                    "refusing to download unpinned Hugging Face files. "
+                    "Pins belong in model_checksums.txt (just model-checksums)."
+                )
+
             self._faster_whisper_engine = FasterWhisperEngine(
                 model_size=self.model_size,
                 language=self.language,
@@ -1332,7 +1350,7 @@ class SpeechRecognitionManager:
             self.model = self._faster_whisper_engine._model
             self._model_initialized = True
             logger.info("faster-whisper engine initialized successfully.")
-        except (ImportError, RuntimeError, OSError, ValueError) as e:
+        except (ImportError, RuntimeError, OSError, ValueError, ChecksumError) as e:
             logger.error(f"Failed to initialize faster-whisper engine: {e}", exc_info=True)
             self.state = RecognitionState.ERROR
             raise

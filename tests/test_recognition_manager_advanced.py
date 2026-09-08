@@ -51,12 +51,16 @@ for _k, _v in _ORIG_MODULES.items():
 
 def _make_manager(engine="whisper_cpp", **kw):
     """Create a manager with deferred init to avoid actually loading models."""
-    with patch.object(SpeechRecognitionManager, "_init_vosk"):
-        with patch.object(SpeechRecognitionManager, "_init_whisper"):
-            with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
-                mgr = SpeechRecognitionManager(
-                    engine=engine, model_size="small", language="en-us", defer_download=True, **kw
-                )
+    with (
+        patch.object(SpeechRecognitionManager, "_init_vosk"),
+        patch.object(SpeechRecognitionManager, "_init_whisper"),
+        patch.object(SpeechRecognitionManager, "_init_whispercpp"),
+        patch.object(SpeechRecognitionManager, "_init_parakeet"),
+        patch.object(SpeechRecognitionManager, "_init_faster_whisper"),
+    ):
+        mgr = SpeechRecognitionManager(
+            engine=engine, model_size="small", language="en-us", defer_download=True, **kw
+        )
     return mgr
 
 

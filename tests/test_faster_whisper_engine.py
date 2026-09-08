@@ -28,8 +28,9 @@ class TestEngineType:
         assert EngineType.VOSK.value == "vosk"
         assert EngineType.WHISPER.value == "whisper"
         assert EngineType.WHISPER_CPP.value == "whisper_cpp"
-        assert EngineType.REMOTE_API.value == "remote_api"
+        assert EngineType.PARAKEET.value == "parakeet"
         assert EngineType.FASTER_WHISPER.value == "faster_whisper"
+        assert EngineType.REMOTE_API.value == "remote_api"
 
 
 class TestEngineProtocol:
@@ -315,7 +316,7 @@ class TestFasterWhisperEngine:
             engine.init()
             assert engine.is_ready()
             whisper_mock.WhisperModel.assert_called_once_with(
-                "tiny", device="cpu", compute_type="int8"
+                "tiny", device="cpu", compute_type="int8", local_files_only=True
             )
 
     def test_init_invalid_model_defaults_to_tiny(self):
@@ -504,16 +505,46 @@ class TestRecognitionManagerIntegration:
 
         whisper_mock = MagicMock()
         with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
-            with patch.object(SpeechRecognitionManager, "_init_vosk"):
-                with patch.object(SpeechRecognitionManager, "_init_whisper"):
-                    with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
-                        manager = SpeechRecognitionManager(
-                            engine="faster_whisper",
-                            model_size="tiny",
-                            language="en-us",
-                            defer_download=True,
-                        )
-                        assert manager.engine == "faster_whisper"
+            with (
+                patch.object(SpeechRecognitionManager, "_init_vosk"),
+                patch.object(SpeechRecognitionManager, "_init_whisper"),
+                patch.object(SpeechRecognitionManager, "_init_whispercpp"),
+                patch.object(SpeechRecognitionManager, "_init_parakeet"),
+            ):
+                manager = SpeechRecognitionManager(
+                    engine="faster_whisper",
+                    model_size="tiny",
+                    language="en-us",
+                    defer_download=True,
+                )
+                assert manager.engine == "faster_whisper"
+
+    def test_init_faster_whisper_refuses_uncached_download(self):
+        """Uncached faster-whisper models must not fetch unpinned Hugging Face files."""
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+        from vocalinux.utils.model_checksums import ChecksumError
+
+        with (
+            patch.object(SpeechRecognitionManager, "_init_vosk"),
+            patch.object(SpeechRecognitionManager, "_init_whisper"),
+            patch.object(SpeechRecognitionManager, "_init_whispercpp"),
+            patch.object(SpeechRecognitionManager, "_init_parakeet"),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.is_faster_whisper_model_downloaded",
+                return_value=False,
+            ),
+        ):
+            manager = SpeechRecognitionManager(
+                engine="faster_whisper",
+                model_size="tiny",
+                language="en-us",
+                defer_download=True,
+            )
+            assert manager.engine == "faster_whisper"
+            assert manager._model_initialized is False
+            manager._defer_download = False
+            with pytest.raises(ChecksumError, match="checksum-pinned"):
+                manager._init_faster_whisper()
 
 
 if __name__ == "__main__":

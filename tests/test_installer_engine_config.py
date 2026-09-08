@@ -33,7 +33,7 @@ def _venv_python(venv_dir: Path, importable: "set[str] | None" = None) -> Path:
     ``importable`` names the engine modules that succeed; every other engine
     module fails. Anything else (the json probes) runs on the real interpreter.
     """
-    modules = {"vosk", "whisper", "pywhispercpp.model"}
+    modules = {"vosk", "whisper", "pywhispercpp.model", "sherpa_onnx", "faster_whisper"}
     ok = importable if importable is not None else set()
     python = venv_dir / "bin" / "python"
     python.parent.mkdir(parents=True, exist_ok=True)

@@ -22,8 +22,9 @@ class EngineType(Enum):
     VOSK = "vosk"
     WHISPER = "whisper"
     WHISPER_CPP = "whisper_cpp"
-    REMOTE_API = "remote_api"
+    PARAKEET = "parakeet"
     FASTER_WHISPER = "faster_whisper"
+    REMOTE_API = "remote_api"
 
 
 class Engine(Protocol):
