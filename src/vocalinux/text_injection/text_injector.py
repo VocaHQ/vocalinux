@@ -943,7 +943,7 @@ class TextInjector:
         )
         return False
 
-    def _clear_clipboard(self) -> bool:
+    def _clear_clipboard(self, x11_only: bool = False) -> bool:
         """
         Clear the clipboard using the first available tool.
 
@@ -952,9 +952,13 @@ class TextInjector:
         - xsel:    ``--clear`` flag
         - xclip:   pipe empty input (creates an empty text offer)
 
+        Args:
+            x11_only: Restrict to xclip/xsel (skip wl-copy), matching whichever
+                backend the paste this clears actually used (#657).
+
         Returns True if the clipboard was cleared successfully.
         """
-        for tool in self._get_clipboard_tools():
+        for tool in self._get_clipboard_tools(x11_only=x11_only):
             if self._clipboard_tool_health.get(tool) is False:
                 continue
             try:
@@ -1334,15 +1338,21 @@ class TextInjector:
         except UnicodeEncodeError:
             return True
 
-    def _read_clipboard(self) -> Optional[str]:
+    def _read_clipboard(self, x11_only: bool = False) -> Optional[str]:
         """
         Read clipboard text only.
 
         Requests text MIME types so image/file data is not treated as text.
         Returns the text, "" if a tool reports a verifiably empty clipboard,
         or None if unreadable as text (non-text data, no tool, or error).
+
+        Args:
+            x11_only: Restrict to xclip/xsel (skip wl-paste). Needed when the
+                caller wrote/needs the X11 CLIPBOARD selection specifically
+                (the xdotool paste path, #657): reading via wl-paste would
+                report a different, unrelated Wayland clipboard instead.
         """
-        host_is_wayland = (
+        host_is_wayland = not x11_only and (
             self._session_environment == DesktopEnvironment.WAYLAND
             or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
             or bool(os.environ.get("WAYLAND_DISPLAY"))
@@ -1356,7 +1366,7 @@ class TextInjector:
             candidates.append(["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"])
         if shutil.which("xsel"):
             candidates.append(["xsel", "--clipboard", "--output"])
-        if not host_is_wayland and shutil.which("wl-paste"):
+        if not x11_only and not host_is_wayland and shutil.which("wl-paste"):
             candidates.append(["wl-paste", "--no-newline", "--type", "text"])
 
         saw_empty = False
@@ -1457,7 +1467,9 @@ class TextInjector:
         with self._state_lock:
             pending_target = self._clipboard_restore_target
         previous_clipboard = (
-            pending_target if pending_target is not None else self._read_clipboard()
+            pending_target
+            if pending_target is not None
+            else self._read_clipboard(x11_only=x11_only)
         )
 
         if not self._copy_to_clipboard(text, x11_only=x11_only):
@@ -1514,9 +1526,9 @@ class TextInjector:
                     self._clipboard_restore_target = None
             if previous_clipboard is not None and not self._should_copy_to_clipboard():
                 if previous_clipboard == "":
-                    self._clear_clipboard()
+                    self._clear_clipboard(x11_only=x11_only)
                 else:
-                    self._copy_to_clipboard(previous_clipboard)
+                    self._copy_to_clipboard(previous_clipboard, x11_only=x11_only)
             return False
 
         # Delayed restore so Ctrl+V can land first. Skip when the user wants
@@ -1532,13 +1544,13 @@ class TextInjector:
                         return
                     self._clipboard_restore_target = None
                 # User copied something else during the delay — leave it alone.
-                if self._read_clipboard() != text:
+                if self._read_clipboard(x11_only=x11_only) != text:
                     logger.debug("Clipboard changed during restore delay; skipping restore")
                     return
                 if previous_clipboard == "":
-                    success = self._clear_clipboard()
+                    success = self._clear_clipboard(x11_only=x11_only)
                 else:
-                    success = self._copy_to_clipboard(previous_clipboard)
+                    success = self._copy_to_clipboard(previous_clipboard, x11_only=x11_only)
                 if success:
                     logger.debug("Clipboard restored to previous content")
                 else:

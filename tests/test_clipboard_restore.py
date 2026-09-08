@@ -229,7 +229,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
         with patch.object(
             obj,
             "_read_clipboard",
-            side_effect=lambda: call_order.append("read") or "prev",
+            side_effect=lambda **kw: call_order.append("read") or "prev",
         ):
             with patch.object(
                 obj,
@@ -498,7 +498,9 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
         with patch.object(obj, "_read_clipboard", side_effect=["", "new text"]):
             with patch.object(obj, "_copy_to_clipboard", return_value=True):
                 with patch.object(
-                    obj, "_clear_clipboard", side_effect=lambda: clear_called.append(True) or True
+                    obj,
+                    "_clear_clipboard",
+                    side_effect=lambda **kw: clear_called.append(True) or True,
                 ):
                     with patch.object(
                         obj,
@@ -665,7 +667,9 @@ class TestClearClipboard(unittest.TestCase):
         with patch.object(obj, "_read_clipboard", return_value=""):
             with patch.object(obj, "_copy_to_clipboard", return_value=True):
                 with patch.object(
-                    obj, "_clear_clipboard", side_effect=lambda: clear_called.append(True) or True
+                    obj,
+                    "_clear_clipboard",
+                    side_effect=lambda **kw: clear_called.append(True) or True,
                 ):
                     with patch.object(
                         obj,
@@ -764,7 +768,7 @@ class TestOverlappingClipboardRestore(unittest.TestCase):
         # clipboard); pending-target must keep restoring to "URL".
         read_values = iter(["URL", "world"])
 
-        with patch.object(obj, "_read_clipboard", side_effect=lambda: next(read_values)):
+        with patch.object(obj, "_read_clipboard", side_effect=lambda **kw: next(read_values)):
             with patch.object(
                 obj, "_copy_to_clipboard", side_effect=lambda t, **kw: copy_calls.append(t) or True
             ):
