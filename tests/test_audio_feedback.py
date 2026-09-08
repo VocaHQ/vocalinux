@@ -449,6 +449,28 @@ class TestAudioFeedback(unittest.TestCase):
             played = _assert_played_wav(_popen_argv(mock_popen), "paplay")
             self.assertEqual(os.path.realpath(played), os.path.realpath(cue))
 
+    def test_preroll_eoferror_falls_back_to_original(self):
+        """A truncated/corrupt WAV raising EOFError still plays the original cue."""
+        import vocalinux.ui.audio_feedback as audio_feedback
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cue = os.path.join(tmp, "cue.wav")
+            with open(cue, "wb") as handle:
+                handle.write(b"RIFF")
+            with (
+                patch.object(
+                    audio_feedback,
+                    "_get_audio_player",
+                    return_value=("paplay", ["wav"]),
+                ),
+                patch.object(audio_feedback.subprocess, "Popen") as mock_popen,
+            ):
+                result = audio_feedback._play_sound_file(cue)
+
+            self.assertTrue(result)
+            played = _assert_played_wav(_popen_argv(mock_popen), "paplay")
+            self.assertEqual(os.path.realpath(played), os.path.realpath(cue))
+
     def test_play_start_sound(self):
         """Test playing start sound (default tone is voca)."""
         # Import the module first
