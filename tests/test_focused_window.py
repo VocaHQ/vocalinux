@@ -146,6 +146,65 @@ class TestGetFocusedWindow(unittest.TestCase):
         self.assertEqual(window.wm_class, "konsole")
         self.assertTrue(looks_like_terminal(window))
 
+    def test_x11_reads_wm_class_with_xprop_never_xdotool(self):
+        """xdotool getwindowclassname aborts on class-less windows; use xprop."""
+        commands: list[tuple[str, ...]] = []
+        with patch.dict("os.environ", {"WAYLAND_DISPLAY": ""}, clear=False):
+            with patch("vocalinux.text_injection.focused_window.shutil.which") as mock_which:
+                mock_which.side_effect = lambda cmd: (
+                    "/usr/bin/" + cmd if cmd in {"xdotool", "xprop"} else None
+                )
+                with patch("vocalinux.text_injection.focused_window.subprocess.run") as mock_run:
+
+                    def _run(cmd, **_kwargs):
+                        commands.append(tuple(cmd))
+                        mapping = {
+                            ("xdotool", "getactivewindow"): "12345",
+                            ("xdotool", "getwindowname", "12345"): "zsh",
+                            ("xdotool", "getwindowpid", "12345"): "77",
+                            ("xprop", "-id", "12345", "WM_CLASS"): (
+                                'WM_CLASS(STRING) = "konsole", "konsole"'
+                            ),
+                        }
+                        return MagicMock(returncode=0, stdout=mapping.get(tuple(cmd), ""))
+
+                    mock_run.side_effect = _run
+                    with patch(
+                        "vocalinux.text_injection.focused_window.open",
+                        mock_open(read_data="konsole\n"),
+                    ):
+                        window = get_focused_window()
+        self.assertNotIn("getwindowclassname", [arg for cmd in commands for arg in cmd])
+        self.assertIsNotNone(window)
+        assert window is not None
+        self.assertEqual(window.wm_class, "konsole konsole")
+        self.assertTrue(looks_like_terminal(window))
+
+    def test_x11_skips_xdotool_class_for_placeholder_window(self):
+        """KWin's _NET_ACTIVE_WINDOW placeholder has no pid, title, or class."""
+        commands: list[tuple[str, ...]] = []
+        with patch.dict("os.environ", {"WAYLAND_DISPLAY": ""}, clear=False):
+            with patch("vocalinux.text_injection.focused_window.shutil.which") as mock_which:
+                mock_which.side_effect = lambda cmd: "/usr/bin/" + cmd if cmd == "xdotool" else None
+                with patch("vocalinux.text_injection.focused_window.subprocess.run") as mock_run:
+
+                    def _run(cmd, **_kwargs):
+                        commands.append(tuple(cmd))
+                        if tuple(cmd) == ("xdotool", "getactivewindow"):
+                            return MagicMock(returncode=0, stdout="2097152")
+                        if tuple(cmd) == ("xdotool", "getwindowname", "2097152"):
+                            return MagicMock(returncode=0, stdout="")
+                        # getwindowpid fails: the placeholder window has no pid.
+                        return MagicMock(returncode=1, stdout="")
+
+                    mock_run.side_effect = _run
+                    window = get_focused_window()
+        self.assertNotIn("getwindowclassname", [arg for cmd in commands for arg in cmd])
+        self.assertIsNotNone(window)
+        assert window is not None
+        self.assertEqual(window.wm_class, "")
+        self.assertFalse(looks_like_terminal(window))
+
     def test_probe_failure_returns_none(self):
         with patch("vocalinux.text_injection.focused_window.shutil.which", return_value=None):
             self.assertIsNone(get_focused_window())

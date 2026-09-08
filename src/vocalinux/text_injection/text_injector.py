@@ -18,7 +18,7 @@ from typing import Optional  # noqa: F401
 
 from ..utils.host_process import host_env
 from ..utils.paths import config_dir
-from .focused_window import is_focused_window_terminal
+from .focused_window import is_focused_window_terminal, read_wm_class
 from .ibus_engine import (
     IBusTextInjector,
     is_ibus_active_input_method,
@@ -2392,17 +2392,9 @@ class TextInjector:
             window_name = result.stdout.strip()
             logger.info(f"Target window: '{window_name}' (ID: {window_id})")
 
-            # Get window class
-            result = subprocess.run(
-                ["xdotool", "getwindowclassname", window_id],
-                env=host_env(env),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True,
-                timeout=2,
-            )
-            window_class = result.stdout.strip()
+            # Get window class. Not via xdotool: getwindowclassname aborts on
+            # windows that carry no WM_CLASS (see focused_window.read_wm_class).
+            window_class = read_wm_class(window_id, env, xdotool_fallback=bool(window_name))
             logger.debug(f"Window class: {window_class}")
 
             # Get window PID
