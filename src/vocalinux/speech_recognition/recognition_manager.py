@@ -3894,6 +3894,9 @@ class SpeechRecognitionManager:
         with self._model_lock:
             self.model = None
             self.recognizer = None
+            if self._faster_whisper_engine is not None:
+                self._faster_whisper_engine.cleanup()
+                self._faster_whisper_engine = None
             if self._http_session is not None:
                 try:
                     self._http_session.close()
