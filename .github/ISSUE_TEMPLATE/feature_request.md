@@ -6,26 +6,27 @@ labels: enhancement
 assignees: ''
 ---
 
-## 🚀 Feature Description
-A clear and concise description of the feature you'd like.
+## Feature description
 
-## 💡 Problem Statement
-Is your feature request related to a problem? Please describe.
-Example: "I'm always frustrated when [...]"
+What you would like Vocalinux to do.
 
-## 📋 Proposed Solution
-Describe the solution you'd like. Be as detailed as possible.
+## Problem
 
-## 🔄 Alternatives Considered
-Describe any alternative solutions or features you've considered.
+What is hard or missing today? Who is affected?
 
-## 📸 Mockups / Examples
-If applicable, add mockups, screenshots, or examples from other applications.
+## Proposed solution
 
-## 📝 Additional Context
-Add any other context about the feature request here.
+How you imagine it working (as specific as you can).
 
-## ✅ Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-- [ ] Criterion 3
+## Alternatives considered
+
+Other approaches or tools you already tried.
+
+## Mockups / examples
+
+Links, screenshots, or references to similar apps (optional).
+
+## Acceptance criteria
+
+- [ ]
+- [ ]

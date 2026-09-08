@@ -1,6 +1,6 @@
-# Remote HTTP-Based Transcription
+# Remote HTTP transcription
 
-Vocalinux can offload speech recognition to a remote HTTP server instead of running a local model. This is useful when you want faster transcription on a more powerful machine, want to share one model across several clients, or want to keep your laptop free of GPU/model overhead.
+Vocalinux can offload speech recognition to a remote HTTP server instead of running a local model. Use this when you want faster transcription on a more powerful machine, to share one model across clients, or to keep a laptop free of GPU/model overhead.
 
 Vocalinux speaks two wire formats out of the box:
 

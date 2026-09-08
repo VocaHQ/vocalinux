@@ -1,25 +1,16 @@
-# Linux Distribution Compatibility
+# Linux distribution compatibility
 
-## Implementation Status
+How Vocalinux behaves across distributions, what is tested, and what to install manually when needed.
 
-The cross-distribution compatibility improvements have been implemented in phases:
+For install steps, prefer [INSTALL.md](INSTALL.md). Flatpak packaging (useful on immutable or non-standard layouts): [packaging/flatpak/README.md](../packaging/flatpak/README.md). Snap Store listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (`--edge`; pack/upload steps in [INSTALL.md](INSTALL.md)). Flatpak is not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | ✅ Complete | Dynamic GI_TYPELIB_PATH detection using pkg-config, multi-arch support, ALSA library fallbacks |
-| Phase 2 | ✅ Complete | Enhanced distro detection (Gentoo, Alpine, Void, Solus, Mageia) |
-| Phase 3 | ✅ Complete | System dependency checker, improved error messages |
-| Phase 4 | 🟡 Partial | pkg-config as a core dependency ✅. The CI distro matrix covers six containers, but it checks detection logic, shell syntax and `--help` — it never runs the installer, and the container jobs are `continue-on-error`. Real install runs are tracked as phase 2.4 of [#701](https://github.com/VocaHQ/vocalinux/issues/701) |
-| **Phase 5** | ✅ **Complete** | **Fixed remaining hardcoded GI_TYPELIB_PATH values in install.sh and CI workflow** |
-| **Phase 6** | ✅ **Complete** | **Added wrapper script verification tests, updated documentation** |
-| **Phase 7** | ✅ **Complete** | **Flatpak packaging (whisper.cpp engine) for universal distribution support — see [`packaging/flatpak/`](../packaging/flatpak/README.md). Not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).** |
-| Phase 8 | 🚧 In progress | Snap recipe in-repo + Store listing live ([snapcraft.io/vocalinux](https://snapcraft.io/vocalinux)); install `--edge` and pack/upload steps in [docs/INSTALL.md](INSTALL.md) |
+## Cross-distro behavior
 
-## Technical Implementation
+The installer and launch wrappers handle most path differences.
 
-### Dynamic GI_TYPELIB_PATH Detection
+### GI_TYPELIB_PATH detection
 
-The installer now uses a robust multi-step approach to detect the correct GI_TYPELIB_PATH across different distributions:
+The installer uses a multi-step approach to detect the correct GI_TYPELIB_PATH:
 
 1. **Primary Method**: Uses `pkg-config --variable=typelibdir gobject-introspection-1.0` (most reliable)
 2. **Fallback Paths**: Checks common distribution-specific paths in priority order:
@@ -222,7 +213,8 @@ packages, creates the virtual environment, installs Vocalinux, sets up desktop
 integration, and downloads the default speech model:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 ### Important: Install System Packages First
@@ -351,7 +343,8 @@ during setup.
 
 For the best experience with automatic dependency handling, use the official installer:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 This installer automatically detects your distribution and installs all required system packages.
@@ -549,9 +542,9 @@ If you successfully get Vocalinux working on an unsupported or experimental dist
    - Any patches or workarounds required
    - Update to this compatibility document
 
-## See Also
+## See also
 
-- [Installation Guide](../README.md#installation)
-- [Manual Installation](MANUAL_INSTALL.md)
-- [Troubleshooting](TROUBLESHOOTING.md)
-- [GitHub Issue Tracker](https://github.com/VocaHQ/vocalinux/issues)
+- [Installation guide](INSTALL.md)
+- [User guide](USER_GUIDE.md)
+- [Update guide](UPDATE.md)
+- [GitHub issue tracker](https://github.com/VocaHQ/vocalinux/issues)

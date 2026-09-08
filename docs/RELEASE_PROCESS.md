@@ -203,30 +203,14 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 
 #### 3.1 Update `README.md`
 
-**Status Badge (line ~6):**
-```markdown
-<!-- Alpha -->
-[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange)]
+**README current-release blurb:**
+Keep a short one-line pointer to the new tag and [docs/UPDATE.md](UPDATE.md). Do not paste the full release notes into the README.
 
-<!-- Beta -->
-[![Status: Beta](https://img.shields.io/badge/Status-Beta-blue)]
-
-<!-- Stable -->
-[![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen)]
-```
-
-**Install Commands:**
-Keep install commands on `main/install.sh` (installer resolves latest release tag automatically):
+**Install commands:**
+Keep install examples on `main/install.sh` (download-then-run preferred; installer resolves latest release tag):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
-```
-
-**Release Announcement (lines ~31-34):**
-```markdown
-> 🎉 **Beta Release!**
->
-> We're excited to share Vocalinux Beta with the community.
-> This release is feature-complete and ready for broader testing.
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 #### 3.2 Update `docs/INSTALL.md`

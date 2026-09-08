@@ -7,7 +7,8 @@ This guide provides detailed instructions for installing Vocalinux on Linux syst
 ### One-liner Installation (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 > **Note**: Always installs the latest release with **whisper.cpp** (our default engine). For a specific version, check [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases).
@@ -159,6 +160,30 @@ snapcraft pack
 snapcraft upload --release=edge vocalinux_*.snap
 ```
 
+### Flatpak (any distro)
+
+GitHub Releases attach `Vocalinux-<version>-x86_64.flatpak` and
+`Vocalinux-<version>-aarch64.flatpak`. After the Flathub GNOME runtime is
+present, install with `flatpak install --user ./Vocalinux-<version>-x86_64.flatpak`.
+Bundles do not auto-update.
+
+For a local build (contributors), use the bundled manifest:
+
+```bash
+flatpak install flathub org.gnome.Platform//50 org.gnome.Sdk//50
+flatpak-builder --user --install --force-clean build-dir \
+  packaging/flatpak/com.vocalinux.Vocalinux.yml
+flatpak run com.vocalinux.Vocalinux
+```
+
+The Flatpak ships the whisper.cpp engine with Vulkan GPU support and runs through
+XWayland on Wayland sessions. See [`packaging/flatpak/README.md`](../packaging/flatpak/README.md)
+for build details and permissions. It is **not on Flathub**: the submission
+([flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368)) was closed
+on 2026-07-23 on policy grounds. Release `.flatpak` assets are tracked in
+[#784](https://github.com/VocaHQ/vocalinux/issues/784); the longer-term channel
+is [#167](https://github.com/VocaHQ/vocalinux/issues/167).
+
 ## System Requirements
 
 | Requirement | Details |
@@ -203,20 +228,24 @@ The new interactive installer guides you through engine selection:
 ```
 
 **Choose your engine:**
-1. **whisper.cpp** ⭐ (Recommended) - Fast, works with any GPU via Vulkan
+1. **whisper.cpp** (recommended) - Fast, works with any GPU via Vulkan
 2. **Whisper** (OpenAI) - PyTorch-based, NVIDIA GPU only
 3. **VOSK** - Lightweight, works on older systems
+4. **Parakeet** - NVIDIA NeMo ASR via sherpa-onnx; CPU; 25 European languages
+5. **Remote API** - Optional user-configured HTTP server
 
-The installer will auto-detect your hardware and recommend the best option!
+The installer will auto-detect your hardware and recommend the best option.
 
 ### Automatic Installation
 
 Skip the interactive prompts with `--auto`:
 
 ```bash
-./install.sh --auto                    # Default: whisper.cpp
-./install.sh --auto --engine=whisper   # Use OpenAI Whisper
-./install.sh --auto --engine=vosk      # Use VOSK only
+./install.sh --auto                         # Default: whisper.cpp
+./install.sh --auto --engine=whisper        # OpenAI Whisper
+./install.sh --auto --engine=vosk           # VOSK only
+./install.sh --auto --engine=parakeet       # Parakeet (CPU)
+./install.sh --auto --engine=remote_api     # Remote HTTP API
 ```
 
 ### Development Installation
@@ -242,7 +271,7 @@ Installation Modes:
 Options:
   --interactive, -i  Force interactive mode (default)
   --auto           Non-interactive automatic installation
-  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk
+  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, remote_api
   --dev            Install in development mode with all dev dependencies
   --test           Run tests after installation
   --venv-dir=PATH  Specify custom virtual environment directory
@@ -268,11 +297,14 @@ Examples:
    - **whisper.cpp** (default): High-performance C++ engine with Vulkan GPU support
    - **Whisper**: OpenAI's PyTorch-based engine (NVIDIA GPU only)
    - **VOSK**: Lightweight engine for older systems
+   - **Parakeet**: NVIDIA NeMo ASR via sherpa-onnx (CPU)
+   - **Remote API**: User-configured HTTP transcription server
 5. **Installs neural VAD support** when ONNX Runtime is available, with a safe amplitude-VAD fallback otherwise
-6. **Downloads speech recognition models**:
+6. **Downloads speech recognition models** (verified against pinned checksums):
    - whisper.cpp: default ~74MB tiny model; selectable variants range from smaller quantized models to large models
    - Whisper: ~75MB tiny model + PyTorch dependencies (~2.3GB with CUDA)
    - VOSK: ~40MB small model
+   - Parakeet: ~639MB v3-european (25 European languages) or ~630MB v2-english
 7. **Installs desktop integration** (icons, .desktop file)
 8. **Creates activation script** for easy environment activation
 
@@ -283,6 +315,8 @@ Examples:
 | **whisper.cpp** (default) | ~74MB default; variants from ~15MB-3GB | ~1-2 min | AMD, Intel, NVIDIA (Vulkan) |
 | Whisper (OpenAI) | ~2.3GB+ | ~5-10 min | NVIDIA only (CUDA) |
 | VOSK | ~40MB | ~30 sec | CPU only |
+| Parakeet | ~630-639MB | CPU install + model download | CPU only |
+| Remote API | No local model | Server-dependent | Server-side |
 
 ## Running Vocalinux
 
@@ -308,6 +342,8 @@ vocalinux --debug                 # Enable debug logging
 vocalinux --engine whisper_cpp    # Use whisper.cpp engine (default)
 vocalinux --engine whisper        # Use OpenAI Whisper engine
 vocalinux --engine vosk           # Use VOSK engine
+vocalinux --engine parakeet       # Use Parakeet (sherpa-onnx, CPU)
+vocalinux --engine remote_api     # Use a configured remote HTTP server
 vocalinux --model tiny            # Use tiny model (default, fastest)
 vocalinux --model small           # Use small model
 vocalinux --model medium          # Use medium model
@@ -583,7 +619,7 @@ Change the `engine` field:
 ```json
 {
   "speech_recognition": {
-    "engine": "whisper_cpp",  // Options: whisper_cpp, whisper, vosk
+    "engine": "whisper_cpp",  // Options: whisper_cpp, whisper, vosk, parakeet, remote_api
     "model_size": "tiny"      // Or an exact whisper.cpp ID like medium.en-q5_0
   }
 }
@@ -779,7 +815,8 @@ Already have Vocalinux installed? See the [Update Guide](UPDATE.md) for instruct
 
 Quick update command:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 ## Getting Help
