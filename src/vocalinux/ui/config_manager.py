@@ -140,6 +140,10 @@ DEFAULT_CONFIG = {
         # Clipboard-paste chord: auto-detect terminals, or force Ctrl+V /
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
+        # Text-injection backend: "auto" autodetects, or pin "ibus"/"wtype"/
+        # "ydotool" when the autodetection is wrong for your compositor (#476).
+        # VOCALINUX_FORCE_BACKEND overrides this for a single run.
+        "backend": "auto",
     },
     "advanced": {
         "power_user_mode": False,
