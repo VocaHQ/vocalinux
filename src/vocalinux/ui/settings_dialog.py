@@ -2597,11 +2597,20 @@ class SettingsDialog(Gtk.Dialog):
                 cleaned.append({"spoken": spoken, "replacement": replacement})
         return cleaned
 
-    def _save_custom_dictionary(self, entries: list) -> None:
-        """Persist the dictionary and refresh the list UI."""
+    def _save_custom_dictionary(self, entries: list) -> bool:
+        """Persist the dictionary and refresh the list UI.
+
+        Returns:
+            True if the config was written. On write failure the in-memory
+            value is restored so UI and memory match disk.
+        """
+        previous = self._get_custom_dictionary()
         self.config_manager.set("text_injection", "custom_dictionary", entries)
-        self.config_manager.save_config()
+        saved = bool(self.config_manager.save_config())
+        if not saved:
+            self.config_manager.set("text_injection", "custom_dictionary", previous)
         self._refresh_custom_dictionary_list()
+        return saved
 
     def _refresh_custom_dictionary_list(self) -> None:
         """Rebuild the custom dictionary list UI from config."""
@@ -2636,7 +2645,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.custom_dictionary_listbox.show_all()
 
-    def _on_custom_dictionary_add_clicked(self, widget):
+    def _on_custom_dictionary_add_clicked(self, widget: Any) -> None:
         if self._initializing or self._applying_settings:
             return
         spoken = self.custom_dictionary_spoken_entry.get_text().strip()
@@ -2647,18 +2656,20 @@ class SettingsDialog(Gtk.Dialog):
         # Re-adding an existing phrase updates its replacement (last wins)
         entries = [e for e in entries if e["spoken"].lower() != spoken.lower()]
         entries.append({"spoken": spoken, "replacement": replacement})
-        self._save_custom_dictionary(entries)
+        if not self._save_custom_dictionary(entries):
+            return
         self.custom_dictionary_spoken_entry.set_text("")
         self.custom_dictionary_replacement_entry.set_text("")
         logger.info("Saved dictionary correction: '%s' -> '%s'", spoken, replacement)
 
-    def _on_custom_dictionary_remove_clicked(self, widget, spoken: str):
+    def _on_custom_dictionary_remove_clicked(self, widget: Any, spoken: str) -> None:
         if self._initializing or self._applying_settings:
             return
         entries = [
             e for e in self._get_custom_dictionary() if e["spoken"].lower() != spoken.lower()
         ]
-        self._save_custom_dictionary(entries)
+        if not self._save_custom_dictionary(entries):
+            return
         logger.info("Removed dictionary correction for '%s'", spoken)
 
     def _build_auto_pause_section(self):

@@ -37,11 +37,20 @@ def load_custom_dictionary() -> list[dict]:
             return []
         with open(config_path, "r") as f:
             config = json.load(f)
-        raw_entries = config.get(CONFIG_SECTION, {}).get(CONFIG_KEY, []) or []
-    except Exception as e:
+    except (json.JSONDecodeError, OSError) as e:
         logger.debug(f"Could not read {CONFIG_KEY} setting: {e}")
         return []
 
+    if not isinstance(config, dict):
+        logger.warning(f"{CONFIG_KEY} config root is not a dict; ignoring it")
+        return []
+
+    section = config.get(CONFIG_SECTION, {})
+    if not isinstance(section, dict):
+        logger.warning(f"{CONFIG_SECTION} config is not a dict; ignoring {CONFIG_KEY}")
+        return []
+
+    raw_entries = section.get(CONFIG_KEY, []) or []
     if not isinstance(raw_entries, list):
         logger.warning(f"{CONFIG_KEY} config is not a list; ignoring it")
         return []

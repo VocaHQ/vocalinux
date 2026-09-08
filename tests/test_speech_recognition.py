@@ -485,11 +485,11 @@ class TestSpeechRecognition(unittest.TestCase):
         manager = SpeechRecognitionManager(engine="vosk")
 
         mock_recognizer = MagicMock()
-        mock_recognizer.FinalResult.return_value = MOCK_VOSK_RESULT
+        mock_recognizer.FinalResult.return_value = '{"text": "super base is great"}'
         mock_recognizer.AcceptWaveform.return_value = True
         manager.recognizer = mock_recognizer
 
-        self.mock_cmd.process_text.return_value = ("super base is great", [])
+        self.mock_cmd.process_text.return_value = ("Supabase is great", [])
 
         text_callback = MagicMock()
         manager.register_text_callback(text_callback)
@@ -503,7 +503,37 @@ class TestSpeechRecognition(unittest.TestCase):
         ):
             manager._process_final_buffer()
 
+        self.mock_cmd.process_text.assert_called_once_with("Supabase is great")
         text_callback.assert_called_once_with("Supabase is great")
+
+    def test_process_final_buffer_applies_dictionary_before_commands(self):
+        """A phrase that would be a voice command is corrected before commands see it."""
+        manager = SpeechRecognitionManager(engine="vosk")
+
+        mock_recognizer = MagicMock()
+        mock_recognizer.FinalResult.return_value = '{"text": "delete that"}'
+        mock_recognizer.AcceptWaveform.return_value = True
+        manager.recognizer = mock_recognizer
+
+        self.mock_cmd.process_text.return_value = ("keep that", [])
+
+        text_callback = MagicMock()
+        action_callback = MagicMock()
+        manager.register_text_callback(text_callback)
+        manager.register_action_callback(action_callback)
+
+        manager.audio_buffer = [b"audio_data1"]
+
+        dictionary = [{"spoken": "delete that", "replacement": "keep that"}]
+        with patch(
+            "vocalinux.speech_recognition.recognition_manager.load_custom_dictionary",
+            return_value=dictionary,
+        ):
+            manager._process_final_buffer()
+
+        self.mock_cmd.process_text.assert_called_once_with("keep that")
+        text_callback.assert_called_once_with("keep that")
+        action_callback.assert_not_called()
 
     def test_process_final_buffer_applies_custom_dictionary_without_commands(self):
         """Corrections apply even when voice commands are disabled."""

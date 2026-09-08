@@ -1465,6 +1465,7 @@ class TestCustomDictionaryUI(unittest.TestCase):
         )
         stub.custom_dictionary_spoken_entry.get_text = Mock(return_value="Super Base")
         stub.custom_dictionary_replacement_entry.get_text = Mock(return_value="Supabase")
+        stub.config_manager.save_config = Mock(return_value=True)
         # Bind unbound methods so `self` is the stub
         dialog_cls = self.SettingsDialog
         stub._get_custom_dictionary = dialog_cls._get_custom_dictionary.__get__(stub)
@@ -1510,6 +1511,30 @@ class TestCustomDictionaryUI(unittest.TestCase):
             [{"spoken": "Super Base", "replacement": "Supabase"}],
         )
         stub.config_manager.save_config.assert_called_once()
+        stub.custom_dictionary_spoken_entry.set_text.assert_called_once_with("")
+        stub.custom_dictionary_replacement_entry.set_text.assert_called_once_with("")
+
+    def test_add_correction_does_not_claim_success_when_save_fails(self):
+        """A failed write leaves the add fields intact and restores memory to disk."""
+        stub = self._make_dialog_stub()
+        previous = [{"spoken": "super base", "replacement": "Superb Ass"}]
+        stub.config_manager.get = Mock(return_value=previous)
+        stub.config_manager.save_config.return_value = False
+
+        self.SettingsDialog._on_custom_dictionary_add_clicked(stub, Mock())
+
+        stub.config_manager.set.assert_has_calls(
+            [
+                call(
+                    "text_injection",
+                    "custom_dictionary",
+                    [{"spoken": "Super Base", "replacement": "Supabase"}],
+                ),
+                call("text_injection", "custom_dictionary", previous),
+            ]
+        )
+        stub.custom_dictionary_spoken_entry.set_text.assert_not_called()
+        stub.custom_dictionary_replacement_entry.set_text.assert_not_called()
 
     def test_add_correction_ignores_empty_fields(self):
         stub = self._make_dialog_stub()

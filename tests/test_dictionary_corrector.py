@@ -188,6 +188,14 @@ class TestLoadCustomDictionary(unittest.TestCase):
         self._write_config("{not valid json")
         self.assertEqual(load_custom_dictionary(), [])
 
+    def test_non_dict_json_root_returns_empty(self):
+        self._write_config("[]")
+        self.assertEqual(load_custom_dictionary(), [])
+
+    def test_non_dict_section_returns_empty(self):
+        self._write_config({"text_injection": "nope"})
+        self.assertEqual(load_custom_dictionary(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3277,6 +3277,14 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
+            # Apply user-configured custom dictionary corrections to the raw
+            # transcript before command matching, so a corrected phrase cannot
+            # be consumed as a voice command. Re-read config.json each segment
+            # so Settings changes apply without a restart.
+            dictionary_entries = load_custom_dictionary()
+            if dictionary_entries:
+                text = apply_dictionary(text, dictionary_entries)
+
             if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
@@ -3284,14 +3292,6 @@ class SpeechRecognitionManager:
                 # Voice commands disabled - pass text through directly (Whisper handles punctuation)
                 processed_text = text.strip()
                 actions = []
-
-            # Apply user-configured custom dictionary corrections so
-            # misheard words are fixed in the final transcript. The
-            # dictionary is re-read from config.json on every segment so
-            # Settings changes apply without a restart.
-            dictionary_entries = load_custom_dictionary()
-            if dictionary_entries:
-                processed_text = apply_dictionary(processed_text, dictionary_entries)
 
             # Call text callbacks with processed text
             logger.debug(
