@@ -5,7 +5,7 @@ Tests for the main module functionality.
 import argparse
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
 sys.modules["gi"] = MagicMock()
@@ -30,6 +30,7 @@ class TestMainModule(unittest.TestCase):
             self.assertIsNone(args.language)
             self.assertFalse(args.wayland)
             self.assertFalse(args.start_minimized)
+            self.assertIsNone(args.dictionary_file)
 
     def test_parse_arguments_custom(self):
         """Test argument parsing with custom values."""
@@ -56,6 +57,11 @@ class TestMainModule(unittest.TestCase):
             self.assertEqual(args.language, "fr")
             self.assertTrue(args.wayland)
             self.assertTrue(args.start_minimized)
+
+    def test_parse_arguments_dictionary_file(self):
+        """The dictionary file CLI override is accepted without persisting config."""
+        with patch("sys.argv", ["vocalinux", "--dictionary-file", "/tmp/terms.txt"]):
+            assert parse_arguments().dictionary_file == "/tmp/terms.txt"
 
     def test_parse_arguments_model_values(self):
         """Test model parsing for base and exact whisper.cpp model IDs."""
@@ -234,6 +240,7 @@ class TestMainModule(unittest.TestCase):
                 whispercpp_no_speech_thold=0.6,
                 whispercpp_n_threads=0,
                 whispercpp_gpu_device=None,
+                dictionary_manager=ANY,
                 remote_api_url="",
                 remote_api_key="",
                 remote_api_endpoint="/inference",
