@@ -3165,7 +3165,7 @@ class SettingsDialog(Gtk.Dialog):
             _,
         ) = _make_expander_card(
             "Advanced",
-            "Engine, model, and remote server",
+            "Engine, model, remote server, and local VocaGateway",
         )
         self.advanced_box.set_spacing(12)
         self.advanced_box.set_margin_top(8)
@@ -4914,7 +4914,7 @@ class SettingsDialog(Gtk.Dialog):
         self.remote_status_label.hide()
 
     def _build_gateway_embed_section(self):
-        """Optional local VocaGateway controls (podman-first). Always on Speech Engine."""
+        """Optional local VocaGateway controls (podman-first). Lives on the Advanced island."""
         self._gateway_manager = get_gateway_embed_manager()
         lan_publish = bool(self.config_manager.get("gateway_embed", "lan_publish", False))
         self._gateway_manager.lan_publish = lan_publish
@@ -5021,7 +5021,7 @@ class SettingsDialog(Gtk.Dialog):
         pairing_row.add(pairing_box)
         self.gateway_embed_group.add_row(pairing_row)
 
-        self.content_box.pack_start(self.gateway_embed_group, False, False, 0)
+        self.advanced_box.pack_start(self.gateway_embed_group, False, False, 0)
 
         # Runtime probe is async so Settings never blocks on podman/docker.
         self._gateway_manager.begin_runtime_detection()
