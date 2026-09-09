@@ -46,6 +46,13 @@ class TestParseShortcutSpec:
     def test_function_key_combo(self):
         assert parse_shortcut_spec("alt+f5").key == "f5"
 
+    def test_bare_function_key(self):
+        spec = parse_shortcut_spec("f10")
+        assert spec.modifiers == ()
+        assert spec.key == "f10"
+        assert spec.is_combo is True
+        assert spec.canonical() == "f10"
+
     def test_named_key_combo(self):
         assert parse_shortcut_spec("super+space").key == "space"
 
@@ -56,14 +63,14 @@ class TestParseShortcutSpec:
 
     @pytest.mark.parametrize(
         "bad",
-        ["", "   ", "ctrl", "ctrl+alt", "alt+r+t", "invalid_shortcut", "alt+", "+r"],
+        ["", "   ", "ctrl", "ctrl+alt", "alt+r+t", "invalid_shortcut", "alt+", "+r", "r", "space"],
     )
     def test_invalid(self, bad):
         with pytest.raises(ValueError):
             parse_shortcut_spec(bad)
 
     def test_canonical_round_trips(self):
-        for s in ["ctrl+ctrl", "alt+r", "ctrl+alt+r", "super+space", "alt+f5"]:
+        for s in ["ctrl+ctrl", "alt+r", "ctrl+alt+r", "super+space", "alt+f5", "f10"]:
             assert parse_shortcut_spec(parse_shortcut_spec(s).canonical()).canonical() == (
                 parse_shortcut_spec(s).canonical()
             )
@@ -77,6 +84,10 @@ class TestBackwardCompatibility:
     def test_parse_shortcut_combo_returns_primary_modifier(self):
         assert parse_shortcut("alt+r") == "alt"
         assert parse_shortcut("ctrl+alt+r") == "ctrl"
+
+    def test_parse_shortcut_bare_function_key_returns_key(self):
+        assert parse_shortcut("f10") == "f10"
+        assert parse_shortcut("F13") == "f13"
 
     def test_parse_shortcut_invalid_raises_with_message(self):
         with pytest.raises(ValueError) as e:
@@ -98,7 +109,9 @@ class TestValidationAndLabels:
     def test_is_valid_shortcut(self):
         assert is_valid_shortcut("alt+r") is True
         assert is_valid_shortcut("ctrl+ctrl") is True
+        assert is_valid_shortcut("f10") is True
         assert is_valid_shortcut("ctrl") is False
+        assert is_valid_shortcut("r") is False
         assert is_valid_shortcut("") is False
         assert is_valid_shortcut("nope") is False
 
@@ -110,6 +123,10 @@ class TestValidationAndLabels:
     def test_combo_display_names_by_mode(self):
         assert get_shortcut_display_name("alt+r", "toggle") == "Press Alt+R"
         assert get_shortcut_display_name("alt+r", "push_to_talk") == "Hold Alt+R"
+
+    def test_bare_function_key_labels(self):
+        assert format_shortcut_label(parse_shortcut_spec("f10")) == "F10"
+        assert get_shortcut_display_name("f10", "push_to_talk") == "Hold F10"
 
 
 # --------------------------------------------------------------------------
@@ -206,6 +223,31 @@ class TestEvdevComboDetection:
         backend._handle_key_event(self._event(KEY_LEFTCTRL, 1), None)
         assert self._wait(fired)
 
+    def test_push_to_talk_bare_function_key(self):
+        from vocalinux.ui.keyboard_backends.evdev_backend import evdev_code_for_key
+
+        key_f10 = evdev_code_for_key("f10")
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut="f10", mode="push_to_talk")
+        pressed = threading.Event()
+        released = threading.Event()
+        backend.register_press_callback(pressed.set)
+        backend.register_release_callback(released.set)
+
+        backend._handle_key_event(self._event(key_f10, 1), None)
+        assert self._wait(pressed)
+        backend._handle_key_event(self._event(key_f10, 0), None)
+        assert self._wait(released)
+
+    def test_toggle_bare_function_key(self):
+        from vocalinux.ui.keyboard_backends.evdev_backend import evdev_code_for_key
+
+        key_f10 = evdev_code_for_key("f10")
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut="f10", mode="toggle")
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+        backend._handle_key_event(self._event(key_f10, 1), None)
+        assert self._wait(fired)
+
 
 # --------------------------------------------------------------------------
 # pynput combo detection
@@ -274,6 +316,18 @@ class TestPynputComboDetection:
         backend._on_press(kb.Key.ctrl_l)
         backend._on_press(kb.KeyCode.from_char("\x12"))
         assert self._wait(fired)
+
+    def test_push_to_talk_bare_function_key(self):
+        kb = self._kb()
+        backend = pynput_backend.PynputKeyboardBackend(shortcut="f10", mode="push_to_talk")
+        pressed = threading.Event()
+        released = threading.Event()
+        backend.register_press_callback(pressed.set)
+        backend.register_release_callback(released.set)
+        backend._on_press(kb.Key.f10)
+        assert self._wait(pressed)
+        backend._on_release(kb.Key.f10)
+        assert self._wait(released)
 
 
 @pytest.mark.skipif(not evdev_backend.EVDEV_AVAILABLE, reason="evdev not available")

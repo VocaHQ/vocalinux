@@ -8,7 +8,7 @@ module-level helper is pure and directly testable.
 
 import pytest
 
-from vocalinux.ui.settings_dialog import _gdk_keyname_to_token
+from vocalinux.ui.settings_dialog import _gdk_keyname_to_token, _shortcut_from_capture
 
 
 @pytest.mark.parametrize(
@@ -35,3 +35,19 @@ def test_maps_known_keys(name, expected):
 def test_rejects_modifiers_and_unknown(name):
     # Modifiers, empty/None, and out-of-range function keys are not main keys.
     assert _gdk_keyname_to_token(name) is None
+
+
+@pytest.mark.parametrize(
+    "modifiers,token,expected",
+    [
+        (["alt"], "r", "alt+r"),
+        (["ctrl", "alt"], "f5", "ctrl+alt+f5"),
+        ([], "f10", "f10"),
+        ([], "f24", "f24"),
+        ([], "r", None),
+        ([], "space", None),
+        (["shift"], "f10", "shift+f10"),
+    ],
+)
+def test_shortcut_from_capture(modifiers, token, expected):
+    assert _shortcut_from_capture(modifiers, token) == expected

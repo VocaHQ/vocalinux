@@ -1629,6 +1629,19 @@ def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
     return None
 
 
+def _shortcut_from_capture(modifiers: list[str], token: Optional[str]) -> Optional[str]:
+    """Build a canonical shortcut from recorded modifiers and a main key."""
+    from .keyboard_backends.base import is_function_key_token
+
+    if token is None:
+        return None
+    if modifiers:
+        return "+".join(modifiers + [token])
+    if is_function_key_token(token):
+        return token
+    return None
+
+
 def _row_matches_query(query: str, title: str, subtitle: str = "", keywords=()) -> bool:
     """Return whether a settings row matches a search query.
 
@@ -3800,9 +3813,7 @@ class SettingsDialog(Gtk.Dialog):
         if state & Gdk.ModifierType.SUPER_MASK:
             modifiers.append("super")
         token = _gdk_keyname_to_token(Gdk.keyval_name(event.keyval))
-        if not modifiers or token is None:
-            return None
-        return "+".join(modifiers + [token])
+        return _shortcut_from_capture(modifiers, token)
 
     def _on_shortcut_key_press(self, widget, event):
         """Capture a pressed combo while recording; otherwise pass through."""
@@ -3825,8 +3836,8 @@ class SettingsDialog(Gtk.Dialog):
             self._apply_custom_shortcut(shortcut)
         else:
             self.shortcut_info_label.set_markup(
-                "<span foreground='#e01b24'>Need a modifier + key. "
-                "Try again or press Esc to cancel.</span>"
+                "<span foreground='#e01b24'>Need a modifier + key, or an F1–F24 "
+                "function key alone. Try again or press Esc to cancel.</span>"
             )
         return True
 
