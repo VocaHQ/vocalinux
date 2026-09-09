@@ -958,7 +958,7 @@ export default function HomePage() {
               </div>
               <h3>VocaWin</h3>
               <p>
-                Unsigned Windows speech-to-text, v0.1.0-beta.1. SmartScreen may
+                Unsigned Windows speech-to-text, v0.1.1-beta. SmartScreen may
                 warn about an unknown publisher.
               </p>
             </a>
