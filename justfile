@@ -122,6 +122,24 @@ aur-gate:
     fi
     docker run "${ARGS[@]}" archlinux:latest bash "$PWD/packaging/aur/build-test.sh"
 
+# Run install.sh unattended in a distro container, as the CI gate does. Answers
+# "does this commit install" (needs docker).
+#
+# The tree is taken via git archive of HEAD and extracted inside the container,
+# so the venv local mode creates lands in the container's copy rather than in
+# your working tree. Same worktree handling as aur-gate above.
+#
+# Usage: `just install-gate` for debian:12, or `just install-gate fedora:42`
+install-gate distro="debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
+    if [ "$COMMON" != "$PWD/.git" ]; then
+        ARGS+=(-v "$COMMON:$COMMON:ro")
+    fi
+    docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-test.sh"
+
 # Check that a published release verifies as published: manifest, provenance,
 # notes and PyPI digests. Needs gh, downloads nothing.
 # Usage: `just verify-release` for the latest, or `just verify-release v0.16.2`
