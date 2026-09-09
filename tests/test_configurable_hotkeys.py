@@ -46,7 +46,7 @@ class TestParseShortcutSpec:
     def test_function_key_combo(self):
         assert parse_shortcut_spec("alt+f5").key == "f5"
 
-    def test_bare_function_key(self):
+    def test_bare_function_key(self) -> None:
         spec = parse_shortcut_spec("f10")
         assert spec.modifiers == ()
         assert spec.key == "f10"
@@ -65,7 +65,7 @@ class TestParseShortcutSpec:
         "bad",
         ["", "   ", "ctrl", "ctrl+alt", "alt+r+t", "invalid_shortcut", "alt+", "+r", "r", "space"],
     )
-    def test_invalid(self, bad):
+    def test_invalid(self, bad: str) -> None:
         with pytest.raises(ValueError):
             parse_shortcut_spec(bad)
 
@@ -85,7 +85,7 @@ class TestBackwardCompatibility:
         assert parse_shortcut("alt+r") == "alt"
         assert parse_shortcut("ctrl+alt+r") == "ctrl"
 
-    def test_parse_shortcut_bare_function_key_returns_key(self):
+    def test_parse_shortcut_bare_function_key_returns_key(self) -> None:
         assert parse_shortcut("f10") == "f10"
         assert parse_shortcut("F13") == "f13"
 
@@ -124,7 +124,7 @@ class TestValidationAndLabels:
         assert get_shortcut_display_name("alt+r", "toggle") == "Press Alt+R"
         assert get_shortcut_display_name("alt+r", "push_to_talk") == "Hold Alt+R"
 
-    def test_bare_function_key_labels(self):
+    def test_bare_function_key_labels(self) -> None:
         assert format_shortcut_label(parse_shortcut_spec("f10")) == "F10"
         assert get_shortcut_display_name("f10", "push_to_talk") == "Hold F10"
 
@@ -223,7 +223,7 @@ class TestEvdevComboDetection:
         backend._handle_key_event(self._event(KEY_LEFTCTRL, 1), None)
         assert self._wait(fired)
 
-    def test_push_to_talk_bare_function_key(self):
+    def test_push_to_talk_bare_function_key(self) -> None:
         from vocalinux.ui.keyboard_backends.evdev_backend import evdev_code_for_key
 
         key_f10 = evdev_code_for_key("f10")
@@ -238,7 +238,7 @@ class TestEvdevComboDetection:
         backend._handle_key_event(self._event(key_f10, 0), None)
         assert self._wait(released)
 
-    def test_toggle_bare_function_key(self):
+    def test_toggle_bare_function_key(self) -> None:
         from vocalinux.ui.keyboard_backends.evdev_backend import evdev_code_for_key
 
         key_f10 = evdev_code_for_key("f10")
@@ -247,6 +247,53 @@ class TestEvdevComboDetection:
         backend.register_toggle_callback(fired.set)
         backend._handle_key_event(self._event(key_f10, 1), None)
         assert self._wait(fired)
+
+
+@pytest.mark.skipif(not evdev_backend.EVDEV_AVAILABLE, reason="evdev not available")
+class TestEvdevShortcutAvailability:
+    def test_bare_function_key_checks_main_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut="f10", mode="push_to_talk")
+        modifier_calls: list[tuple[str, str]] = []
+        key_calls: list[tuple[str, str]] = []
+
+        monkeypatch.setattr(
+            evdev_backend,
+            "find_keyboard_devices",
+            lambda: ["/dev/input/event0", "/dev/input/event1"],
+        )
+
+        def fake_has_modifier(device_path: str, modifier: str) -> bool:
+            modifier_calls.append((device_path, modifier))
+            return False
+
+        def fake_has_key(device_path: str, key_token: str) -> bool:
+            key_calls.append((device_path, key_token))
+            return device_path == "/dev/input/event0" and key_token == "f10"
+
+        monkeypatch.setattr(evdev_backend, "device_has_modifier_key", fake_has_modifier)
+        monkeypatch.setattr(evdev_backend, "device_has_key", fake_has_key)
+
+        assert backend.is_available() is True
+        assert key_calls == [
+            ("/dev/input/event0", "f10"),
+        ]
+        assert modifier_calls == []
+
+    def test_modifier_shortcut_still_checks_modifier(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut="alt+r", mode="toggle")
+        modifier_calls: list[tuple[str, str]] = []
+
+        monkeypatch.setattr(evdev_backend, "find_keyboard_devices", lambda: ["/dev/input/event0"])
+
+        def fake_has_modifier(device_path: str, modifier: str) -> bool:
+            modifier_calls.append((device_path, modifier))
+            return modifier == "alt"
+
+        monkeypatch.setattr(evdev_backend, "device_has_modifier_key", fake_has_modifier)
+        monkeypatch.setattr(evdev_backend, "device_has_key", lambda *_args: False)
+
+        assert backend.is_available() is True
+        assert modifier_calls == [("/dev/input/event0", "alt")]
 
 
 # --------------------------------------------------------------------------
@@ -317,7 +364,7 @@ class TestPynputComboDetection:
         backend._on_press(kb.KeyCode.from_char("\x12"))
         assert self._wait(fired)
 
-    def test_push_to_talk_bare_function_key(self):
+    def test_push_to_talk_bare_function_key(self) -> None:
         kb = self._kb()
         backend = pynput_backend.PynputKeyboardBackend(shortcut="f10", mode="push_to_talk")
         pressed = threading.Event()

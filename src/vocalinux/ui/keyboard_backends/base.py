@@ -395,11 +395,7 @@ def parse_shortcut(shortcut_string: str) -> str:
             f"Supported shortcuts: {', '.join(SUPPORTED_SHORTCUTS.keys())}"
         )
     if spec.is_combo and not spec.modifiers:
-        if spec.key is None:
-            raise ValueError(
-                f"Unsupported shortcut: {shortcut_string}. "
-                f"Supported shortcuts: {', '.join(SUPPORTED_SHORTCUTS.keys())}"
-            )
+        assert spec.key is not None
         return spec.key
     return spec.primary_modifier
 
