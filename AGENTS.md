@@ -2,6 +2,11 @@
 
 Voice dictation for Linux: GTK 3 tray app (Python) plus a Next.js marketing site in `web/`. Default speech engine is **whisper.cpp** (`pywhispercpp`); OpenAI Whisper, Vosk, and a user-configured remote API are optional. Do not invent features, user counts, or privacy claims.
 
+## Commit attribution
+
+Agents must not add themselves as commit co-authors or add `Co-authored-by`
+trailers for agents.
+
 ## Critical: git worktrees for every branch and PR
 
 Never create a branch, commit, or open a pull request in the primary checkout. Always use a linked git worktree so the main working tree stays on `main` and stays clean. Do not `git switch` / `git checkout` a feature branch in the primary directory, and do not leave it dirty.
