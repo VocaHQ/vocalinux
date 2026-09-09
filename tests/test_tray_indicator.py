@@ -869,7 +869,15 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertEqual(len(listening_calls), 2)
         for call in listening_calls:
             self.assertEqual(call[0][1], "Microphone on")
-        self.assertGreaterEqual(indicator.set_icon_theme_path.call_count, 2)
+        from vocalinux.ui.tray_indicator import ICON_DIR
+
+        # _init_indicator already applied the default icon, so each cycle step
+        # nudges IconThemePath. Assert the alternating args, not only count.
+        theme_paths = [call[0][0] for call in indicator.set_icon_theme_path.call_args_list]
+        self.assertEqual(
+            theme_paths,
+            [ICON_DIR + os.sep, ICON_DIR, ICON_DIR + os.sep, ICON_DIR],
+        )
 
     def test_set_menu_item_enabled_noop_when_menu_missing(self):
         if hasattr(self.tray_indicator, "menu"):
