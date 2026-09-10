@@ -155,11 +155,19 @@ def test_pr_767_dictionary_configuration_keys_and_contract_are_preserved(
     manager = manager_at(tmp_path, monkeypatch, config)
 
     assert TERMS_FILENAME == "dictionary.txt"
-    assert DEFAULT_TERMS_PATH == "~/.config/vocalinux/dictionary.txt"
-    assert CustomDictionaryManager(FakeConfig()).terms_path_text() == DEFAULT_TERMS_PATH
+    assert Path(DEFAULT_TERMS_PATH).name == TERMS_FILENAME
     assert manager.terms_enabled()
     assert manager.terms_path() == configured_path
     assert manager.build_initial_prompt() == "VocaLinux"
+
+
+def test_default_terms_path_follows_xdg_config_home(tmp_path: Path, monkeypatch) -> None:
+    """A missing saved path uses the same XDG-aware root as corrections."""
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
+    manager = CustomDictionaryManager(FakeConfig({"dictionary": {}}))
+
+    assert manager.terms_path() == tmp_path / TERMS_FILENAME
+    assert manager.corrections_path() == tmp_path / CORRECTIONS_FILENAME
 
 
 def test_invalid_or_unreadable_configured_terms_path_is_not_persisted(
@@ -279,7 +287,28 @@ def test_invalid_corrections_file_fails_closed(tmp_path: Path, monkeypatch) -> N
     (tmp_path / CORRECTIONS_FILENAME).write_text("{not json", encoding="utf-8")
 
     assert manager.get_corrections() == []
+    assert manager.get_corrections_for_edit() is None
     assert manager.apply_corrections("super base") == "super base"
+
+
+def test_partially_invalid_corrections_cannot_be_destructively_edited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """UI write-back is refused when runtime reads had to filter source entries."""
+    manager = manager_at(tmp_path, monkeypatch)
+    path = tmp_path / CORRECTIONS_FILENAME
+    original = {
+        "version": 1,
+        "corrections": [
+            {"heard": "super base", "replacement": "Supabase"},
+            {"heard": "missing replacement"},
+        ],
+    }
+    path.write_text(json.dumps(original), encoding="utf-8")
+
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert manager.get_corrections_for_edit() is None
+    assert json.loads(path.read_text(encoding="utf-8")) == original
 
 
 def test_invalid_terms_file_is_ignored_and_explained(tmp_path: Path, monkeypatch) -> None:

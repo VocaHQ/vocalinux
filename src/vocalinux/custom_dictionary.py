@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TERMS_FILENAME = "dictionary.txt"
-DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
+DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
 DEFAULT_MAX_TERMS = 200
@@ -142,9 +142,10 @@ class CustomDictionaryManager:
         """Return the configured or session-only terms path without expansion."""
         if self._transient_terms_path is not None:
             return self._transient_terms_path
-        configured = self.config.get("dictionary", "file_path", DEFAULT_TERMS_PATH)
+        default_path = str(Path(config_dir()) / TERMS_FILENAME)
+        configured = self.config.get("dictionary", "file_path", default_path)
         if not isinstance(configured, str) or not configured.strip():
-            return DEFAULT_TERMS_PATH
+            return default_path
         return configured.strip()
 
     def terms_path(self) -> Optional[Path]:
@@ -174,7 +175,9 @@ class CustomDictionaryManager:
             logger.warning("Ignoring invalid custom terms path %r: %s", configured, error)
             return False
 
-        old_value = self.config.get("dictionary", "file_path", DEFAULT_TERMS_PATH)
+        old_value = self.config.get(
+            "dictionary", "file_path", str(Path(config_dir()) / TERMS_FILENAME)
+        )
         if not self.config.set("dictionary", "file_path", configured):
             return False
         if self.config.save_config():
@@ -300,6 +303,19 @@ class CustomDictionaryManager:
 
     def get_corrections(self) -> list[dict[str, str]]:
         """Read corrections from JSON for every segment, failing closed on errors."""
+        entries = self._read_corrections(for_edit=False)
+        return entries if entries is not None else []
+
+    def get_corrections_for_edit(self) -> Optional[list[dict[str, str]]]:
+        """Return losslessly editable entries, or None for an unsafe source file.
+
+        Runtime correction reads may safely ignore malformed individual entries,
+        but a UI edit must never rewrite the file from that filtered view.
+        """
+        return self._read_corrections(for_edit=True)
+
+    def _read_corrections(self, *, for_edit: bool) -> Optional[list[dict[str, str]]]:
+        """Read corrections with stricter validation for write-back workflows."""
         path = self.corrections_path()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -307,12 +323,20 @@ class CustomDictionaryManager:
             return self._legacy_corrections()
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             logger.warning("Could not read custom corrections file %s: %s", path, error)
-            return []
+            return None if for_edit else []
 
         if not isinstance(payload, dict) or payload.get("version") != CORRECTIONS_VERSION:
             logger.warning("Ignoring custom corrections file with an unsupported schema")
-            return []
-        return normalize_corrections(payload.get("corrections"))
+            return None if for_edit else []
+
+        raw_entries = payload.get("corrections")
+        entries = normalize_corrections(raw_entries)
+        if for_edit and (not isinstance(raw_entries, list) or len(entries) != len(raw_entries)):
+            logger.warning(
+                "Refusing to edit custom corrections because some source entries are invalid"
+            )
+            return None
+        return entries
 
     def save_corrections(self, entries: list[dict[str, str]]) -> bool:
         """Safely write validated corrections in the versioned JSON contract."""

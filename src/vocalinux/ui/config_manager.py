@@ -194,7 +194,7 @@ DEFAULT_CONFIG = {
     "dictionary": {
         # Preserve the custom-dictionary contract used by the accessibility scanner.
         "enabled": False,
-        "file_path": "~/.config/vocalinux/dictionary.txt",
+        "file_path": os.path.join(CONFIG_DIR, "dictionary.txt"),
         "max_words": 200,
     },
     "advanced": {

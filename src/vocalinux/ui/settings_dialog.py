@@ -3348,7 +3348,12 @@ class SettingsDialog(Gtk.Dialog):
                 "Enter both the heard phrase and its replacement."
             )
             return
-        entries = self.dictionary_manager.get_corrections()
+        entries = self.dictionary_manager.get_corrections_for_edit()
+        if entries is None:
+            self.dictionary_feedback_label.set_text(
+                "Could not edit corrections: fix or replace the malformed corrections file first."
+            )
+            return
         existing = [entry for entry in entries if entry["heard"].casefold() == heard.casefold()]
         entries = [entry for entry in entries if entry["heard"].casefold() != heard.casefold()]
         entries.append({"heard": heard, "replacement": replacement})
@@ -3376,10 +3381,14 @@ class SettingsDialog(Gtk.Dialog):
         """Remove one correction from the structured corrections file."""
         if self._initializing or self._applying_settings or not self._dictionary_available():
             return
+        editable_entries = self.dictionary_manager.get_corrections_for_edit()
+        if editable_entries is None:
+            self.dictionary_feedback_label.set_text(
+                "Could not edit corrections: fix or replace the malformed corrections file first."
+            )
+            return
         entries = [
-            entry
-            for entry in self.dictionary_manager.get_corrections()
-            if entry["heard"].casefold() != heard.casefold()
+            entry for entry in editable_entries if entry["heard"].casefold() != heard.casefold()
         ]
         if self.dictionary_manager.save_corrections(entries):
             self.dictionary_feedback_label.set_text("Correction removed.")
