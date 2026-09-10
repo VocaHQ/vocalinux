@@ -1095,6 +1095,10 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn('title="Transcript corrections"', body)
         self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper", body)
         self.assertIn("self.dictionary_management_switcher = Gtk.StackSwitcher()", body)
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)",
+            body,
+        )
         self.assertIn('terms_scroller, "terms", "Custom terms"', body)
         self.assertIn('corrections_scroller, "corrections", "Corrections"', body)
         for accessible_name in [

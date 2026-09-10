@@ -3102,6 +3102,7 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_management_switcher.set_halign(Gtk.Align.CENTER)
         self.dictionary_management_switcher.get_accessible().set_name("Custom dictionary section")
         self.dictionary_tab.pack_start(self.dictionary_management_switcher, False, False, 0)
+        self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)
 
         terms_group = PreferencesGroup(
             title="Custom terms",
