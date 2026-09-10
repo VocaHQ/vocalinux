@@ -7,6 +7,10 @@ on:
       - 'packaging/flatpak/**'
       - 'src/**'
       - 'pyproject.toml'
+      # The dependency manifest is generated from the hash-pinned export, so a
+      # lock refresh moves what this build ships. Without this, `just lock`
+      # could change every version in it and start no Flatpak job.
+      - 'requirements/**'
       - '.github/workflows/flatpak.yml'
   pull_request:
     branches: [ main, master ]
@@ -14,6 +18,10 @@ on:
       - 'packaging/flatpak/**'
       - 'src/**'
       - 'pyproject.toml'
+      # The dependency manifest is generated from the hash-pinned export, so a
+      # lock refresh moves what this build ships. Without this, `just lock`
+      # could change every version in it and start no Flatpak job.
+      - 'requirements/**'
       - '.github/workflows/flatpak.yml'
   workflow_dispatch:
 

@@ -26,8 +26,6 @@ depends=(
   'python-requests'
   'python-tqdm'
   'python-psutil'
-  'python-lxml'
-  'python-pydub'
   'python-evdev'
   'python-xlib'
   'hicolor-icon-theme'
@@ -45,6 +43,12 @@ optdepends=(
   'python-pywhispercpp-cuda: NVIDIA GPU whisper.cpp backend'
   'python-pywhispercpp-rocm: AMD GPU whisper.cpp backend'
   'python-onnxruntime: Silero VAD'
+  # One line per selectable engine. Without it the engine is offered in
+  # Settings and fails at import, which is how vosk and whisper shipped too.
+  'python-vosk: Vosk engine'
+  'python-openai-whisper: OpenAI Whisper engine'
+  'python-sherpa-onnx: Parakeet TDT 0.6B engine'
+  'python-faster-whisper: faster-whisper engine'
   'xdotool: X11 injection fallback'
   'xclip: X11 clipboard tools (copy/paste injection fallbacks)'
   'wl-clipboard: Wayland clipboard (wl-copy/wl-paste) injection fallbacks'

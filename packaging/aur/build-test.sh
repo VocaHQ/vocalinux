@@ -174,7 +174,7 @@ pacman -U --noconfirm "$BUILD"/*.pkg.tar.* >/dev/null
 
 # The console script proves the wheel's entry points landed; the imports walk
 # every depends entry the package declares (gi/Gtk/AppIndicator, IBus, cairo,
-# pyaudio, numpy, requests, tqdm, psutil, lxml, pydub, evdev, xlib, pynput).
+# pyaudio, numpy, requests, tqdm, psutil, evdev, xlib, pynput).
 vocalinux --version
 python - <<'PY' || fail "the installed package does not import"
 import vocalinux.main
