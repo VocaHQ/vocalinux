@@ -927,6 +927,21 @@ SETTINGS_CSS = """
     border: 1px solid alpha(@borders, 0.5);
 }
 
+/* Keep child list backgrounds inside the card's rounded lower corners. */
+.preferences-group-list {
+    background-color: transparent;
+    border-radius: 0 0 11px 11px;
+}
+
+.preferences-group-list > row:last-child,
+.preferences-group-list > row:last-child:hover {
+    border-radius: 0 0 11px 11px;
+}
+
+.dictionary-entry-list {
+    background-color: transparent;
+}
+
 .preferences-group-title {
     font-weight: bold;
     font-size: 0.9em;
@@ -2101,6 +2116,7 @@ class PreferencesGroup(Gtk.Box):
 
         # Content area with listbox for rows
         self.listbox = Gtk.ListBox()
+        self.listbox.get_style_context().add_class("preferences-group-list")
         self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.listbox.set_activate_on_single_click(False)
         self.pack_start(self.listbox, False, False, 0)
@@ -2546,7 +2562,10 @@ class SettingsDialog(Gtk.Dialog):
         self.settings_stack.set_transition_duration(120)
         self.settings_stack.set_hexpand(True)
         for page in self._pages:
-            self.settings_stack.add_titled(_scrollable(page.box), page.name, page.title)
+            # The dictionary page owns two independently scrollable management
+            # panes so its pane chooser stays visible above long term lists.
+            content = page.box if page.name == "dictionary" else _scrollable(page.box)
+            self.settings_stack.add_titled(content, page.name, page.title)
         self.settings_stack.add_named(self._build_search_empty_page(), "search-empty")
         self.settings_stack.connect("notify::visible-child", self._on_settings_page_changed)
 
@@ -2842,6 +2861,17 @@ class SettingsDialog(Gtk.Dialog):
             for extra in page.extras:
                 extra.hide()
 
+            if page.name == "dictionary":
+                # A search can hide the selected management pane while the
+                # other pane contains the match. Keep matching controls visible.
+                current = self.dictionary_management_stack.get_visible_child_name()
+                terms_visible = self.dictionary_terms_group.get_visible()
+                corrections_visible = self.dictionary_corrections_group.get_visible()
+                if current == "terms" and not terms_visible and corrections_visible:
+                    self.dictionary_management_stack.set_visible_child_name("corrections")
+                elif current == "corrections" and not corrections_visible and terms_visible:
+                    self.dictionary_management_stack.set_visible_child_name("terms")
+
             if page_matches > 0:
                 if page.update_badge_label is not None:
                     page.update_badge_label.hide()
@@ -3060,19 +3090,37 @@ class SettingsDialog(Gtk.Dialog):
 
     def _build_dictionary_section(self) -> None:
         """Build the Custom Dictionary page for terms and transcript corrections."""
+        self.dictionary_management_stack = Gtk.Stack()
+        self.dictionary_management_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.dictionary_management_stack.set_transition_duration(120)
+        self.dictionary_management_stack.set_homogeneous(False)
+        self.dictionary_management_stack.set_hexpand(True)
+        self.dictionary_management_stack.set_vexpand(True)
+
+        self.dictionary_management_switcher = Gtk.StackSwitcher()
+        self.dictionary_management_switcher.set_stack(self.dictionary_management_stack)
+        self.dictionary_management_switcher.set_halign(Gtk.Align.CENTER)
+        self.dictionary_management_switcher.get_accessible().set_name("Custom dictionary section")
+        self.dictionary_tab.pack_start(self.dictionary_management_switcher, False, False, 0)
+
         terms_group = PreferencesGroup(
             title="Custom terms",
             description=(
-                "Terms bias Whisper and whisper.cpp recognition. The UTF-8 terms file is "
-                "live-reloaded and has one term per line, so accessibility tools can edit it."
+                "Terms bias Whisper, whisper.cpp, and Faster Whisper recognition. The UTF-8 "
+                "terms file is live-reloaded and has one term per line, so accessibility tools "
+                "can edit it."
             ),
             keywords=("dictionary", "terms", "vocabulary", "whisper", "scanner"),
         )
+        self.dictionary_terms_group = terms_group
         self.dictionary_terms_enabled_switch = Gtk.Switch()
         terms_group.add_row(
             PreferenceRow(
                 title="Use custom terms",
-                subtitle="Vocabulary bias works with Whisper and whisper.cpp; corrections work with every engine.",
+                subtitle=(
+                    "Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper; "
+                    "corrections work with every engine."
+                ),
                 widget=self.dictionary_terms_enabled_switch,
             )
         )
@@ -3128,6 +3176,7 @@ class SettingsDialog(Gtk.Dialog):
         terms_group.add_row(terms_add_row)
 
         self.dictionary_terms_listbox = Gtk.ListBox()
+        self.dictionary_terms_listbox.get_style_context().add_class("dictionary-entry-list")
         self.dictionary_terms_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.dictionary_terms_listbox.set_placeholder(
             Gtk.Label(label="No custom terms yet.", xalign=0.5)
@@ -3136,7 +3185,12 @@ class SettingsDialog(Gtk.Dialog):
         terms_list_row.set_activatable(False)
         terms_list_row.add(self.dictionary_terms_listbox)
         terms_group.add_row(terms_list_row)
-        self.dictionary_tab.pack_start(terms_group, False, False, 0)
+
+        terms_scroller = Gtk.ScrolledWindow()
+        terms_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        terms_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        terms_scroller.add(terms_group)
+        self.dictionary_management_stack.add_titled(terms_scroller, "terms", "Custom terms")
 
         corrections_group = PreferencesGroup(
             title="Transcript corrections",
@@ -3147,6 +3201,7 @@ class SettingsDialog(Gtk.Dialog):
             ),
             keywords=("dictionary", "correction", "replacement", "misheard", "transcript"),
         )
+        self.dictionary_corrections_group = corrections_group
         corrections_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         corrections_box.set_margin_top(8)
         corrections_box.set_margin_bottom(4)
@@ -3177,6 +3232,7 @@ class SettingsDialog(Gtk.Dialog):
         corrections_group.add_row(corrections_add_row)
 
         self.dictionary_corrections_listbox = Gtk.ListBox()
+        self.dictionary_corrections_listbox.get_style_context().add_class("dictionary-entry-list")
         self.dictionary_corrections_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.dictionary_corrections_listbox.set_placeholder(
             Gtk.Label(label="No transcript corrections yet.", xalign=0.5)
@@ -3192,7 +3248,14 @@ class SettingsDialog(Gtk.Dialog):
         corrections_group.add_row(
             PreferenceRow(title="Dictionary status", widget=self.dictionary_feedback_label)
         )
-        self.dictionary_tab.pack_start(corrections_group, False, False, 0)
+
+        corrections_scroller = Gtk.ScrolledWindow()
+        corrections_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        corrections_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        corrections_scroller.add(corrections_group)
+        self.dictionary_management_stack.add_titled(
+            corrections_scroller, "corrections", "Corrections"
+        )
 
         self.dictionary_terms_enabled_switch.connect("state-set", self._on_dictionary_terms_enabled)
         self.dictionary_terms_path_entry.connect("activate", self._on_dictionary_terms_path_changed)

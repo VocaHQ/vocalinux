@@ -4,8 +4,8 @@
 
 Custom dictionary support has two separate jobs:
 
-1. **Custom terms** bias local Whisper and whisper.cpp recognition toward names and
-   jargon.
+1. **Custom terms** bias local Whisper, whisper.cpp, and Faster Whisper recognition
+   toward names and jargon.
 2. **Transcript corrections** deterministically replace a known misheard phrase
    after transcription.
 
@@ -64,7 +64,9 @@ for matching, so composed/decomposed accents are handled consistently.
 | --- | --- | --- |
 | OpenAI Whisper | `initial_prompt` | Yes |
 | whisper.cpp | Advanced initial prompt followed by custom terms; explicit empty prompt clears reused native state | Yes |
+| Faster Whisper | `initial_prompt` | Yes |
 | VOSK | No prompt-bias API | Yes |
+| Parakeet | No prompt-bias API | Yes |
 | Remote API | No prompt is added to current request formats | Yes |
 
 `--dictionary-file PATH` preserves the #767 session-only behavior: `PATH` is
@@ -99,7 +101,7 @@ paths are safely ignored and shown as unavailable rather than raising.
 
 1. Add `VocaLinux`, `PyGObject`, and a non-ASCII term in **Custom terms**;
    confirm `dictionary.txt` is UTF-8, one line per term, and an external
-   edit changes the next Whisper and whisper.cpp dictation segment.
+   edit changes the next Whisper, whisper.cpp, and Faster Whisper dictation segment.
 2. Add `super base` → `Supabase`; test lowercase, uppercase, punctuation, an
    overlapping short correction, `C++`, and non-ASCII text. Confirm replacement
    casing is exact and embedded text (for example `supersize`) is not replaced.
@@ -111,8 +113,9 @@ paths are safely ignored and shown as unavailable rather than raising.
    the Settings status/save feedback is clear.
 5. Test the UI with keyboard only: Add buttons via Enter, empty validation,
    update/remove feedback, narrow window, long entries, and high-contrast theme.
-6. Test all engines: Whisper and whisper.cpp should use terms and corrections;
-   VOSK and remote API should use corrections only, with the VOSK terms warning.
+6. Test all engines: Whisper, whisper.cpp, and Faster Whisper should use terms and
+   corrections; VOSK, Parakeet, and remote API should use corrections only, with
+   the VOSK terms warning.
 7. Start with `--dictionary-file /path/to/terms.txt`; confirm the session uses
    that file, Settings disables terms editing, saved settings remain unchanged,
    and corrections still apply.

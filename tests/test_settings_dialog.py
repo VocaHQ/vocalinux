@@ -1093,7 +1093,10 @@ class TestSettingsNavigation(unittest.TestCase):
         body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
         self.assertIn('title="Custom terms"', body)
         self.assertIn('title="Transcript corrections"', body)
-        self.assertIn("Vocabulary bias works with Whisper and whisper.cpp", body)
+        self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper", body)
+        self.assertIn("self.dictionary_management_switcher = Gtk.StackSwitcher()", body)
+        self.assertIn('terms_scroller, "terms", "Custom terms"', body)
+        self.assertIn('corrections_scroller, "corrections", "Corrections"', body)
         for accessible_name in [
             "Custom terms file",
             "Custom term",
@@ -1102,6 +1105,12 @@ class TestSettingsNavigation(unittest.TestCase):
             "Custom dictionary status",
         ]:
             self.assertIn(accessible_name, body)
+
+    def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self):
+        """Transparent list backgrounds do not cover the card's lower radius."""
+        self.assertIn(".preferences-group-list", self.source_code)
+        self.assertIn('add_class("preferences-group-list")', self.source_code)
+        self.assertIn("border-radius: 0 0 11px 11px", self.source_code)
 
     def test_custom_dictionary_path_and_persistence_handlers_are_present(self):
         """Path chooser and failure feedback keep existing settings safe."""

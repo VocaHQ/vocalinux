@@ -306,6 +306,22 @@ def test_whisper_receives_the_live_custom_terms_prompt(tmp_path: Path, monkeypat
     assert manager.model.transcribe.call_args.kwargs["initial_prompt"] == "VocaLinux"
 
 
+def test_faster_whisper_receives_the_live_custom_terms_prompt(tmp_path: Path, monkeypatch) -> None:
+    """Faster Whisper receives the same live vocabulary bias as OpenAI Whisper."""
+    dictionary = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    (tmp_path / TERMS_FILENAME).write_text("VocaLinux\n", encoding="utf-8")
+    manager = object.__new__(SpeechRecognitionManager)
+    manager.dictionary_manager = dictionary
+    manager._faster_whisper_engine = MagicMock()
+    manager._faster_whisper_engine.is_ready.return_value = True
+    manager._faster_whisper_engine.transcribe.return_value = "ok"
+
+    assert manager._transcribe_with_faster_whisper([b"\x00\x00"]) == "ok"
+    manager._faster_whisper_engine.transcribe.assert_called_once_with(
+        [b"\x00\x00"], initial_prompt="VocaLinux"
+    )
+
+
 def test_whispercpp_composes_and_clears_live_terms_prompt(tmp_path: Path, monkeypatch) -> None:
     """whisper.cpp keeps Advanced context and explicitly clears a stale prompt."""
     config = FakeConfig({"dictionary": {"enabled": True}})
@@ -405,7 +421,14 @@ def test_corrections_run_before_voice_commands() -> None:
 
 def test_correction_stage_is_shared_by_every_engine() -> None:
     """The common post-transcription stage is available to local and remote engines."""
-    for engine in ("vosk", "whisper", "whisper_cpp", "remote_api"):
+    for engine in (
+        "vosk",
+        "whisper",
+        "whisper_cpp",
+        "faster_whisper",
+        "parakeet",
+        "remote_api",
+    ):
         manager = object.__new__(SpeechRecognitionManager)
         manager.engine = engine
         manager.dictionary_manager = type(
