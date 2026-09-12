@@ -242,6 +242,17 @@ def test_no_source_is_pinned_to_one_python_abi(source: dict[str, str]) -> None:
     )
 
 
+def _on_event_block(event: str) -> str:
+    """The body of one `on:` event, up to the next same-indent key."""
+    match = re.search(
+        rf"^  {re.escape(event)}:\n(.*?)(?=^  [a-z_]+:|\Z)",
+        WORKFLOW.read_text(encoding="utf-8"),
+        re.M | re.S,
+    )
+    assert match, f"flatpak.yml has no on.{event} block"
+    return match.group(1)
+
+
 def test_a_lock_refresh_reaches_the_flatpak_build() -> None:
     """The manifest is generated from requirements/, so a change there changes
     what the Flatpak ships. Without the path filter, `just lock` could move
@@ -250,4 +261,28 @@ def test_a_lock_refresh_reaches_the_flatpak_build() -> None:
     assert text.count("'requirements/**'") >= 2, (
         "flatpak.yml does not watch requirements/**, so a lock refresh changes"
         " what the Flatpak builds and runs no build"
+    )
+
+
+def test_prs_skip_the_flatpak_build_when_only_src_changed() -> None:
+    """numpy and pywhispercpp compile from source. A text-injection PR does
+    not need that. push to main still watches src/** so a sandbox install
+    break still fails the default branch."""
+    assert "'src/**'" not in _on_event_block("pull_request")
+    assert "'src/**'" in _on_event_block("push")
+
+
+def test_builder_cache_key_is_a_prefix_the_action_can_restore() -> None:
+    """The action restore-keys is `flatpak-builder-${arch}`.
+
+    cache-key is passed through as `${cache-key}-${arch}`. A key of
+    `flatpak-builder-${hash}` becomes `flatpak-builder-${hash}-x86_64`,
+    which does not start with `flatpak-builder-x86_64`, so a packaging
+    hash change discarded the previous .flatpak-builder cache and
+    recompiled numpy and pywhispercpp from scratch (~18 min). Putting
+    `${{ matrix.arch }}` in the key first makes the fallback match.
+    """
+    assert (
+        "cache-key: flatpak-builder-${{ matrix.arch }}-"
+        "${{ hashFiles('packaging/flatpak/**') }}" in WORKFLOW.read_text(encoding="utf-8")
     )

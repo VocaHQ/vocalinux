@@ -275,7 +275,9 @@ jobs:
         with:
           bundle: Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak
           manifest-path: packaging/flatpak/com.vocalinux.Vocalinux.yml
-          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          # Same prefix rule as flatpak.yml: restore-keys is
+          # `flatpak-builder-${arch}`. The action appends -${arch} again.
+          cache-key: flatpak-builder-x86_64-${{ hashFiles('packaging/flatpak/**') }}
           arch: x86_64
           # Pinned actions/upload-artifact below, same digest as AppImage.
           upload-artifact: false
@@ -310,7 +312,7 @@ jobs:
         with:
           bundle: Vocalinux-${{ steps.get_version.outputs.VERSION }}-aarch64.flatpak
           manifest-path: packaging/flatpak/com.vocalinux.Vocalinux.yml
-          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          cache-key: flatpak-builder-aarch64-${{ hashFiles('packaging/flatpak/**') }}
           arch: aarch64
           upload-artifact: false
           mirror-screenshots-url: https://dl.flathub.org/media

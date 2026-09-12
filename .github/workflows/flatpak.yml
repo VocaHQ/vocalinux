@@ -16,7 +16,10 @@ on:
     branches: [ main, master ]
     paths:
       - 'packaging/flatpak/**'
-      - 'src/**'
+      # src/** is push-only. A text-injection PR already runs python-test;
+      # the Flatpak job's cost is compiling numpy and pywhispercpp from
+      # source, which those PRs do not change. main still builds src-only
+      # pushes so a sandbox install break fails the default branch.
       - 'pyproject.toml'
       # The dependency manifest is generated from the hash-pinned export, so a
       # lock refresh moves what this build ships. Without this, `just lock`
@@ -67,10 +70,12 @@ jobs:
         with:
           bundle: vocalinux-${{ matrix.arch }}.flatpak
           manifest-path: packaging/flatpak/com.vocalinux.Vocalinux.yml
-          # Stable key so .flatpak-builder cache restores across commits.
+          # The action appends -${arch} and restore-keys is
+          # `flatpak-builder-${arch}`, so the key has to start with that
+          # prefix. Putting the packaging hash first made every lock
+          # refresh a full rebuild (numpy + pywhispercpp from source).
           # github.sha in the key forced a full rebuild every run.
-          # Arch is appended automatically by the action.
-          cache-key: flatpak-builder-${{ hashFiles('packaging/flatpak/**') }}
+          cache-key: flatpak-builder-${{ matrix.arch }}-${{ hashFiles('packaging/flatpak/**') }}
           arch: ${{ matrix.arch }}
           artifact-name: vocalinux-flatpak-${{ matrix.arch }}
           # Flathub mirrors screenshots at submission time; mirror locally so the
