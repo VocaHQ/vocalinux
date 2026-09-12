@@ -114,7 +114,7 @@ def _flatpak_versions() -> dict:
     return {source["name"]: source["version"] for source in _flatpak_sources()}
 
 
-def test_the_project_is_installed_without_deps():
+def test_the_project_is_installed_without_deps() -> None:
     """The reason every other test here has to exist.
 
     `--no-deps` is correct (the runtime provides PyGObject and the modules
@@ -126,7 +126,7 @@ def test_the_project_is_installed_without_deps():
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_every_source_is_the_version_the_lock_resolved(source):
+def test_every_source_is_the_version_the_lock_resolved(source) -> None:
     """A version here that uv did not resolve is a package nothing tested."""
     if source["name"] in BUILD_BACKENDS:
         pytest.skip("build backend; absent from the runtime export by design")
@@ -143,7 +143,7 @@ def test_every_source_is_the_version_the_lock_resolved(source):
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_every_digest_is_one_uv_recorded(source):
+def test_every_digest_is_one_uv_recorded(source) -> None:
     """The bytes the Flatpak fetches are the bytes in uv.lock, not merely the
     same version number. A digest uv never saw is an artifact nothing pinned."""
     if source["name"] in BUILD_BACKENDS:
@@ -155,7 +155,7 @@ def test_every_digest_is_one_uv_recorded(source):
     )
 
 
-def test_the_flatpak_carries_every_runtime_dependency():
+def test_the_flatpak_carries_every_runtime_dependency() -> None:
     """A missing one fails at first launch, not at build time, because the
     project is installed with --no-deps and nothing resolves the gap."""
     missing = sorted(set(_locked()) - set(_flatpak_versions()) - RUNTIME_PROVIDED)
@@ -165,7 +165,7 @@ def test_the_flatpak_carries_every_runtime_dependency():
     )
 
 
-def test_the_flatpak_builds_nothing_the_lock_does_not_resolve():
+def test_the_flatpak_builds_nothing_the_lock_does_not_resolve() -> None:
     """#705 deleted pydub, lxml, tqdm and python-xlib from `pyproject.toml`.
 
     Two of those four came back through the dependency chain: pywhispercpp
@@ -182,7 +182,7 @@ def test_the_flatpak_builds_nothing_the_lock_does_not_resolve():
     )
 
 
-def test_pywhispercpp_satisfies_the_projects_own_floor():
+def test_pywhispercpp_satisfies_the_projects_own_floor() -> None:
     """The finding this file was written for. Stated as the constraint rather
     than a literal, so bumping the floor cannot leave the check behind it."""
     with PYPROJECT.open("rb") as handle:
@@ -197,7 +197,7 @@ def test_pywhispercpp_satisfies_the_projects_own_floor():
     )
 
 
-def test_the_version_injection_names_the_version_being_built():
+def test_the_version_injection_names_the_version_being_built() -> None:
     """pywhispercpp's sdist carries no version.txt and its setup() takes no
     version= argument, so the module rewrites setup.py before building and
     spells the version out four times. All four have to agree with the tarball
@@ -218,7 +218,7 @@ def test_the_version_injection_names_the_version_being_built():
     )
 
 
-def test_the_manifest_env_agrees_with_the_module():
+def test_the_manifest_env_agrees_with_the_module() -> None:
     """build-options.env sets PYWHISPERCPP_VERSION for the whole build. Left
     behind, it tells the build one version while the module builds another."""
     declared = re.search(r'PYWHISPERCPP_VERSION: "([^"]+)"', MANIFEST.read_text(encoding="utf-8"))
@@ -227,7 +227,7 @@ def test_the_manifest_env_agrees_with_the_module():
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_no_source_is_pinned_to_one_python_abi(source):
+def test_no_source_is_pinned_to_one_python_abi(source) -> None:
     """Universal wheel or sdist, never a cp-tagged wheel.
 
     The SDK's Python minor version is not ours to choose and moves with the
@@ -242,7 +242,7 @@ def test_no_source_is_pinned_to_one_python_abi(source):
     )
 
 
-def test_a_lock_refresh_reaches_the_flatpak_build():
+def test_a_lock_refresh_reaches_the_flatpak_build() -> None:
     """The manifest is generated from requirements/, so a change there changes
     what the Flatpak ships. Without the path filter, `just lock` could move
     every version in it and start no Flatpak job."""

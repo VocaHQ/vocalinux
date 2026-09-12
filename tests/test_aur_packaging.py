@@ -246,7 +246,7 @@ def _pypi_name(arch_name: str) -> str:
     return bare.removeprefix("python-").lower().replace("_", "-")
 
 
-def test_depends_declares_no_python_package_nothing_depends_on():
+def test_depends_declares_no_python_package_nothing_depends_on() -> None:
     """#705 deleted pydub, lxml, tqdm and python-xlib from `pyproject.toml`
     and left all four here, so AUR users installed four packages for nothing.
 
@@ -268,7 +268,7 @@ def test_depends_declares_no_python_package_nothing_depends_on():
     )
 
 
-def test_depends_covers_every_direct_dependency():
+def test_depends_covers_every_direct_dependency() -> None:
     """The other direction, and against the direct list rather than the
     resolved one.
 
@@ -290,7 +290,7 @@ def test_depends_covers_every_direct_dependency():
     ), f"pyproject.toml requires these and depends=() omits them: {', '.join(missing)}"
 
 
-def test_every_selectable_engine_reaches_optdepends():
+def test_every_selectable_engine_reaches_optdepends() -> None:
     """Each optional extra is an engine a user can pick in Settings. One with
     no optdepends line is an engine the AUR install cannot run and does not
     say so. #802 and #543 both landed without one."""
