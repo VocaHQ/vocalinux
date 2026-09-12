@@ -142,6 +142,12 @@ class TestCrossDistroCompatibility:
         zypper_line = next(
             line for line in install_sh_content.splitlines() if "local ZYPPER_PACKAGES=" in line
         )
+        zypper_packages = zypper_line.split('"')[1].split()
+        # ibus, not the typelib alone: ibus_engine.py spawns `ibus-daemon -x -d -r`
+        # and shells out to `ibus engine`, neither of which libibus provides.
+        assert "ibus" in zypper_packages
+        assert "typelib-1_0-IBus-1_0" in zypper_packages
+        assert "ibus-devel" not in zypper_packages
         assert "python3-devel" not in zypper_line
         assert "python3-virtualenv" not in zypper_line
         assert "libappindicator-gtk3" not in zypper_line

@@ -1,33 +1,34 @@
 ## Description
 
-<!-- Describe your changes in detail -->
+<!-- What changed and why. Link design docs or discussions if relevant. -->
 
-## Related Issue
+## Related issue
 
-<!-- Link to the related issue if applicable -->
+<!-- Link the issue this closes, if any. -->
 Fixes #
 
-## Type of Change
+## Type of change
 
-- [ ] 🐛 Bug fix (non-breaking change which fixes an issue)
-- [ ] ✨ New feature (non-breaking change which adds functionality)
-- [ ] 💥 Breaking change (fix or feature that would cause existing functionality to change)
-- [ ] 📖 Documentation update
-- [ ] 🧹 Code refactoring
-- [ ] ✅ Test update
+- [ ] Bug fix
+- [ ] New feature
+- [ ] Breaking change
+- [ ] Documentation
+- [ ] Refactor
+- [ ] Tests
+- [ ] Packaging / CI
 
 ## Checklist
 
-- [ ] My code follows the code style of this project (black, isort)
-- [ ] I have updated the documentation accordingly
-- [ ] I have added tests to cover my changes
-- [ ] All new and existing tests pass locally
-- [ ] Pre-commit hooks pass
+- [ ] Code follows project style (Black, isort, flake8)
+- [ ] Documentation updated when user-facing behavior or install steps change
+- [ ] Tests added or updated for the change
+- [ ] Local tests pass (`pytest`)
+- [ ] Conventional commit message style
 
 ## Screenshots (if applicable)
 
-<!-- Add screenshots to help explain your changes -->
+<!-- UI changes: before/after if helpful -->
 
-## Additional Notes
+## Notes for reviewers
 
-<!-- Add any additional notes for reviewers -->
+<!-- Anything not obvious from the diff -->

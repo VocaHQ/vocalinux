@@ -203,6 +203,38 @@ def _x11_probe_env() -> dict[str, str]:
     return env
 
 
+def read_wm_class(
+    window_id: str,
+    env: Optional[dict[str, str]] = None,
+    *,
+    xdotool_fallback: bool = False,
+) -> str:
+    """Return an X11 window's WM_CLASS without tripping xdotool's abort.
+
+    ``xdotool getwindowclassname`` hands an uninitialized ``XClassHint`` to
+    ``XFree`` when the window carries no WM_CLASS, so the process dies with
+    SIGABRT ("free(): invalid size") and leaves a coredump behind. KDE Plasma
+    on Wayland hits that on every probe: while a native Wayland client holds
+    focus, KWin points XWayland's _NET_ACTIVE_WINDOW at a property-less window
+    that ``xdotool getactivewindow`` still reports as the active window.
+
+    ``xprop`` reads the property safely, so it is the primary source. When
+    xprop is missing and ``xdotool_fallback`` is true, xdotool is used even
+    for class-only clients (no title, no pid). A property-less placeholder
+    may then abort the child; ``_run_text`` swallows that failure.
+    """
+    if not window_id:
+        return ""
+    if env is None:
+        env = _x11_probe_env()
+    if shutil.which("xprop"):
+        xprop = _run_text(["xprop", "-id", window_id, "WM_CLASS"], env)
+        return " ".join(re.findall(r'"([^"]+)"', xprop))
+    if xdotool_fallback and shutil.which("xdotool"):
+        return _run_text(["xdotool", "getwindowclassname", window_id], env)
+    return ""
+
+
 def _focused_window_x11() -> Optional[FocusedWindow]:
     """Identify the active X11 / XWayland window via xdotool."""
     if not shutil.which("xdotool"):
@@ -211,14 +243,9 @@ def _focused_window_x11() -> Optional[FocusedWindow]:
     window_id = _run_text(["xdotool", "getactivewindow"], env)
     if not window_id:
         return None
-    wm_class = _run_text(["xdotool", "getwindowclassname", window_id], env)
     title = _run_text(["xdotool", "getwindowname", window_id], env)
     pid = _run_text(["xdotool", "getwindowpid", window_id], env)
-    if shutil.which("xprop") and not wm_class:
-        xprop = _run_text(["xprop", "-id", window_id, "WM_CLASS"], env)
-        quoted = re.findall(r'"([^"]+)"', xprop)
-        if quoted:
-            wm_class = " ".join(quoted)
+    wm_class = read_wm_class(window_id, env, xdotool_fallback=True)
     return FocusedWindow(
         wm_class=wm_class,
         title=title,

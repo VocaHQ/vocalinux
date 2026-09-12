@@ -26,7 +26,13 @@ except ImportError:
     ecodes = None  # type: ignore
     EVDEV_AVAILABLE = False
 
-from .base import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE, KeyboardBackend, parse_shortcut
+from .base import (
+    DEFAULT_SHORTCUT,
+    DEFAULT_SHORTCUT_MODE,
+    KeyboardBackend,
+    ShortcutSpec,
+    parse_shortcut,
+)
 from .layout_key_map import get_active_char_to_evdev_map
 
 logger = logging.getLogger(__name__)
@@ -217,6 +223,21 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
     return keyboard_devices
 
 
+def _device_has_any_code(device_path: str, codes: set[int]) -> bool:
+    """Return True if the device reports any of ``codes`` in its EV_KEY caps."""
+    if not EVDEV_AVAILABLE or not codes:
+        return False
+
+    try:
+        device = InputDevice(device_path)
+        capabilities = device.capabilities()
+        device.close()
+        key_caps = capabilities.get(ecodes.EV_KEY, ())
+        return any(code in key_caps for code in codes)
+    except (OSError, IOError):
+        return False
+
+
 def device_has_modifier_key(device_path: str, modifier: str = "ctrl") -> bool:
     """
     Check if a device has a specific modifier key capability.
@@ -228,29 +249,31 @@ def device_has_modifier_key(device_path: str, modifier: str = "ctrl") -> bool:
     Returns:
         True if the device can send the specified modifier key events
     """
-    if not EVDEV_AVAILABLE:
+    return _device_has_any_code(device_path, MODIFIER_KEY_CODES.get(modifier, set()))
+
+
+def device_has_key(device_path: str, key_token: str) -> bool:
+    """
+    Check if a device can emit events for a canonical main-key token.
+
+    Args:
+        device_path: Path to the input device
+        key_token: Canonical main-key token (e.g. "f10", "r", "space")
+
+    Returns:
+        True if the device reports the key in its EV_KEY capabilities
+    """
+    key_code = evdev_code_for_key(key_token)
+    if key_code is None:
         return False
+    return _device_has_any_code(device_path, {key_code})
 
-    key_codes = MODIFIER_KEY_CODES.get(modifier, set())
-    if not key_codes:
-        return False
 
-    try:
-        device = InputDevice(device_path)
-        capabilities = device.capabilities()
-        device.close()
-
-        # Check if device has EV_KEY capability and supports the modifier keys
-        if ecodes.EV_KEY in capabilities:
-            key_caps = capabilities[ecodes.EV_KEY]
-            # Check for left or right variant of the modifier
-            for key_code in key_codes:
-                if key_code in key_caps:
-                    return True
-    except (OSError, IOError):
-        pass
-
-    return False
+def device_supports_shortcut(device_path: str, spec: ShortcutSpec) -> bool:
+    """Return True if the device can emit the configured shortcut."""
+    if spec.modifiers:
+        return device_has_modifier_key(device_path, spec.modifiers[0])
+    return spec.key is not None and device_has_key(device_path, spec.key)
 
 
 class EvdevKeyboardBackend(KeyboardBackend):
@@ -358,22 +381,19 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._combo_released()
 
     def is_available(self) -> bool:
-        """Check if evdev is available and we can access a keyboard device with the modifier key."""
+        """Check if evdev can access a keyboard device that supports this shortcut."""
         if not EVDEV_AVAILABLE:
             return False
 
-        # Check if we can access at least one keyboard device with the modifier key capability
         try:
             devices = find_keyboard_devices()
             if not devices:
                 return False
 
-            # Try to find at least one device with the modifier key that we can open
             for device_path in devices:
-                if device_has_modifier_key(device_path, self._modifier_key):
+                if device_supports_shortcut(device_path, self._spec):
                     return True
 
-            # Could not find any accessible device with the modifier key
             return False
         except Exception:
             return False
@@ -777,5 +797,7 @@ __all__ = [
     "EvdevKeyboardBackend",
     "EVDEV_AVAILABLE",
     "find_keyboard_devices",
+    "device_has_key",
     "device_has_modifier_key",
+    "device_supports_shortcut",
 ]

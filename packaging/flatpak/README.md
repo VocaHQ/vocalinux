@@ -74,18 +74,37 @@ flatpak-builder --run build-dir packaging/flatpak/com.vocalinux.Vocalinux.yml \
 
 ## Python Dependencies
 
-`python3-dependencies.yaml` is generated with `flatpak-pip-generator` (offline
-builds). Regenerate when `pyproject.toml` deps change:
+`python3-dependencies.yaml` is generated from `requirements/runtime.txt`, the
+hash-pinned export `just lock` writes out of `uv.lock`. Refresh it whenever the
+dependency set changes:
 
 ```bash
-pipx run flatpak-pip-generator \
-  --runtime org.gnome.Sdk//50 \
-  --yaml \
-  --ignore-pkg 'vosk>=0.3.45' "PyGObject; sys_platform == 'linux'" \
-  --output packaging/flatpak/python3-dependencies \
-  pywhispercpp pydub pynput evdev requests tqdm numpy pyaudio python-xlib psutil lxml \
-  meson-python pyproject-metadata
+just flatpak-deps        # rewrite the manifest (needs PyPI)
+just flatpak-deps-check  # report drift, change nothing
 ```
+
+`just lock` runs the first of those itself, so a normal dependency change needs
+no extra step.
+
+The script resolves each package's URL by looking up the digest uv already
+recorded, so the bytes this build downloads are the bytes in `uv.lock`, not
+merely the same version number. It takes a universal wheel where one exists and
+the sdist otherwise; an ABI-tagged wheel would pin the build to one SDK Python.
+
+This replaced a `flatpak-pip-generator` invocation whose package list was typed
+out on the command line. Nothing regenerated it and no test compared it to
+anything, so it drifted: by 2026-09-10 ten of its fifteen shared packages were
+behind the lock, `pydub` and `lxml` were still built four months after #705
+deleted them for having no imports, and pywhispercpp sat at 1.4.1 under the
+project's own `>=1.5.0`. The project is installed here with
+`pip3 install --no-deps`, so nothing inside the build could notice.
+`tests/test_flatpak_packaging.py` is what notices now, and it runs offline.
+
+Two things in that file are hand-written and the script preserves them, because
+no generator produces them: pywhispercpp's Vulkan build, which injects a version
+into `setup.py` (the sdist ships no `version.txt`, `setup()` takes no `version=`
+argument, and setuptools-scm has no git tree to read in the sandbox), and the
+symlinking of whisper.cpp's shared libraries onto the loader path.
 
 `python3-build-dependencies.yaml` is a small hand-maintained helper so
 `--no-build-isolation` builds can import `mesonpy` before NumPy is built.

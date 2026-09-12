@@ -1,129 +1,90 @@
-# Vocalinux Website
+# Vocalinux website
 
-This is the official website for Vocalinux, a voice-to-text application for Linux systems. The website is built with Next.js and can be deployed as a static site to GitHub Pages.
+Marketing site for [vocalinux.com](https://vocalinux.com), built with Next.js and deployed as a static export (GitHub Pages).
 
-## 🚀 Quick Start
+Product claims and design constraints: [PRODUCT.md](PRODUCT.md), [DESIGN.md](DESIGN.md). Agent notes: [AGENTS.md](AGENTS.md).
 
-### Development
+## Development
+
 ```bash
 npm install
 npm run dev
 ```
 
-### Building for Production
+## Production build
+
 ```bash
 npm install
 npm run build
 ```
 
-The static files will be generated in the `out/` directory.
+Static output is written to `out/`.
 
-## 📦 Deployment to GitHub Pages
+### Local preview of the build
 
-### Automatic Deployment (Recommended)
-
-1. **Push your changes** to the `main` or `master` branch
-2. **GitHub Actions will automatically build and deploy** your site to the `gh-pages` branch
-3. **Custom Domain**: The site is configured for `vocalinux.com`
-4. **The site will be available** at https://vocalinux.com
-
-### Manual Deployment
-
-If you prefer to deploy manually:
-
-1. **Build the static site:**
-   ```bash
-   cd web
-   npm install
-   npm run deploy
-   ```
-
-2. **The build includes:**
-   - Static HTML, CSS, and JavaScript files in `out/`
-   - `.nojekyll` file for GitHub Pages compatibility
-   - `CNAME` file pointing to `vocalinux.com`
-
-### Local Testing
-
-To test the built site locally:
 ```bash
-cd web/out
+cd out
 python3 -m http.server 3000
 ```
 
-Then visit `http://localhost:3000` in your browser.
+Open `http://localhost:3000`.
 
-## 🛠️ Build Scripts
+## Scripts
 
-- `npm run dev` - Start development server
-- `npm run build` - Build static site for production
-- `npm run deploy` - Build and prepare for GitHub Pages (adds .nojekyll and CNAME)
-- `npm run lint` - Run ESLint
-- `npm run typecheck` - Run TypeScript type checking
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Dev server |
+| `npm run build` | Production static export |
+| `npm run deploy` | Build and prepare GitHub Pages (`.nojekyll`, `CNAME`) |
+| `npm run lint` | ESLint |
+| `npm run typecheck` | TypeScript |
 
-## 📁 Project Structure
+## Deployment
+
+Push to `main` triggers the site workflow. Production host: **vocalinux.com**.
+
+Manual path:
+
+```bash
+cd web
+npm install
+npm run deploy
+```
+
+That produces `out/` with `.nojekyll` and a `CNAME` for vocalinux.com.
+
+## Layout
 
 ```
 web/
 ├── src/
-│   ├── app/
-│   │   ├── layout.tsx          # Root layout
-│   │   └── page.tsx            # Homepage
+│   ├── app/            # Next.js app routes
 │   ├── components/
 │   │   ├── site-chrome.tsx
-│   │   └── ui/                 # Reusable UI components
+│   │   └── ui/         # Reusable UI components
 │   ├── hooks/
 │   └── lib/
-├── public/                     # Static assets
-├── out/                        # Generated static files (after build)
+├── public/             # Static assets and screenshots
+├── out/                # Build output (generated)
 └── package.json
 ```
 
-## 🎨 Features
+## Configuration notes
 
-- **Responsive Design** - Works on desktop and mobile
-- **Family workbench UI** - Warm paper, system type, same language as VocaHQ
-- **Modern UI** - Built with Tailwind CSS
-- **SEO Optimized** - Proper meta tags and structure
-- **Fast Loading** - Optimized static generation
+- Custom domain: `deploy` script writes `out/CNAME`
+- Subdirectory deploy: set `basePath` in `next.config.js` if needed
+- Family workbench UI: warm paper, system type, same language as VocaHQ ([DESIGN.md](DESIGN.md))
 
-## 🔧 Configuration
+## Troubleshooting
 
-### Custom Domain
+| Symptom | Check |
+|---------|--------|
+| Module not found | `npm install` |
+| Type errors | `npm run typecheck` |
+| Lint errors | `npm run lint` |
+| 404 on GitHub Pages | Ensure `out/.nojekyll` exists |
+| Assets 404 | Confirm `basePath` matches deploy path |
 
-If you want to use a custom domain:
+## License
 
-1. Update the `deploy` script in `package.json` to include your domain:
-   ```json
-   "deploy": "next build && touch out/.nojekyll && echo 'yourdomain.com' > out/CNAME"
-   ```
-
-2. Configure your domain's DNS to point to GitHub Pages
-
-### Base Path
-
-If deploying to a subdirectory, update `next.config.js`:
-```javascript
-const config = {
-  basePath: '/your-subdirectory',
-  // ... other config
-}
-```
-
-## 🐛 Troubleshooting
-
-### Build Issues
-
-- **"Module not found"**: Run `npm install` to ensure all dependencies are installed
-- **TypeScript errors**: Run `npm run typecheck` to see detailed type errors
-- **ESLint errors**: Run `npm run lint:fix` to automatically fix common issues
-
-### Deployment Issues
-
-- **404 on GitHub Pages**: Ensure `.nojekyll` file exists in the `out/` directory
-- **Assets not loading**: Check that `basePath` is correctly configured in `next.config.js`
-- **Blank page**: Check browser console for JavaScript errors
-
-## 📝 License
-
-This project is licensed under the same license as the main Vocalinux project.
+Same as the main Vocalinux project ([AGPL-3.0](../LICENSE)).

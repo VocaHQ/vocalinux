@@ -161,6 +161,11 @@ class TrayIndicator:
                 self.icon_names["processing"] if FLATPAK_ID else self.icon_paths["processing"]
             ),
         }
+        # Last IconName applied this session. StatusNotifier hosts skip a
+        # redraw when the same path is reused; _set_indicator_icon nudges
+        # IconThemePath so gray→red→gray→red actually turns red again.
+        self._last_icon_key: Optional[str] = None
+        self._icon_theme_nudge = False
 
         # Register for speech recognition state changes
         self.speech_engine.register_state_callback(self._on_recognition_state_changed)
@@ -691,6 +696,24 @@ class TrayIndicator:
             self.speech_engine.end_download()
             self._model_download_active = False
 
+    def _set_indicator_icon(self, icon_key: str, description: str) -> None:
+        """Apply a tray icon, forcing a host redraw when cycling reused paths.
+
+        Ayatana/GNOME StatusNotifier hosts often skip a redraw when IconName
+        returns to a path already used earlier in the session. Alternating
+        IconThemePath between ICON_DIR and ICON_DIR + os.sep triggers a reload
+        while keeping absolute paths (theme names would regress the stale
+        ~/.local/share/icons hicolor placeholder). Flatpak uses themed names
+        and does not need the nudge.
+        """
+        if not FLATPAK_ID and self._last_icon_key is not None:
+            nudge = getattr(self.indicator, "set_icon_theme_path", None)
+            if callable(nudge):
+                self._icon_theme_nudge = not self._icon_theme_nudge
+                nudge(ICON_DIR + os.sep if self._icon_theme_nudge else ICON_DIR)
+        self.indicator.set_icon_full(icon_key, description)
+        self._last_icon_key = icon_key
+
     def _update_ui(self, state: RecognitionState):
         """
         Update the UI based on the recognition state.
@@ -708,19 +731,19 @@ class TrayIndicator:
             state = engine_state
 
         if state == RecognitionState.IDLE:
-            self.indicator.set_icon_full(self._icon_keys["default"], "Microphone off")
+            self._set_indicator_icon(self._icon_keys["default"], "Microphone off")
             self._set_menu_item_enabled("Start Voice Typing", True)
             self._set_menu_item_enabled("Stop Voice Typing", False)
         elif state == RecognitionState.LISTENING:
-            self.indicator.set_icon_full(self._icon_keys["active"], "Microphone on")
+            self._set_indicator_icon(self._icon_keys["active"], "Microphone on")
             self._set_menu_item_enabled("Start Voice Typing", False)
             self._set_menu_item_enabled("Stop Voice Typing", True)
         elif state == RecognitionState.PROCESSING:
-            self.indicator.set_icon_full(self._icon_keys["processing"], "Processing speech")
+            self._set_indicator_icon(self._icon_keys["processing"], "Processing speech")
             self._set_menu_item_enabled("Start Voice Typing", False)
             self._set_menu_item_enabled("Stop Voice Typing", True)
         elif state == RecognitionState.ERROR:
-            self.indicator.set_icon_full(self._icon_keys["default"], "Error")
+            self._set_indicator_icon(self._icon_keys["default"], "Error")
             self._set_menu_item_enabled("Start Voice Typing", True)
             self._set_menu_item_enabled("Stop Voice Typing", False)
 

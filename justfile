@@ -122,6 +122,24 @@ aur-gate:
     fi
     docker run "${ARGS[@]}" archlinux:latest bash "$PWD/packaging/aur/build-test.sh"
 
+# Run install.sh unattended in a distro container, as the CI gate does. Answers
+# "does this commit install" (needs docker).
+#
+# The tree is taken via git archive of HEAD and extracted inside the container,
+# so the venv local mode creates lands in the container's copy rather than in
+# your working tree. Same worktree handling as aur-gate above.
+#
+# Usage: `just install-gate` for debian:12, or `just install-gate fedora:42`
+install-gate distro="debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
+    if [ "$COMMON" != "$PWD/.git" ]; then
+        ARGS+=(-v "$COMMON:$COMMON:ro")
+    fi
+    docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-test.sh"
+
 # Check that a published release verifies as published: manifest, provenance,
 # notes and PyPI digests. Needs gh, downloads nothing.
 # Usage: `just verify-release` for the latest, or `just verify-release v0.16.2`
@@ -150,10 +168,25 @@ lock:
         -o requirements/appimage.txt
     uv pip compile requirements/appimage-tools.in --universal --no-deps --generate-hashes \
         -o requirements/appimage-tools.txt
+    # The Flatpak is a fourth copy of the dependency set, and it drifted ten
+    # packages behind before anything compared it to source. Regenerate it here
+    # so a lock refresh cannot leave it behind again.
+    just flatpak-deps
 
 # Fail if uv.lock is stale relative to pyproject.toml
 lock-check:
     uv lock --check
+
+# The export pins names, versions and digests; this looks up the URL that serves
+# those bytes, so it needs PyPI. tests/test_flatpak_packaging.py checks the same
+# invariant offline, which is what CI gates on.
+# Point the Flatpak's dependency manifest at what uv.lock resolved.
+flatpak-deps: _tooling
+    uv run --no-sync python scripts/sync_flatpak_deps.py
+
+# Fail if the Flatpak manifest is behind requirements/runtime.txt.
+flatpak-deps-check: _tooling
+    uv run --no-sync python scripts/sync_flatpak_deps.py --check
 
 # Refresh the pinned model digests. whisper.cpp digests come from Hugging Face
 # `lfs` metadata and cost no bandwidth; VOSK is pinned by the bytes we fetch, so

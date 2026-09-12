@@ -1,101 +1,87 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.16.x  | :white_check_mark: |
-| 0.15.x  | :x:                |
-| 0.14.x  | :x:                |
-| 0.13.x  | :x:                |
-| 0.12.x  | :x:                |
-| 0.11.x  | :x:                |
-| 0.10.x  | :x:                |
-| 0.9.x   | :x:                |
-| 0.8.x   | :x:                |
-| < 0.8   | :x:                |
+Only the current stable minor line receives security fixes:
 
-## Reporting a Vulnerability
+| Version | Supported |
+| ------- | --------- |
+| 0.16.x  | Yes |
+| 0.15.x  | No |
+| 0.14.x  | No |
+| older   | No |
 
-We take security seriously. If you discover a security vulnerability within Vocalinux, please follow these steps:
+Upgrade to the latest release for security and reliability fixes. See [docs/UPDATE.md](docs/UPDATE.md).
 
-### Do NOT
+## Reporting a vulnerability
 
-- Open a public GitHub issue for security vulnerabilities
-- Disclose the vulnerability publicly before it's fixed
+Do not open a public GitHub issue for security vulnerabilities.
 
-### Do
+**Preferred:** email the maintainer at **jatinkrmalik@gmail.com** with subject:
 
-1. **Email the maintainer directly**: Send an email to jatinkrmalik@gmail.com with:
-   - A clear description of the vulnerability
-   - Steps to reproduce the issue
-   - Potential impact assessment
-   - Any suggested fixes (optional)
+`Vocalinux Security Vulnerability Report`
 
-2. **Use the subject line**: "Vocalinux Security Vulnerability Report"
+Include:
 
-3. **Wait for acknowledgment**: You should receive a response within 48 hours
+- Clear description of the issue
+- Steps to reproduce
+- Potential impact
+- Suggested fix (optional)
 
-### What to Expect
+You should receive acknowledgment within 48 hours. We will assess severity, share an expected timeline, coordinate disclosure, and credit you in release notes if you want credit.
 
-1. **Acknowledgment**: We'll confirm receipt within 48 hours
-2. **Assessment**: We'll evaluate the severity and impact
-3. **Timeline**: We'll provide an estimated fix timeline
-4. **Fix**: We'll work on a fix and coordinate disclosure
-5. **Credit**: If desired, we'll credit you in the release notes
+If email is unavailable, use [GitHub private vulnerability reporting](https://github.com/VocaHQ/vocalinux/security/advisories/new) when enabled for the repository.
 
-## Security Considerations
+## Privacy design
 
-### Privacy
+Vocalinux is built for local-first dictation:
 
-Vocalinux is designed with privacy in mind:
+- Local engines process audio on-device after you download a model
+- No Voca account is required for local engines
+- No usage telemetry in the installed application
+- Models download once and stay in local cache
+- Downloads are checked against pinned checksums before install
 
-- **Offline by default**: whisper.cpp (default), Whisper, and VOSK engines all work completely offline
-- **Local processing**: All speech recognition happens on your device
-- **No data collection**: We don't collect or transmit your voice data
-- **No telemetry**: We don't track usage or behavior
+### Remote API (optional)
 
-### whisper.cpp (Default Engine)
+When the user enables **Remote API**, audio is uploaded to the configured server over HTTP(S). That path is off by default. Operators should use TLS and authentication for any network outside a trusted LAN. See [docs/HTTP_REMOTE.md](docs/HTTP_REMOTE.md).
 
-whisper.cpp is the default speech recognition engine:
-- High-performance C++ implementation
-- Processes completely locally on your machine
-- Models are downloaded once and cached locally
-- No audio data is sent to external servers
-- Supports Vulkan GPU acceleration for AMD, Intel, and NVIDIA GPUs
+### Engines
 
-### Whisper AI (OpenAI)
+| Engine | Processing | Notes |
+|--------|------------|--------|
+| whisper.cpp (default) | Local | Vulkan GPU optional; models cached under XDG data |
+| OpenAI Whisper | Local | PyTorch; NVIDIA/CUDA common |
+| VOSK | Local | Lightweight CPU path |
+| Parakeet | Local | NVIDIA NeMo ASR via sherpa-onnx; CPU |
+| Remote API | User-configured server | Opt-in only |
 
-OpenAI's Whisper is also available as an alternative:
-- PyTorch-based implementation
-- Processes locally on your machine
-- Models are downloaded once and cached locally
-- No audio data is sent to external servers
+### File locations
 
-### File Permissions
+| Path | Purpose | Permissions (typical) |
+|------|---------|------------------------|
+| `~/.config/vocalinux/` | Configuration | User-only (mode 700) |
+| `~/.local/share/vocalinux/` | Data and models | User-only (mode 700) |
 
-The application stores data in:
-- `~/.config/vocalinux/` - Configuration (mode 700)
-- `~/.local/share/vocalinux/` - Data and models (mode 700)
+### Known limitations
 
-### Known Limitations
+1. **Text injection** uses tools such as xdotool, wtype, ydotool, or IBus; desktop input APIs have their own privilege model
+2. **Global shortcuts** need access to input devices (e.g. evdev on some setups)
+3. **Virtual environments** isolate Python packages but do not sandbox the desktop session
 
-1. **Text injection**: Uses xdotool/wtype which may have implications for input monitoring
-2. **Keyboard shortcuts**: Global keyboard hooks require appropriate permissions
-3. **Virtual environments**: Running in a venv provides some isolation
-
-## Updates
-
-Keep your installation updated to receive security fixes:
+## Keeping installs current
 
 ```bash
-cd vocalinux
-git pull origin main
-pip install --upgrade -e .
+# Re-run the official installer (preserves config and models)
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
+
+Or follow [docs/UPDATE.md](docs/UPDATE.md) for source, AUR, AppImage, Snap, and Flatpak paths.
 
 ## Contact
 
-For security concerns: jatinkrmalik@gmail.com
-
-For general issues: https://github.com/VocaHQ/vocalinux/issues
+| Topic | Contact |
+|-------|---------|
+| Security | jatinkrmalik@gmail.com |
+| General bugs | https://github.com/VocaHQ/vocalinux/issues |

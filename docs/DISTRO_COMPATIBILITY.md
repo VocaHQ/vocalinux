@@ -1,25 +1,16 @@
-# Linux Distribution Compatibility
+# Linux distribution compatibility
 
-## Implementation Status
+How Vocalinux behaves across distributions, what is tested, and what to install manually when needed.
 
-The cross-distribution compatibility improvements have been implemented in phases:
+For install steps, prefer [INSTALL.md](INSTALL.md). Flatpak packaging (useful on immutable or non-standard layouts): [packaging/flatpak/README.md](../packaging/flatpak/README.md). Snap Store listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (`--edge`; pack/upload steps in [INSTALL.md](INSTALL.md)). Flatpak is not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).
 
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | ✅ Complete | Dynamic GI_TYPELIB_PATH detection using pkg-config, multi-arch support, ALSA library fallbacks |
-| Phase 2 | ✅ Complete | Enhanced distro detection (Gentoo, Alpine, Void, Solus, Mageia) |
-| Phase 3 | ✅ Complete | System dependency checker, improved error messages |
-| Phase 4 | 🟡 Partial | pkg-config as a core dependency ✅. The CI distro matrix covers six containers, but it checks detection logic, shell syntax and `--help` — it never runs the installer, and the container jobs are `continue-on-error`. Real install runs are tracked as phase 2.4 of [#701](https://github.com/VocaHQ/vocalinux/issues/701) |
-| **Phase 5** | ✅ **Complete** | **Fixed remaining hardcoded GI_TYPELIB_PATH values in install.sh and CI workflow** |
-| **Phase 6** | ✅ **Complete** | **Added wrapper script verification tests, updated documentation** |
-| **Phase 7** | ✅ **Complete** | **Flatpak packaging (whisper.cpp engine) for universal distribution support — see [`packaging/flatpak/`](../packaging/flatpak/README.md). Not on Flathub: submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds; channel tracked in [#167](https://github.com/VocaHQ/vocalinux/issues/167).** |
-| Phase 8 | 🚧 In progress | Snap recipe in-repo + Store listing live ([snapcraft.io/vocalinux](https://snapcraft.io/vocalinux)); install `--edge` and pack/upload steps in [docs/INSTALL.md](INSTALL.md) |
+## Cross-distro behavior
 
-## Technical Implementation
+The installer and launch wrappers handle most path differences.
 
-### Dynamic GI_TYPELIB_PATH Detection
+### GI_TYPELIB_PATH detection
 
-The installer now uses a robust multi-step approach to detect the correct GI_TYPELIB_PATH across different distributions:
+The installer uses a multi-step approach to detect the correct GI_TYPELIB_PATH:
 
 1. **Primary Method**: Uses `pkg-config --variable=typelibdir gobject-introspection-1.0` (most reliable)
 2. **Fallback Paths**: Checks common distribution-specific paths in priority order:
@@ -97,7 +88,7 @@ sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 \
 
 Debian's standard repositories differ from Ubuntu in a few ways that matter for Vocalinux:
 
-**pywhispercpp build prerequisites** — On a clean Debian install the following packages are not
+**pywhispercpp build prerequisites.** On a clean Debian install the following packages are not
 pulled in transitively (unlike Ubuntu) but are required when `pywhispercpp` must be compiled
 from source (e.g. for GPU support):
 
@@ -108,7 +99,7 @@ sudo apt install -y libssl-dev autoconf automake libtool patchelf
 The installer now installs these automatically, but if you hit a CMake error like
 `Could not find OpenSSL` during a manual reinstall, add the above first.
 
-**ydotool** — `ydotool` is not packaged in Debian's standard repos. The installer falls back
+**ydotool.** `ydotool` is not packaged in Debian's standard repos. The installer falls back
 gracefully to IBus or `wtype` for most Wayland compositors. KDE Plasma Wayland users should
 first select **IBus Wayland** in **System Settings -> Keyboard -> Virtual Keyboard**. If you
 specifically need `ydotool` as a fallback, compile it from source:
@@ -121,7 +112,7 @@ sudo cmake --build /tmp/ydotool/build --target install
 sudo systemctl enable --now ydotoold
 ```
 
-**Scoped source builds** — If you need to force `pywhispercpp` to rebuild from source, use the
+**Scoped source builds.** If you need to force `pywhispercpp` to rebuild from source, use the
 package-scoped flag to avoid compiling unrelated deps like NumPy from source (which takes a very
 long time and can fail):
 
@@ -131,7 +122,7 @@ PYWHISPERCPP_CLEAN=1 pip install --force-reinstall --no-binary=pywhispercpp pywh
 deactivate
 ```
 
-**Verifying libwhisper.so resolution** — If Vocalinux starts with
+**Verifying libwhisper.so resolution.** If Vocalinux starts with
 `libwhisper.so.1: cannot open shared object file`, check for unresolved symbols:
 
 ```bash
@@ -222,7 +213,8 @@ packages, creates the virtual environment, installs Vocalinux, sets up desktop
 integration, and downloads the default speech model:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 ### Important: Install System Packages First
@@ -351,7 +343,8 @@ during setup.
 
 For the best experience with automatic dependency handling, use the official installer:
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 This installer automatically detects your distribution and installs all required system packages.
@@ -549,9 +542,11 @@ If you successfully get Vocalinux working on an unsupported or experimental dist
    - Any patches or workarounds required
    - Update to this compatibility document
 
-## See Also
+## See also
 
-- [Installation Guide](../README.md#installation)
-- [Manual Installation](MANUAL_INSTALL.md)
+- [Installation guide](INSTALL.md)
+- [Manual / PyPI install](INSTALL_MANUAL.md)
 - [Troubleshooting](TROUBLESHOOTING.md)
-- [GitHub Issue Tracker](https://github.com/VocaHQ/vocalinux/issues)
+- [User guide](USER_GUIDE.md)
+- [Update guide](UPDATE.md)
+- [GitHub issue tracker](https://github.com/VocaHQ/vocalinux/issues)

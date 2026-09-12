@@ -228,6 +228,7 @@ class ShortcutSpec:
       from "ctrl+ctrl". The double-tap / hold gesture applies to that modifier.
     - Combo: ``modifiers=("alt",), key="r"`` parsed from "alt+r"; may carry
       several modifiers, e.g. ``modifiers=("ctrl", "alt"), key="r"``.
+    - Bare function key: ``modifiers=(), key="f10"`` parsed from "f10".
     """
 
     modifiers: Tuple[str, ...]
@@ -235,13 +236,15 @@ class ShortcutSpec:
 
     @property
     def is_combo(self) -> bool:
-        """True if this shortcut is a modifier+key combo (not a bare modifier)."""
+        """True if this shortcut has a main key (combo or bare function key)."""
         return self.key is not None
 
     @property
     def primary_modifier(self) -> str:
-        """The first modifier, used for backward-compatible single-modifier APIs."""
-        return self.modifiers[0] if self.modifiers else ""
+        """First modifier, or the bare main key when there are no modifiers."""
+        if self.modifiers:
+            return self.modifiers[0]
+        return self.key or ""
 
     def canonical(self) -> str:
         """Canonical shortcut string (round-trips through parse_shortcut_spec)."""
@@ -253,8 +256,8 @@ class ShortcutSpec:
 def parse_shortcut_spec(shortcut_string: str) -> ShortcutSpec:
     """Parse a shortcut string into a :class:`ShortcutSpec`.
 
-    Accepts legacy pure-modifier forms ("ctrl+ctrl", "left_shift+left_shift")
-    and modifier+key combos ("alt+r", "ctrl+alt+r").
+    Accepts legacy pure-modifier forms ("ctrl+ctrl", "left_shift+left_shift"),
+    modifier+key combos ("alt+r", "ctrl+alt+r"), and bare function keys ("f10").
 
     Raises:
         ValueError: if the string is empty, malformed, contains an unknown key,
@@ -283,6 +286,8 @@ def parse_shortcut_spec(shortcut_string: str) -> ShortcutSpec:
             raise ValueError(f"Unknown key in shortcut: {token!r}")
 
     if not modifiers:
+        if main_key is not None and _FUNCTION_KEY_RE.fullmatch(main_key):
+            return ShortcutSpec(modifiers=(), key=main_key)
         raise ValueError(f"Shortcut needs at least one modifier: {shortcut_string}")
 
     # Deduplicate modifiers while preserving order ("ctrl+ctrl" -> ("ctrl",)).
@@ -365,9 +370,10 @@ def parse_shortcut(shortcut_string: str) -> str:
     """
     Parse a shortcut string and return its primary modifier key name.
 
-    Retained for backward compatibility. Accepts both legacy pure-modifier
-    shortcuts ("ctrl+ctrl") and modifier+key combos ("alt+r"); for a combo the
-    first (primary) modifier is returned.
+    Retained for backward compatibility. Accepts legacy pure-modifier shortcuts
+    ("ctrl+ctrl"), modifier+key combos ("alt+r"), and bare function keys ("f10").
+    For combos the first (primary) modifier is returned; for bare function keys
+    the key token is returned.
 
     Args:
         shortcut_string: The shortcut string (e.g., "ctrl+ctrl", "alt+r")

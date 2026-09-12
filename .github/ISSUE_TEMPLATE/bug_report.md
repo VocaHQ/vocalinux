@@ -1,42 +1,52 @@
 ---
 name: Bug Report
-about: Report a bug to help us improve Vocalinux
+about: Report a bug to help improve Vocalinux
 title: "[BUG] "
 labels: bug
 assignees: ''
 ---
 
-## 🐛 Bug Description
-A clear and concise description of what the bug is.
+## Bug description
 
-## 📋 Steps to Reproduce
-1. Go to '...'
-2. Click on '...'
-3. Speak '...'
-4. See error
+A clear description of what went wrong.
 
-## ✅ Expected Behavior
-A clear and concise description of what you expected to happen.
+## Steps to reproduce
 
-## ❌ Actual Behavior
-What actually happened.
+1.
+2.
+3.
 
-## 📸 Screenshots
-If applicable, add screenshots to help explain your problem.
+## Expected behavior
 
-## 💻 Environment
-- **OS**: [e.g., Ubuntu 24.04]
-- **Python Version**: [e.g., 3.12]
-- **Vocalinux Version**: [e.g., 0.2.0-alpha]
-- **Display Server**: [X11 / Wayland]
-- **Speech Engine**: [VOSK / Whisper]
-- **Model Size**: [small / medium / large]
+What you expected to happen.
 
-## 📋 Debug Logs
-Run `vocalinux --debug` and paste relevant log output:
+## Actual behavior
+
+What happened instead.
+
+## Screenshots
+
+If applicable, attach screenshots.
+
+## Environment
+
+- **OS / distro**: (e.g. Ubuntu 24.04)
+- **Python version**: (e.g. 3.12; 3.11+ required)
+- **Vocalinux version**: (`vocalinux --version`)
+- **Install method**: (installer / AppImage / AUR / Flatpak / Snap / source / PyPI)
+- **Display server**: (X11 / Wayland)
+- **Desktop environment**: (e.g. GNOME, KDE Plasma)
+- **Speech engine**: (whisper_cpp / whisper / vosk / parakeet / remote_api)
+- **Model**: (e.g. tiny, medium.en-q5_0, v3-european)
+
+## Debug logs
+
+Run `vocalinux --debug` and paste the relevant output:
+
 ```
 [paste logs here]
 ```
 
-## 📝 Additional Context
-Add any other context about the problem here.
+## Additional context
+
+Anything else that might help (recent upgrade, Bluetooth mic, multi-GPU, etc.).

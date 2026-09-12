@@ -832,6 +832,53 @@ class TestTrayIndicator(unittest.TestCase):
         )
         self.assertEqual(result, False)
 
+    def test_update_ui_ptt_cycle_reapplies_active_icon(self):
+        """PTT IDLE→LISTENING→IDLE→LISTENING must set the active icon both times.
+
+        StatusNotifier hosts skip a redraw when IconName returns to a path
+        already used this session; the helper must still call set_icon_full
+        on the second LISTENING and nudge IconThemePath outside Flatpak.
+        """
+        indicator = MagicMock()
+        self.tray_indicator.indicator = indicator
+        mock_menu_item = MagicMock()
+        mock_menu_item.get_label.return_value = "Start Voice Typing"
+        self.tray_indicator.menu = MagicMock()
+        self.tray_indicator.menu.get_children.return_value = [mock_menu_item]
+
+        cycle = (
+            self.RecognitionState.IDLE,
+            self.RecognitionState.LISTENING,
+            self.RecognitionState.IDLE,
+            self.RecognitionState.LISTENING,
+        )
+        with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
+            patched_gtk.MenuItem = type(mock_menu_item)
+            with patch("vocalinux.ui.tray_indicator.FLATPAK_ID", None):
+                for state in cycle:
+                    self.mock_speech_engine.state = state
+                    self.tray_indicator._update_ui(state)
+
+        active = self.tray_indicator._icon_keys["active"]
+        default = self.tray_indicator._icon_keys["default"]
+        icon_names = [call[0][0] for call in indicator.set_icon_full.call_args_list]
+        self.assertEqual(icon_names, [default, active, default, active])
+        listening_calls = [
+            call for call in indicator.set_icon_full.call_args_list if call[0][0] == active
+        ]
+        self.assertEqual(len(listening_calls), 2)
+        for call in listening_calls:
+            self.assertEqual(call[0][1], "Microphone on")
+        from vocalinux.ui.tray_indicator import ICON_DIR
+
+        # _init_indicator already applied the default icon, so each cycle step
+        # nudges IconThemePath. Assert the alternating args, not only count.
+        theme_paths = [call[0][0] for call in indicator.set_icon_theme_path.call_args_list]
+        self.assertEqual(
+            theme_paths,
+            [ICON_DIR + os.sep, ICON_DIR, ICON_DIR + os.sep, ICON_DIR],
+        )
+
     def test_set_menu_item_enabled_noop_when_menu_missing(self):
         if hasattr(self.tray_indicator, "menu"):
             delattr(self.tray_indicator, "menu")

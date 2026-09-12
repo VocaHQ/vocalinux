@@ -49,7 +49,8 @@ Use this checklist for every release:
 - [ ] `pyproject.toml` - Confirm `Development Status` classifier and `requires-python` are correct for this release phase
 
 ### Documentation
-- [ ] `README.md` - Update release announcement and status references
+- [ ] `README.md` - Update short current-release blurb (not full notes)
+- [ ] `CHANGELOG.md` - Point "Current stable" at the new tag
 - [ ] `docs/INSTALL.md` - Verify install examples use `main/install.sh` (not version-pinned raw URLs)
 - [ ] `docs/UPDATE.md` - Add "What's New" section for new version
 - [ ] `SECURITY.md` - Update supported versions table
@@ -153,19 +154,19 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 #### Sources of truth
 
 - Delta commits: `git log vPREV..HEAD` plus merged PR titles/bodies.
-- Closed issues via PR `Fixes` / `Closes` references only — do not invent issue numbers.
+- Closed issues via PR `Fixes` / `Closes` references only - do not invent issue numbers.
 - Do not invent benchmarks, user counts, testimonials, or features not in the tree.
 
 #### Required structure
 
 1. `# Vocalinux vX.Y.Z` title
 2. One to three plain sentences: what this release is for (no hype)
-3. `## Highlights` — markdown table, about 4–8 rows
-4. `## New Features` — bullets with PR + author; include issue closes when real
-5. `## Bug Fixes` — group by area (IBus, Installer, AUR, Text injection, …)
+3. `## Highlights` - markdown table, about 4-8 rows
+4. `## New Features` - bullets with PR + author; include issue closes when real
+5. `## Bug Fixes` - group by area (IBus, Installer, AUR, Text injection, …)
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
-7. `## Thanks` — external PR authors and issue reporters by `@handle`
-8. `## Install / Upgrade` — `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
+7. `## Thanks` - external PR authors and issue reporters by `@handle`
+8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
 9. `### Verifying what you downloaded` (required, and easy to lose). `release.yml`
    generates it, with `sha256sum -c --ignore-missing SHA256SUMS` and
    `gh attestation verify`. A hand-written body replaces the generated one, so carry
@@ -176,7 +177,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 #### Include / exclude
 
 - **Include:** user-visible features, install/packaging changes, desktop reliability fixes, docs that change user instructions.
-- **Exclude or demote:** Dependabot-only bumps, CI matrix tweaks, agent-env docs, pure refactors — short “CI / maintenance” subsection at most.
+- **Exclude or demote:** Dependabot-only bumps, CI matrix tweaks, agent-env docs, pure refactors - short “CI / maintenance” subsection at most.
 
 #### Attribution and voice
 
@@ -186,7 +187,7 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 
 #### Website changelog vs GitHub Release
 
-- **Website** (`web/src/app/changelog/page.tsx`): 3–10 concise user-facing bullets for the new entry.
+- **Website** (`web/src/app/changelog/page.tsx`): 3-10 concise user-facing bullets for the new entry.
 - **GitHub Release**: fuller narrative + install block + thanks. Draft in the release-prep **PR body**; paste/edit onto the release after the tag workflow runs (workflow install stub + generated notes are a starting point only).
 
 #### Minor vs patch (reminder)
@@ -203,30 +204,14 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 
 #### 3.1 Update `README.md`
 
-**Status Badge (line ~6):**
-```markdown
-<!-- Alpha -->
-[![Status: Alpha](https://img.shields.io/badge/Status-Alpha-orange)]
+**README current-release blurb:**
+Keep a short one-line pointer to the new tag and [docs/UPDATE.md](UPDATE.md). Do not paste the full release notes into the README.
 
-<!-- Beta -->
-[![Status: Beta](https://img.shields.io/badge/Status-Beta-blue)]
-
-<!-- Stable -->
-[![Status: Stable](https://img.shields.io/badge/Status-Stable-brightgreen)]
-```
-
-**Install Commands:**
-Keep install commands on `main/install.sh` (installer resolves latest release tag automatically):
+**Install commands:**
+Keep install examples on `main/install.sh` (download-then-run preferred; installer resolves latest release tag):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash
-```
-
-**Release Announcement (lines ~31-34):**
-```markdown
-> 🎉 **Beta Release!**
->
-> We're excited to share Vocalinux Beta with the community.
-> This release is feature-complete and ready for broader testing.
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
+bash /tmp/vl.sh
 ```
 
 #### 3.2 Update `docs/INSTALL.md`
@@ -390,7 +375,7 @@ git push origin v0.5.0-beta
 
 After pushing the tag, the GitHub Actions workflow will automatically:
 
-1. Build the Python package (wheel and sdist) — **once**, with `SOURCE_DATE_EPOCH`
+1. Build the Python package (wheel and sdist) - **once**, with `SOURCE_DATE_EPOCH`
    pinned to the tagged commit. Every later job downloads that artifact instead of
    rebuilding, so the wheel on PyPI is byte-for-byte the wheel on the release
 2. Build and attach AppImages for x86_64 and aarch64, both from that same wheel
@@ -409,7 +394,7 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 - [ ] Verify GitHub Release was created correctly
 - [ ] Verify `SHA256SUMS` is attached and lists all four artifacts (wheel, sdist,
-      both AppImages) — the release notes tell users to run `sha256sum -c` against it
+      both AppImages) - the release notes tell users to run `sha256sum -c` against it
 - [ ] Verify provenance: `gh attestation verify <artifact> --repo VocaHQ/vocalinux`
 - [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
       matches the line for that wheel in `SHA256SUMS`

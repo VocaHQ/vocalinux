@@ -1,15 +1,15 @@
-# AUR
+# Arch User Repository (AUR)
 
 ## Users
 
 ```bash
 yay -S vocalinux          # latest release tag
-yay -S vocalinux-git      # community package, tracks main
+yay -S vocalinux-git      # community package; tracks main
 ```
 
-`vocalinux` and `vocalinux-git` conflict. Install only one.
+`vocalinux` and `vocalinux-git` conflict; install only one.
 
-## Maintainers (one-time)
+## Maintainers (one-time setup)
 
 Release tags auto-push `packaging/aur/vocalinux/PKGBUILD` when these secrets exist:
 

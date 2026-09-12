@@ -1,219 +1,145 @@
-# User Guide
+# User guide
 
-This guide explains how to use Vocalinux effectively.
+How to use Vocalinux day to day. Install first: [INSTALL.md](INSTALL.md).
 
-## Getting Started
+## Getting started
 
-After installing Vocalinux (see the [Installation Guide](INSTALL.md)), you can start the application from the terminal and optionally enable start-on-login.
+1. Launch Vocalinux (`vocalinux` or the application menu)
+2. Find the microphone icon in the system tray
+3. Start dictation with the tray menu or your keyboard shortcut
+4. Speak into the focused application; text is injected when an utterance completes
+5. Stop by releasing the key (push-to-talk, default on new installs) or with the same shortcut (toggle)
 
-## Start on Login (Autostart)
+### Start on login
 
-Vocalinux supports login autostart using the standard Linux desktop-session mechanism.
+Enable **Start on Login** from the first-run dialog, tray menu, or Settings. Vocalinux writes an XDG autostart entry (`~/.config/autostart/vocalinux.desktop`) and starts as a normal user app (`--start-minimized`). It does not create a systemd service.
 
-- **Where to enable it**:
-  - First-run welcome dialog
-  - Tray menu: **Start on Login**
-  - Settings dialog: **Start on Login**
-- **What Vocalinux creates**:
-  - `vocalinux.desktop` in `$XDG_CONFIG_HOME/autostart/` or `~/.config/autostart/`
-- **How it starts**:
-  - As a regular user GUI app in your desktop session (`--start-minimized`)
-- **What it does not do**:
-  - It does not create a `systemd` service/unit for autostart
+Works on common desktop environments (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt). Minimal window-manager sessions may need their own autostart helper.
 
-### Desktop Compatibility Notes
+### Status icons
 
-- Works on most mainstream desktop environments (GNOME, KDE, Xfce, Cinnamon, MATE, LXQt)
-- On minimal/custom window managers, autostart may require an autostart manager or desktop-specific startup hook
-
-## Basic Usage
-
-### Starting and Stopping Voice Typing
-
-1. **Launch the application**: Run `vocalinux` in a terminal or launch it from your application menu
-2. **Find the tray icon**: Look for the microphone icon in your system tray
-3. **Start voice typing**: Hold Right Alt (Option) by default, or use the tray menu / your configured shortcut
-4. **Speak clearly**: As you speak, your words will be transcribed into the currently focused application
-5. **Stop voice typing**: Release the key in push-to-talk (default), double-tap again in toggle mode, or use the tray menu
+| Icon state | Meaning |
+|------------|---------|
+| Gray (off) | Inactive |
+| Blue (on) | Listening |
+| Orange | Processing speech |
 
 ### Dictation formatting
 
-Vocalinux capitalizes the start of dictation and letters after `.`, `!`, or `?`. Each completed utterance also leaves a trailing space so the next push-to-talk or toggle session does not glue onto the previous sentence (`Hello.This` → `Hello. This`).
+Vocalinux capitalizes the start of dictation and letters after `.`, `!`, or `?`. Each completed utterance leaves a trailing space so the next session does not glue onto the previous sentence.
 
 ### Dictating into terminals
 
 When Vocalinux injects through the clipboard (the usual Wayland / ydotool path), it sends **Ctrl+V** in ordinary text fields and **Ctrl+Shift+V** in terminal emulator windows. Auto-detect works on X11 and on Hyprland, Sway, and niri. On GNOME or KDE Wayland, set **Settings → Dictation → Clipboard Paste Shortcut** to **Ctrl+Shift+V**.
 
-On non-US layouts such as German Neo, that chord uses the key that types **v** on the active layout (not physical KEY_V). Plasma's active layout comes from layout memory or D-Bus, not from `kxkbrc` list order. The map is cached for the process lifetime — restart Vocalinux after switching layouts. Per-window Plasma layouts may be stale if D-Bus is unavailable.
+On non-US layouts such as German Neo, that chord uses the key that types **v** on the active layout (not physical KEY_V). Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**.
 
-Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**. Choose **Ctrl+V** if a window was mis-detected as a terminal.
+## Shortcuts
 
-### Understanding the Status Icons
+Configure under **Settings → Shortcuts**:
 
-- **Microphone off** (gray): Voice typing is inactive
-- **Microphone on** (blue): Voice typing is active and listening
-- **Microphone processing** (orange): Voice typing is processing your speech
+| Mode | Behavior |
+|------|----------|
+| **Push-to-talk** (default on new installs) | Hold Right Alt (Option on Mac-layout keyboards) while speaking; release to stop |
+| **Toggle** | Double-tap the configured shortcut key to start/stop |
 
-## Voice Commands
+Existing configs keep their saved shortcut. Left/right modifier keys and custom modifier+key combos (for example `Alt+R`) are supported.
 
-Vocalinux supports several commands that you can speak to control formatting.
-English phrases always work. When recognition language is set (e.g. Italian,
-French, German, Spanish), matching punctuation and line-break phrases in that
-language are also recognized (for example Italian *virgola* / *punto*, French
-*virgule* / *point*).
+## Voice commands
+
+Optional spoken commands for punctuation and editing (can be disabled in Settings).
+English phrases always work. With a non-English recognition language, matching
+punctuation and line-break phrases in that language are also recognized
+(Italian *virgola* / *punto*, French *virgule* / *point*, and similar).
 
 | Command | Action |
 |---------|--------|
-| "new line" or "new paragraph" | Inserts a line break |
-| "period", "full stop", or "dot" | Types a period (.) |
-| "comma" | Types a comma (,) |
-| "question mark" | Types a question mark (?) |
-| "exclamation point" or "exclamation mark" | Types an exclamation point (!) |
-| "semicolon" | Types a semicolon (;) |
-| "colon" | Types a colon (:) |
-| "delete that" or "scratch that" | Deletes the last sentence |
-| "capitalize" or "uppercase" | Capitalizes the next word |
-| "all caps" | Makes the next word ALL CAPS |
+| "new line" / "new paragraph" | Line break |
+| "period" / "full stop" / "dot" | `.` |
+| "comma" | `,` |
+| "question mark" | `?` |
+| "exclamation point" / "exclamation mark" | `!` |
+| "semicolon" | `;` |
+| "colon" | `:` |
+| "delete that" / "scratch that" | Delete last sentence |
+| "capitalize" / "uppercase" | Capitalize next word |
+| "all caps" | Next word in ALL CAPS |
 
-Editing and formatting action phrases (`delete that`, `undo`, `capitalize`, …)
+Editing and formatting action phrases (`delete that`, `undo`, `capitalize`, and similar)
 are currently English-only.
 
-## Tips for Better Recognition
+## Engines and models
 
-1. **Use a good microphone**: A quality microphone significantly improves recognition accuracy
-2. **Speak clearly**: Enunciate your words clearly but naturally
-3. **Moderate pace**: Don't speak too quickly or too slowly
-4. **Quiet environment**: Minimize background noise when possible
-5. **Learn commands**: Familiarize yourself with voice commands for punctuation and formatting
-6. **Use GPU acceleration**: If you have a GPU (AMD, Intel, or NVIDIA), whisper.cpp will automatically use it for faster transcription
-7. **Choose the right model**:
-   - For real-time dictation: Use `tiny` or `base` (fastest)
-   - For better accuracy: Use `small`, `medium`, or `large`
-   - For English-only dictation: Choose an `.en` specialization
-   - For lower-memory systems: Choose a quantized specialization such as `q5_0` or `q5_1`
-8. **Check debug logs**: Run `vocalinux --debug` to see which backend is being used (Vulkan, CUDA, or CPU)
+Open **Settings → Speech Model**. The page starts with a simple setup (language and speed/accuracy). Expand **Advanced** for engine, model size, and specialization. Sidebar search (Ctrl+F) works across pages.
 
-## Customization
+### Engines
 
-### Keyboard Shortcut
+| Engine | Best for | GPU | Footprint |
+|--------|----------|-----|-----------|
+| **whisper.cpp** (default) | Most users | Vulkan (AMD, Intel, NVIDIA) | ~74MB default model |
+| **Whisper** (OpenAI) | PyTorch/CUDA workflows | NVIDIA/CUDA | Large (PyTorch stack) |
+| **Faster Whisper** | CPU Whisper (CTranslate2 / INT8) | Optional CUDA | Similar model sizes to Whisper |
+| **VOSK** | Low RAM / older machines | CPU | ~40MB |
+| **Parakeet** | CPU dictation; 25 European languages | CPU | ~639MB v3-european |
+| **Remote API** | Offload to a server | N/A (server-side) | Opt-in; see [HTTP_REMOTE.md](HTTP_REMOTE.md) |
 
-Vocalinux supports two shortcut modes for controlling voice typing:
+Parakeet runs NVIDIA NeMo ASR models through sherpa-onnx. The default bundle is **v3-european** (25 European languages). **v2-english** is English-only. Parakeet ignores the catalog language picker (language is treated as auto).
 
-- **Push-to-talk mode (default)**: Hold Right Alt (Option on Mac-layout keyboards) to speak, then release to stop
-- **Toggle mode**: Double-tap the configured shortcut key to start/stop voice typing
-- Configure mode and key in **Settings -> Shortcuts**
+### Model size (whisper.cpp / Whisper)
 
-### Model Settings
+| Size | Approx. size | Tradeoff |
+|------|--------------|----------|
+| tiny | ~74MB | Fastest; real-time friendly |
+| base | ~141MB | Balance of speed and accuracy |
+| small | ~465MB | Better accuracy |
+| medium | ~1.5GB | High accuracy |
+| large | ~3.0GB | Best accuracy; heavier |
 
-You can change the speech recognition engine and model for better accuracy or faster performance:
-
-### Choosing Your Engine
-
-Vocalinux now offers **three speech recognition engines**:
-
-1. **whisper.cpp** ⭐ (Default) - High-performance C++ engine
-   - Fastest installation (~1-2 min)
-   - Works with AMD, Intel, NVIDIA GPUs via Vulkan
-   - True multi-threading (no Python GIL)
-   - Best for most users
-
-2. **Whisper** (OpenAI) - PyTorch-based engine
-   - NVIDIA GPU only (requires CUDA)
-   - Larger download (~2.3GB with PyTorch)
-   - Installation takes ~5-10 min
-   - Use if you specifically need PyTorch features
-
-3. **VOSK** - Lightweight engine
-   - Smallest footprint (~40MB)
-   - CPU only
-   - Great for older systems or minimal resource usage
-
-### Changing Engine and Model
-
-1. Open settings from the tray icon menu (right-click)
-2. Open the **Speech Engine** page in the settings sidebar (search works if you prefer)
-3. Select your **Speech Engine**:
-   - whisper_cpp (recommended)
-   - whisper
-   - vosk
-4. Select your **Model Size**:
-   - **tiny** (~74MB) - Fastest, good for real-time dictation
-   - **base** (~141MB) - Good balance
-   - **small** (~465MB) - Better accuracy
-   - **medium** (~1.5GB) - High accuracy
-   - **large** (~3.0GB) - Best accuracy, slower
-5. For whisper.cpp, select a **Specialization**:
-   - **Standard multilingual** - Best default for auto-detect or non-English dictation
-   - **English-only** - Choose when you dictate only in English
-   - **Quantized** - Lower memory and smaller downloads with a possible accuracy tradeoff
-   - **Turbo** - Faster large-v3 option with strong accuracy
-   - **Legacy large** - Use only if you specifically need an older large model version
-
-English-only whisper.cpp specializations limit the language selector to English.
+For whisper.cpp, also pick a **Specialization**: standard multilingual, English-only, quantized (lower memory), Turbo, or legacy large. English-only specializations limit the language selector to English. Exact IDs (for example `medium.en-q5_0`, `large-v3-turbo`) work with `--model`.
 
 ### Removing unused models
 
-Open Settings and go to **Speech Model**. If leftover files are on disk that are
-not the model currently selected, **Unused downloads** appears under the model
-info card. Expand it to delete leftovers one at a time. Confirming removes those
-files from `~/.local/share/vocalinux`. Vocalinux will download a model again if
-you select it later. Packaged system-wide VOSK models are left alone. The section
-is hidden when there is nothing unused to delete.
+If leftover files are on disk that are not the model currently selected, **Unused downloads** appears under the model info card. Expand it to delete leftovers one at a time. Confirming removes those files from `~/.local/share/vocalinux`. Packaged system-wide VOSK models are left alone.
 
-### When to Use Each Model
+### GPU
 
-**For real-time dictation:** Use **tiny** or **base** - they're fast enough to keep up with your speech.
+whisper.cpp prefers Vulkan when the bundled pywhispercpp libraries include it, then CUDA, then CPU. Host tools such as `vulkaninfo` only describe the machine. The engine follows the libraries actually loaded. On multi-GPU machines a discrete Vulkan device is preferred; override under **Settings → Performance → Vulkan GPU**. Check logs with `vocalinux --debug`.
 
-**For transcription:** Use **small** or **medium** - better accuracy for recorded audio.
+Pip wheels of pywhispercpp are often CUDA builds. In that case Vocalinux uses CUDA device 0. `install.sh` rebuilds pywhispercpp with Vulkan or CUDA when it can.
 
-**For maximum accuracy:** Use **large** - best results but requires more RAM and GPU power.
+### Auto-pause and keep-alive
 
-**For lower-memory systems:** Use a quantized whisper.cpp specialization such as **Q5** or **Q8**.
+Under Settings:
 
-**For English-only dictation:** Use an **English-only** specialization and keep the language set to English.
+- **Auto-pause apps**: unload the model while listed apps run
+- **Model keep-alive**: unload after idle timeout to free GPU/CPU
 
-### GPU Acceleration
+## Tips for better recognition
 
-**whisper.cpp** uses GPU acceleration when the bundled pywhispercpp libraries include Vulkan or CUDA:
+1. Use a decent microphone and reduce background noise when you can
+2. Speak clearly at a natural pace
+3. Prefer `tiny`/`base` for snappy dictation; larger models when accuracy matters more than latency
+4. English-only or quantized specializations help when they match your use case
+5. Confirm Vulkan/CUDA in debug logs if transcription is slower than expected
 
-- **Vulkan** (AMD, Intel, NVIDIA) when `libggml-vulkan` is present
-- **CUDA** (NVIDIA) when `libggml-cuda` is present
-- **CPU** when those libraries are missing, even if Settings lists a GPU
+## CLI
 
-Host tools such as `vulkaninfo` only describe the machine. The engine follows the libraries actually loaded. Look for `GPU backend: vulkan` or `GPU backend: cuda` after the model loads. `CPU-only; pywhispercpp lacks GPU libraries` means inference is on the CPU.
-
-On multi-GPU machines, Vocalinux prefers a discrete Vulkan device when one is present and skips software renderers such as llvmpipe. Override the device under **Settings → Performance → Vulkan GPU**.
-
-Pip wheels of pywhispercpp are often CUDA builds. In that case Vocalinux always uses CUDA device 0 (the first NVIDIA GPU), because Vulkan GPU indices do not match CUDA ordinals. On a hybrid laptop the NVIDIA GPU is usually Vulkan GPU 1; feeding that index into CUDA would land on the CPU fallback instead.
-
-If you need a second NVIDIA GPU, either set `CUDA_VISIBLE_DEVICES` before starting Vocalinux or install a Vulkan-built pywhispercpp so the Performance GPU picker applies.
-
-`install.sh` rebuilds pywhispercpp with Vulkan or CUDA when it can. Prefer that launcher (or the wrapper it installs) so `LD_LIBRARY_PATH` includes the GPU libs. Raw `venv/bin` binaries can come up CPU-only.
-
-AppImages built from this tree compile pywhispercpp with Vulkan and use the host Vulkan driver at runtime. Older AppImages shipped the CPU-only wheel; if you see the `lacks GPU libraries` line, download a newer AppImage or use `install.sh`.
-
-Hybrid / PRIME / Optimus laptops: picking NVIDIA in Settings is enough when pywhispercpp is Vulkan-built. `prime-run` is not required for Vulkan, and it cannot fix a CPU-only wheel. Install `vulkan-tools` so `vulkaninfo` can enumerate devices; without it, whisper.cpp may default to GPU 0 (often the iGPU).
-
-To check which backend is being used, look for these log messages when starting Vocalinux (`vocalinux --debug`):
+```bash
+vocalinux --help
+vocalinux --version
+vocalinux --debug
+vocalinux --engine whisper_cpp
+vocalinux --engine faster_whisper
+vocalinux --engine parakeet
+vocalinux --model medium.en-q5_0
+vocalinux --wayland
+vocalinux --start-minimized
 ```
-[INFO] whisper.cpp using Vulkan GPU backend: AMD Radeon RX 6800
-[INFO] Using Vulkan GPU [0]: AMD Radeon RX 6800
-[INFO] whisper.cpp configured with n_threads=4 (GPU backend: vulkan)
-```
-
-### Auto-pause and model keep-alive
-
-Optional power-saving controls live under settings:
-
-- **Auto-pause apps** — unload the speech model while configured apps/games are running, then reload when they exit
-- **Model keep-alive** — unload the model after a configurable idle timeout so idle dictation does not keep GPU/CPU resources warm
 
 ## Troubleshooting
-
-If you encounter issues, check the [Installation Guide](INSTALL.md) troubleshooting section or run the application with debug logging:
 
 ```bash
 vocalinux --debug
 ```
 
-Check the logs for error messages and possible solutions.
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for tray, audio, injection, and model issues. Distro notes: [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md). Updates: [UPDATE.md](UPDATE.md). Help channels: [SUPPORT.md](../SUPPORT.md).

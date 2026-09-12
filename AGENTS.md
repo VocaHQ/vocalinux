@@ -2,6 +2,11 @@
 
 Voice dictation for Linux: GTK 3 tray app (Python) plus a Next.js marketing site in `web/`. Default speech engine is **whisper.cpp** (`pywhispercpp`); OpenAI Whisper, Vosk, and a user-configured remote API are optional. Do not invent features, user counts, or privacy claims.
 
+## Commit attribution
+
+Agents must not add themselves as commit co-authors or add `Co-authored-by`
+trailers for agents.
+
 ## Critical: git worktrees for every branch and PR
 
 Never create a branch, commit, or open a pull request in the primary checkout. Always use a linked git worktree so the main working tree stays on `main` and stays clean. Do not `git switch` / `git checkout` a feature branch in the primary directory, and do not leave it dirty.
@@ -75,12 +80,15 @@ just test          # pytest -v
 just test-cov      # pytest --cov=src --cov-report=html
 just deps          # sync .venv with dev+vad extras and the lint group
 just deps-all      # also whisper/vosk/docs; later recipes use --no-sync so they keep it
-just lock          # regenerate uv.lock + requirements/*.txt
+just lock          # regenerate uv.lock, requirements/*.txt and the Flatpak dep manifest
 just lock-check    # fail if uv.lock is stale vs pyproject.toml
+just flatpak-deps       # regenerate the Flatpak dep manifest from requirements/runtime.txt (needs PyPI)
+just flatpak-deps-check # fail if that manifest is behind the export
 just model-checksums  # refresh pinned model digests after adding a model
 just appimage      # build the AppImage in its pinned base image (needs docker)
 just appimage-boot fedora:42   # boot that AppImage in a distro container
 just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
+just install-gate debian:12  # run install.sh unattended in a distro container
 just verify-release  # check a published release as published (needs gh)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
@@ -100,7 +108,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 
 ## Dependencies (uv)
 
-`uv.lock` is authoritative. `just lock` regenerates it and the hash-pinned `requirements/*.txt` exports. The AppImage build installs from `runtime`/`vad` plus `appimage.txt`; `install.sh` still resolves at install time (phase 2 of #701). **Do not edit `requirements/*.txt` by hand.** Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine, `requirements/appimage*.in` for the AppImage), run `just lock`, and commit the lock plus the exports with the manifest change.
+`uv.lock` is authoritative. `just lock` regenerates it, the hash-pinned `requirements/*.txt` exports, and `packaging/flatpak/python3-dependencies.yaml`. The AppImage build installs from `runtime`/`vad` plus `appimage.txt`; `install.sh` still resolves at install time (phase 2 of #701). **Do not edit `requirements/*.txt` by hand**, nor the url/sha256 pairs in `packaging/flatpak/python3-dependencies.yaml`. Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine, `requirements/appimage*.in` for the AppImage), run `just lock`, and commit the lock plus the exports with the manifest change.
 
 | Constraint | Rule |
 |---|---|
@@ -112,6 +120,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | AppImage PyGObject | Pinned separately in `requirements/appimage.in`, and below 3.52: the AppImage bundles its own interpreter and builds PyGObject against the base image's girepository-1.0, while uv.lock's 3.56 needs girepository-2.0 (glib 2.80+) |
 | AppImage build inputs | Base image, tooling, interpreter, shaderc and the Vulkan headers are pinned in `packaging/appimage/tool_checksums.txt`. Build with `just appimage` (docker) — building on the host ships the host's glibc, which is what kept the AppImage off Debian 12 |
 | AppImage boot matrix | `packaging/appimage/boot-test.sh` runs the finished AppImage in distro containers, and the matrix in `unified-pipeline.yml` must keep distros both older and newer than the build image: the old ones prove the glibc floor, the new ones catch a bundle that breaks the host binaries it spawns. A distro added there needs its package recipe in the script — `tests/test_appimage_packaging.py` checks both |
+| Flatpak deps | `packaging/flatpak/python3-dependencies.yaml` is generated from `requirements/runtime.txt` by `scripts/sync_flatpak_deps.py` (`just flatpak-deps`, which `just lock` runs itself). It resolves each artifact by the digest uv already recorded, so the Flatpak downloads the bytes in `uv.lock`. The project installs there with `pip3 install --no-deps`, so nothing inside the build evaluates `pyproject.toml` — `tests/test_flatpak_packaging.py` checks the invariant offline |
 | Speech models | Verified against digests pinned in `src/vocalinux/utils/model_checksums.txt` before install, by both `install.sh` and the runtime downloaders. **Fails closed** — an unpinned model is refused. Regenerate with `just model-checksums` (never by hand); `tests/test_model_checksums.py` fails if it falls behind. whisper.cpp URLs use a pinned Hugging Face commit, never `main` |
 
 Optional extras: `vosk`, `whisper`, `vad`, `dev`.

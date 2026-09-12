@@ -31,6 +31,22 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     assert SNAP_PNG.stat().st_size > 0
 
 
+def test_snap_puts_gnome_platform_first_on_ld_library_path() -> None:
+    """core24 gdk-pixbuf finds libpixbufloader_svg.so only if gnome-platform wins.
+
+    Stage-packages pull a second gdk-pixbuf (no SVG loader) into
+    $SNAP/usr/lib/<triplet>. desktop-launch's query-loaders walks the first
+    LD_LIBRARY_PATH entry that ends in that triplet, so gnome-platform must
+    come first or About-page SVGs fail with "Image type svg is not supported".
+    """
+    doc = yaml.safe_load(SNAPCRAFT_YAML.read_text(encoding="utf-8"))
+    env = (doc.get("apps") or {}).get("vocalinux", {}).get("environment") or {}
+    ld_path = env.get("LD_LIBRARY_PATH")
+    assert isinstance(ld_path, str)
+    assert ld_path.startswith("$SNAP/gnome-platform/usr/lib/$CRAFT_ARCH_TRIPLET:")
+    assert ld_path.endswith(":$LD_LIBRARY_PATH")
+
+
 def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
     """Pip must not build PyGObject; GI comes from the gnome extension."""
     text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
