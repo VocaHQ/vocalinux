@@ -1,0 +1,15 @@
+# Robots.txt for Vocalinux
+# https://vocalinux.com
+#
+# Intentionally permissive for marketing pages. Do not blanket-block
+# query-string URLs or /_next/static — those caused Google Search Console
+# "Indexed, though blocked by robots.txt" for otherwise valid pages.
+# Duplicate/param URLs are handled via canonical tags instead.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /out/
+
+# Sitemap location
+Sitemap: https://vocalinux.com/sitemap.xml
