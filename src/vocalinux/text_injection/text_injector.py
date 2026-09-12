@@ -1455,10 +1455,18 @@ class TextInjector:
             logger.warning("Could not copy text to clipboard for paste injection")
             return False
 
-        # Clipboard is overwritten — cancel any in-flight restore and take ownership.
+        # Clipboard is overwritten — take ownership. Publish the original
+        # clipboard now (first writer wins) so an overlapping paste inherits
+        # it even if this paste later fails.
         with self._state_lock:
             self._clipboard_restore_generation += 1
             generation = self._clipboard_restore_generation
+            if (
+                previous_clipboard is not None
+                and not self._should_copy_to_clipboard()
+                and self._clipboard_restore_target is None
+            ):
+                self._clipboard_restore_target = previous_clipboard
 
         # Simulate paste. XWayland uses xdotool against the X11 CLIPBOARD;
         # native Wayland prefers wtype keysyms, then layout-resolved ydotool.
@@ -1510,23 +1518,24 @@ class TextInjector:
         # Delayed restore so Ctrl+V can land first. Skip when the user wants
         # dictated text left on the clipboard (copy_to_clipboard setting).
         if previous_clipboard is not None and not self._should_copy_to_clipboard():
-            with self._state_lock:
-                self._clipboard_restore_target = previous_clipboard
 
             def _restore() -> None:
                 time.sleep(0.3)
                 with self._state_lock:
                     if generation != self._clipboard_restore_generation:
                         return
+                    target = self._clipboard_restore_target
                     self._clipboard_restore_target = None
+                if target is None:
+                    return
                 # User copied something else during the delay — leave it alone.
                 if self._read_clipboard() != text:
                     logger.debug("Clipboard changed during restore delay; skipping restore")
                     return
-                if previous_clipboard == "":
+                if target == "":
                     success = self._clear_clipboard(tools=tools)
                 else:
-                    success = self._copy_to_clipboard(previous_clipboard, tools=tools)
+                    success = self._copy_to_clipboard(target, tools=tools)
                 if success:
                     logger.debug("Clipboard restored to previous content")
                 else:

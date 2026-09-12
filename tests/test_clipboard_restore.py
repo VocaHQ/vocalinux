@@ -847,6 +847,47 @@ class TestOverlappingClipboardRestore(unittest.TestCase):
                                     self.assertEqual(copy_calls, ["hello", "world"])
                                     self.assertNotIn("URL", copy_calls)
 
+    def test_stale_failure_does_not_lose_original_clipboard(self) -> None:
+        """Newer overlapping restore must still land on the pre-first clipboard.
+
+        If the older paste fails after generation moved on, skipping its
+        restore must not strand the newer thread on intermediate dictated text.
+        """
+        obj = _make_injector()
+        copy_calls: list[str] = []
+        nested = {"done": False}
+
+        def run_side_effect(cmd, **kwargs):
+            if not nested["done"]:
+                nested["done"] = True
+                self.assertTrue(obj._inject_via_clipboard_paste("world"))
+                raise subprocess.CalledProcessError(1, cmd)
+            return MagicMock(returncode=0)
+
+        with patch.object(obj, "_read_clipboard", side_effect=["URL", "world"]):
+            with patch.object(
+                obj, "_copy_to_clipboard", side_effect=lambda t, **kw: copy_calls.append(t) or True
+            ):
+                with patch.object(obj, "_should_copy_to_clipboard", return_value=False):
+                    with patch.object(obj, "_should_use_terminal_paste", return_value=False):
+                        with patch.object(
+                            obj,
+                            "_clipboard_paste_command",
+                            return_value=["ydotool", "key", "ctrl+v"],
+                        ):
+                            with patch(
+                                "vocalinux.text_injection.text_injector.subprocess.run",
+                                side_effect=run_side_effect,
+                            ):
+                                self.assertFalse(obj._inject_via_clipboard_paste("hello"))
+                                time.sleep(0.5)
+
+        self.assertEqual(copy_calls[0], "hello")
+        self.assertEqual(copy_calls[1], "world")
+        self.assertEqual(copy_calls[-1], "URL")
+        self.assertNotIn("hello", copy_calls[2:])
+        self.assertIsNone(obj._clipboard_restore_target)
+
 
 if __name__ == "__main__":
     unittest.main()
