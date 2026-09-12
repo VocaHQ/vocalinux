@@ -39,6 +39,7 @@ class _WhisperModel(Protocol):
         beam_size: int,
         best_of: int,
         condition_on_previous_text: bool,
+        initial_prompt: Optional[str],
     ) -> tuple[Iterable[_Segment], object]:
         """Transcribe audio and return segments with metadata."""
         ...
@@ -129,11 +130,12 @@ class FasterWhisperEngine:
             return "en"
         return self.language
 
-    def transcribe(self, audio_buffer: list[bytes]) -> str:
+    def transcribe(self, audio_buffer: list[bytes], initial_prompt: Optional[str] = None) -> str:
         """Transcribe the provided audio buffer.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz).
+            initial_prompt: Optional vocabulary prompt used to bias recognition.
 
         Returns:
             Recognized text.
@@ -157,6 +159,7 @@ class FasterWhisperEngine:
                 beam_size=5,
                 best_of=5,
                 condition_on_previous_text=False,
+                initial_prompt=initial_prompt,
             )
 
             text_parts = [segment.text.strip() for segment in segments if segment.text]

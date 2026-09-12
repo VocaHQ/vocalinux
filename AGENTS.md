@@ -134,6 +134,7 @@ src/vocalinux/
 ├── auto_pause_monitor.py       # unload model while configured apps run
 ├── model_keepalive.py          # idle unload
 ├── suspend_handler.py          # logind PrepareForSleep
+├── custom_dictionary.py         # terms bias + transcript correction file contracts
 ├── speech_recognition/
 │   ├── recognition_manager.py  # whisper.cpp / Whisper / Vosk / remote
 │   ├── command_processor.py    # voice commands
