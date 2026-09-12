@@ -80,6 +80,8 @@ def _make_injector(env) -> Any:
     obj._state_lock = threading.Lock()
     obj._clipboard_tool_health = {}
     obj._clipboard_timeout = 0.35
+    obj._clipboard_restore_generation = 0
+    obj._clipboard_restore_target = None
     return obj
 
 
