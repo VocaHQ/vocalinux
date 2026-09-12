@@ -4,27 +4,38 @@ on:
   push:
     branches: [ main, master ]
     paths:
+      - 'install.sh'
       - '**/*.sh'
       - 'scripts/**'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - 'requirements/**'
       - 'src/vocalinux/version.py'
+      - 'vocalinux.desktop'
       - '.github/workflows/distro-test-matrix.yml'
   pull_request:
     branches: [ main, master ]
     paths:
+      - 'install.sh'
       - '**/*.sh'
       - 'scripts/**'
       - 'pyproject.toml'
+      - 'uv.lock'
+      - 'requirements/**'
       - 'src/vocalinux/version.py'
+      - 'vocalinux.desktop'
       - '.github/workflows/distro-test-matrix.yml'
   workflow_dispatch:
 
+# Six containers a run, on a filter that any shell script matches: a second
+# push should not leave the first one's matrix running to completion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  # The repo's only `bash -n install.sh` used to live inside the matrix below,
-  # under continue-on-error, so a syntax error in a 4698-line installer could
-  # not fail a build anywhere. This job is the one thing here allowed to fail.
-  # It is not phase 2.4 — nothing here runs the installer yet — it just stops
-  # the cheapest check we have from being advisory.
+  # First, because there is no point spending six containers on a script that
+  # does not parse.
   syntax:
     name: Shell syntax
     runs-on: ubuntu-latest
@@ -35,16 +46,21 @@ jobs:
           set -euo pipefail
           git ls-files -z '*.sh' | xargs -0 -n1 -t bash -n
 
-  test:
-    name: Test on ${{ matrix.container }}
+  install:
+    name: install.sh on ${{ matrix.container }}
     runs-on: ubuntu-latest
-    continue-on-error: true
+    needs: syntax
+    # A real install pulls the distro's whole GTK and build-toolchain closure
+    # before pip sees a single wheel.
+    timeout-minutes: 45
     strategy:
+      # Every distro reports independently: one failing arm is a finding about
+      # that distro, not a reason to lose the other five results.
       fail-fast: false
       matrix:
-        # README.md advertises Arch and Tumbleweed as tested and neither was
-        # here; fedora:39 has been EOL since 2024 while the AppImage boot
-        # matrix moved to 42. This list is what the docs promise.
+        # Adding a container here means adding a bootstrap arm to
+        # scripts/install-test.sh; tests/test_installer_gate.py holds the two
+        # lists together.
         container:
           - ubuntu:24.04
           - ubuntu:26.04
@@ -52,270 +68,22 @@ jobs:
           - fedora:42
           - archlinux:latest
           - opensuse/tumbleweed
-    container:
-      image: ${{ matrix.container }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate takes the tree with `git archive HEAD`, so it needs the
+          # commit's objects. Shallow is enough; the history is not.
+          fetch-depth: 1
 
-      - name: Install basic dependencies
+      # Not `container:` on the job: that would run every step inside the image
+      # as root, and install.sh refuses to run as root. Docker from the runner
+      # lets the gate create an unprivileged user with sudo instead.
+      - name: Run install.sh unattended in ${{ matrix.container }}
         run: |
-          set -e
-          # Install bash and basic tools
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update
-            apt-get install -y bash curl python3 git
-          elif command -v dnf >/dev/null 2>&1; then
-            # Fedora needs cache update first in container environment
-            dnf clean all || true
-            dnf makecache || true
-            dnf install -y bash curl python3 git || {
-              echo "⚠ dnf install failed, trying with --nogpgcheck..."
-              dnf install -y --nogpgcheck bash curl python3 git
-            }
-          elif command -v pacman >/dev/null 2>&1; then
-            # -Syu, never -Sy: archlinux:latest lags the mirrors and a partial
-            # upgrade would be our breakage, not the installer's.
-            pacman -Syu --noconfirm bash curl python git
-          elif command -v zypper >/dev/null 2>&1; then
-            zypper --non-interactive --gpg-auto-import-keys refresh
-            zypper --non-interactive install bash curl python3 git
-          fi
-
-      # ============================================================================
-      # TEST 1: Verify /etc/os-release exists and distro detection works
-      # ============================================================================
-      - name: Test distro detection
-        run: |
-          echo "=== Testing Distro Detection ==="
-          if [ -f /etc/os-release ]; then
-            echo "/etc/os-release exists: OK"
-            cat /etc/os-release
-          else
-            echo "/etc/os-release NOT found: FAIL"
-            exit 1
-          fi
-
-      # ============================================================================
-      # TEST 2: Test the distro detection logic from install.sh
-      # ============================================================================
-      # Note: We cannot source install.sh directly because it has a root check
-      # that fails in containers. Instead, we test the same logic independently.
-      - name: Test detect_distro() function
-        run: |
-          echo "=== Testing detect_distro() Function ==="
-
-          # Verify the function exists in install.sh
-          if grep -q "detect_distro()" install.sh; then
-            echo "✓ detect_distro() function found in install.sh"
-          else
-            echo "✗ detect_distro() function not found"
-            exit 1
-          fi
-
-          # Test the distro detection logic (same as in install.sh)
-          . /etc/os-release
-          DISTRO_NAME="$NAME"
-          DISTRO_ID="$ID"
-          DISTRO_VERSION="$VERSION_ID"
-          DISTRO_FAMILY="unknown"
-
-          if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID" == "pop" || "$ID" == "linuxmint" || "$ID" == "elementary" || "$ID" == "zorin" ]]; then
-            DISTRO_FAMILY="ubuntu"
-          elif [[ "$ID" == "debian" || "$ID_LIKE" == *"debian"* ]]; then
-            DISTRO_FAMILY="debian"
-          elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" || "$ID" == "rocky" || "$ID" == "almalinux" ]]; then
-            DISTRO_FAMILY="fedora"
-          elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* || "$ID" == "manjaro" || "$ID" == "endeavouros" ]]; then
-            DISTRO_FAMILY="arch"
-          elif [[ "$ID" == "opensuse" || "$ID_LIKE" == *"suse"* ]]; then
-            DISTRO_FAMILY="suse"
-          elif [[ "$ID" == "gentoo" ]]; then
-            DISTRO_FAMILY="gentoo"
-          elif [[ "$ID" == "alpine" ]]; then
-            DISTRO_FAMILY="alpine"
-          elif [[ "$ID" == "void" ]]; then
-            DISTRO_FAMILY="void"
-          elif [[ "$ID" == "solus" ]]; then
-            DISTRO_FAMILY="solus"
-          elif [[ "$ID" == "mageia" ]]; then
-            DISTRO_FAMILY="mageia"
-          fi
-
-          echo "Detected: $DISTRO_NAME $DISTRO_VERSION ($DISTRO_FAMILY family)"
-          echo "DISTRO_FAMILY=$DISTRO_FAMILY"
-          echo "DISTRO_ID=$DISTRO_ID"
-
-          # Verify we detected a known family
-          if [[ "$DISTRO_FAMILY" == "unknown" ]]; then
-            echo "⚠ Warning: Distro family is 'unknown', this may indicate incomplete detection"
-          else
-            echo "✓ Distro detection successful"
-          fi
-
-      # ============================================================================
-      # TEST 3: Test detect_typelib_path() function
-      # ============================================================================
-      - name: Test detect_typelib_path() function
-        run: |
-          echo "=== Testing detect_typelib_path() Function ==="
-
-          # Install pkg-config first (needed for typelib detection)
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get install -y pkg-config libgirepository1.0-dev 2>/dev/null || true
-          elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y pkg-config gobject-introspection-devel 2>/dev/null || true
-          elif command -v pacman >/dev/null 2>&1; then
-            pacman -S --needed --noconfirm pkgconf gobject-introspection 2>/dev/null || true
-          elif command -v zypper >/dev/null 2>&1; then
-            zypper --non-interactive install pkgconf-pkg-config gobject-introspection-devel 2>/dev/null || true
-          fi
-
-          # Test typelib path detection
-          bash -c '
-            # Function from install.sh
-            detect_typelib_path() {
-                # Try pkg-config first (most reliable)
-                if command -v pkg-config >/dev/null 2>&1; then
-                    local path=$(pkg-config --variable=typelibdir gobject-introspection-1.0 2>/dev/null)
-                    if [ -n "$path" ] && [ -d "$path" ]; then
-                        echo "$path"
-                        return 0
-                    fi
-                fi
-
-                # Fallback to common distribution-specific paths
-                for path in \
-                    /usr/lib/x86_64-linux-gnu/girepository-1.0 \
-                    /usr/lib/aarch64-linux-gnu/girepository-1.0 \
-                    /usr/lib/arm-linux-gnueabihf/girepository-1.0 \
-                    /usr/lib/riscv64-linux-gnu/girepository-1.0 \
-                    /usr/lib/powerpc64le-linux-gnu/girepository-1.0 \
-                    /usr/lib/s390x-linux-gnu/girepository-1.0 \
-                    /usr/lib64/girepository-1.0 \
-                    /usr/lib/girepository-1.0 \
-                    /usr/local/lib/girepository-1.0 \
-                    /usr/local/lib64/girepository-1.0; do
-                    if [ -d "$path" ]; then
-                        echo "$path"
-                        return 0
-                    fi
-                done
-
-                # Ultimate fallback
-                echo "/usr/lib/girepository-1.0"
-                return 1
-            }
-
-            TYPOB_PATH=$(detect_typelib_path)
-            echo "Detected typelib path: $TYPOB_PATH"
-
-            if [ -d "$TYPOB_PATH" ]; then
-              echo "✓ Typelib path exists: $TYPOB_PATH"
-              ls -la "$TYPOB_PATH" | head -5 || true
-            else
-              echo "⚠ Typelib path does not exist: $TYPOB_PATH (may be OK if pkg-config not available)"
-            fi
-          '
-
-      # ============================================================================
-      # TEST 4: Check install.sh syntax
-      # ============================================================================
-      - name: Check install.sh syntax
-        run: |
-          echo "=== Checking install.sh Syntax ==="
-          bash -n install.sh
-          echo "✓ install.sh: Syntax OK"
-
-      # ============================================================================
-      # TEST 5: Run the dependency checker
-      # ============================================================================
-      - name: Run dependency checker
-        run: |
-          echo "=== Running Dependency Checker ==="
-          bash scripts/check-system-deps.sh || echo "⚠ Some dependencies missing (expected in container)"
-        continue-on-error: true
-
-      # ============================================================================
-      # TEST 6: Test installer help command
-      # ============================================================================
-      - name: Test installer --help
-        run: |
-          echo "=== Testing Installer --help ==="
-          bash install.sh --help || true
-
-      # ============================================================================
-      # TEST 7: Test minimal install (venv setup only)
-      # ============================================================================
-      - name: Test minimal installer (dry-run venv setup)
-        run: |
-          echo "=== Testing Minimal Installer (venv setup) ==="
-
-          # Install minimal dependencies needed for venv creation
-          if command -v apt-get >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y python3-venv python3-pip python3-dev 2>/dev/null || true
-          elif command -v dnf >/dev/null 2>&1; then
-            dnf install -y python3-virtualenv python3-pip python3-devel 2>/dev/null || true
-          elif command -v pacman >/dev/null 2>&1; then
-            pacman -S --needed --noconfirm python python-pip 2>/dev/null || true
-          elif command -v zypper >/dev/null 2>&1; then
-            zypper --non-interactive install python3-pip python3-devel 2>/dev/null || true
-          fi
-
-          # Create a temporary venv to test the flow
-          python3 -m venv /tmp/test-venv || {
-            echo "⚠ Could not create venv (may need additional system deps)"
-            exit 0
-          }
-
-          echo "✓ Virtual environment created successfully"
-          ls -la /tmp/test-venv/bin/
-          rm -rf /tmp/test-venv
-
-      # ============================================================================
-      # TEST 8: Test Python import paths
-      # ============================================================================
-      - name: Test Python import paths
-        run: |
-          echo "=== Testing Python Import Paths ==="
-          python3 -c "import sys; sys.path.insert(0, 'src'); print('Python path configured')"
-          python3 --version
-          echo "✓ Python is available"
-
-  # ============================================================================
-  # SUMMARY: Aggregate results from all container tests
-  # ============================================================================
-  summary:
-    name: Test Summary
-    runs-on: ubuntu-latest
-    needs: test
-    if: always()
-    steps:
-      - name: Check test results
-        run: |
-          echo "===================================="
-          echo "Distro Test Matrix Results"
-          echo "===================================="
-          echo ""
-          echo "All container tests have completed."
-          echo "Check individual job logs for details."
-          echo ""
-          echo "Expected behavior:"
-          echo "  ✓ ubuntu:24.04 - Full support expected"
-          echo "  ✓ ubuntu:26.04 - Full support expected"
-          echo "  ✓ debian:12 - Full support expected"
-          echo "  ⚠ fedora:42 - Good support, minor differences expected"
-          echo "  ⚠ archlinux:latest - Rolling; also the AUR package's distro"
-          echo "  ⚠ opensuse/tumbleweed - Rolling, least exercised"
-          echo ""
-          echo "Key tests performed:"
-          echo "  1. /etc/os-release availability"
-          echo "  2. Distro detection function"
-          echo "  3. Typelib path detection"
-          echo "  4. install.sh syntax validation (also gated in the syntax job)"
-          echo "  5. Dependency checker"
-          echo "  6. Installer --help command"
-          echo "  7. Virtual environment creation"
-          echo "  8. Python availability"
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:$PWD:ro" -e REPO="$PWD" \
+            "${{ matrix.container }}" \
+            bash "$PWD/scripts/install-test.sh"
