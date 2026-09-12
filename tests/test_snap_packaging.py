@@ -25,6 +25,9 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     plugs = set((doc.get("apps") or {}).get("vocalinux", {}).get("plugs") or [])
     assert "raw-input" in plugs
     assert "audio-record" in plugs
+    assert "uinput" in plugs
+    stage = doc["parts"]["vocalinux"].get("stage-packages") or []
+    assert "ydotool" in stage
 
     assert DESKTOP_FILE.is_file()
     assert SNAP_PNG.is_file()

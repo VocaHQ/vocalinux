@@ -181,6 +181,7 @@ Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). `stable` is s
 sudo snap install vocalinux --edge
 sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
 sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
+sudo snap connect vocalinux:uinput         # native Wayland text injection (ydotool)
 ```
 
 ### From source

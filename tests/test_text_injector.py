@@ -166,6 +166,47 @@ class TestTextInjector(unittest.TestCase):
             # Should fall back to XWayland
             self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_XDOTOOL)
 
+    def test_wayland_wtype_fail_prefers_ydotool_over_xdotool(self):
+        """wtype rejection must not skip ydotool; xdotool is XWayland-only."""
+        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
+            self.mock_which.side_effect = lambda cmd: {
+                "wtype": "/usr/bin/wtype",
+                "ydotool": "/usr/bin/ydotool",
+                "xdotool": "/usr/bin/xdotool",
+            }.get(cmd)
+
+            mock_process = MagicMock()
+            mock_process.returncode = 1
+            mock_process.stderr = "compositor does not support virtual keyboard protocol"
+            self.mock_subprocess.return_value = mock_process
+
+            with patch.object(TextInjector, "_uinput_usable", return_value=True):
+                injector = TextInjector()
+
+            self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
+            self.assertEqual(injector.wayland_tool, "ydotool")
+
+    def test_wayland_wtype_fail_xdotool_when_uinput_blocked(self):
+        """ydotool in PATH without /dev/uinput still cannot rescue a wtype miss."""
+        with patch.dict(
+            "os.environ", {"XDG_SESSION_TYPE": "wayland", "SNAP": "/snap/vocalinux/x1"}
+        ):
+            self.mock_which.side_effect = lambda cmd: {
+                "wtype": "/usr/bin/wtype",
+                "ydotool": "/usr/bin/ydotool",
+                "xdotool": "/usr/bin/xdotool",
+            }.get(cmd)
+
+            mock_process = MagicMock()
+            mock_process.returncode = 1
+            mock_process.stderr = "compositor does not support virtual keyboard protocol"
+            self.mock_subprocess.return_value = mock_process
+
+            with patch.object(TextInjector, "_uinput_usable", return_value=False):
+                injector = TextInjector()
+
+            self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_XDOTOOL)
+
     def test_x11_text_injection(self):
         """Test text injection in X11 environment."""
         # Setup X11 environment
@@ -2360,19 +2401,29 @@ class TestCompositorIBusBridging(unittest.TestCase):
         mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
         injector = self._bare_injector()
         with patch.object(injector, "_is_ydotoold_running", return_value=False):
-            self.assertTrue(injector._ensure_ydotoold())
+            with patch.object(injector, "_uinput_usable", return_value=True):
+                self.assertTrue(injector._ensure_ydotoold())
 
-    @patch("os.path.exists", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_ensure_ydotoold_false_when_uinput_not_writable(self, mock_which):
+        """0.1.x ydotool without /dev/uinput write access is not ready (Snap)."""
+        mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        injector = self._bare_injector()
+        with patch.object(injector, "_is_ydotoold_running", return_value=False):
+            with patch.object(injector, "_uinput_usable", return_value=False):
+                self.assertFalse(injector._ensure_ydotoold())
+
+    @patch.object(TextInjector, "_uinput_usable", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
-    def test_ensure_ydotoold_false_without_uinput(self, _mock_which, _mock_exists):
+    def test_ensure_ydotoold_false_without_uinput(self, _mock_which, _mock_uinput):
         injector = self._bare_injector()
         with patch.object(injector, "_is_ydotoold_running", return_value=False):
             self.assertFalse(injector._ensure_ydotoold())
 
+    @patch.object(TextInjector, "_uinput_usable", return_value=True)
     @patch("vocalinux.text_injection.text_injector.subprocess.Popen")
-    @patch("os.path.exists", return_value=True)
     @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
-    def test_ensure_ydotoold_starts_daemon(self, _mock_which, _mock_exists, mock_popen):
+    def test_ensure_ydotoold_starts_daemon(self, _mock_which, mock_popen, _mock_uinput):
         injector = self._bare_injector()
         # First probe: not running; after start: running
         with patch.object(injector, "_is_ydotoold_running", side_effect=[False, False, True]):

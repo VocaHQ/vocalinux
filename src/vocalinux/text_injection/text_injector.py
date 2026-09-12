@@ -149,9 +149,18 @@ class TextInjector:
                             "KDE Plasma Wayland detected. wtype is not a reliable "
                             f"text injection path on this compositor. {_kde_wayland_ibus_hint()}"
                         )
-                    if shutil.which("xdotool"):
+                    # xdotool only types into XWayland windows. Prefer ydotool
+                    # (uinput) so native Wayland apps still receive text.
+                    if shutil.which("ydotool") and self._ensure_ydotoold():
+                        self.wayland_tool = "ydotool"
+                        logger.info(
+                            "wtype unsupported on this compositor; "
+                            "using ydotool (uinput) for native Wayland apps"
+                        )
+                    elif shutil.which("xdotool"):
                         logger.info("Automatically switching to XWayland fallback with xdotool")
                         self.environment = DesktopEnvironment.WAYLAND_XDOTOOL
+                        self._warn_if_snap_xwayland_only()
                     else:
                         logger.error("No fallback text injection method available")
             except Exception as e:
@@ -426,15 +435,22 @@ class TextInjector:
         ydotool 1.x talks to a daemon that owns /dev/uinput. Inside Flatpak we
         start the daemon on demand when the app is granted device access.
         Host ydotool 0.1.x often works without a daemon; starting one is still
-        safe when ydotoold is installed.
+        safe when ydotoold is installed. The CLI still needs a writable
+        /dev/uinput (Snap: ``snap connect vocalinux:uinput``).
         """
         if self._is_ydotoold_running():
             return True
         ydotoold = shutil.which("ydotoold")
         if not ydotoold:
-            # Distro ydotool 0.1.x may not ship a daemon; treat as ready.
-            return shutil.which("ydotool") is not None
-        if not os.path.exists("/dev/uinput"):
+            # Distro ydotool 0.1.x may not ship a daemon; treat as ready
+            # only when /dev/uinput is actually writable.
+            if shutil.which("ydotool") is None:
+                return False
+            if not self._uinput_usable():
+                logger.warning(self._uinput_permission_hint())
+                return False
+            return True
+        if not self._uinput_usable():
             logger.warning(
                 "ydotoold needs /dev/uinput (Flatpak: grant --device=all). "
                 "Text injection into native Wayland apps will fail."
@@ -458,6 +474,40 @@ class TextInjector:
                 return True
         logger.warning("ydotoold did not become ready in time")
         return False
+
+    @staticmethod
+    def _uinput_usable() -> bool:
+        """Return True when this process can open ``/dev/uinput`` for write."""
+        try:
+            fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+        except OSError:
+            return False
+        os.close(fd)
+        return True
+
+    @staticmethod
+    def _uinput_permission_hint() -> str:
+        """How to grant ydotool access to ``/dev/uinput`` in this install."""
+        if os.environ.get("SNAP"):
+            return (
+                "ydotool cannot open /dev/uinput. For the Snap, run: "
+                "sudo snap connect vocalinux:uinput"
+            )
+        return (
+            "ydotool cannot open /dev/uinput. "
+            "Add your user to the input group and log out, or start ydotoold. "
+            f"{_ydotool_install_guidance()}"
+        )
+
+    @staticmethod
+    def _warn_if_snap_xwayland_only() -> None:
+        """Log that Snap XWayland fallback will miss native Wayland apps."""
+        if not os.environ.get("SNAP"):
+            return
+        logger.warning(
+            "Snap XWayland fallback only types into X11/XWayland apps. "
+            "Native Wayland apps need: sudo snap connect vocalinux:uinput"
+        )
 
     @staticmethod
     def _forced_backend() -> str:

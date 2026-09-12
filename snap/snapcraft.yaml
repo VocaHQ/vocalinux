@@ -1,7 +1,7 @@
 # Vocalinux Snap packaging
 #
 # First ship: strict confinement, default whisper.cpp engine path, GTK tray UI,
-# mic capture, model download, and X11/XWayland text injection (xdotool/xsel).
+# mic capture, model download, and text injection (ydotool/uinput, wtype, xdotool).
 # Informed by issue #48 and packaging/flatpak lessons on feat/flatpak-packaging.
 #
 # Build (from repo root, with snapcraft + LXD or Multipass):
@@ -26,10 +26,11 @@ description: |
     - System tray control and GTK settings
     - Offline dictation (models download on first use)
     - Microphone capture and short feedback tones
-    - Text injection via xdotool/xsel (X11/XWayland) and IBus when available
+    - Text injection via ydotool (native Wayland/X11), wtype, or xdotool
 
   Sandbox notes:
     - Global hotkeys need: sudo snap connect vocalinux:raw-input
+    - Native Wayland typing needs: sudo snap connect vocalinux:uinput
     - Microphone may need: sudo snap connect vocalinux:audio-record
     - Config and models live under ~/snap/vocalinux/
 
@@ -59,6 +60,10 @@ apps:
       # Super-privileged: not auto-connected; user must:
       #   sudo snap connect vocalinux:raw-input
       - raw-input
+      # ydotool writes to /dev/uinput so dictation reaches native Wayland apps.
+      # Super-privileged: not auto-connected; user must:
+      #   sudo snap connect vocalinux:uinput
+      - uinput
     common-id: com.vocalinux.Vocalinux
     desktop: usr/share/applications/vocalinux.desktop
     environment:
@@ -102,7 +107,9 @@ parts:
       - libasound2-plugins # pcm/ctl pulse → host PulseAudio/PipeWire
       - pulseaudio-utils # paplay for start/stop UI sounds
       - xdotool
-      - wtype # native Wayland text injection (preferred over xdotool)
+      - wtype # virtual-keyboard protocol (GNOME often rejects this)
+      - ydotool # uinput; reaches native Wayland apps (needs vocalinux:uinput)
+      - x11-utils # xprop for XWayland WM_CLASS
       - xsel
       - xclip
       - wl-clipboard
