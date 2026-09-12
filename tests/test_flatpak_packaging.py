@@ -126,7 +126,7 @@ def test_the_project_is_installed_without_deps() -> None:
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_every_source_is_the_version_the_lock_resolved(source) -> None:
+def test_every_source_is_the_version_the_lock_resolved(source: dict[str, str]) -> None:
     """A version here that uv did not resolve is a package nothing tested."""
     if source["name"] in BUILD_BACKENDS:
         pytest.skip("build backend; absent from the runtime export by design")
@@ -143,7 +143,7 @@ def test_every_source_is_the_version_the_lock_resolved(source) -> None:
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_every_digest_is_one_uv_recorded(source) -> None:
+def test_every_digest_is_one_uv_recorded(source: dict[str, str]) -> None:
     """The bytes the Flatpak fetches are the bytes in uv.lock, not merely the
     same version number. A digest uv never saw is an artifact nothing pinned."""
     if source["name"] in BUILD_BACKENDS:
@@ -227,7 +227,7 @@ def test_the_manifest_env_agrees_with_the_module() -> None:
 
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
-def test_no_source_is_pinned_to_one_python_abi(source) -> None:
+def test_no_source_is_pinned_to_one_python_abi(source: dict[str, str]) -> None:
     """Universal wheel or sdist, never a cp-tagged wheel.
 
     The SDK's Python minor version is not ours to choose and moves with the
