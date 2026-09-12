@@ -74,6 +74,15 @@ apps:
       PATH: $SNAP/usr/bin:$SNAP/bin:$PATH
       # PortAudio opens ALSA first. Point at snap-local config that routes to Pulse.
       ALSA_CONFIG_PATH: $SNAP/etc/asound.conf
+      # core24 gnome-46-2404: desktop-launch rebuilds gdk-pixbuf-loaders.cache
+      # by running query-loaders, which picks the SVG loader from the first
+      # LD_LIBRARY_PATH entry ending in /$CRAFT_ARCH_TRIPLET. Stage-packages
+      # (via libavcodec and friends) put a gdk-pixbuf tree without
+      # libpixbufloader_svg.so at $SNAP/usr/lib/$CRAFT_ARCH_TRIPLET, ahead of
+      # gnome-platform. About page and other GdkPixbuf SVG loads then fail
+      # with "Image type svg is not supported".
+      # https://forum.snapcraft.io/t/missing-svg-support-for-gtk3-in-core24/48851
+      LD_LIBRARY_PATH: $SNAP/gnome-platform/usr/lib/$CRAFT_ARCH_TRIPLET:$LD_LIBRARY_PATH
 
 # Make ALSA data/plugins visible at the paths libasound expects.
 layout:

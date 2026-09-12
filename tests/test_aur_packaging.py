@@ -6,6 +6,7 @@ first place, because no paths filter matched packaging/aur/**.
 """
 
 import re
+import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -172,3 +173,149 @@ def test_the_pkgbuild_builds_without_isolation_on_distro_setuptools():
     changes what the gate proves, not a slip to make in passing."""
     pkgbuild = PKGBUILD.read_text(encoding="utf-8")
     assert "--no-isolation" in pkgbuild
+
+
+#: Arch names in depends=() that are not Python distributions from our lock:
+#: the GI stack and the C libraries behind it. `python-gobject` and
+#: `python-cairo` are Python packages, but they come from Arch rather than from
+#: the export -- `just lock` builds it with --no-emit-package pygobject, and
+#: PyGObject cannot be pip-installed on a user machine anyway.
+NOT_FROM_THE_LOCK = {
+    "python",
+    "python-gobject",
+    "python-cairo",
+    "gtk3",
+    "libayatana-appindicator",
+    "ibus",
+    "gobject-introspection",
+    "portaudio",
+    "hicolor-icon-theme",
+}
+
+#: Arch name -> PyPI name, where stripping `python-` does not get there.
+ARCH_TO_PYPI = {
+    "python-pywhispercpp": "pywhispercpp",
+    "python-pyaudio": "pyaudio",
+    # Arch keeps the distribution name, which already starts with `python-`.
+    "python-xlib": "python-xlib",
+}
+
+
+def _locked_distributions() -> set:
+    """PyPI names in the hash-pinned runtime export, canonicalized.
+
+    Read the resolved set, not `pyproject.toml`'s direct one. #705 deleted
+    tqdm and python-xlib from the direct list, but pywhispercpp still needs the
+    first and pynput the second, so both are still installed on every machine
+    and the PKGBUILD is right to name them. Comparing against the direct list
+    would call for deleting two dependencies Arch users need.
+    """
+    names = set()
+    for line in RUNTIME_EXPORT.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^([A-Za-z0-9._-]+)==", line)
+        if match:
+            names.add(match.group(1).lower().replace("_", "-"))
+    assert names, "requirements/runtime.txt parsed to nothing"
+    return names
+
+
+def _direct_dependencies() -> set:
+    """`[project].dependencies` from pyproject.toml, canonicalized.
+
+    PyGObject is dropped: Arch ships it as python-gobject, which is already in
+    NOT_FROM_THE_LOCK, and it is absent from the export for the same reason.
+    """
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        specs = tomllib.load(handle)["project"]["dependencies"]
+    names = {
+        re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0].strip().lower().replace("_", "-")
+        for spec in specs
+    }
+    return names - {"pygobject"}
+
+
+def _pypi_name(arch_name: str) -> str:
+    """PyPI distribution behind an Arch package name, minus any version bound.
+
+    depends=() entries may carry a constraint (`python>=3.11`); pacman treats
+    the name and the bound separately and so must this.
+    """
+    bare = re.split(r"[<>=]", arch_name, maxsplit=1)[0]
+    if bare in ARCH_TO_PYPI:
+        return ARCH_TO_PYPI[bare]
+    return bare.removeprefix("python-").lower().replace("_", "-")
+
+
+def test_depends_declares_no_python_package_nothing_depends_on() -> None:
+    """#705 deleted pydub, lxml, tqdm and python-xlib from `pyproject.toml`
+    and left all four here, so AUR users installed four packages for nothing.
+
+    Two of them came back through the dependency chain and belong here; pydub
+    and lxml had no path back and stayed for four months. #772's build gate
+    could not see it: `makepkg` verifies that every depends entry *resolves*,
+    never that anything needs it, and the depends test above compares the
+    gate's stub to this list rather than either to source.
+    """
+    orphans = sorted(
+        name
+        for name in _aur_depends()
+        if re.split(r"[<>=]", name, maxsplit=1)[0] not in NOT_FROM_THE_LOCK
+        and _pypi_name(name) not in _locked_distributions()
+    )
+    assert not orphans, (
+        f"depends=() names packages the lock does not resolve: {', '.join(orphans)}."
+        " Drop them, or add the dependency to pyproject.toml and re-run `just lock`."
+    )
+
+
+def test_depends_covers_every_direct_dependency() -> None:
+    """The other direction, and against the direct list rather than the
+    resolved one.
+
+    pacman resolves transitive dependencies itself, so certifi, idna, six and
+    urllib3 have no business in depends=(); naming them would pin us to
+    requests' internals. What must be here is what `src/` imports directly. A
+    dependency added to `pyproject.toml` and not here builds fine, because
+    `python -m build` never reads depends=(), and then fails at import on a
+    user's machine.
+    """
+    declared = {_pypi_name(name) for name in _aur_depends()}
+    missing = sorted(
+        dist
+        for dist in _direct_dependencies()
+        if dist not in declared and f"python-{dist}" not in NOT_FROM_THE_LOCK
+    )
+    assert (
+        not missing
+    ), f"pyproject.toml requires these and depends=() omits them: {', '.join(missing)}"
+
+
+def test_every_selectable_engine_reaches_optdepends() -> None:
+    """Each optional extra is an engine a user can pick in Settings. One with
+    no optdepends line is an engine the AUR install cannot run and does not
+    say so. #802 and #543 both landed without one."""
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        extras = tomllib.load(handle)["project"]["optional-dependencies"]
+    #: Extras that are tooling, not engines. Everything else a user can pick
+    #: in Settings, and a new engine extra must land here without this test
+    #: being edited: an allowlist would let it slip past silently, which is
+    #: exactly how #802 and #543 shipped.
+    not_engines = {"dev", "docs"}
+    lines = PKGBUILD.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("optdepends=("))
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == ")")
+    optdepends = "\n".join(lines[start + 1 : end])
+
+    missing = []
+    for extra in sorted(set(extras) - not_engines):
+        for spec in extras[extra]:
+            dist = re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0].strip().lower()
+            if dist in {"torch", "torchaudio"}:
+                continue  # pulled in by python-openai-whisper, not named alone
+            arch_name = f"python-{dist.replace('_', '-')}"
+            if arch_name not in optdepends:
+                missing.append(f"{extra} -> {arch_name}")
+    assert not missing, (
+        "these optional engines have no optdepends line, so an AUR user who"
+        f" selects them gets an ImportError: {', '.join(missing)}"
+    )

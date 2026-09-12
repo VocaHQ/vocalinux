@@ -166,7 +166,7 @@ class TestTextInjector(unittest.TestCase):
             # Should fall back to XWayland
             self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_XDOTOOL)
 
-    def test_wayland_wtype_fail_prefers_ydotool_over_xdotool(self):
+    def test_wayland_wtype_fail_prefers_ydotool_over_xdotool(self) -> None:
         """wtype rejection must not skip ydotool; xdotool is XWayland-only."""
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
             self.mock_which.side_effect = lambda cmd: {
@@ -186,7 +186,7 @@ class TestTextInjector(unittest.TestCase):
             self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
             self.assertEqual(injector.wayland_tool, "ydotool")
 
-    def test_wayland_wtype_fail_xdotool_when_uinput_blocked(self):
+    def test_wayland_wtype_fail_xdotool_when_uinput_blocked(self) -> None:
         """ydotool in PATH without /dev/uinput still cannot rescue a wtype miss."""
         with patch.dict(
             "os.environ", {"XDG_SESSION_TYPE": "wayland", "SNAP": "/snap/vocalinux/x1"}
@@ -2396,7 +2396,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
         self.assertFalse(injector._is_ydotoold_running())
 
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ensure_ydotoold_ready_when_only_ydotool_cli(self, mock_which):
+    def test_ensure_ydotoold_ready_when_only_ydotool_cli(self, mock_which: MagicMock) -> None:
         """Host ydotool 0.1.x without ydotoold is still considered ready."""
         mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
         injector = self._bare_injector()
@@ -2405,7 +2405,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
                 self.assertTrue(injector._ensure_ydotoold())
 
     @patch("vocalinux.text_injection.text_injector.shutil.which")
-    def test_ensure_ydotoold_false_when_uinput_not_writable(self, mock_which):
+    def test_ensure_ydotoold_false_when_uinput_not_writable(self, mock_which: MagicMock) -> None:
         """0.1.x ydotool without /dev/uinput write access is not ready (Snap)."""
         mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
         injector = self._bare_injector()
@@ -2415,7 +2415,9 @@ class TestCompositorIBusBridging(unittest.TestCase):
 
     @patch.object(TextInjector, "_uinput_usable", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
-    def test_ensure_ydotoold_false_without_uinput(self, _mock_which, _mock_uinput):
+    def test_ensure_ydotoold_false_without_uinput(
+        self, _mock_which: MagicMock, _mock_uinput: MagicMock
+    ) -> None:
         injector = self._bare_injector()
         with patch.object(injector, "_is_ydotoold_running", return_value=False):
             self.assertFalse(injector._ensure_ydotoold())
@@ -2423,7 +2425,9 @@ class TestCompositorIBusBridging(unittest.TestCase):
     @patch.object(TextInjector, "_uinput_usable", return_value=True)
     @patch("vocalinux.text_injection.text_injector.subprocess.Popen")
     @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
-    def test_ensure_ydotoold_starts_daemon(self, _mock_which, mock_popen, _mock_uinput):
+    def test_ensure_ydotoold_starts_daemon(
+        self, _mock_which: MagicMock, mock_popen: MagicMock, _mock_uinput: MagicMock
+    ) -> None:
         injector = self._bare_injector()
         # First probe: not running; after start: running
         with patch.object(injector, "_is_ydotoold_running", side_effect=[False, False, True]):

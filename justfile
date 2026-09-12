@@ -168,10 +168,25 @@ lock:
         -o requirements/appimage.txt
     uv pip compile requirements/appimage-tools.in --universal --no-deps --generate-hashes \
         -o requirements/appimage-tools.txt
+    # The Flatpak is a fourth copy of the dependency set, and it drifted ten
+    # packages behind before anything compared it to source. Regenerate it here
+    # so a lock refresh cannot leave it behind again.
+    just flatpak-deps
 
 # Fail if uv.lock is stale relative to pyproject.toml
 lock-check:
     uv lock --check
+
+# The export pins names, versions and digests; this looks up the URL that serves
+# those bytes, so it needs PyPI. tests/test_flatpak_packaging.py checks the same
+# invariant offline, which is what CI gates on.
+# Point the Flatpak's dependency manifest at what uv.lock resolved.
+flatpak-deps: _tooling
+    uv run --no-sync python scripts/sync_flatpak_deps.py
+
+# Fail if the Flatpak manifest is behind requirements/runtime.txt.
+flatpak-deps-check: _tooling
+    uv run --no-sync python scripts/sync_flatpak_deps.py --check
 
 # Refresh the pinned model digests. whisper.cpp digests come from Hugging Face
 # `lfs` metadata and cost no bandwidth; VOSK is pinned by the bytes we fetch, so
