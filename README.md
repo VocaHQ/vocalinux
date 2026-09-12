@@ -33,7 +33,7 @@ Vocalinux turns speech into typed text in whatever app has focus. It is a free, 
 
 No Voca account is required. Models download once. After that, speech-to-text stays on your machine.
 
-**Current release:** [v0.16.2](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2). Stability patch on the 0.16 series (KDE leftover IBus, Wayland/IBus shortcuts, BackSpace for "delete that", installer glslc, release integrity pins). Series highlights include the in-app update checker, Right Alt push-to-talk for new installs, searchable languages, unused-model cleanup, and the family tone picker. Details: [docs/UPDATE.md](docs/UPDATE.md).
+**Current release:** [v0.17.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0). Minor: Faster Whisper and Parakeet engines, Speech Model simple setup, first-run system language, Snap with native Wayland typing, Flatpak bundles on the GitHub Release. Details: [docs/UPDATE.md](docs/UPDATE.md).
 
 ## Features
 
@@ -140,7 +140,7 @@ bash /tmp/vl.sh --auto --engine=vosk                # VOSK only
 bash /tmp/vl.sh --auto --engine=parakeet            # Parakeet (CPU)
 ```
 
-For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.16.2`.
+For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.17.0`.
 
 ### Arch Linux (AUR)
 
@@ -184,7 +184,7 @@ sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-The **v0.16.2** store snap (`latest/edge` rev 7) has no `uinput` plug. `snap connect vocalinux:uinput` fails with `snap "vocalinux" has no plug named "uinput"`, and dictation only reaches XWayland apps. After `snap info vocalinux` shows a revision that lists `uinput` under plugs, `sudo snap refresh vocalinux` then connect `uinput` for native GNOME/GTK/Qt windows.
+This tag's snap ships ydotool and the `uinput` plug. After install: `sudo snap connect vocalinux:uinput` and restart Vocalinux for native GNOME/GTK/Qt windows. Older **v0.16.2** edge (rev 7) has no `uinput` plug — refresh first.
 
 ### From source
 
@@ -333,7 +333,7 @@ Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text firs
 
 | Platform | Project | Website | GitHub | Status |
 |----------|---------|---------|--------|--------|
-| Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | Available now (`v0.16.2`) |
+| Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | Available now (`v0.17.0`) |
 | macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | Beta (`v0.9.0`) |
 | Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | Unsigned beta (`v0.1.0-beta.1`) |
 | Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |

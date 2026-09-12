@@ -55,6 +55,11 @@ const reliabilityFeatures = [
 
 const releaseMap = [
   {
+    version: "v0.17.0",
+    highlights:
+      "Faster Whisper and Parakeet engines, Speech Model simple setup, first-run system language, Snap ydotool/uinput, workflow Flatpak bundles, XWayland clipboard paste, xprop WM_CLASS instead of crashing xdotool, and PTT tray/audio cue fixes.",
+  },
+  {
     version: "v0.16.2",
     highlights:
       "Skip leftover IBus on KDE so dictation types, Wayland and IBus shortcuts via wtype/ydotool, real BackSpace for delete that, Fedora/Arch glslc installer fix, nightly version stamp, and release integrity pins.",

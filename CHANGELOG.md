@@ -12,13 +12,11 @@ Release history for Vocalinux.
 
 ## Current stable
 
-**[v0.16.2](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2)** (2026-09-05)
+**[v0.17.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0)** (2026-09-12)
 
-Stability patch on the 0.16 series: KDE leftover IBus skip, Wayland/IBus shortcuts via wtype/ydotool, real BackSpace for "delete that", installer glslc on Fedora/Arch, nightly version stamp, release integrity pins, AUR PKGBUILD CI gate, distro CI/docs drift.
+Minor on the stable line: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, Snap packaging with ydotool/`uinput`, Flatpak bundles attached by the release workflow, and injection/settings/audio fixes.
 
-Series highlights (0.16.x): in-app update checker, Right Alt push-to-talk for new installs, searchable languages, unused-model cleanup, AGPL-3.0, family mic icons, tone picker, Justfile/uv installer pinning.
-
-See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0162) for the highlight table and bug list, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2).
+See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0170) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0).
 
 ## Earlier versions
 

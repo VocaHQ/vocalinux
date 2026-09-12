@@ -39,8 +39,8 @@ const homeJsonLd = [
       priceCurrency: "USD",
     },
     description:
-      "Offline voice dictation and speech-to-text for Linux with whisper.cpp and VOSK.",
-    softwareVersion: "0.16.2",
+      "Offline voice dictation and speech-to-text for Linux with whisper.cpp, Faster Whisper, Whisper, VOSK, and Parakeet.",
+    softwareVersion: "0.17.0",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
@@ -50,7 +50,7 @@ const homeJsonLd = [
     downloadUrl: GITHUB_REPO_URL,
     screenshot: "https://vocalinux.com/og-image.png",
     featureList: [
-      "Local speech recognition with whisper.cpp, Whisper, and VOSK",
+      "Local speech recognition with whisper.cpp, Faster Whisper, Whisper, VOSK, and Parakeet",
       "Remote API speech recognition for compatible self-hosted transcription servers",
       "Silero neural voice activity detection with amplitude fallback",
       "Works with X11 and Wayland",
@@ -68,7 +68,7 @@ const homeJsonLd = [
       "Adaptive audio and IBus-aware text injection",
       "Clipboard fallback for unsupported Wayland compositors",
       "Sound effects toggle for audio feedback",
-      "whisper.cpp, Whisper, VOSK, and Remote API support",
+      "whisper.cpp, Faster Whisper, Whisper, VOSK, Parakeet, and Remote API support",
       "Advanced whisper.cpp anti-hallucination settings",
       "Auto-recover speech recognition after system suspend/resume",
       "Safe engine switching without segfaults",
@@ -111,7 +111,7 @@ const homeJsonLd = [
         name: "How do I switch between speech engines?",
         acceptedAnswer: {
           "@type": "Answer",
-          text: "Use the settings GUI or CLI flags for whisper.cpp, Whisper, VOSK, or Remote API. Open Settings from the tray and use the sidebar (search works). Remote API options live under Advanced.",
+          text: "Use the settings GUI or CLI flags for whisper.cpp, Faster Whisper, Whisper, VOSK, Parakeet, or Remote API. Open Settings from the tray and use the sidebar (search works). Remote API options live under Advanced.",
         },
       },
       {
@@ -367,8 +367,10 @@ export default function HomePage() {
                 </div>
                 <div className="workbench-meta">
                   <span className="chip">whisper.cpp default</span>
+                  <span className="chip">Faster Whisper</span>
                   <span className="chip">Whisper</span>
                   <span className="chip">VOSK</span>
+                  <span className="chip">Parakeet</span>
                   <span className="chip">Remote API</span>
                 </div>
               </div>
@@ -612,7 +614,7 @@ export default function HomePage() {
               />
               <figcaption>
                 <strong>Engine and model controls</strong>
-                Pick whisper.cpp, Whisper, VOSK, or a Remote API you trust.
+                Pick whisper.cpp, Faster Whisper, Whisper, VOSK, Parakeet, or a Remote API you trust.
               </figcaption>
             </figure>
             <figure className="shot shot-frame">
@@ -798,8 +800,9 @@ export default function HomePage() {
                   question: "Does Vocalinux work offline?",
                   answer: (
                     <>
-                      Local engines (whisper.cpp, Whisper, and VOSK) process
-                      speech on your machine. Remote API is optional and only
+                      Local engines (whisper.cpp, Faster Whisper, Whisper, VOSK,
+                      and Parakeet) process speech on your machine. Remote API is
+                      optional and only
                       talks to servers you configure.{" "}
                       <Link href="/offline/">Offline details</Link>.
                     </>

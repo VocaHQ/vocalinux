@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.17.0" date="2026-09-12">
+      <description>
+        <p>Minor: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, searchable open language picker, localized punctuation commands, bare function-key push-to-talk, Snap packaging with ydotool/uinput, Flatpak bundles attached by the release workflow, and XWayland/layout paste plus settings/audio fixes. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.16.2" date="2026-09-05">
       <description>
         <p>Stability patch: skip leftover IBus on KDE so dictation types into real apps, Wayland/IBus shortcuts via wtype and ydotool, real BackSpace for "delete that", Fedora/Arch installer glslc (not glslang), nightly version stamp before build, release integrity checksums and pinned builders, AUR PKGBUILD CI gate, distro CI plus docs drift fixes, and VocaGateway Beta on the site.</p>

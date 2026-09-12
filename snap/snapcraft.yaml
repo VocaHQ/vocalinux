@@ -12,7 +12,7 @@ name: vocalinux
 base: core24  # Ubuntu 24.04 / Python 3.12 (project requires-python >=3.11)
 # Fallback version; live version is set from src/vocalinux/version.py via
 # adopt-info + craftctl set in the vocalinux part (required for craftctl).
-version: "0.16.2"
+version: "0.17.0"
 adopt-info: vocalinux
 summary: Free offline voice dictation for Linux
 description: |
@@ -31,7 +31,7 @@ description: |
   Sandbox notes:
     - Global hotkeys need: sudo snap connect vocalinux:raw-input
     - Native Wayland typing needs: sudo snap connect vocalinux:uinput
-      (v0.16.2 store snaps have no uinput plug; refresh to a revision that lists it)
+      (v0.17.0 ships the plug; v0.16.2 store snaps do not — refresh first)
     - Microphone may need: sudo snap connect vocalinux:audio-record
     - Config and models live under ~/snap/vocalinux/
 
