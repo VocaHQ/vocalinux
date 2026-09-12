@@ -1493,9 +1493,14 @@ class TextInjector:
             if paste_cmd:
                 self._ydotool_release_paste_keys(paste_cmd)
             with self._state_lock:
-                if generation == self._clipboard_restore_generation:
+                stale = generation != self._clipboard_restore_generation
+                if not stale:
                     self._clipboard_restore_target = None
-            if previous_clipboard is not None and not self._should_copy_to_clipboard():
+            if (
+                not stale
+                and previous_clipboard is not None
+                and not self._should_copy_to_clipboard()
+            ):
                 if previous_clipboard == "":
                     self._clear_clipboard(tools=tools)
                 else:

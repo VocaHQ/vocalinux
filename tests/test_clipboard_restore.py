@@ -813,6 +813,40 @@ class TestOverlappingClipboardRestore(unittest.TestCase):
         self.assertNotIn("hello", copy_calls[2:])
         self.assertIsNone(obj._clipboard_restore_target)
 
+    def test_failed_older_paste_does_not_restore_over_newer(self) -> None:
+        """A stale paste failure must not rewind the clipboard over a newer copy."""
+        obj = _make_injector()
+        copy_calls: list[str] = []
+        nested = {"done": False}
+
+        def run_side_effect(cmd, **kwargs):
+            if not nested["done"]:
+                nested["done"] = True
+                self.assertTrue(obj._inject_via_clipboard_paste("world"))
+                raise subprocess.CalledProcessError(1, cmd)
+            return MagicMock(returncode=0)
+
+        with patch.object(obj, "_read_clipboard", side_effect=["URL", "hello"]):
+            with patch.object(
+                obj, "_copy_to_clipboard", side_effect=lambda t, **kw: copy_calls.append(t) or True
+            ):
+                with patch.object(obj, "_should_copy_to_clipboard", return_value=False):
+                    with patch.object(obj, "_should_use_terminal_paste", return_value=False):
+                        with patch.object(
+                            obj,
+                            "_clipboard_paste_command",
+                            return_value=["ydotool", "key", "ctrl+v"],
+                        ):
+                            with patch("threading.Thread"):
+                                with patch(
+                                    "vocalinux.text_injection.text_injector.subprocess.run",
+                                    side_effect=run_side_effect,
+                                ):
+                                    self.assertFalse(obj._inject_via_clipboard_paste("hello"))
+                                    # Stale failure must not rewind to "URL" over "world".
+                                    self.assertEqual(copy_calls, ["hello", "world"])
+                                    self.assertNotIn("URL", copy_calls)
+
 
 if __name__ == "__main__":
     unittest.main()
