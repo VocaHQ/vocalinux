@@ -29,7 +29,7 @@ const releases = [
       "CI: gate AUR PKGBUILD builds on every PR; test the distros the docs promise and fix docs drift (PR #772, #773)",
       "Site: VocaGateway family card is Beta; README logo, badges, and privacy copy (PR #765, #764)",
       "Deps: bump the github-actions group (PR #766)",
-      "Snap 0.16.2 edge (rev 7) has no uinput plug: snap connect vocalinux:uinput fails, and dictation only reaches XWayland apps. 0.17 ships ydotool; refresh, then connect uinput (PR #823)",
+      "Snap 0.16.2 edge (rev 7) has no uinput plug: snap connect vocalinux:uinput fails, and dictation only reaches XWayland apps. A later store snap ships ydotool; refresh, then connect uinput (PR #823)",
     ],
   },
   {

@@ -118,10 +118,10 @@ Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](h
 sudo snap install vocalinux --edge
 sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
 sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
-sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool); 0.17+
+sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-**v0.16.2 edge (rev 7) has no `uinput` plug.** `sudo snap connect vocalinux:uinput` fails with `snap "vocalinux" has no plug named "uinput"`. That build only types into XWayland apps (Firefox/Chrome often work; native GNOME/GTK/Qt do not). 0.17 ships `ydotool` and the plug. After `sudo snap refresh vocalinux`, connect `uinput` and restart Vocalinux.
+**v0.16.2 edge (rev 7) has no `uinput` plug.** `sudo snap connect vocalinux:uinput` fails with `snap "vocalinux" has no plug named "uinput"`. That build only types into XWayland apps (Firefox/Chrome often work; native GNOME/GTK/Qt do not). A later store revision ships `ydotool` and the plug. After `snap info vocalinux` lists `uinput`, `sudo snap refresh vocalinux`, connect `uinput`, and restart Vocalinux.
 
 ## From source
 

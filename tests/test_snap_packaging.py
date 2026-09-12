@@ -29,19 +29,25 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     stage = doc["parts"]["vocalinux"].get("stage-packages") or []
     assert "ydotool" in stage
 
+    assert DESKTOP_FILE.is_file()
+    assert SNAP_PNG.is_file()
+    assert SNAP_PNG.stat().st_size > 0
+
 
 def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
     """v0.16.2 edge has no uinput plug; the connect command must not stand alone."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     install = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
     update = (REPO_ROOT / "docs" / "UPDATE.md").read_text(encoding="utf-8")
+    changelog = (REPO_ROOT / "web" / "src" / "app" / "changelog" / "page.tsx").read_text(
+        encoding="utf-8"
+    )
+    snapcraft = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    for text in (readme, install, update, changelog, snapcraft):
+        assert "0.17" not in text
     for text in (readme, install, update):
         assert "sudo snap connect vocalinux:uinput" in text
         assert "has no" in text and "uinput" in text
-
-    assert DESKTOP_FILE.is_file()
-    assert SNAP_PNG.is_file()
-    assert SNAP_PNG.stat().st_size > 0
 
 
 def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
