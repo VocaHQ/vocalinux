@@ -1483,7 +1483,7 @@ class TextInjector:
                 stderr=subprocess.PIPE,
                 text=True,
                 timeout=3,
-                env=host_env(env) if env is not None else host_env(),
+                env=host_env(env),
             )
             logger.info(f"Text injected via clipboard paste: '{text[:20]}...' ({len(text)} chars)")
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
