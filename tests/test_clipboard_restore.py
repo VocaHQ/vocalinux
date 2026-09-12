@@ -56,6 +56,27 @@ class TestReadClipboard(unittest.TestCase):
             ["wl-paste", "--no-newline", "--type", "text"],
         )
 
+    def test_skips_wl_paste_on_xwayland_fallback(self) -> None:
+        """WAYLAND_XDOTOOL reads the X11 CLIPBOARD, not wl-paste."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector()
+        obj.environment = DesktopEnvironment.WAYLAND_XDOTOOL
+        with patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}):
+            with patch("vocalinux.text_injection.text_injector.shutil.which") as mock_which:
+                mock_which.side_effect = lambda cmd: (
+                    f"/usr/bin/{cmd}" if cmd in ("wl-paste", "xclip") else None
+                )
+                with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+                    mock_run.return_value = MagicMock(returncode=0, stdout="from-x11")
+                    result = obj._read_clipboard()
+        self.assertEqual(result, "from-x11")
+        mock_run.assert_called_once()
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"],
+        )
+
     def test_xclip_requests_utf8_string_target(self):
         """xclip must request UTF8_STRING so image clipboards are not read as text."""
         obj = _make_injector()
