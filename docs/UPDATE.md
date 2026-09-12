@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | `sudo snap refresh vocalinux` (channel `--edge` until stable is promoted) |
+| Snap | `sudo snap refresh vocalinux` (`--edge` until stable is promoted). **v0.16.2** has no `uinput` plug, so `snap connect vocalinux:uinput` fails and typing stays XWayland-only. After **0.17** is on edge, refresh, then `sudo snap connect vocalinux:uinput` for native Wayland apps. |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -102,6 +102,7 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 - **CI**: gate AUR PKGBUILD builds on every PR (#772 by @sesav)
 - **CI / docs**: test the distros the docs promise and fix docs drift (#773 by @sesav)
 - **Site**: VocaGateway family card is Beta; README logo, badges, and privacy copy (#765 by @jatinkrmalik, #764)
+- **Snap**: v0.16.2 `latest/edge` (rev 7) has no `uinput` plug. `sudo snap connect vocalinux:uinput` errors with `snap "vocalinux" has no plug named "uinput"`. Dictation only reaches XWayland apps. 0.17 ships ydotool and the plug; then `snap refresh` and `snap connect vocalinux:uinput` (#823)
 
 See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2).
 
