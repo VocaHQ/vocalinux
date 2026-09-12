@@ -24,6 +24,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     EVDEV_AVAILABLE,
     MODIFIER_KEY_CODES,
     EvdevKeyboardBackend,
+    device_has_key,
     device_has_modifier_key,
     find_keyboard_devices,
 )
@@ -223,6 +224,34 @@ class TestDeviceHasModifierKey:
         """Test with invalid modifier name."""
         result = device_has_modifier_key("/dev/input/event0", "invalid")
         assert result is False
+
+
+class TestDeviceHasKey:
+    """Test device_has_key() against EV_KEY capabilities."""
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE", True)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_device_has_key_f10(self, mock_input_device):
+        mock_device = MagicMock()
+        mock_device.capabilities.return_value = {1: [68]}  # KEY_F10
+        mock_input_device.return_value = mock_device
+
+        with patch("vocalinux.ui.keyboard_backends.evdev_backend.ecodes") as mock_ecodes:
+            mock_ecodes.EV_KEY = 1
+            mock_ecodes.KEY_F10 = 68
+            assert device_has_key("/dev/input/event0", "f10") is True
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE", True)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_device_has_key_missing(self, mock_input_device):
+        mock_device = MagicMock()
+        mock_device.capabilities.return_value = {1: [1, 2, 3]}
+        mock_input_device.return_value = mock_device
+
+        with patch("vocalinux.ui.keyboard_backends.evdev_backend.ecodes") as mock_ecodes:
+            mock_ecodes.EV_KEY = 1
+            mock_ecodes.KEY_F10 = 68
+            assert device_has_key("/dev/input/event0", "f10") is False
 
 
 class TestEvdevKeyboardBackendInit:

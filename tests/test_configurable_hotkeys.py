@@ -52,6 +52,7 @@ class TestParseShortcutSpec:
         assert spec.key == "f10"
         assert spec.is_combo is True
         assert spec.canonical() == "f10"
+        assert spec.primary_modifier == "f10"
 
     def test_named_key_combo(self):
         assert parse_shortcut_spec("super+space").key == "space"

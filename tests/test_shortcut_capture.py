@@ -46,6 +46,7 @@ def test_rejects_modifiers_and_unknown(name: str | None) -> None:
         ([], "f24", "f24"),
         ([], "r", None),
         ([], "space", None),
+        ([], None, None),
         (["shift"], "f10", "shift+f10"),
     ],
 )

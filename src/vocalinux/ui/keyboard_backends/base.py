@@ -220,11 +220,6 @@ def is_main_key_token(token: str) -> bool:
     return token in _NAMED_MAIN_KEYS
 
 
-def is_function_key_token(token: str) -> bool:
-    """Return True if a token names an F1–F24 function key."""
-    return bool(_FUNCTION_KEY_RE.fullmatch(token))
-
-
 @dataclass(frozen=True)
 class ShortcutSpec:
     """Structured representation of a parsed shortcut.
@@ -241,13 +236,15 @@ class ShortcutSpec:
 
     @property
     def is_combo(self) -> bool:
-        """True if this shortcut is a modifier+key combo (not a bare modifier)."""
+        """True if this shortcut has a main key (combo or bare function key)."""
         return self.key is not None
 
     @property
     def primary_modifier(self) -> str:
-        """The first modifier, used for backward-compatible single-modifier APIs."""
-        return self.modifiers[0] if self.modifiers else ""
+        """First modifier, or the bare main key when there are no modifiers."""
+        if self.modifiers:
+            return self.modifiers[0]
+        return self.key or ""
 
     def canonical(self) -> str:
         """Canonical shortcut string (round-trips through parse_shortcut_spec)."""
@@ -289,7 +286,7 @@ def parse_shortcut_spec(shortcut_string: str) -> ShortcutSpec:
             raise ValueError(f"Unknown key in shortcut: {token!r}")
 
     if not modifiers:
-        if main_key is not None and is_function_key_token(main_key):
+        if main_key is not None and _FUNCTION_KEY_RE.fullmatch(main_key):
             return ShortcutSpec(modifiers=(), key=main_key)
         raise ValueError(f"Shortcut needs at least one modifier: {shortcut_string}")
 
@@ -394,9 +391,6 @@ def parse_shortcut(shortcut_string: str) -> str:
             f"Unsupported shortcut: {shortcut_string}. "
             f"Supported shortcuts: {', '.join(SUPPORTED_SHORTCUTS.keys())}"
         )
-    if spec.is_combo and not spec.modifiers:
-        assert spec.key is not None
-        return spec.key
     return spec.primary_modifier
 
 

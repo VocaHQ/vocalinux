@@ -223,6 +223,21 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
     return keyboard_devices
 
 
+def _device_has_any_code(device_path: str, codes: set[int]) -> bool:
+    """Return True if the device reports any of ``codes`` in its EV_KEY caps."""
+    if not EVDEV_AVAILABLE or not codes:
+        return False
+
+    try:
+        device = InputDevice(device_path)
+        capabilities = device.capabilities()
+        device.close()
+        key_caps = capabilities.get(ecodes.EV_KEY, ())
+        return any(code in key_caps for code in codes)
+    except (OSError, IOError):
+        return False
+
+
 def device_has_modifier_key(device_path: str, modifier: str = "ctrl") -> bool:
     """
     Check if a device has a specific modifier key capability.
@@ -234,29 +249,7 @@ def device_has_modifier_key(device_path: str, modifier: str = "ctrl") -> bool:
     Returns:
         True if the device can send the specified modifier key events
     """
-    if not EVDEV_AVAILABLE:
-        return False
-
-    key_codes = MODIFIER_KEY_CODES.get(modifier, set())
-    if not key_codes:
-        return False
-
-    try:
-        device = InputDevice(device_path)
-        capabilities = device.capabilities()
-        device.close()
-
-        # Check if device has EV_KEY capability and supports the modifier keys
-        if ecodes.EV_KEY in capabilities:
-            key_caps = capabilities[ecodes.EV_KEY]
-            # Check for left or right variant of the modifier
-            for key_code in key_codes:
-                if key_code in key_caps:
-                    return True
-    except (OSError, IOError):
-        pass
-
-    return False
+    return _device_has_any_code(device_path, MODIFIER_KEY_CODES.get(modifier, set()))
 
 
 def device_has_key(device_path: str, key_token: str) -> bool:
@@ -270,31 +263,17 @@ def device_has_key(device_path: str, key_token: str) -> bool:
     Returns:
         True if the device reports the key in its EV_KEY capabilities
     """
-    if not EVDEV_AVAILABLE:
-        return False
-
     key_code = evdev_code_for_key(key_token)
     if key_code is None:
         return False
-
-    try:
-        device = InputDevice(device_path)
-        capabilities = device.capabilities()
-        device.close()
-
-        if ecodes.EV_KEY in capabilities:
-            return key_code in capabilities[ecodes.EV_KEY]
-    except (OSError, IOError):
-        pass
-
-    return False
+    return _device_has_any_code(device_path, {key_code})
 
 
 def device_supports_shortcut(device_path: str, spec: ShortcutSpec) -> bool:
     """Return True if the device can emit the configured shortcut."""
-    if spec.is_combo and spec.key is not None and not spec.modifiers:
-        return device_has_key(device_path, spec.key)
-    return device_has_modifier_key(device_path, spec.primary_modifier)
+    if spec.modifiers:
+        return device_has_modifier_key(device_path, spec.modifiers[0])
+    return spec.key is not None and device_has_key(device_path, spec.key)
 
 
 class EvdevKeyboardBackend(KeyboardBackend):

@@ -1631,15 +1631,10 @@ def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
 
 def _shortcut_from_capture(modifiers: list[str], token: Optional[str]) -> Optional[str]:
     """Build a canonical shortcut from recorded modifiers and a main key."""
-    from .keyboard_backends.base import is_function_key_token
-
     if token is None:
         return None
-    if modifiers:
-        return "+".join(modifiers + [token])
-    if is_function_key_token(token):
-        return token
-    return None
+    candidate = "+".join((*modifiers, token)) if modifiers else token
+    return candidate if is_valid_shortcut(candidate) else None
 
 
 def _row_matches_query(query: str, title: str, subtitle: str = "", keywords=()) -> bool:
@@ -3615,10 +3610,10 @@ class SettingsDialog(Gtk.Dialog):
         # something the preset modifiers can't express (split keyboards, etc.).
         custom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.custom_shortcut_entry = Gtk.Entry()
-        self.custom_shortcut_entry.set_placeholder_text("e.g. alt+r")
+        self.custom_shortcut_entry.set_placeholder_text("e.g. alt+r or f10")
         self.custom_shortcut_entry.set_width_chars(12)
         self.custom_shortcut_entry.set_tooltip_text(
-            "A modifier plus a key, e.g. alt+r, ctrl+alt+r, super+space"
+            "A modifier plus a key (alt+r) or a function key (f10)"
         )
         self.custom_shortcut_entry.connect("activate", self._on_custom_shortcut_apply)
         custom_box.pack_start(self.custom_shortcut_entry, False, False, 0)
@@ -3635,7 +3630,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.custom_shortcut_row = PreferenceRow(
             title="Custom Shortcut",
-            subtitle="Modifier + key combo (great for split keyboards)",
+            subtitle="Modifier + key, or a function key",
             widget=custom_box,
             keywords=("record", "keybinding", "hotkey"),
         )
@@ -3749,7 +3744,7 @@ class SettingsDialog(Gtk.Dialog):
             self.shortcut_info_label.set_markup(
                 f"<span foreground='#e01b24'>Invalid shortcut: "
                 f"<b>{GLib.markup_escape_text(shortcut or '(empty)')}</b>. "
-                "Try a modifier + key, e.g. alt+r.</span>"
+                "Try a modifier + key (alt+r) or a function key (f10).</span>"
             )
             return
 
@@ -3792,7 +3787,7 @@ class SettingsDialog(Gtk.Dialog):
         self._recording_shortcut = True
         self.record_shortcut_button.set_label("Press keys…")
         self.shortcut_info_label.set_markup(
-            "<i>Press a modifier + key (e.g. Alt+R). Press Esc to cancel.</i>"
+            "<i>Press a modifier + key (e.g. Alt+R), or an F-key. Press Esc to cancel.</i>"
         )
 
     def _stop_recording_shortcut(self):
@@ -3953,7 +3948,7 @@ class SettingsDialog(Gtk.Dialog):
             self._set_custom_shortcut_row_visible(True)
             self.custom_shortcut_entry.grab_focus()
             self.shortcut_info_label.set_markup(
-                "<i>Record or type a custom shortcut (e.g. alt+r), then click Set.</i>"
+                "<i>Record or type a custom shortcut (e.g. alt+r or f10), then click Set.</i>"
             )
             return
 
