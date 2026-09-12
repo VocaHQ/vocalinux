@@ -20,7 +20,7 @@ The installer detects a running instance, updates in place, preserves configurat
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.16.2
+git checkout v0.17.0
 ./install.sh
 ```
 
@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | `sudo snap refresh vocalinux` (`--edge` until stable is promoted). **v0.16.2** has no `uinput` plug, so `snap connect vocalinux:uinput` fails and typing stays XWayland-only. After `snap info vocalinux` lists an `uinput` plug, refresh, then `sudo snap connect vocalinux:uinput` for native Wayland apps. |
+| Snap | `sudo snap refresh vocalinux` (`--edge` until stable is promoted). **v0.17.0** ships `uinput`; `sudo snap connect vocalinux:uinput` then restart for native Wayland apps. v0.16.2 rev 7 has no such plug. |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -70,6 +70,46 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.17.0
+
+0.17.0 is a **minor** on the stable line. Default engine is still whisper.cpp. This release adds two optional local engines (Faster Whisper and Parakeet), a simpler Speech Model page, Snap packaging with native Wayland typing, and Flatpak bundles built by the release workflow. It also fixes XWayland/layout paste, a KDE xdotool crash, push-to-talk tray redraw, and clipped start/stop cues.
+
+### 0.17 series highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Faster Whisper** | Optional CTranslate2 / INT8 Whisper on CPU (`--engine=faster_whisper`) (#543) |
+| **Parakeet** | Optional Parakeet TDT 0.6B via sherpa-onnx; default v3-european bundle (`--engine=parakeet`) (#802) |
+| **Speech Model simple setup** | Language + speed/accuracy first; engine/size under Advanced (#801) |
+| **First-run language** | Seeds from keyboard layout / locale; saved choice is left alone (#796) |
+| **Searchable open picker** | Language list filters while open (#798) |
+| **Localized punctuation commands** | it/fr/de/es/pt/nl/pl/ru; English phrases still work (#642) |
+| **Bare F-keys** | F1–F24 are valid push-to-talk shortcuts (#815) |
+| **Snap** | Store listing, ydotool + `uinput` for native Wayland (#519, #823, #822) |
+| **Flatpak on the tag** | Workflow attaches `.flatpak` assets and checksums them (#786) |
+
+### Also in v0.17.0
+
+- Recommended model is a button that sets size and specialization together, and will not ignore a suitable file already on disk (#797)
+- XWayland xdotool fallback pastes via clipboard so missing-layout characters are not garbled (#680)
+- Clipboard paste uses the key that types **v** on the current layout (#788)
+- Timed-out ydotool paste releases Ctrl (#675)
+- Read `WM_CLASS` with `xprop` instead of crashing `xdotool getwindowclassname` on KDE Plasma Wayland (#807)
+- Applying an already-downloaded model no longer freezes Settings (#790)
+- Selected language picks the whisper.cpp variant (English → `.en`) (#795, #780)
+- Push-to-talk tray icon turns red on every hold (#809)
+- Sink-wake no longer clips start/stop cues (#804)
+- Parakeet keeps recognizing after a decode error (#803)
+- Flatpak/AUR deps derived from `uv.lock` (#819)
+- `just verify-release` checks the published GitHub Release (#791)
+- Distro matrix runs `install.sh` (#810)
+
+AppImage and Flatpak remain whisper.cpp only. Snap ships whisper.cpp plus VOSK. Faster Whisper and Parakeet are optional extras on `install.sh` / source installs.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0).
 
 ---
 

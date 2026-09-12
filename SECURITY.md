@@ -6,9 +6,9 @@ Only the current stable minor line receives security fixes:
 
 | Version | Supported |
 | ------- | --------- |
-| 0.16.x  | Yes |
+| 0.17.x  | Yes |
+| 0.16.x  | No |
 | 0.15.x  | No |
-| 0.14.x  | No |
 | older   | No |
 
 Upgrade to the latest release for security and reliability fixes. See [docs/UPDATE.md](docs/UPDATE.md).
@@ -52,6 +52,7 @@ When the user enables **Remote API**, audio is uploaded to the configured server
 |--------|------------|--------|
 | whisper.cpp (default) | Local | Vulkan GPU optional; models cached under XDG data |
 | OpenAI Whisper | Local | PyTorch; NVIDIA/CUDA common |
+| Faster Whisper | Local | CTranslate2 / INT8 Whisper on CPU; optional extra |
 | VOSK | Local | Lightweight CPU path |
 | Parakeet | Local | NVIDIA NeMo ASR via sherpa-onnx; CPU |
 | Remote API | User-configured server | Opt-in only |
