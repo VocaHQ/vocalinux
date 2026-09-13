@@ -387,6 +387,80 @@ class TestAudioDeviceDetection(unittest.TestCase):
         assert mock_audio.open.call_args.kwargs.get("channels") == 1
         assert any(call.kwargs.get("channels") == 2 for call in mock_audio.open.call_args_list)
 
+    def test_open_capture_stream_hda_4ch_prefers_native_channels(self):
+        """HDA mics reporting 4 capture channels must open 4ch-first (#813).
+
+        Built-in analog HDA devices often expose 4ch (front/rear). Opening
+        at 2ch can succeed then abort in PortAudio CleanUpStream with
+        ``free(): corrupted unsorted chunks``.
+        """
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+        mock_audio.open.return_value = mock_stream
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "HDA Intel PCH Analog",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 4,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 4
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_count == 1
+        assert mock_audio.open.call_args.kwargs.get("channels") == 4
+
+    def test_open_capture_stream_pulse_32ch_opens_stereo_never_native(self):
+        """Pulse devices reporting 32 channels must try 2ch first, never 32."""
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+        mock_audio.open.return_value = mock_stream
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "pulse",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 32,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 2
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_args.kwargs.get("channels") == 2
+        assert all(call.kwargs.get("channels") != 32 for call in mock_audio.open.call_args_list)
+
+    def test_open_capture_stream_hda_4ch_falls_back_to_stereo(self):
+        """If native 4ch open fails, still try 2ch on a 4ch-reporting device."""
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+
+        def open_side_effect(**kwargs):
+            if kwargs.get("channels") == 4:
+                raise IOError("[Errno -9998] Invalid number of channels")
+            return mock_stream
+
+        mock_audio.open.side_effect = open_side_effect
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "HDA Intel PCH Analog",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 4,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 2
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_args.kwargs.get("channels") == 2
+        assert any(call.kwargs.get("channels") == 4 for call in mock_audio.open.call_args_list)
+
     def test_open_capture_stream_mono_device_never_probes_stereo(self):
         """Mono-only devices must never be opened with 2 channels.
 
