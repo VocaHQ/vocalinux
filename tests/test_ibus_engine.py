@@ -266,6 +266,23 @@ class TestGetCurrentEngine(unittest.TestCase):
 
     @patch("vocalinux.text_injection.ibus_engine.get_current_engine_gnome_fallback")
     @patch("vocalinux.text_injection.ibus_engine._is_gnome_session", return_value=True)
+    @patch("vocalinux.text_injection.ibus_engine._is_wayland_session", return_value=False)
+    @patch("subprocess.run")
+    def test_get_current_engine_suspicious_us_default_on_gnome_x11(
+        self, mock_run, mock_wayland, mock_gnome, mock_gnome_fallback
+    ):
+        """Test that xkb:us::eng on GNOME/X11 also triggers gsettings fallback (#699)."""
+        mock_run.return_value = MagicMock(stdout="xkb:us::eng\n", stderr="", returncode=0)
+        mock_gnome_fallback.return_value = "xkb:hu::hun"
+
+        from vocalinux.text_injection.ibus_engine import get_current_engine
+
+        result = get_current_engine()
+        self.assertEqual(result, "xkb:hu::hun")
+        mock_gnome_fallback.assert_called_once()
+
+    @patch("vocalinux.text_injection.ibus_engine.get_current_engine_gnome_fallback")
+    @patch("vocalinux.text_injection.ibus_engine._is_gnome_session", return_value=True)
     @patch("vocalinux.text_injection.ibus_engine._is_wayland_session", return_value=True)
     @patch("subprocess.run")
     def test_get_current_engine_rejects_suspicious_us_when_gnome_fails(
@@ -320,14 +337,37 @@ class TestGetCurrentEngineGnomeFallback(unittest.TestCase):
 
     @patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "GNOME"})
     @patch("subprocess.run")
-    def test_empty_mru_sources_returns_none(self, mock_run):
-        """Test that an empty mru-sources list returns None."""
+    def test_empty_mru_and_sources_returns_none(self, mock_run):
+        """Test that an empty mru-sources AND an empty sources both return None."""
         mock_run.return_value = MagicMock(returncode=0, stdout="[]", stderr="")
 
         from vocalinux.text_injection.ibus_engine import get_current_engine_gnome_fallback
 
         result = get_current_engine_gnome_fallback()
         self.assertIsNone(result)
+
+    @patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "GNOME"})
+    @patch("subprocess.run")
+    def test_empty_mru_sources_falls_back_to_configured_sources(self, mock_run):
+        """Test that an empty mru-sources falls back to sources[0] (#699)."""
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[:2] == ["ibus", "list-engine"]:
+                return MagicMock(returncode=0, stdout="xkb:us::eng\nxkb:hu::hun\n", stderr="")
+            key = cmd[-1]
+            if key == "mru-sources":
+                return MagicMock(returncode=0, stdout="@a(ss) []", stderr="")
+            if key == "sources":
+                return MagicMock(returncode=0, stdout="[('xkb', 'hu')]", stderr="")
+            raise AssertionError(f"unexpected command: {cmd}")
+
+        mock_run.side_effect = run_side_effect
+
+        from vocalinux.text_injection.ibus_engine import get_current_engine_gnome_fallback
+
+        result = get_current_engine_gnome_fallback()
+        self.assertEqual(result, "xkb:hu::hun")
+        self.assertEqual(mock_run.call_count, 3)  # mru-sources, sources, ibus list-engine
 
     @patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "GNOME"})
     @patch("subprocess.run")

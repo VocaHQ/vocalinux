@@ -360,21 +360,18 @@ def _is_gnome_session() -> bool:
     return "GNOME" in desktop.upper()
 
 
-def _get_gnome_current_source() -> Optional[tuple[str, str]]:
-    """Return GNOME's current input source from the MRU list."""
-    if not _is_gnome_session():
-        return None
-
+def _read_gnome_input_sources_key(key: str) -> Optional[list]:
+    """Return the parsed list for a gsettings org.gnome.desktop.input-sources key, or None."""
     try:
         result = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.input-sources", "mru-sources"],
+            ["gsettings", "get", "org.gnome.desktop.input-sources", key],
             capture_output=True,
             text=True,
             timeout=5,
             env=host_env(),
         )
         if result.returncode != 0:
-            logger.debug("gsettings get mru-sources failed; not using GNOME fallback")
+            logger.debug(f"gsettings get {key} failed; not using GNOME fallback")
             return None
 
         import ast
@@ -384,22 +381,37 @@ def _get_gnome_current_source() -> Optional[tuple[str, str]]:
             sources_text = sources_text[len("@a(ss) ") :]
         sources = ast.literal_eval(sources_text)
         if not isinstance(sources, (list, tuple)) or not sources:
-            logger.debug("GNOME mru-sources list is empty or invalid")
             return None
-
-        source = sources[0]
-        if not isinstance(source, (list, tuple)) or len(source) != 2:
-            logger.debug("GNOME current input source has an invalid shape")
-            return None
-
-        source_type, source_id = source
-        if not isinstance(source_type, str) or not isinstance(source_id, str) or not source_id:
-            logger.debug("GNOME current input source has invalid values")
-            return None
-        return source_type, source_id
+        return list(sources)
     except (subprocess.SubprocessError, OSError, TypeError, ValueError, SyntaxError) as e:
         logger.debug(f"GNOME fallback via gsettings failed: {e}")
         return None
+
+
+def _get_gnome_current_source() -> Optional[tuple[str, str]]:
+    """Return GNOME's current input source from the MRU list, or from the
+    configured source list when GNOME has not recorded an MRU entry yet."""
+    if not _is_gnome_session():
+        return None
+
+    sources = _read_gnome_input_sources_key("mru-sources")
+    if not sources:
+        logger.debug("GNOME mru-sources is empty; falling back to the configured sources list")
+        sources = _read_gnome_input_sources_key("sources")
+    if not sources:
+        logger.debug("GNOME mru-sources and sources are both empty or invalid")
+        return None
+
+    source = sources[0]
+    if not isinstance(source, (list, tuple)) or len(source) != 2:
+        logger.debug("GNOME current input source has an invalid shape")
+        return None
+
+    source_type, source_id = source
+    if not isinstance(source_type, str) or not isinstance(source_id, str) or not source_id:
+        logger.debug("GNOME current input source has invalid values")
+        return None
+    return source_type, source_id
 
 
 def _resolve_registered_xkb_engine(source_id: str) -> Optional[str]:
@@ -446,7 +458,9 @@ def get_current_engine_gnome_fallback() -> Optional[str]:
 
     On GNOME/Wayland, IBus may have no global engine (input sources are managed
     by Mutter, not ibus-daemon). GNOME's ``current`` key is deprecated and
-    ignored, so the first entry in ``mru-sources`` is used as the current source.
+    ignored, so the first entry in ``mru-sources`` is used as the current
+    source, falling back to ``sources`` (GNOME's static configured list) when
+    no MRU entry has been recorded yet.
 
     Explicit IBus source IDs are returned directly. XKB source IDs are matched
     against registered IBus engines; names such as ``xkb:cn::`` are never
@@ -504,12 +518,10 @@ def get_current_engine() -> Optional[str]:
             if not engine:
                 return None
 
-            # On GNOME/Wayland, ``ibus engine`` can return ``xkb:us::eng``
-            # as a default fallback even when the user's actual layout is
-            # different (e.g. Brazilian ABNT2). Detect this suspicious
-            # default and try the GNOME gsettings fallback for the real
-            # layout before trusting the IBus output (see issue #497).
-            if engine == "xkb:us::eng" and _is_gnome_session() and _is_wayland_session():
+            # On GNOME, ``ibus engine`` can return ``xkb:us::eng`` as a
+            # default fallback even when the actual layout differs. Detect
+            # it and try the gsettings fallback first (see #497, #699).
+            if engine == "xkb:us::eng" and _is_gnome_session():
                 logger.debug(
                     "ibus engine returned 'xkb:us::eng' on GNOME/Wayland; "
                     "attempting GNOME gsettings fallback (see #497)"
