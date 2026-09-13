@@ -615,10 +615,12 @@ def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
 
     Speech recognition engines expect mono audio.
 
-    Stereo (2ch) averages both channels. For 3+ channels, only the first
-    stereo pair is averaged: HDA analog capture often reports 4ch with the
-    microphone on the front pair and silence on the rear, and averaging all
-    N channels would halve the speech level.
+    Stereo (2ch) still averages both channels. For 3+ channels, energy-aware
+    selection is required: the microphone may not be on ch0/ch1 (HDA analog
+    capture often puts it on ch2/ch3), so keeping only the first stereo pair
+    can yield silence, while averaging all N attenuates speech when only some
+    channels are live. Pick the single loudest channel by per-buffer
+    mean-square energy so that channel is returned at full level.
 
     Args:
         audio_array: 1-D int16 samples with interleaved channels.
@@ -627,8 +629,10 @@ def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
     Returns:
         1-D int16 mono samples. ``channels <= 1`` is a passthrough. If
         ``len(audio_array)`` is not divisible by *channels*, leftover
-        samples are truncated using the full interleaved frame width, then
-        the first pair is selected from the reshaped frames.
+        samples are truncated using the full N-channel frame width before
+        reshape; an empty array after truncation is returned as-is. Stereo
+        then averages both channels; N>=3 selects the loudest channel by
+        per-buffer mean-square (ties keep the first index).
     """
     if channels <= 1:
         return audio_array
@@ -638,9 +642,12 @@ def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
     if len(audio_array) == 0:
         return audio_array
     frames = audio_array.reshape(-1, channels)
-    if channels > 2:
-        frames = frames[:, :2]
-    return frames.mean(axis=1).astype(audio_array.dtype)
+    if channels == 2:
+        return frames.mean(axis=1).astype(audio_array.dtype)
+    # Cast before squaring so int16 does not overflow.
+    energy = (frames.astype("float64") ** 2).mean(axis=0)
+    loudest = int(energy.argmax())
+    return frames[:, loudest].astype(audio_array.dtype)
 
 
 def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:

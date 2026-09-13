@@ -803,7 +803,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
 
 
 class TestDownmixToMono(unittest.TestCase):
-    """First-pair downmix policy for HDA capture (#813 / PR #829)."""
+    """Energy-aware loudest-channel downmix policy for HDA capture (#813 / PR #829)."""
 
     @classmethod
     def setUpClass(cls):
@@ -831,8 +831,8 @@ class TestDownmixToMono(unittest.TestCase):
         out = _downmix_to_mono(audio, 2)
         np.testing.assert_array_equal(out, np.array([150], dtype=np.int16))
 
-    def test_quad_front_pair_does_not_halve_speech_level(self):
-        """4ch (speech, speech, silence, silence) must keep first-pair level."""
+    def test_quad_loudest_channel_does_not_halve_speech_level(self):
+        """4ch (speech, speech, silence, silence) keeps the loudest channel at full level."""
         np = self.np
         audio = np.array([1000, 1000, 0, 0], dtype=np.int16)
         out = _downmix_to_mono(audio, 4)
@@ -840,10 +840,31 @@ class TestDownmixToMono(unittest.TestCase):
         # Averaging all 4 channels would have produced 500.
         assert out[0] != 500
 
+    def test_quad_recovers_speech_on_channel_2(self):
+        """4ch (silence, silence, speech, silence) selects the loud rear channel."""
+        np = self.np
+        audio = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+
+    def test_quad_recovers_speech_on_channel_3(self):
+        """4ch (silence, silence, silence, speech) selects the loud rear channel."""
+        np = self.np
+        audio = np.array([0, 0, 0, 1000], dtype=np.int16)
+        out = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+
     def test_quad_leftover_truncation(self):
-        """Incomplete trailing frame is dropped using full N-channel width."""
+        """Incomplete trailing frame is dropped using full N-channel width, then loudest channel."""
         np = self.np
         audio = np.array([1000, 1000, 0, 0, 2000, 2000, 0, 0, 99], dtype=np.int16)
+        out = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
+
+    def test_quad_leftover_truncation_then_loudest_rear_channel(self):
+        """Truncate leftover at full N-channel width, then pick speech on ch2 (not first pair)."""
+        np = self.np
+        audio = np.array([0, 0, 1000, 0, 0, 0, 2000, 0, 99], dtype=np.int16)
         out = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
 
