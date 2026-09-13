@@ -40,6 +40,11 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
+from .dictionary_corrector import (
+    load_custom_dictionary,
+    mask_dictionary_phrases,
+    unmask_dictionary_phrases,
+)
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
@@ -3546,6 +3551,18 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
+            # Mask dictionary phrases with word-like sentinels before command
+            # matching, then restore replacements afterward. That covers spoken
+            # command remaps, command-like replacements, hardcoded CommandProcessor
+            # phrases, and unrelated commands in the same transcript, without
+            # letting format commands destroy the placeholders.
+            # Re-read config.json each segment so Settings changes apply without
+            # a restart.
+            dictionary_entries = load_custom_dictionary()
+            mapping: dict[str, str] = {}
+            if dictionary_entries:
+                text, mapping = mask_dictionary_phrases(text, dictionary_entries)
+
             if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
@@ -3553,6 +3570,9 @@ class SpeechRecognitionManager:
                 # Voice commands disabled - pass text through directly (Whisper handles punctuation)
                 processed_text = text.strip()
                 actions = []
+
+            if mapping:
+                processed_text = unmask_dictionary_phrases(processed_text, mapping)
 
             # Call text callbacks with processed text
             logger.debug(
