@@ -153,6 +153,14 @@ lock:
     uv lock
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt
+    # One export per selectable engine. install.sh installs each of these as an
+    # extra, so an extra without an export is an install path with nothing
+    # pinned: that is how parakeet, faster-whisper and vosk reached users.
+    # tests/test_dependency_exports.py enumerates the extras and fails when one
+    # has no export, rather than trusting this list to stay complete.
+    uv export --no-dev --extra vosk --no-emit-project --no-emit-package pygobject -o requirements/vosk.txt
+    uv export --no-dev --extra parakeet --no-emit-project --no-emit-package pygobject -o requirements/parakeet.txt
+    uv export --no-dev --extra faster-whisper --no-emit-project --no-emit-package pygobject -o requirements/faster-whisper.txt
     # --group lint too: the linters live in a dependency group, not in the dev
     # extra, so exporting the extra alone produced a file that reproduced
     # neither `just deps` nor what CI lints with.
@@ -176,6 +184,12 @@ lock:
 # Fail if uv.lock is stale relative to pyproject.toml
 lock-check:
     uv lock --check
+
+# Fail if any requirements/* export is behind uv.lock. Reads the `uv export`
+# lines out of `lock` above and re-runs them, rather than keeping a second copy
+# of that list. Offline: `uv export` reads the lock, so this needs no network.
+export-check:
+    python3 scripts/check_exports.py
 
 # The export pins names, versions and digests; this looks up the URL that serves
 # those bytes, so it needs PyPI. tests/test_flatpak_packaging.py checks the same

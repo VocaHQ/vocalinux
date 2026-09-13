@@ -3,9 +3,12 @@
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+PYPROJECT = REPO_ROOT / "pyproject.toml"
 SETTINGS = Path(__file__).resolve().parents[1] / "src" / "vocalinux" / "ui" / "settings_dialog.py"
 AGENTS = Path(__file__).resolve().parents[1] / "AGENTS.md"
 
@@ -124,10 +127,18 @@ def test_write_pip_reqs_skip_pygobject_runtime(tmp_path) -> None:
 
 
 def test_write_pip_reqs_skip_pygobject_vosk_extra(tmp_path) -> None:
+    """The writer copies an extra's specifiers through, bounds and all.
+
+    Read out of pyproject.toml rather than written here as a literal. This
+    assertion was `["vosk>=0.3.45"]` and failed the day the extra gained an
+    upper bound, reporting an intentional pyproject edit as an installer defect.
+    """
+    with PYPROJECT.open("rb") as handle:
+        expected = tomllib.load(handle)["project"]["optional-dependencies"]["vosk"]
+    assert expected, "the vosk extra declares nothing; this would compare [] to []"
     dest = tmp_path / "vosk.txt"
     _run_reqs_writer(dest, "vosk")
-    reqs = dest.read_text().splitlines()
-    assert reqs == ["vosk>=0.3.45"]
+    assert dest.read_text().splitlines() == expected
 
 
 def test_settings_uses_engine_flag_not_removed_with_whisper() -> None:

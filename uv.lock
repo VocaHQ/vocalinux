@@ -2824,7 +2824,7 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "evdev", marker = "sys_platform == 'linux'", specifier = ">=1.6.0,<2" },
-    { name = "faster-whisper", marker = "extra == 'faster-whisper'", specifier = ">=1.0.0" },
+    { name = "faster-whisper", marker = "extra == 'faster-whisper'", specifier = ">=1.0.0,<2" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "numpy", specifier = ">=1.22.0,<3" },
     { name = "onnxruntime", marker = "extra == 'vad'", specifier = ">=1.16.0" },
@@ -2840,12 +2840,12 @@ requires-dist = [
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.1.0" },
     { name = "pywhispercpp", specifier = ">=1.5.0,<2" },
     { name = "requests", specifier = ">=2.28.0" },
-    { name = "sherpa-onnx", marker = "extra == 'parakeet'", specifier = ">=1.12.0" },
+    { name = "sherpa-onnx", marker = "extra == 'parakeet'", specifier = ">=1.12.0,<2" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=6.0.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.2.0" },
     { name = "torch", marker = "extra == 'whisper'", specifier = ">=2.0.0" },
     { name = "torchaudio", marker = "extra == 'whisper'", specifier = ">=2.0.0" },
-    { name = "vosk", marker = "extra == 'vosk'", specifier = ">=0.3.45" },
+    { name = "vosk", marker = "extra == 'vosk'", specifier = ">=0.3.45,<0.4" },
 ]
 provides-extras = ["vosk", "whisper", "parakeet", "faster-whisper", "vad", "dev", "docs"]
 
