@@ -7,8 +7,9 @@ color-scheme=prefer-dark`` on its own. Setting
 ``gtk-application-prefer-dark-theme`` follows the same portal/gsettings
 signals without forcing Adwaita, so custom themes still work.
 
-Portal ``Read`` is tried first, then ``gsettings``. ``0`` / ``default`` /
-read failure leave GTK defaults. ``GTK_THEME`` already set (AppImage or
+Portal ``Read`` is tried first. If it is unavailable or reports no preference,
+``gsettings`` is used as a fallback. An unknown ``gsettings`` value or read
+failure leaves GTK defaults unchanged. ``GTK_THEME`` already set (AppImage or
 user override) skips the helper entirely.
 """
 
