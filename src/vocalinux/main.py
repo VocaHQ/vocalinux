@@ -309,6 +309,10 @@ def main():
     if not check_display_available():
         sys.exit(1)
 
+    from .utils.gtk_color_scheme import apply_os_color_scheme
+
+    apply_os_color_scheme()
+
     if not check_appindicator_support():
         logger.warning("No StatusNotifierWatcher found on D-Bus session bus.")
         logger.warning("The system tray icon may not appear.")

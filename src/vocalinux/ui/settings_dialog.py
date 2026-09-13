@@ -20,7 +20,6 @@ UX Design Notes:
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
 from typing import TYPE_CHECKING, Any, NamedTuple, Optional
@@ -514,16 +513,9 @@ def _about_surface_is_dark() -> bool:
         except Exception:
             pass
     try:
-        from ..utils.host_process import host_env
+        from ..utils.gtk_color_scheme import read_os_color_scheme
 
-        result = subprocess.run(
-            ["gsettings", "get", "org.gnome.desktop.interface", "color-scheme"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            env=host_env(),
-        )
-        if result.returncode == 0 and "prefer-dark" in (result.stdout or "").lower():
+        if read_os_color_scheme() == "prefer-dark":
             return True
     except Exception:
         pass
