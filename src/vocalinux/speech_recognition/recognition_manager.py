@@ -17,7 +17,10 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
@@ -518,10 +521,10 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     heap corruption (see GitHub issue #567).
 
     This function opens PortAudio exactly once per capture session: candidate
-    formats are tried in order (device default rate first, mono before stereo,
-    stereo skipped entirely for mono-only devices) and the FIRST successfully
-    opened stream is returned to the caller for actual capture — never closed
-    and reopened.
+    formats are tried in order (device default rate first, native channel count
+    first for 2–8ch devices, stereo skipped entirely for mono-only devices)
+    and the FIRST successfully opened stream is returned to the caller for
+    actual capture — never closed and reopened.
 
     Args:
         audio: PyAudio instance
@@ -607,11 +610,15 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     return 1, 16000, None
 
 
-def _downmix_to_mono(audio_array, channels: int):
-    """Average N interleaved int16 channels down to mono.
+def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
+    """Downmix interleaved int16 PCM to mono.
 
-    Speech recognition engines expect mono audio. Multi-channel HDA
-    capture (e.g. 4ch analog surround) is downmixed by averaging.
+    Speech recognition engines expect mono audio.
+
+    Stereo (2ch) averages both channels. For 3+ channels, only the first
+    stereo pair is averaged: HDA analog capture often reports 4ch with the
+    microphone on the front pair and silence on the rear, and averaging all
+    N channels would halve the speech level.
 
     Args:
         audio_array: 1-D int16 samples with interleaved channels.
@@ -620,7 +627,8 @@ def _downmix_to_mono(audio_array, channels: int):
     Returns:
         1-D int16 mono samples. ``channels <= 1`` is a passthrough. If
         ``len(audio_array)`` is not divisible by *channels*, leftover
-        samples are truncated.
+        samples are truncated using the full interleaved frame width, then
+        the first pair is selected from the reshaped frames.
     """
     if channels <= 1:
         return audio_array
@@ -629,7 +637,10 @@ def _downmix_to_mono(audio_array, channels: int):
         audio_array = audio_array[: len(audio_array) - leftover]
     if len(audio_array) == 0:
         return audio_array
-    return audio_array.reshape(-1, channels).mean(axis=1).astype(audio_array.dtype)
+    frames = audio_array.reshape(-1, channels)
+    if channels > 2:
+        frames = frames[:, :2]
+    return frames.mean(axis=1).astype(audio_array.dtype)
 
 
 def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
@@ -645,7 +656,8 @@ def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
         device_index: The device index to test (None for default)
 
     Returns:
-        int: Number of channels supported (1 or 2), defaults to 1
+        int: Negotiated channel count (1, 2, or native 3–8 for HDA),
+        defaults to 1
     """
     channels, _rate, stream = _open_capture_stream(audio, device_index)
     _safe_close_stream(stream)

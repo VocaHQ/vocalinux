@@ -28,6 +28,7 @@ import pytest
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import (
     SpeechRecognitionManager,
+    _downmix_to_mono,
     _filter_non_speech,
     _get_supported_channels,
     _get_supported_sample_rate,
@@ -799,6 +800,52 @@ class TestAudioDeviceDetection(unittest.TestCase):
         with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
             rate = _get_supported_sample_rate(mock_audio, None, 1)
             assert rate == 16000  # Default fallback
+
+
+class TestDownmixToMono(unittest.TestCase):
+    """First-pair downmix policy for HDA capture (#813 / PR #829)."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Other test modules may have left sys.modules["numpy"] as MagicMock.
+        if isinstance(sys.modules.get("numpy"), MagicMock):
+            real = getattr(sys, "_vocalinux_real_numpy", None)
+            if real is not None:
+                sys.modules["numpy"] = real
+            else:
+                del sys.modules["numpy"]
+        import numpy as np
+
+        cls.np = np
+
+    def test_mono_passthrough_unchanged(self):
+        np = self.np
+        audio = np.array([100, 200, 300], dtype=np.int16)
+        out = _downmix_to_mono(audio, 1)
+        np.testing.assert_array_equal(out, audio)
+        assert out is audio
+
+    def test_stereo_mean_of_both_channels(self):
+        np = self.np
+        audio = np.array([100, 200], dtype=np.int16)
+        out = _downmix_to_mono(audio, 2)
+        np.testing.assert_array_equal(out, np.array([150], dtype=np.int16))
+
+    def test_quad_front_pair_does_not_halve_speech_level(self):
+        """4ch (speech, speech, silence, silence) must keep first-pair level."""
+        np = self.np
+        audio = np.array([1000, 1000, 0, 0], dtype=np.int16)
+        out = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        # Averaging all 4 channels would have produced 500.
+        assert out[0] != 500
+
+    def test_quad_leftover_truncation(self):
+        """Incomplete trailing frame is dropped using full N-channel width."""
+        np = self.np
+        audio = np.array([1000, 1000, 0, 0, 2000, 2000, 0, 0, 99], dtype=np.int16)
+        out = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
 
 
 class TestRecordAudioNegotiationFallback(unittest.TestCase):
