@@ -610,7 +610,11 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     return 1, 16000, None
 
 
-def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
+def _downmix_to_mono(
+    audio_array: "np.ndarray",
+    channels: int,
+    sticky_channel: Optional[int] = None,
+) -> tuple["np.ndarray", Optional[int]]:
     """Downmix interleaved int16 PCM to mono.
 
     Speech recognition engines expect mono audio.
@@ -619,35 +623,48 @@ def _downmix_to_mono(audio_array: "np.ndarray", channels: int) -> "np.ndarray":
     selection is required: the microphone may not be on ch0/ch1 (HDA analog
     capture often puts it on ch2/ch3), so keeping only the first stereo pair
     can yield silence, while averaging all N attenuates speech when only some
-    channels are live. Pick the single loudest channel by per-buffer
-    mean-square energy so that channel is returned at full level.
+    channels are live. On the first N>=3 buffer (or after sticky is cleared),
+    pick the single loudest channel by mean-square energy and return that
+    index so the caller can pin it for the life of the capture stream. Later
+    buffers reuse *sticky_channel* so a noise burst on another input cannot
+    switch the mic mid-utterance.
 
     Args:
         audio_array: 1-D int16 samples with interleaved channels.
         channels: Number of interleaved channels in *audio_array*.
+        sticky_channel: Previously selected channel for N>=3 streams, or
+            ``None`` to (re)select by loudest mean-square energy.
 
     Returns:
-        1-D int16 mono samples. ``channels <= 1`` is a passthrough. If
-        ``len(audio_array)`` is not divisible by *channels*, leftover
-        samples are truncated using the full N-channel frame width before
-        reshape; an empty array after truncation is returned as-is. Stereo
-        then averages both channels; N>=3 selects the loudest channel by
+        ``(mono, sticky)`` where *mono* is 1-D int16 samples and *sticky* is
+        the channel index to reuse on the next N>=3 buffer (``None`` for
+        N<=2). ``channels <= 1`` is a passthrough. If ``len(audio_array)`` is
+        not divisible by *channels*, leftover samples are truncated using the
+        full N-channel frame width before reshape; an empty array after
+        truncation is returned as-is (sticky unchanged for N>=3 when already
+        set, else ``None``). Stereo averages both channels; N>=3 uses the
+        sticky index when in range, otherwise the loudest channel by
         per-buffer mean-square (ties keep the first index).
     """
     if channels <= 1:
-        return audio_array
+        return audio_array, None
     leftover = len(audio_array) % channels
     if leftover:
         audio_array = audio_array[: len(audio_array) - leftover]
     if len(audio_array) == 0:
-        return audio_array
+        if channels >= 3 and sticky_channel is not None and 0 <= sticky_channel < channels:
+            return audio_array, sticky_channel
+        return audio_array, None
     frames = audio_array.reshape(-1, channels)
     if channels == 2:
-        return frames.mean(axis=1).astype(audio_array.dtype)
-    # Cast before squaring so int16 does not overflow.
-    energy = (frames.astype("float64") ** 2).mean(axis=0)
-    loudest = int(energy.argmax())
-    return frames[:, loudest].astype(audio_array.dtype)
+        return frames.mean(axis=1).astype(audio_array.dtype), None
+    if sticky_channel is not None and 0 <= sticky_channel < channels:
+        selected = int(sticky_channel)
+    else:
+        # Cast before squaring so int16 does not overflow.
+        energy = (frames.astype("float64") ** 2).mean(axis=0)
+        selected = int(energy.argmax())
+    return frames[:, selected].astype(audio_array.dtype), selected
 
 
 def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
@@ -1139,6 +1156,7 @@ class SpeechRecognitionManager:
         self._pyaudio_instance = None
         self._capture_sample_rate = 16000  # Default, updated when device is opened
         self._capture_channels = 1  # Default, updated when device is opened
+        self._capture_downmix_channel = None  # Sticky N>=3 channel for open stream
 
         # Create models directory if it doesn't exist
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -3271,6 +3289,7 @@ class SpeechRecognitionManager:
             logger.info(f"Using {CHANNELS} channel(s) for recording")
             self._capture_sample_rate = RATE
             self._capture_channels = CHANNELS
+            self._capture_downmix_channel = None  # New stream: re-pick loudest on first buffer
             logger.info(f"Using sample rate: {RATE}Hz")
 
             try:
@@ -3365,7 +3384,11 @@ class SpeechRecognitionManager:
                         # Speech recognition engines expect mono (1 channel) audio
                         if CHANNELS > 1:
                             audio_array = np.frombuffer(data, dtype=np.int16)
-                            data = _downmix_to_mono(audio_array, CHANNELS).tobytes()
+                            mono, selected = _downmix_to_mono(
+                                audio_array, CHANNELS, self._capture_downmix_channel
+                            )
+                            self._capture_downmix_channel = selected
+                            data = mono.tobytes()
 
                         # Resample to 16kHz if capturing at non-16kHz for Vosk/Whisper compatibility
                         if self._capture_sample_rate != 16000:
@@ -3518,6 +3541,7 @@ class SpeechRecognitionManager:
             # Reset audio stream reference and reconnection state
             self._audio_stream = None
             self._pyaudio_instance = None
+            self._capture_downmix_channel = None
             self._reconnection_attempts = 0
             self._last_audio_error_time = 0
 
@@ -3949,6 +3973,7 @@ class SpeechRecognitionManager:
             logger.debug(f"Reconnecting with {CHANNELS} channel(s)")
             self._capture_sample_rate = RATE
             self._capture_channels = CHANNELS
+            self._capture_downmix_channel = None  # Reopened stream: re-pick loudest
             logger.debug(f"Reconnecting with sample rate: {RATE}Hz")
 
             if new_stream is None:

@@ -821,52 +821,84 @@ class TestDownmixToMono(unittest.TestCase):
     def test_mono_passthrough_unchanged(self):
         np = self.np
         audio = np.array([100, 200, 300], dtype=np.int16)
-        out = _downmix_to_mono(audio, 1)
+        out, sticky = _downmix_to_mono(audio, 1)
         np.testing.assert_array_equal(out, audio)
         assert out is audio
+        assert sticky is None
 
     def test_stereo_mean_of_both_channels(self):
         np = self.np
         audio = np.array([100, 200], dtype=np.int16)
-        out = _downmix_to_mono(audio, 2)
+        out, sticky = _downmix_to_mono(audio, 2)
         np.testing.assert_array_equal(out, np.array([150], dtype=np.int16))
+        assert sticky is None
 
     def test_quad_loudest_channel_does_not_halve_speech_level(self):
         """4ch (speech, speech, silence, silence) keeps the loudest channel at full level."""
         np = self.np
         audio = np.array([1000, 1000, 0, 0], dtype=np.int16)
-        out = _downmix_to_mono(audio, 4)
+        out, sticky = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
         # Averaging all 4 channels would have produced 500.
         assert out[0] != 500
+        assert sticky == 0
 
     def test_quad_recovers_speech_on_channel_2(self):
         """4ch (silence, silence, speech, silence) selects the loud rear channel."""
         np = self.np
         audio = np.array([0, 0, 1000, 0], dtype=np.int16)
-        out = _downmix_to_mono(audio, 4)
+        out, sticky = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        assert sticky == 2
 
     def test_quad_recovers_speech_on_channel_3(self):
         """4ch (silence, silence, silence, speech) selects the loud rear channel."""
         np = self.np
         audio = np.array([0, 0, 0, 1000], dtype=np.int16)
-        out = _downmix_to_mono(audio, 4)
+        out, sticky = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        assert sticky == 3
 
     def test_quad_leftover_truncation(self):
         """Incomplete trailing frame is dropped using full N-channel width, then loudest channel."""
         np = self.np
         audio = np.array([1000, 1000, 0, 0, 2000, 2000, 0, 0, 99], dtype=np.int16)
-        out = _downmix_to_mono(audio, 4)
+        out, sticky = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
+        assert sticky == 0
 
     def test_quad_leftover_truncation_then_loudest_rear_channel(self):
         """Truncate leftover at full N-channel width, then pick speech on ch2 (not first pair)."""
         np = self.np
         audio = np.array([0, 0, 1000, 0, 0, 0, 2000, 0, 99], dtype=np.int16)
-        out = _downmix_to_mono(audio, 4)
+        out, sticky = _downmix_to_mono(audio, 4)
         np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
+        assert sticky == 2
+
+    def test_quad_sticky_channel_ignores_later_noise_burst(self):
+        """First buffer speech on ch2 sticks; later louder noise on ch0 still returns ch2."""
+        np = self.np
+        first = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([1000], dtype=np.int16))
+        assert sticky == 2
+        # Noise burst on ch0 is louder than sticky mic speech on ch2.
+        second = np.array([5000, 0, 800, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([800], dtype=np.int16))
+        assert sticky2 == 2
+
+    def test_quad_front_pair_full_level_with_sticky(self):
+        """Front-pair speech still comes through at full level once sticky is set."""
+        np = self.np
+        first = np.array([1200, 1100, 0, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([1200], dtype=np.int16))
+        assert sticky == 0
+        second = np.array([900, 850, 0, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([900], dtype=np.int16))
+        assert sticky2 == 0
 
 
 class TestRecordAudioNegotiationFallback(unittest.TestCase):
