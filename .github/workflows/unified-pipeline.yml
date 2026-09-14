@@ -51,6 +51,10 @@ jobs:
               - 'vocalinux.desktop'
               - 'resources/**'
               - 'justfile'
+              # scripts/ is guarded by tests/ and one of them is executed by the
+              # lint job: a scripts-only change that skipped this filter would
+              # skip both the checker and the tests that validate it.
+              - 'scripts/**'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
             # The AUR gate builds packaging/aur/vocalinux/PKGBUILD from this
@@ -110,6 +114,15 @@ jobs:
       - name: Check import sorting with isort
         run: |
           uv run --locked --only-group lint isort --check-only --diff --profile black src/ tests/
+
+      # --locked above fails when uv.lock drifts from pyproject.toml; nothing
+      # covered the step after that one. The exports are hash-pinned copies of
+      # the lock written by `just lock`, and no workflow ever re-ran it, so one
+      # could sit behind the lock indefinitely. `uv export` reads the lock and
+      # nothing else, so this needs neither the network nor the system headers
+      # the test matrix installs, which is why it rides here.
+      - name: Exports match uv.lock
+        run: python3 scripts/check_exports.py
 
   python-test:
     name: 🧪 Test Python ${{ matrix.python-version }}

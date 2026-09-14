@@ -50,7 +50,7 @@ dependencies = [
 
 [project.optional-dependencies]
 vosk = [
-    "vosk>=0.3.45",
+    "vosk>=0.3.45,<0.4",
 ]
 whisper = [
     "openai-whisper>=20231117",
@@ -58,10 +58,10 @@ whisper = [
     "torchaudio>=2.0.0",
 ]
 parakeet = [
-    "sherpa-onnx>=1.12.0",
+    "sherpa-onnx>=1.12.0,<2",
 ]
 faster_whisper = [
-    "faster-whisper>=1.0.0",
+    "faster-whisper>=1.0.0,<2",
 ]
 vad = [
     "onnxruntime>=1.16.0",
