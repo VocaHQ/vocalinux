@@ -610,6 +610,12 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     return 1, 16000, None
 
 
+# Mean-square energy floor on int16 PCM before locking the N>=3 sticky channel.
+# Capture samples are raw int16 (see _record_audio np.frombuffer(..., int16));
+# RMS ≈ 100 ≈ -50 dBFS — above idle dither/ambient, well below speech.
+_STICKY_LOCK_MIN_MEAN_SQUARE = 10_000.0
+
+
 def _downmix_to_mono(
     audio_array: "np.ndarray",
     channels: int,
@@ -623,11 +629,15 @@ def _downmix_to_mono(
     selection is required: the microphone may not be on ch0/ch1 (HDA analog
     capture often puts it on ch2/ch3), so keeping only the first stereo pair
     can yield silence, while averaging all N attenuates speech when only some
-    channels are live. On the first N>=3 buffer (or after sticky is cleared),
-    pick the single loudest channel by mean-square energy and return that
-    index so the caller can pin it for the life of the capture stream. Later
-    buffers reuse *sticky_channel* so a noise burst on another input cannot
-    switch the mic mid-utterance.
+    channels are live.
+
+    While sticky is unset, each buffer returns the loudest channel by
+    mean-square energy, but sticky is only *set* when that channel's
+    mean-square exceeds :data:`_STICKY_LOCK_MIN_MEAN_SQUARE` (speech-gated
+    lock). That avoids pinning an ambient/noise channel from a silent first
+    buffer before the mic speaks. Once sticky is set, later buffers reuse it
+    until cleared on open/reconnect/cleanup so a noise burst on another input
+    cannot switch the mic mid-utterance.
 
     Args:
         audio_array: 1-D int16 samples with interleaved channels.
@@ -638,13 +648,15 @@ def _downmix_to_mono(
     Returns:
         ``(mono, sticky)`` where *mono* is 1-D int16 samples and *sticky* is
         the channel index to reuse on the next N>=3 buffer (``None`` for
-        N<=2). ``channels <= 1`` is a passthrough. If ``len(audio_array)`` is
-        not divisible by *channels*, leftover samples are truncated using the
-        full N-channel frame width before reshape; an empty array after
-        truncation is returned as-is (sticky unchanged for N>=3 when already
-        set, else ``None``). Stereo averages both channels; N>=3 uses the
-        sticky index when in range, otherwise the loudest channel by
-        per-buffer mean-square (ties keep the first index).
+        N<=2, or when N>=3 and no speech-gated lock yet). ``channels <= 1``
+        is a passthrough. If ``len(audio_array)`` is not divisible by
+        *channels*, leftover samples are truncated using the full N-channel
+        frame width before reshape; an empty array after truncation is
+        returned as-is (sticky unchanged for N>=3 when already set, else
+        ``None``). Stereo averages both channels; N>=3 uses the sticky index
+        when in range, otherwise the loudest channel by per-buffer
+        mean-square (ties keep the first index), locking sticky only when
+        that channel clears the non-silence energy floor.
     """
     if channels <= 1:
         return audio_array, None
@@ -660,11 +672,15 @@ def _downmix_to_mono(
         return frames.mean(axis=1).astype(audio_array.dtype), None
     if sticky_channel is not None and 0 <= sticky_channel < channels:
         selected = int(sticky_channel)
-    else:
-        # Cast before squaring so int16 does not overflow.
-        energy = (frames.astype("float64") ** 2).mean(axis=0)
-        selected = int(energy.argmax())
-    return frames[:, selected].astype(audio_array.dtype), selected
+        return frames[:, selected].astype(audio_array.dtype), selected
+    # Cast before squaring so int16 does not overflow.
+    energy = (frames.astype("float64") ** 2).mean(axis=0)
+    selected = int(energy.argmax())
+    mono = frames[:, selected].astype(audio_array.dtype)
+    # Speech-gate: return loudest mono now, but only pin sticky on real energy.
+    if float(energy[selected]) >= _STICKY_LOCK_MIN_MEAN_SQUARE:
+        return mono, selected
+    return mono, None
 
 
 def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
@@ -1156,7 +1172,7 @@ class SpeechRecognitionManager:
         self._pyaudio_instance = None
         self._capture_sample_rate = 16000  # Default, updated when device is opened
         self._capture_channels = 1  # Default, updated when device is opened
-        self._capture_downmix_channel = None  # Sticky N>=3 channel for open stream
+        self._capture_downmix_channel = None  # Speech-gated sticky N>=3 channel for open stream
 
         # Create models directory if it doesn't exist
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -3289,7 +3305,7 @@ class SpeechRecognitionManager:
             logger.info(f"Using {CHANNELS} channel(s) for recording")
             self._capture_sample_rate = RATE
             self._capture_channels = CHANNELS
-            self._capture_downmix_channel = None  # New stream: re-pick loudest on first buffer
+            self._capture_downmix_channel = None  # New stream: speech-gated sticky unset
             logger.info(f"Using sample rate: {RATE}Hz")
 
             try:
@@ -3973,7 +3989,7 @@ class SpeechRecognitionManager:
             logger.debug(f"Reconnecting with {CHANNELS} channel(s)")
             self._capture_sample_rate = RATE
             self._capture_channels = CHANNELS
-            self._capture_downmix_channel = None  # Reopened stream: re-pick loudest
+            self._capture_downmix_channel = None  # Reopened stream: clear speech-gated sticky
             logger.debug(f"Reconnecting with sample rate: {RATE}Hz")
 
             if new_stream is None:

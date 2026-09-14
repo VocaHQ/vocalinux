@@ -28,6 +28,7 @@ import pytest
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import (
     SpeechRecognitionManager,
+    _STICKY_LOCK_MIN_MEAN_SQUARE,
     _downmix_to_mono,
     _filter_non_speech,
     _get_supported_channels,
@@ -899,6 +900,43 @@ class TestDownmixToMono(unittest.TestCase):
         out2, sticky2 = _downmix_to_mono(second, 4, sticky)
         np.testing.assert_array_equal(out2, np.array([900], dtype=np.int16))
         assert sticky2 == 0
+
+    def test_quad_silent_first_buffer_does_not_lock_sticky(self):
+        """Idle/ambient first buffer must not permanently pin ch0 before speech."""
+        np = self.np
+        # ch0 has tiny ambient (mean-square << lock floor); others silent.
+        ambient = 20  # MS = 400 << _STICKY_LOCK_MIN_MEAN_SQUARE (10000)
+        assert ambient * ambient < _STICKY_LOCK_MIN_MEAN_SQUARE
+        first = np.array([ambient, 0, 0, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([ambient], dtype=np.int16))
+        assert sticky is None
+        # Second buffer: real speech on ch2 — lock there, not ch0.
+        second = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([1000], dtype=np.int16))
+        assert sticky2 == 2
+
+    def test_quad_near_silence_noise_then_speech_locks_speech_channel(self):
+        """Noise-floor ch0 then speech on ch2: return speech and pin ch2."""
+        np = self.np
+        # Multi-frame idle: faint noise on ch0 only.
+        idle = np.array(
+            [30, 0, 0, 0, 40, 0, 0, 0, 25, 0, 0, 0],
+            dtype=np.int16,
+        )
+        out1, sticky = _downmix_to_mono(idle, 4)
+        assert sticky is None
+        assert out1.tolist() == [30, 40, 25]
+        speech = np.array([10, 0, 2000, 0, 5, 0, 1800, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(speech, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([2000, 1800], dtype=np.int16))
+        assert sticky2 == 2
+        # Once locked, later louder noise on another channel stays ignored.
+        burst = np.array([8000, 0, 900, 0], dtype=np.int16)
+        out3, sticky3 = _downmix_to_mono(burst, 4, sticky2)
+        np.testing.assert_array_equal(out3, np.array([900], dtype=np.int16))
+        assert sticky3 == 2
 
 
 class TestRecordAudioNegotiationFallback(unittest.TestCase):
