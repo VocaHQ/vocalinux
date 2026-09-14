@@ -4,8 +4,8 @@ import { CheckCircle2, ChevronRight, Globe, Languages, Mic } from "lucide-react"
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
 import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
-const WHISPER_ENGINES = ["whisper.cpp", "Whisper"] as const;
-const ALL_ENGINES = ["whisper.cpp", "Whisper", "VOSK"] as const;
+const WHISPER_ENGINES = ["whisper.cpp", "Whisper", "Faster Whisper"] as const;
+const ALL_ENGINES = ["whisper.cpp", "Whisper", "Faster Whisper", "VOSK"] as const;
 
 const supportedLanguages = [
   {
@@ -286,7 +286,7 @@ const features = [
   {
     title: "Engine-Aware Catalog",
     description:
-      "Whisper engines cover the full language list. VOSK appears only where an official model exists.",
+      "Whisper engines (whisper.cpp, Whisper, Faster Whisper) cover the full language list. VOSK appears only where an official model exists. Parakeet uses its own English / European bundles and ignores the catalog picker.",
     icon: Mic,
   },
   {
