@@ -105,6 +105,7 @@ def regenerate(argv: list[str], target: Path, scratch: Path) -> str:
 
 
 def main() -> int:
+    """Check every lock-generated export and report whether any are stale."""
     commands = export_commands()
     if not commands:
         print("no `uv export` lines in the lock recipe; nothing was checked", file=sys.stderr)

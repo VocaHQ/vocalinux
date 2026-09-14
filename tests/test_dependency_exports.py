@@ -7,11 +7,14 @@ happened: the linters moved into the `lint` dependency group and
 reproduced either `just deps` or what CI lints with.
 """
 
+from __future__ import annotations
+
 import importlib.util
 import re
 import tomllib
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -31,17 +34,17 @@ EXPORT_EXEMPT = {
 }
 
 
-def _pyproject() -> dict:
+def _pyproject() -> dict[str, Any]:
     with PYPROJECT.open("rb") as handle:
         return tomllib.load(handle)
 
 
-def _requirement_names(specs: list) -> list:
+def _requirement_names(specs: list[str]) -> list[str]:
     """Distribution names out of PEP 508 specifiers, lowercased."""
     return [re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0].strip().lower() for spec in specs]
 
 
-def _exported_names(path: Path) -> set:
+def _exported_names(path: Path) -> set[str]:
     names = set()
     for line in path.read_text(encoding="utf-8").splitlines():
         match = re.match(r"^([A-Za-z0-9._-]+)==", line)
@@ -50,7 +53,7 @@ def _exported_names(path: Path) -> set:
     return names
 
 
-def _extras() -> dict:
+def _extras() -> dict[str, list[str]]:
     return _pyproject()["project"]["optional-dependencies"]
 
 
@@ -59,7 +62,7 @@ def _export_for(extra: str) -> Path:
     return REQUIREMENTS / f"{extra.replace('_', '-')}.txt"
 
 
-def _pinned_hash_counts(path: Path) -> list:
+def _pinned_hash_counts(path: Path) -> list[list[str | int]]:
     """Every pin in an export, as `(distribution, hashes it carries)`.
 
     One entry per pin rather than per name. numpy is pinned twice in every
@@ -85,7 +88,7 @@ def _pinned_hash_counts(path: Path) -> list:
     return pins
 
 
-def _installer_extra_call_sites() -> list:
+def _installer_extra_call_sites() -> list[tuple[int, set[str]]]:
     """Every `pip_install_extras_skip_pygobject` call, as `(line number, names)`.
 
     The call takes a log path and then one or more extra names, so the names are
@@ -117,7 +120,7 @@ def _installer_extra_call_sites() -> list:
     return sites
 
 
-def test_build_system_setuptools_accepts_arch_extra():
+def test_build_system_setuptools_accepts_arch_extra() -> None:
     """AUR PKGBUILD uses python -m build --no-isolation against Arch extra setuptools 84."""
     requires = _pyproject()["build-system"]["requires"]
     setuptools_req = next(r for r in requires if r.lower().startswith("setuptools"))
@@ -125,7 +128,7 @@ def test_build_system_setuptools_accepts_arch_extra():
     assert ">=77" in setuptools_req.replace(" ", "")
 
 
-def test_the_dev_export_requests_every_group_it_needs():
+def test_the_dev_export_requests_every_group_it_needs() -> None:
     """The export line has to name the lint group, not just the dev extra."""
     line = next(
         l
@@ -136,7 +139,7 @@ def test_the_dev_export_requests_every_group_it_needs():
     assert "--group lint" in line, "the linters live in a group; the extra alone misses them"
 
 
-def test_every_linter_reaches_the_dev_export():
+def test_every_linter_reaches_the_dev_export() -> None:
     """What CI lints with must be reproducible from the committed export."""
     linters = _requirement_names(_pyproject()["dependency-groups"]["lint"])
     assert linters, "no lint group in pyproject.toml"
@@ -144,7 +147,7 @@ def test_every_linter_reaches_the_dev_export():
     assert not missing, f"missing from requirements/dev.txt; re-run `just lock`: {missing}"
 
 
-def test_documented_uv_run_examples_do_not_prune_the_linters():
+def test_documented_uv_run_examples_do_not_prune_the_linters() -> None:
     """`uv sync`/`uv run` install exactly what the flags name and remove the rest.
 
     That is why every justfile recipe passes the same DEV_EXTRAS. A documented
@@ -161,7 +164,7 @@ def test_documented_uv_run_examples_do_not_prune_the_linters():
     assert not offenders, "these examples uninstall the linters:\n" + "\n".join(offenders)
 
 
-def test_justfile_uv_run_recipes_do_not_sync():
+def test_justfile_uv_run_recipes_do_not_sync() -> None:
     """`uv run` without --no-sync prunes whisper/vosk after `just deps-all`."""
     offenders = []
     for number, line in enumerate(JUSTFILE.read_text(encoding="utf-8").splitlines(), 1):
@@ -173,7 +176,7 @@ def test_justfile_uv_run_recipes_do_not_sync():
     assert not offenders, "uv run without --no-sync undoes just deps-all:\n" + "\n".join(offenders)
 
 
-def test_the_dev_extra_reaches_the_dev_export():
+def test_the_dev_extra_reaches_the_dev_export() -> None:
     dev = _requirement_names(_pyproject()["project"]["optional-dependencies"]["dev"])
     missing = sorted(set(dev) - _exported_names(DEV_EXPORT))
     assert not missing, f"missing from requirements/dev.txt; re-run `just lock`: {missing}"
@@ -185,7 +188,7 @@ def test_the_dev_extra_reaches_the_dev_export():
 NO_TOOLING_NEEDED = {"version"}
 
 
-def _justfile_recipes() -> dict:
+def _justfile_recipes() -> dict[str, tuple[list[str], list[str]]]:
     """Map every recipe name to its dependency list and its body lines."""
     recipes = {}
     current = None
@@ -201,7 +204,7 @@ def _justfile_recipes() -> dict:
     return recipes
 
 
-def test_no_sync_recipes_bootstrap_the_venv():
+def test_no_sync_recipes_bootstrap_the_venv() -> None:
     """Something has to create .venv before `uv run --no-sync` can use it.
 
     Nothing does, once every recipe stops syncing: a fresh clone gets an empty
@@ -221,7 +224,7 @@ def test_no_sync_recipes_bootstrap_the_venv():
     )
 
 
-def test_default_is_the_first_recipe():
+def test_default_is_the_first_recipe() -> None:
     """`just` with no arguments runs the first recipe, whatever it is named.
 
     A recipe added above `default` silently becomes what bare `just` does, and
@@ -232,7 +235,7 @@ def test_default_is_the_first_recipe():
     assert first == "default", f"bare `just` would run `{first}` instead of listing recipes"
 
 
-def test_the_export_exemption_list_names_real_extras():
+def test_the_export_exemption_list_names_real_extras() -> None:
     """An exemption for an extra that no longer exists exempts nothing.
 
     Renaming `docs` while this entry stays would leave the new name silently
@@ -245,7 +248,7 @@ def test_the_export_exemption_list_names_real_extras():
     assert extras - EXPORT_EXEMPT.keys(), "every extra is exempt; nothing is being checked"
 
 
-def test_every_extra_has_a_hash_pinned_export():
+def test_every_extra_has_a_hash_pinned_export() -> None:
     """Enumerated from pyproject.toml, not from a list of what we remember.
 
     `[parakeet]`, `[faster_whisper]` and `[vosk]` each reached users with no
@@ -272,23 +275,33 @@ def test_every_extra_has_a_hash_pinned_export():
     assert not missing, "add the export to `just lock`, then re-run it:\n" + "\n".join(missing)
 
 
-def test_just_lock_regenerates_every_extra_export():
+def test_just_lock_regenerates_every_extra_export() -> None:
     """A committed export nothing regenerates is a snapshot, not a pin."""
     lock_body = _justfile_recipes()["lock"][1]
     assert lock_body, "the lock recipe has no body"
-    checked, missing = [], []
+    checked, missing, unpaired = [], [], []
     for extra in _extras():
         if extra in EXPORT_EXEMPT:
             continue
         checked.append(extra)
+        cli_name = extra.replace("_", "-")
         target = f"-o {_export_for(extra).relative_to(REPO_ROOT)}"
         if not any(target in line for line in lock_body):
             missing.append(target)
+            continue
+        if extra == "whisper":
+            if not any(target in line and "--extra " not in line for line in lock_body):
+                unpaired.append(target)
+            continue
+        extra_flag = f"--extra {cli_name}"
+        if not any(extra_flag in line and target in line for line in lock_body):
+            unpaired.append(f"{extra_flag} {target}")
     assert checked, "no extra was checked; the enumeration is empty or wholly exempt"
     assert not missing, f"`just lock` writes no such file: {missing}"
+    assert not unpaired, f"`just lock` does not pair --extra with -o on the same line: {unpaired}"
 
 
-def test_every_extra_reaches_its_own_export():
+def test_every_extra_reaches_its_own_export() -> None:
     """The export must actually carry what the extra declares."""
     checked, missing = [], []
     for extra, specs in _extras().items():
@@ -308,7 +321,7 @@ def test_every_extra_reaches_its_own_export():
     assert not missing, "re-run `just lock`:\n" + "\n".join(missing)
 
 
-def test_every_extra_the_installer_installs_is_pinnable():
+def test_every_extra_the_installer_installs_is_pinnable() -> None:
     """install.sh is the path that hands users unpinned ranges today (2.3).
 
     Whatever it installs as an extra has to have an export before that swap can
@@ -344,7 +357,7 @@ def _export_checker() -> ModuleType:
     return module
 
 
-def test_the_drift_check_covers_every_export_just_lock_writes():
+def test_the_drift_check_covers_every_export_just_lock_writes() -> None:
     """A drift check that skips a file is a file that can drift.
 
     `uv pip compile` targets stay out: requirements/whisper.txt and the AppImage
@@ -362,7 +375,7 @@ def test_the_drift_check_covers_every_export_just_lock_writes():
     assert covered == written, f"the drift check misses {sorted(written - covered)}"
 
 
-def _changes_filter(name: str) -> list:
+def _changes_filter(name: str) -> list[str]:
     """The path patterns under one `dorny/paths-filter` key, and only those.
 
     Searching the whole workflow would accept the pattern anywhere in it: moved
@@ -381,7 +394,7 @@ def _changes_filter(name: str) -> list:
     return patterns
 
 
-def test_ci_runs_the_drift_check():
+def test_ci_runs_the_drift_check() -> None:
     """A guard no workflow runs is a guard that is not running.
 
     `just lock-check` and `just flatpak-deps-check` both sit in the justfile
