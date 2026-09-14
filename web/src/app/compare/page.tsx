@@ -35,6 +35,17 @@ const engineTable = [
     iconBg: "bg-primary/10",
   },
   {
+    engine: "Faster Whisper",
+    speed: "Fast CPU inference (CTranslate2 / INT8)",
+    hardware: "CPU",
+    accuracy: "High (Whisper-class)",
+    footprint: "Optional extra; not in AppImage/Flatpak/Snap",
+    bestFor: "CPU-only machines that want Whisper quality without PyTorch",
+    icon: Sparkles,
+    iconColor: "text-primary",
+    iconBg: "bg-primary/10",
+  },
+  {
     engine: "VOSK",
     speed: "Very fast realtime on low-end systems",
     hardware: "CPU",
@@ -44,6 +55,17 @@ const engineTable = [
     icon: Cpu,
     iconColor: "text-primary",
     iconBg: "bg-primary/10",
+  },
+  {
+    engine: "Parakeet",
+    speed: "Fast CPU (sherpa-onnx TDT 0.6B)",
+    hardware: "CPU",
+    accuracy: "High on bundled English / European languages",
+    footprint: "Large download (~639MB v3-european default)",
+    bestFor: "English or European dictation without the Whisper catalog picker",
+    icon: Cpu,
+    iconColor: "text-primary",
+    iconBg: "bg-muted",
   },
   {
     engine: "Remote API",
@@ -211,14 +233,14 @@ export default function CompareEnginesPage() {
           Switching Between Engines
         </h2>
         <p className="text-sm text-muted-foreground">
-          You can switch between whisper.cpp, Whisper, VOSK, and Remote API from
-          Settings. v0.10.1+ safely stops recognition before switching to
-          prevent crashes. v0.12.0 adds Remote API configuration under Advanced
-          settings for compatible transcription servers.
+          You can switch between whisper.cpp, Faster Whisper, Whisper, VOSK,
+          Parakeet, and Remote API from Settings. Speech Model simple setup
+          (v0.17.0) puts language and speed/accuracy first; engine choice lives
+          under Advanced. v0.10.1+ safely stops recognition before switching.
         </p>
       </section>
 
-      <section className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <section className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
         <article className="rounded-[12px] border border-border bg-background p-6">
           <h2 className="mb-3 text-2xl font-semibold">
             When to pick whisper.cpp
@@ -240,10 +262,28 @@ export default function CompareEnginesPage() {
         </article>
 
         <article className="rounded-[12px] border border-border bg-background p-6">
+          <h2 className="mb-3 text-2xl font-semibold">When to pick Faster Whisper</h2>
+          <p className="text-sm text-muted-foreground">
+            Choose Faster Whisper for Whisper-class accuracy on CPU without the
+            PyTorch stack. Optional extra; not bundled in AppImage, Flatpak, or Snap.
+          </p>
+        </article>
+
+        <article className="rounded-[12px] border border-border bg-background p-6">
           <h2 className="mb-3 text-2xl font-semibold">When to pick VOSK</h2>
           <p className="text-sm text-muted-foreground">
             Choose VOSK on older laptops, low-RAM systems, or lightweight VMs
             where small model size and minimal overhead matter most.
+          </p>
+        </article>
+
+        <article className="rounded-[12px] border border-border bg-background p-6">
+          <h2 className="mb-3 text-2xl font-semibold">When to pick Parakeet</h2>
+          <p className="text-sm text-muted-foreground">
+            Choose Parakeet for English or European dictation on CPU via
+            sherpa-onnx. It uses a bundled language set (v3-european default)
+            instead of the Whisper catalog picker. Optional extra; not in
+            AppImage, Flatpak, or Snap.
           </p>
         </article>
 

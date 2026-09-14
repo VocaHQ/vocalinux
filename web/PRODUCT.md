@@ -10,7 +10,7 @@ Linux desktop users who want voice dictation that stays on their machine: develo
 
 ## Product purpose
 
-Vocalinux is free, open-source offline voice dictation for Linux. It turns speech into typed text in whatever app has focus, using local engines (whisper.cpp default, Whisper, VOSK) or an optional user-configured remote API. Success is: install once, dictate in any app, without cloud transcription or telemetry.
+Vocalinux is free, open-source offline voice dictation for Linux. It turns speech into typed text in whatever app has focus, using local engines (whisper.cpp default, Faster Whisper, Whisper, VOSK, Parakeet) or an optional user-configured remote API. Success is: install once, dictate in any app, without cloud transcription or telemetry.
 
 ## Positioning
 
@@ -18,7 +18,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 
 ## Operating context
 
-- Install via a one-line shell installer, AppImage from GitHub Releases, AUR, or local Flatpak build; then run from PATH, app menu, or the AppImage binary
+- Install via a one-line shell installer, AppImage from GitHub Releases, AUR, Snap (`--edge`), or Flatpak release bundle; then run from PATH, app menu, or the AppImage binary
 - System tray indicator and settings GUI (GTK) with searchable sidebar navigation and an always-visible sidebar footer for dictation status / Test Dictation / Close
 - Dictation into terminals, browsers, IDEs, office apps
 - Engines and models chosen for hardware (CPU, optional Vulkan GPU with discrete-device preference)
@@ -26,7 +26,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 
 ## Capabilities and constraints
 
-- Engines: whisper.cpp (default), OpenAI Whisper, VOSK, optional Remote API
+- Engines: whisper.cpp (default), Faster Whisper, OpenAI Whisper, VOSK, Parakeet, optional Remote API
 - Speech languages: large selectable catalog (~33 + Auto-detect) shared by Settings/CLI; VOSK only lists languages with official Alphacephei models; remaining Whisper languages available via Auto-detect
 - Display servers: X11 and Wayland
 - Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
@@ -39,6 +39,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Optional disable of the missing-tray warning dialog
 - Settings → Audio family tone picker (Lift, Flick, Ember, Step, Voca, Soft, Chirp, Scale, Drop, Glass, Off) with Preview; new installs default to Voca; catalog files are the family preview WAVs
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
+- Native GTK installs follow the OS dark/light preference unless `GTK_THEME` is already set
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
 - Packaging: install.sh (distro python3-gi required; no pip sdist of PyGObject), AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented); uv.lock pins Python deps; Justfile replaces Makefile
 - No usage telemetry in the installed app

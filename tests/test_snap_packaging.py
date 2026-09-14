@@ -51,7 +51,7 @@ def test_snap_puts_gnome_platform_first_on_ld_library_path() -> None:
 
 
 def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
-    """v0.16.2 edge has no uinput plug; the connect command must not stand alone."""
+    """v0.16.2 edge (rev 7) has no uinput plug; the connect command must not stand alone."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     install = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
     update = (REPO_ROOT / "docs" / "UPDATE.md").read_text(encoding="utf-8")
@@ -63,8 +63,8 @@ def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
         uinput_lines = "\n".join(line for line in text.splitlines() if "uinput" in line.lower())
         lowered = uinput_lines.lower()
         assert "uinput" in lowered
+        assert "0.16.2" in uinput_lines or "rev 7" in lowered
         assert "plug" in lowered and "no" in lowered
-        assert "0.17" not in uinput_lines
 
 
 def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
