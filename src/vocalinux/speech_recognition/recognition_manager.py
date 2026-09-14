@@ -17,7 +17,10 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    import numpy as np
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
@@ -518,10 +521,10 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     heap corruption (see GitHub issue #567).
 
     This function opens PortAudio exactly once per capture session: candidate
-    formats are tried in order (device default rate first, mono before stereo,
-    stereo skipped entirely for mono-only devices) and the FIRST successfully
-    opened stream is returned to the caller for actual capture — never closed
-    and reopened.
+    formats are tried in order (device default rate first, native channel count
+    first for 2–8ch devices, stereo skipped entirely for mono-only devices)
+    and the FIRST successfully opened stream is returned to the caller for
+    actual capture — never closed and reopened.
 
     Args:
         audio: PyAudio instance
@@ -550,18 +553,25 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
         if rate not in rates_to_try:
             rates_to_try.append(rate)
 
-    # Never probe stereo on a device that reports a single input channel
-    # (opening with more channels than supported is itself a known
-    # PortAudio/ALSA corruption trigger). Stereo-capable devices must be
-    # opened at their native layout first: Intel SOF DMICs (Raptor Lake
-    # "Digital Microphone", etc.) often only support 2ch at the PCM, and
-    # PortAudio can abort with heap corruption if open() accepts a converted
-    # 1ch stream and the callback then overruns (#666).
+    # Never probe extra channels on a device that reports a single input
+    # channel (opening with more than supported is itself a known
+    # PortAudio/ALSA corruption trigger). Devices must be opened at their
+    # native layout first: Intel SOF DMICs often only support 2ch at the
+    # PCM (#666), and HDA analog mics commonly expose 4 capture channels
+    # even when only the first pair is a mic (#813). Opening below native
+    # channel count can succeed then abort in PortAudio CleanUpStream with
+    # ``free(): corrupted unsorted chunks``. Pulse virtual devices often
+    # report 32 or 128 channels; those are not native PCM layouts, so we
+    # still try 2ch then 1ch.
     reported_channels = int(device_info.get("maxInputChannels", 0) or 0)
     if reported_channels == 1:
         channel_options = [1]
-    elif reported_channels >= 2:
+    elif reported_channels == 2:
         channel_options = [2, 1]
+    elif 2 < reported_channels <= 8:
+        channel_options = [reported_channels, 2, 1]  # HDA 4ch (#813)
+    elif reported_channels > 8:
+        channel_options = [2, 1]  # Pulse 32/128
     else:
         channel_options = [1, 2]
 
@@ -600,6 +610,79 @@ def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int
     return 1, 16000, None
 
 
+# Mean-square energy floor on int16 PCM before locking the N>=3 sticky channel.
+# Capture samples are raw int16 (see _record_audio np.frombuffer(..., int16));
+# RMS ≈ 100 ≈ -50 dBFS — above idle dither/ambient, well below speech.
+_STICKY_LOCK_MIN_MEAN_SQUARE = 10_000.0
+
+
+def _downmix_to_mono(
+    audio_array: "np.ndarray",
+    channels: int,
+    sticky_channel: Optional[int] = None,
+) -> tuple["np.ndarray", Optional[int]]:
+    """Downmix interleaved int16 PCM to mono.
+
+    Speech recognition engines expect mono audio.
+
+    Stereo (2ch) still averages both channels. For 3+ channels, energy-aware
+    selection is required: the microphone may not be on ch0/ch1 (HDA analog
+    capture often puts it on ch2/ch3), so keeping only the first stereo pair
+    can yield silence, while averaging all N attenuates speech when only some
+    channels are live.
+
+    While sticky is unset, each buffer returns the loudest channel by
+    mean-square energy, but sticky is only *set* when that channel's
+    mean-square exceeds :data:`_STICKY_LOCK_MIN_MEAN_SQUARE` (speech-gated
+    lock). That avoids pinning an ambient/noise channel from a silent first
+    buffer before the mic speaks. Once sticky is set, later buffers reuse it
+    until cleared on open/reconnect/cleanup so a noise burst on another input
+    cannot switch the mic mid-utterance.
+
+    Args:
+        audio_array: 1-D int16 samples with interleaved channels.
+        channels: Number of interleaved channels in *audio_array*.
+        sticky_channel: Previously selected channel for N>=3 streams, or
+            ``None`` to (re)select by loudest mean-square energy.
+
+    Returns:
+        ``(mono, sticky)`` where *mono* is 1-D int16 samples and *sticky* is
+        the channel index to reuse on the next N>=3 buffer (``None`` for
+        N<=2, or when N>=3 and no speech-gated lock yet). ``channels <= 1``
+        is a passthrough. If ``len(audio_array)`` is not divisible by
+        *channels*, leftover samples are truncated using the full N-channel
+        frame width before reshape; an empty array after truncation is
+        returned as-is (sticky unchanged for N>=3 when already set, else
+        ``None``). Stereo averages both channels; N>=3 uses the sticky index
+        when in range, otherwise the loudest channel by per-buffer
+        mean-square (ties keep the first index), locking sticky only when
+        that channel clears the non-silence energy floor.
+    """
+    if channels <= 1:
+        return audio_array, None
+    leftover = len(audio_array) % channels
+    if leftover:
+        audio_array = audio_array[: len(audio_array) - leftover]
+    if len(audio_array) == 0:
+        if channels >= 3 and sticky_channel is not None and 0 <= sticky_channel < channels:
+            return audio_array, sticky_channel
+        return audio_array, None
+    frames = audio_array.reshape(-1, channels)
+    if channels == 2:
+        return frames.mean(axis=1).astype(audio_array.dtype), None
+    if sticky_channel is not None and 0 <= sticky_channel < channels:
+        selected = int(sticky_channel)
+        return frames[:, selected].astype(audio_array.dtype), selected
+    # Cast before squaring so int16 does not overflow.
+    energy = (frames.astype("float64") ** 2).mean(axis=0)
+    selected = int(energy.argmax())
+    mono = frames[:, selected].astype(audio_array.dtype)
+    # Speech-gate: return loudest mono now, but only pin sticky on real energy.
+    if float(energy[selected]) >= _STICKY_LOCK_MIN_MEAN_SQUARE:
+        return mono, selected
+    return mono, None
+
+
 def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
     """
     Detect the supported number of channels for the audio device.
@@ -613,7 +696,8 @@ def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
         device_index: The device index to test (None for default)
 
     Returns:
-        int: Number of channels supported (1 or 2), defaults to 1
+        int: Negotiated channel count (1, 2, or native 3–8 for HDA),
+        defaults to 1
     """
     channels, _rate, stream = _open_capture_stream(audio, device_index)
     _safe_close_stream(stream)
@@ -1087,6 +1171,8 @@ class SpeechRecognitionManager:
         self._audio_stream = None
         self._pyaudio_instance = None
         self._capture_sample_rate = 16000  # Default, updated when device is opened
+        self._capture_channels = 1  # Default, updated when device is opened
+        self._capture_downmix_channel = None  # Speech-gated sticky N>=3 channel for open stream
 
         # Create models directory if it doesn't exist
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -3218,6 +3304,8 @@ class SpeechRecognitionManager:
             CHANNELS, RATE, negotiated_stream = _open_capture_stream(audio, resolved_device_index)
             logger.info(f"Using {CHANNELS} channel(s) for recording")
             self._capture_sample_rate = RATE
+            self._capture_channels = CHANNELS
+            self._capture_downmix_channel = None  # New stream: speech-gated sticky unset
             logger.info(f"Using sample rate: {RATE}Hz")
 
             try:
@@ -3266,6 +3354,7 @@ class SpeechRecognitionManager:
                     # Attempt reconnection
                     if self._attempt_audio_reconnection(audio):
                         stream = self._audio_stream
+                        CHANNELS = self._capture_channels
                     else:
                         play_error_sound()
                         audio.terminate()
@@ -3307,14 +3396,15 @@ class SpeechRecognitionManager:
 
                         data = stream.read(CHUNK, exception_on_overflow=False)
 
-                        # Convert stereo to mono if necessary
+                        # Convert multi-channel capture to mono if necessary
                         # Speech recognition engines expect mono (1 channel) audio
-                        if CHANNELS == 2:
+                        if CHANNELS > 1:
                             audio_array = np.frombuffer(data, dtype=np.int16)
-                            # Reshape to (n_samples, 2) and average channels
-                            stereo_samples = audio_array.reshape(-1, 2)
-                            mono_samples = stereo_samples.mean(axis=1).astype(np.int16)
-                            data = mono_samples.tobytes()
+                            mono, selected = _downmix_to_mono(
+                                audio_array, CHANNELS, self._capture_downmix_channel
+                            )
+                            self._capture_downmix_channel = selected
+                            data = mono.tobytes()
 
                         # Resample to 16kHz if capturing at non-16kHz for Vosk/Whisper compatibility
                         if self._capture_sample_rate != 16000:
@@ -3441,6 +3531,7 @@ class SpeechRecognitionManager:
                         if self._attempt_audio_reconnection(audio):
                             logger.info("Audio reconnection successful, continuing recording")
                             stream = self._audio_stream  # Update stream reference
+                            CHANNELS = self._capture_channels
                             continue  # Continue recording with new stream
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
@@ -3466,6 +3557,7 @@ class SpeechRecognitionManager:
             # Reset audio stream reference and reconnection state
             self._audio_stream = None
             self._pyaudio_instance = None
+            self._capture_downmix_channel = None
             self._reconnection_attempts = 0
             self._last_audio_error_time = 0
 
@@ -3896,6 +3988,8 @@ class SpeechRecognitionManager:
             CHANNELS, RATE, new_stream = _open_capture_stream(audio_instance, resolved_device_index)
             logger.debug(f"Reconnecting with {CHANNELS} channel(s)")
             self._capture_sample_rate = RATE
+            self._capture_channels = CHANNELS
+            self._capture_downmix_channel = None  # Reopened stream: clear speech-gated sticky
             logger.debug(f"Reconnecting with sample rate: {RATE}Hz")
 
             if new_stream is None:

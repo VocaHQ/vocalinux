@@ -27,7 +27,9 @@ import pytest
 
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import (
+    _STICKY_LOCK_MIN_MEAN_SQUARE,
     SpeechRecognitionManager,
+    _downmix_to_mono,
     _filter_non_speech,
     _get_supported_channels,
     _get_supported_sample_rate,
@@ -387,6 +389,80 @@ class TestAudioDeviceDetection(unittest.TestCase):
         assert mock_audio.open.call_args.kwargs.get("channels") == 1
         assert any(call.kwargs.get("channels") == 2 for call in mock_audio.open.call_args_list)
 
+    def test_open_capture_stream_hda_4ch_prefers_native_channels(self):
+        """HDA mics reporting 4 capture channels must open 4ch-first (#813).
+
+        Built-in analog HDA devices often expose 4ch (front/rear). Opening
+        at 2ch can succeed then abort in PortAudio CleanUpStream with
+        ``free(): corrupted unsorted chunks``.
+        """
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+        mock_audio.open.return_value = mock_stream
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "HDA Intel PCH Analog",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 4,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 4
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_count == 1
+        assert mock_audio.open.call_args.kwargs.get("channels") == 4
+
+    def test_open_capture_stream_pulse_32ch_opens_stereo_never_native(self):
+        """Pulse devices reporting 32 channels must try 2ch first, never 32."""
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+        mock_audio.open.return_value = mock_stream
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "pulse",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 32,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 2
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_args.kwargs.get("channels") == 2
+        assert all(call.kwargs.get("channels") != 32 for call in mock_audio.open.call_args_list)
+
+    def test_open_capture_stream_hda_4ch_falls_back_to_stereo(self):
+        """If native 4ch open fails, still try 2ch on a 4ch-reporting device."""
+        mock_audio = MagicMock()
+        mock_stream = MagicMock()
+
+        def open_side_effect(**kwargs):
+            if kwargs.get("channels") == 4:
+                raise IOError("[Errno -9998] Invalid number of channels")
+            return mock_stream
+
+        mock_audio.open.side_effect = open_side_effect
+        mock_audio.get_device_info_by_index.return_value = {
+            "name": "HDA Intel PCH Analog",
+            "defaultSampleRate": 48000,
+            "maxInputChannels": 4,
+        }
+        mock_pyaudio = MagicMock(paInt16=8)
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
+            channels, rate, stream = _open_capture_stream(mock_audio, 0)
+
+        assert channels == 2
+        assert rate == 48000
+        assert stream is mock_stream
+        assert mock_audio.open.call_args.kwargs.get("channels") == 2
+        assert any(call.kwargs.get("channels") == 4 for call in mock_audio.open.call_args_list)
+
     def test_open_capture_stream_mono_device_never_probes_stereo(self):
         """Mono-only devices must never be opened with 2 channels.
 
@@ -725,6 +801,142 @@ class TestAudioDeviceDetection(unittest.TestCase):
         with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
             rate = _get_supported_sample_rate(mock_audio, None, 1)
             assert rate == 16000  # Default fallback
+
+
+class TestDownmixToMono(unittest.TestCase):
+    """Energy-aware loudest-channel downmix policy for HDA capture (#813 / PR #829)."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Other test modules may have left sys.modules["numpy"] as MagicMock.
+        if isinstance(sys.modules.get("numpy"), MagicMock):
+            real = getattr(sys, "_vocalinux_real_numpy", None)
+            if real is not None:
+                sys.modules["numpy"] = real
+            else:
+                del sys.modules["numpy"]
+        import numpy as np
+
+        cls.np = np
+
+    def test_mono_passthrough_unchanged(self):
+        np = self.np
+        audio = np.array([100, 200, 300], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 1)
+        np.testing.assert_array_equal(out, audio)
+        assert out is audio
+        assert sticky is None
+
+    def test_stereo_mean_of_both_channels(self):
+        np = self.np
+        audio = np.array([100, 200], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 2)
+        np.testing.assert_array_equal(out, np.array([150], dtype=np.int16))
+        assert sticky is None
+
+    def test_quad_loudest_channel_does_not_halve_speech_level(self):
+        """4ch (speech, speech, silence, silence) keeps the loudest channel at full level."""
+        np = self.np
+        audio = np.array([1000, 1000, 0, 0], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        # Averaging all 4 channels would have produced 500.
+        assert out[0] != 500
+        assert sticky == 0
+
+    def test_quad_recovers_speech_on_channel_2(self):
+        """4ch (silence, silence, speech, silence) selects the loud rear channel."""
+        np = self.np
+        audio = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        assert sticky == 2
+
+    def test_quad_recovers_speech_on_channel_3(self):
+        """4ch (silence, silence, silence, speech) selects the loud rear channel."""
+        np = self.np
+        audio = np.array([0, 0, 0, 1000], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000], dtype=np.int16))
+        assert sticky == 3
+
+    def test_quad_leftover_truncation(self):
+        """Incomplete trailing frame is dropped using full N-channel width, then loudest channel."""
+        np = self.np
+        audio = np.array([1000, 1000, 0, 0, 2000, 2000, 0, 0, 99], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
+        assert sticky == 0
+
+    def test_quad_leftover_truncation_then_loudest_rear_channel(self):
+        """Truncate leftover at full N-channel width, then pick speech on ch2 (not first pair)."""
+        np = self.np
+        audio = np.array([0, 0, 1000, 0, 0, 0, 2000, 0, 99], dtype=np.int16)
+        out, sticky = _downmix_to_mono(audio, 4)
+        np.testing.assert_array_equal(out, np.array([1000, 2000], dtype=np.int16))
+        assert sticky == 2
+
+    def test_quad_sticky_channel_ignores_later_noise_burst(self):
+        """First buffer speech on ch2 sticks; later louder noise on ch0 still returns ch2."""
+        np = self.np
+        first = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([1000], dtype=np.int16))
+        assert sticky == 2
+        # Noise burst on ch0 is louder than sticky mic speech on ch2.
+        second = np.array([5000, 0, 800, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([800], dtype=np.int16))
+        assert sticky2 == 2
+
+    def test_quad_front_pair_full_level_with_sticky(self):
+        """Front-pair speech still comes through at full level once sticky is set."""
+        np = self.np
+        first = np.array([1200, 1100, 0, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([1200], dtype=np.int16))
+        assert sticky == 0
+        second = np.array([900, 850, 0, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([900], dtype=np.int16))
+        assert sticky2 == 0
+
+    def test_quad_silent_first_buffer_does_not_lock_sticky(self):
+        """Idle/ambient first buffer must not permanently pin ch0 before speech."""
+        np = self.np
+        # ch0 has tiny ambient (mean-square << lock floor); others silent.
+        ambient = 20  # MS = 400 << _STICKY_LOCK_MIN_MEAN_SQUARE (10000)
+        assert ambient * ambient < _STICKY_LOCK_MIN_MEAN_SQUARE
+        first = np.array([ambient, 0, 0, 0], dtype=np.int16)
+        out1, sticky = _downmix_to_mono(first, 4)
+        np.testing.assert_array_equal(out1, np.array([ambient], dtype=np.int16))
+        assert sticky is None
+        # Second buffer: real speech on ch2 — lock there, not ch0.
+        second = np.array([0, 0, 1000, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(second, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([1000], dtype=np.int16))
+        assert sticky2 == 2
+
+    def test_quad_near_silence_noise_then_speech_locks_speech_channel(self):
+        """Noise-floor ch0 then speech on ch2: return speech and pin ch2."""
+        np = self.np
+        # Multi-frame idle: faint noise on ch0 only.
+        idle = np.array(
+            [30, 0, 0, 0, 40, 0, 0, 0, 25, 0, 0, 0],
+            dtype=np.int16,
+        )
+        out1, sticky = _downmix_to_mono(idle, 4)
+        assert sticky is None
+        assert out1.tolist() == [30, 40, 25]
+        speech = np.array([10, 0, 2000, 0, 5, 0, 1800, 0], dtype=np.int16)
+        out2, sticky2 = _downmix_to_mono(speech, 4, sticky)
+        np.testing.assert_array_equal(out2, np.array([2000, 1800], dtype=np.int16))
+        assert sticky2 == 2
+        # Once locked, later louder noise on another channel stays ignored.
+        burst = np.array([8000, 0, 900, 0], dtype=np.int16)
+        out3, sticky3 = _downmix_to_mono(burst, 4, sticky2)
+        np.testing.assert_array_equal(out3, np.array([900], dtype=np.int16))
+        assert sticky3 == 2
 
 
 class TestRecordAudioNegotiationFallback(unittest.TestCase):
