@@ -27,8 +27,8 @@ import pytest
 
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import (
-    SpeechRecognitionManager,
     _STICKY_LOCK_MIN_MEAN_SQUARE,
+    SpeechRecognitionManager,
     _downmix_to_mono,
     _filter_non_speech,
     _get_supported_channels,
