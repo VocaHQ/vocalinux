@@ -142,7 +142,7 @@ install-gate distro="debian:12":
 
 # Check that a published release verifies as published: manifest, provenance,
 # notes and PyPI digests. Needs gh, downloads nothing.
-# Usage: `just verify-release` for the latest, or `just verify-release v0.16.2`
+# Usage: `just verify-release` for the latest, or `just verify-release v0.17.0`
 verify-release tag="":
     python3 scripts/verify_release.py {{tag}}
 
