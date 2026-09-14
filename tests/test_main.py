@@ -5,7 +5,7 @@ Tests for the main module functionality.
 import argparse
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
 sys.modules["gi"] = MagicMock()
@@ -28,6 +28,7 @@ class TestMainModule(unittest.TestCase):
             self.assertIsNone(args.model)  # No default set, loaded from config instead
             self.assertIsNone(args.engine)
             self.assertIsNone(args.language)
+            self.assertIsNone(args.dictionary_file)
             self.assertFalse(args.wayland)
             self.assertFalse(args.start_minimized)
 
@@ -234,6 +235,7 @@ class TestMainModule(unittest.TestCase):
                 whispercpp_no_speech_thold=0.6,
                 whispercpp_n_threads=0,
                 whispercpp_gpu_device=None,
+                dictionary_manager=ANY,
                 remote_api_url="",
                 remote_api_key="",
                 remote_api_endpoint="/inference",

@@ -136,6 +136,39 @@ vocalinux --wayland
 vocalinux --start-minimized
 ```
 
+## Custom Dictionary Support
+
+Open **Settings → Custom Dictionary** to configure two separate capabilities:
+
+- **Custom terms** bias recognition toward product names, people, and jargon.
+  They are read from `~/.config/vocalinux/dictionary.txt` by default, as UTF-8
+  with one term per line. Blank lines and `#` comments are allowed, so the same
+  file remains friendly to an accessibility scanner. Use the add/remove editor
+  or choose a different readable terms file with the file picker.
+- **Transcript corrections** replace a known misheard word or phrase after
+  transcription, for example `super base` with `Supabase`. Corrections are
+  stored separately in `~/.config/vocalinux/custom-dictionary-corrections.json`.
+
+VocaLinux re-reads both files before each completed dictation segment, so an
+external edit applies to the next segment without restarting the app. Vocabulary
+bias works with Whisper, whisper.cpp, and Faster Whisper. Corrections work with
+every engine, including VOSK, Parakeet, and the configured remote API.
+
+Corrections run before voice-command interpretation. This can prevent a
+command-like misrecognition from acting, but avoid replacements that create a
+voice command unless that is intentional. Correction replacements are not
+automatically added to recognition bias.
+
+For a one-session terms override, start Vocalinux with:
+
+```bash
+vocalinux --dictionary-file /path/to/dictionary.txt
+```
+
+This temporarily enables terms from that file without changing saved settings;
+the Custom terms controls are disabled for the session. It does not disable
+transcript corrections.
+
 ## Troubleshooting
 
 ```bash

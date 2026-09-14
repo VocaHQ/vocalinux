@@ -142,6 +142,12 @@ DEFAULT_CONFIG = {
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
     },
+    "dictionary": {
+        # Preserve the custom-dictionary contract used by the accessibility scanner.
+        "enabled": False,
+        "file_path": os.path.join(CONFIG_DIR, "dictionary.txt"),
+        "max_words": 200,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,
