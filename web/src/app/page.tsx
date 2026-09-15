@@ -981,7 +981,7 @@ export default function HomePage() {
                   </span>
                   iPhone + Android
                 </span>
-                <span className="chip">Phone beta</span>
+                <span className="chip">Android beta / iOS TestFlight</span>
               </div>
               <h3>VocaPhone</h3>
               <p>

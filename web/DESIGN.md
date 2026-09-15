@@ -1,23 +1,23 @@
 ---
 name: Vocalinux website
-description: Linux voice dictation marketing site in the Voca family workbench language
+description: Linux voice dictation marketing site on iron-white with emerald accent
 colors:
-  paper: "#f4f1e8"
-  paper-deep: "#ebe5d8"
-  paper-bright: "#fffdf7"
-  ink: "#14231c"
-  muted-copy: "#58625c"
-  faint: "#5f6861"
-  line: "#c9c8bd"
-  brand: "#0f6b57"
-  brand-dark: "#0b493d"
-  brand-soft: "#cfe9dc"
-  brand-softer: "#e5f2eb"
-  dark-ink: "#0b1a15"
+  paper: "#ffffff"
+  paper-deep: "#f4f4f5"
+  paper-bright: "#ffffff"
+  ink: "#09090b"
+  muted-copy: "#52525b"
+  faint: "#71717a"
+  line: "#e4e4e7"
+  brand: "#1a7f4e"
+  brand-dark: "#14663e"
+  brand-soft: "#d1fae5"
+  brand-softer: "#ecfdf3"
+  dark-ink: "#0a0a0c"
   sun: "#e9b949"
-  red: "#de6a57"
-  terminal: "#0b1a15"
-  terminal-fg: "#cfe9dc"
+  red: "#c45c5c"
+  terminal: "#0a0a0c"
+  terminal-fg: "#6ee7a8"
 typography:
   display: '"Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif'
   body: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif'
@@ -35,9 +35,9 @@ spacing:
 
 ## Overview
 
-**Creative north star: the Linux desk in the Voca family**
+**Creative north star: the Linux desk on iron-white**
 
-Vocalinux.com is a Voca product site. It should feel related to VocaHQ, VocaMac, VocaPhone, and VocaGateway before anyone reads the logo: warm paper, deep green ink, one teal accent, editorial type, flat surfaces, and real product proof.
+Vocalinux.com is a Voca product site. It should feel related to VocaHQ, VocaMac, VocaPhone, and VocaGateway before anyone reads the logo: iron-white canvas, near-black iron ink, one emerald accent (`#1a7f4e`), editorial type, flat surfaces, and real product proof.
 
 The Linux-specific job is to show local desktop dictation with distribution and display-server truth. Pair a GTK-style window (not macOS traffic lights) with a terminal. Explain the user outcome before the install command.
 
@@ -49,34 +49,36 @@ overrides it for that tab.
 
 ## Colors
 
-Warm paper with one product teal. No second chromatic brand color.
+Iron-white with one product emerald (`#1a7f4e`). No second chromatic brand color. Never warm cream or beige as the default canvas.
 
 ### Surfaces
-- **Paper** `#f4f1e8`: page canvas
-- **Deep paper** `#ebe5d8`: recessed bands (install, engines)
-- **Bright paper** `#fffdf7`: windows and cards
-- **Dark ink** `#0b1a15`: panel bar, terminal, optional dark band
+- **Paper / iron-white** `#ffffff`: page canvas
+- **Deep paper** `#f4f4f5`: recessed bands (install, engines)
+- **Bright paper** `#ffffff`: windows and cards
+- **Dark ink** `#0a0a0c`: panel bar, terminal, optional dark band
 
 ### Ink
-- **Ink** `#14231c`: headings and strong borders
-- **Muted copy** `#58625c`: body
-- **Faint** `#5f6861`: metadata
-- **Line** `#c9c8bd`: quiet borders
-- **Line dark** `#9ea59f`: window outlines
+- **Ink** `#09090b`: headings and strong borders
+- **Muted copy** `#52525b`: body
+- **Faint** `#71717a`: metadata
+- **Line** `#e4e4e7`: quiet borders
+- **Line dark** `#d4d4d8`: window outlines
 
 ### Accent
-- **Brand teal** `#0f6b57`: primary buttons, links, live marks
-- **Dark teal** `#0b493d`: hover / pressed
-- **Mint** `#cfe9dc` / **mint soft** `#e5f2eb`: tags and chips
+- **Brand / emerald** `#1a7f4e`: primary buttons, links, live marks
+- **Brand dark** `#14663e`: hover / pressed
+- **Accent foreground** `#14532d`: text on mint chips
+- **Mint** `#d1fae5` / **mint soft** `#ecfdf3`: tags and chips
+- **Terminal fg** `#6ee7a8`: mint-on-iron command text
 
 ### Annotations only
 - **Sun** `#e9b949`: focus rings
-- **Red** `#de6a57`: recording dot, never as a brand fill
+- **Red** `#c45c5c`: recording dot, never as a brand fill
 
 ### Named rules
-**The family paper rule.** Backgrounds stay warm paper, with dark ink only for the tray bar, terminal, and ribbon. Not zinc white, not a second site-wide dark theme, not purple mesh.
+**The iron surface rule.** Backgrounds stay iron-white (`#ffffff`) and raised iron (`#f4f4f5`). Never warm cream or beige as the default canvas. Dark ink only for the tray bar, terminal, and ribbon. Not a second site-wide dark theme, not purple mesh.
 
-**The one signal rule.** Teal is the only chromatic accent on marketing pages. Yellow and red are physical details (focus, recording), not competing brands.
+**The one signal rule.** Emerald `#1a7f4e` is the only chromatic accent on marketing pages. Yellow and red are physical details (focus, recording), not competing brands.
 
 **The no-gradient rule.** Solid fills only. No linear, radial, or conic gradients.
 
@@ -118,7 +120,7 @@ Flat fills, 1px borders, paper-window shadows. Small rotations only on decorativ
 ## Components
 
 ### Buttons
-- Primary: brand teal, paper-bright text, 44px min height
+- Primary: brand emerald, paper-bright text, 44px min height
 - Homepage / closing CTA: "Install Vocalinux", jumps to `#install`
 - Secondary: transparent with a 3:1 control outline
 - Hover: 2px lift, no bounce scale as the only affordance

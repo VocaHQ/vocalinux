@@ -73,7 +73,7 @@ web/
 
 - Custom domain: `deploy` script writes `out/CNAME`
 - Subdirectory deploy: set `basePath` in `next.config.js` if needed
-- Family workbench UI: warm paper, system type, same language as VocaHQ ([DESIGN.md](DESIGN.md))
+- Iron-white canvas, emerald accent, system type ([DESIGN.md](DESIGN.md))
 
 ## Troubleshooting
 

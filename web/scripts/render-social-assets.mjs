@@ -16,7 +16,7 @@ const chrome =
   ["/usr/bin/chromium-browser", "/usr/bin/chromium"].find(Boolean);
 
 function convertPng(size, dest, { paper } = {}) {
-  const args = ["-background", paper ? "#f4f1e8" : "none", "-resize", `${size}x${size}`, mark];
+  const args = ["-background", paper ? "#ffffff" : "none", "-resize", `${size}x${size}`, mark];
   if (paper) {
     args.push("-gravity", "center", "-extent", `${size}x${size}`);
   }
@@ -51,6 +51,7 @@ if (!skipIcons) {
       const webp = dest.replace(/\.png$/i, ".webp");
       if (
         dest.includes("vocalinux-") ||
+        dest.includes("icon-") ||
         dest.endsWith("/vocalinux.png")
       ) {
         toWebp(dest, webp);
@@ -82,8 +83,8 @@ const ogHtml = `<!doctype html>
 <style>
   html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; }
   body {
-    color: #14231c;
-    background-color: #f4f1e8;
+    color: #09090b;
+    background-color: #ffffff;
     background-image: url("${dotsData}");
     font-family: "Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, "Segoe UI", Arial, sans-serif;
   }
@@ -92,26 +93,26 @@ const ogHtml = `<!doctype html>
   .brand { display: flex; align-items: center; gap: 14px; font-size: 28px; font-weight: 600; letter-spacing: -0.03em; }
   .brand img { width: 56px; height: 56px; border-radius: 50%; }
   h1 { margin: 28px 0 0; font-size: 72px; font-weight: 780; letter-spacing: -0.075em; line-height: 0.92; }
-  h1 em { font-style: normal; color: #0f6b57; }
-  .lede { margin: 22px 0 0; max-width: 22em; color: #58625c; font-size: 22px; line-height: 1.45; }
-  .proof { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 28px; padding-top: 22px; border-top: 1px solid #c9c8bd; color: #5f6861; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; }
-  .proof span + span { padding-left: 18px; border-left: 1px solid #c9c8bd; }
-  .url { margin-top: 26px; color: #5f6861; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
+  h1 em { font-style: normal; color: #1a7f4e; }
+  .lede { margin: 22px 0 0; max-width: 22em; color: #52525b; font-size: 22px; line-height: 1.45; }
+  .proof { display: flex; flex-wrap: wrap; gap: 10px 18px; margin-top: 28px; padding-top: 22px; border-top: 1px solid #e4e4e7; color: #71717a; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; }
+  .proof span + span { padding-left: 18px; border-left: 1px solid #e4e4e7; }
+  .url { margin-top: 26px; color: #71717a; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
   .right { position: relative; width: 520px; flex: none; align-self: stretch; }
   .workbench { width: 340px; margin-top: 36px; }
   .tux { position: absolute; right: 0; bottom: 0; height: 430px; width: auto; }
-  .panel { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; color: #fffdf7; background: #0b1a15; border-radius: 10px; font-size: 14px; }
-  .rec { width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #de6a57; display: inline-block; }
-  .window { margin-top: 10px; background: #fffdf7; border: 1px solid #9ea59f; border-radius: 12px; overflow: hidden; }
-  .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #ebe5d8; border-bottom: 1px solid #c9c8bd; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #5f6861; }
+  .panel { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; color: #ffffff; background: #0a0a0c; border-radius: 10px; font-size: 14px; }
+  .rec { width: 8px; height: 8px; margin-right: 6px; border-radius: 50%; background: #c45c5c; display: inline-block; }
+  .window { margin-top: 10px; background: #ffffff; border: 1px solid #d4d4d8; border-radius: 12px; overflow: hidden; }
+  .titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: #f4f4f5; border-bottom: 1px solid #e4e4e7; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #71717a; }
   .dots { display: flex; gap: 5px; }
-  .dots i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #5c7d71; background: #fffdf7; display: block; }
-  .dots i.close { background: #cfe9dc; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; border: 1px solid #71717a; background: #ffffff; display: block; }
+  .dots i.close { background: #d1fae5; }
   .body { padding: 18px 18px 16px; }
   .ready { font-size: 18px; font-weight: 650; }
-  .hint { margin-top: 4px; color: #58625c; font-size: 13px; }
-  .line { margin-top: 16px; padding: 12px 14px; background: #f4f1e8; border-radius: 8px; font-size: 16px; }
-  .caret { display: inline-block; width: 2px; height: 1em; margin-left: 3px; background: #0f6b57; vertical-align: -2px; }
+  .hint { margin-top: 4px; color: #52525b; font-size: 13px; }
+  .line { margin-top: 16px; padding: 12px 14px; background: #f4f4f5; border-radius: 8px; font-size: 16px; }
+  .caret { display: inline-block; width: 2px; height: 1em; margin-left: 3px; background: #1a7f4e; vertical-align: -2px; }
 </style>
 </head>
 <body>
@@ -125,7 +126,7 @@ const ogHtml = `<!doctype html>
       <p class="lede">Hold Right Alt. Text lands in the focused window. Local engines by default.</p>
       <div class="proof">
         <span>X11 and Wayland</span>
-        <span>No telemetry</span>
+        <span>No app telemetry</span>
         <span>AGPL-3.0</span>
       </div>
       <p class="url">vocalinux.com</p>

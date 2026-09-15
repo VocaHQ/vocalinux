@@ -49,7 +49,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 
 - Name: Vocalinux (part of [VocaHQ](https://vocahq.com) with VocaMac / VocaWin)
 - Mark: shared Voca family mic for the app icon, tray states, and site favicons (`public/`)
-- Warm paper surfaces and Voca teal, matching the family web standard
+- Iron-white surfaces and emerald `#1a7f4e` (never warm cream or beige as the default canvas)
 - Voice: practical, specific, Linux-native; not hype-first SaaS copy
 
 ## Evidence on hand

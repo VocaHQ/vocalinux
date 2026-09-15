@@ -24,7 +24,7 @@ export default function PrivacyPage() {
     headline: "Vocalinux Privacy Policy",
     description:
       "How Vocalinux handles voice data: local engines on your machine, optional Remote API to a server you configure.",
-    dateModified: "2026-02-19",
+    dateModified: "2026-09-15",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
@@ -57,8 +57,9 @@ export default function PrivacyPage() {
           How Vocalinux handles your voice
         </h1>
         <p className="mb-8 max-w-4xl text-lg text-muted-foreground">
-          Vocalinux is built for privacy. Local engines process speech on your machine. Remote API
-          is optional and only talks to a server you set.
+          The installed Vocalinux app is built for privacy. Local engines process speech on your
+          machine. Remote API is optional and only talks to a server you set. vocalinux.com is a
+          separate marketing site and uses Google Analytics as disclosed below.
         </p>
       </section>
 
@@ -92,8 +93,8 @@ export default function PrivacyPage() {
           </div>
           <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
           <p className="text-sm text-muted-foreground">
-            Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. No hidden
-            telemetry or data collection.
+            Fully open source under AGPL-3.0. Inspect the app code yourself on GitHub. The
+            installed app has no hidden telemetry.
           </p>
         </article>
       </section>
@@ -107,8 +108,10 @@ export default function PrivacyPage() {
           </h2>
           <div className="space-y-4 text-muted-foreground">
             <p>
-              <strong className="text-foreground">We do not collect any personal data.</strong> This
-              includes:
+              <strong className="text-foreground">
+                The installed app does not collect personal data from dictation.
+              </strong>{" "}
+              Local engines and the desktop client do not send us:
             </p>
             <ul className="space-y-2">
               <li className="flex items-start gap-2">
@@ -121,17 +124,16 @@ export default function PrivacyPage() {
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No usage analytics or telemetry
+                No usage analytics or telemetry from the app
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No device fingerprints
-              </li>
-              <li className="flex items-start gap-2">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No IP addresses or location data
+                No device fingerprints from the app
               </li>
             </ul>
+            <p className="text-sm">
+              These app claims do not describe vocalinux.com. See Website analytics below.
+            </p>
           </div>
         </article>
 
@@ -196,6 +198,22 @@ export default function PrivacyPage() {
             </p>
           </div>
         </article>
+
+        <article className="rounded-[12px] border border-border bg-background p-6">
+          <h2 className="mb-4 flex items-center gap-2 font-display text-2xl font-semibold">
+            <Eye className="h-5 w-5 text-primary" />
+            Website analytics
+          </h2>
+          <div className="space-y-4 text-muted-foreground">
+            <p>
+              vocalinux.com uses Google Analytics (measurement ID{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5">G-7NBBNJNNQ7</code>) for aggregate
+              site traffic. Google Analytics may process IP addresses and standard web analytics
+              data. This is separate from the installed app and does not include voice recordings
+              or transcribed text.
+            </p>
+          </div>
+        </article>
       </section>
 
       {/* Comparison with Cloud Services */}
@@ -237,7 +255,7 @@ export default function PrivacyPage() {
               </tr>
               <tr>
                 <td className="py-3 font-medium text-foreground">Cost</td>
-                <td className="py-3 text-primary">Free forever</td>
+                <td className="py-3 text-primary">Free and open source</td>
                 <td className="py-3">Subscription</td>
               </tr>
             </tbody>

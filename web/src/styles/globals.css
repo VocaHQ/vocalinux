@@ -2,38 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Vocalinux — Voca family workbench.
-   Warm paper, deep ink, one teal accent. Flat fills only; no gradients. */
+/* Vocalinux — iron-white canvas, emerald accent.
+   Iron-white + #1a7f4e. Flat fills only; no gradients. Never warm cream as default. */
 
 @layer base {
   :root {
-    --paper: #f4f1e8;
-    --paper-deep: #ebe5d8;
-    --paper-bright: #fffdf7;
-    --ink: #14231c;
-    --muted-copy: #58625c;
-    --faint: #5f6861;
-    --faint-inverse: #94a89f;
-    --line: #c9c8bd;
-    --line-dark: #9ea59f;
-    --line-control: #5c7d71;
-    --brand: #0f6b57;
+    --paper: #ffffff;
+    --paper-deep: #f4f4f5;
+    --paper-bright: #ffffff;
+    --ink: #09090b;
+    --muted-copy: #52525b;
+    --faint: #71717a;
+    --faint-inverse: #a1a1aa;
+    --line: #e4e4e7;
+    --line-dark: #d4d4d8;
+    --line-control: #71717a;
+    --brand: #1a7f4e;
     --teal: var(--brand);
-    --brand-dark: #0b493d;
-    --brand-soft: #cfe9dc;
-    --brand-softer: #e5f2eb;
-    --dark-ink: #0b1a15;
+    --brand-dark: #14663e;
+    --brand-soft: #d1fae5;
+    --brand-softer: #ecfdf3;
+    --dark-ink: #0a0a0c;
     --sun: #e9b949;
-    --red: #de6a57;
+    --red: #c45c5c;
     --focus: var(--sun);
-    --mint: #cfe9dc;
-    --on-dark: #fffdf7;
-    --btn-bg: #0f6b57;
-    --btn-fg: #fffdf7;
-    --btn-hover: #0b493d;
-    --btn-border: #0b493d;
-    --terminal: #0b1a15;
-    --terminal-fg: #cfe9dc;
+    --mint: #d1fae5;
+    --on-dark: #ffffff;
+    --btn-bg: #1a7f4e;
+    --btn-fg: #ffffff;
+    --btn-hover: #14663e;
+    --btn-border: #14663e;
+    --terminal: #0a0a0c;
+    --terminal-fg: #6ee7a8;
     --font-display: "Avenir Next", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
     --font-body: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, monospace;
@@ -42,9 +42,9 @@
     --radius-md: 1rem;
     --radius-lg: 1.4rem;
     --ease: cubic-bezier(0.22, 0.8, 0.24, 1);
-    --shadow-paper: 0 1px 0 rgb(20 35 28 / 4%), 0 2px 8px rgb(20 35 28 / 5%);
-    --shadow-lift: 0 6px 18px rgb(20 35 28 / 9%), 0 1px 3px rgb(20 35 28 / 6%);
-    --shadow-window: 0 12px 32px rgb(20 35 28 / 12%), 0 2px 6px rgb(20 35 28 / 6%);
+    --shadow-paper: 0 1px 0 rgb(9 9 11 / 4%), 0 2px 8px rgb(9 9 11 / 5%);
+    --shadow-lift: 0 6px 18px rgb(9 9 11 / 9%), 0 1px 3px rgb(9 9 11 / 6%);
+    --shadow-window: 0 12px 32px rgb(9 9 11 / 12%), 0 2px 6px rgb(9 9 11 / 6%);
 
     --background: var(--paper);
     --foreground: var(--ink);
@@ -60,7 +60,7 @@
     --muted: var(--paper-deep);
     --muted-foreground: var(--muted-copy);
     --accent: var(--brand-softer);
-    --accent-foreground: var(--brand-dark);
+    --accent-foreground: #14532d;
     --destructive: var(--red);
     --destructive-foreground: var(--paper-bright);
     --border: var(--line);
@@ -77,7 +77,7 @@
     --sidebar-primary: var(--brand);
     --sidebar-primary-foreground: var(--paper-bright);
     --sidebar-accent: var(--brand-softer);
-    --sidebar-accent-foreground: var(--brand-dark);
+    --sidebar-accent-foreground: #14532d;
     --sidebar-border: var(--line);
     --sidebar-ring: var(--brand);
     --status-no: #c45c5c;
@@ -276,7 +276,7 @@
     z-index: 50;
     top: 0;
     border-bottom: 1px solid var(--line);
-    background: rgb(244 241 232 / 96%);
+    background: rgb(255 255 255 / 96%);
   }
 
   .header-inner {

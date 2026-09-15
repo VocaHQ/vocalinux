@@ -4,8 +4,8 @@
     "description": "Voice dictation for Linux with local engines and an optional Remote API.",
     "start_url": "/",
     "display": "standalone",
-    "background_color": "#f4f1e8",
-    "theme_color": "#0f6b57",
+    "background_color": "#ffffff",
+    "theme_color": "#1a7f4e",
     "icons": [
         {
             "src": "/brand/vocalinux-mark-circle.svg",

@@ -63,9 +63,9 @@ describe("marketing home layout guards (shipped source)", () => {
     expect(pageTsx).toMatch(/TerminalBlock|terminal-panel/);
   });
 
-  it("uses the Voca family paper workbench tokens", () => {
-    expect(globalsCss).toMatch(/--paper:\s*#f4f1e8/);
-    expect(globalsCss).toMatch(/--brand:\s*#0f6b57/);
+  it("uses iron-white and emerald brand tokens", () => {
+    expect(globalsCss).toMatch(/--paper:\s*#ffffff/);
+    expect(globalsCss).toMatch(/--brand:\s*#1a7f4e/);
     expect(globalsCss).not.toMatch(/linear-gradient|radial-gradient|conic-gradient/);
     expect(pageTsx).not.toMatch(/linear-gradient|radial-gradient|conic-gradient/);
   });
