@@ -172,14 +172,10 @@ def test_default_terms_path_follows_xdg_config_home(tmp_path: Path, monkeypatch)
     assert manager.corrections_path() == tmp_path / CORRECTIONS_FILENAME
 
 
-def test_legacy_vocalinux_terms_root_colocates_corrections(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_legacy_vocalinux_terms_root_colocates_corrections(tmp_path: Path, monkeypatch) -> None:
     """Persisted ~/.config/vocalinux terms keep corrections beside that root."""
     monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
-    legacy_corrections = (
-        Path.home() / ".config" / "vocalinux" / CORRECTIONS_FILENAME
-    )
+    legacy_corrections = Path.home() / ".config" / "vocalinux" / CORRECTIONS_FILENAME
     expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
     assert legacy_corrections != tmp_path / CORRECTIONS_FILENAME
 

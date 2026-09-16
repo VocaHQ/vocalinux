@@ -261,11 +261,7 @@ class CustomDictionaryManager:
         corrections there. Otherwise keep corrections under ``config_dir()``.
         """
         terms = self.terms_path()
-        if (
-            terms is not None
-            and terms.name == TERMS_FILENAME
-            and terms.parent.name == "vocalinux"
-        ):
+        if terms is not None and terms.name == TERMS_FILENAME and terms.parent.name == "vocalinux":
             return terms.parent / CORRECTIONS_FILENAME
         return Path(config_dir()) / CORRECTIONS_FILENAME
 
