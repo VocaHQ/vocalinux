@@ -72,9 +72,20 @@ def test_mapping_the_list_remeasures_it():
     )
 
 
-def test_unused_downloads_are_not_nested_in_advanced():
-    """An expander inside Advanced measured while collapsed and nested scroll."""
+def test_expanding_the_list_remeasures_it():
+    """Measure while collapsed is worthless; expanding must remeasure."""
     src = inspect.getsource(settings_dialog)
-    assert "self.content_box.pack_start(self.unused_models_group" in src
+    assert re.search(
+        r"self\.unused_expander\.connect\(\s*\"notify::expanded\","
+        r"\s*lambda \*_args: self\._fit_unused_downloads_height\(\)",
+        src,
+    )
+
+
+def test_unused_downloads_are_a_sibling_expander_not_nested_in_advanced():
+    """Same card chrome as Advanced, not an expander inside Advanced."""
+    src = inspect.getsource(settings_dialog)
+    assert "self.content_box.pack_start(self.unused_island" in src
     assert "self.advanced_box.pack_start(self.unused_models_group" not in src
-    assert "self.unused_expander" not in src
+    assert "self.unused_expander" in src
+    assert "_make_expander_card" in src

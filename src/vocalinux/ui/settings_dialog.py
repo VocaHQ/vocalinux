@@ -1043,8 +1043,26 @@ spinbutton {
     margin-right: 8px;
 }
 
-/* Unused downloads: own card on the Speech Model page, not nested in Advanced. */
-.unused-downloads-group list {
+/* Sibling expander cards on Speech Model (Advanced, Unused downloads).
+   Padding lives on the expander, not the title class: .preferences-group-title
+   already has 16px inset, which stacked with expander margin and shoved the
+   chevron off the unused-downloads title. */
+.expander-card expander {
+    padding: 10px 12px;
+}
+
+.expander-card-title {
+    font-weight: bold;
+    font-size: 0.9em;
+    color: @theme_unfocused_fg_color;
+}
+
+.expander-card-subtitle {
+    font-size: 0.85em;
+    color: @theme_unfocused_fg_color;
+}
+
+.expander-card list {
     background-color: transparent;
 }
 
@@ -1638,6 +1656,30 @@ def _row_matches_query(query: str, title: str, subtitle: str = "", keywords=()) 
     return any(query in text.casefold() for text in haystacks)
 
 
+def _make_expander_card(
+    title: str, subtitle: str
+) -> tuple[Gtk.Box, Gtk.Expander, Gtk.Box, Gtk.Label]:
+    """Card with a compact title+subtitle expander, used for Advanced and Unused."""
+    island = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    island.get_style_context().add_class("preferences-group")
+    island.get_style_context().add_class("expander-card")
+
+    expander = Gtk.Expander()
+    header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    title_label = Gtk.Label(label=title, xalign=0)
+    title_label.get_style_context().add_class("expander-card-title")
+    subtitle_label = Gtk.Label(label=subtitle, xalign=0, wrap=True)
+    subtitle_label.get_style_context().add_class("expander-card-subtitle")
+    header.pack_start(title_label, False, False, 0)
+    header.pack_start(subtitle_label, False, False, 0)
+    expander.set_label_widget(header)
+
+    body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    expander.add(body)
+    island.pack_start(expander, False, False, 0)
+    return island, expander, body, subtitle_label
+
+
 class PreferencesGroup(Gtk.Box):
     """A card-style group of preferences, similar to libadwaita's AdwPreferencesGroup."""
 
@@ -1994,6 +2036,8 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_box = None
         self.advanced_island = None
         self.advanced_expander = None
+        self.unused_island = None
+        self.unused_expander = None
         self.simple_page = None
         self.simple_group = None
         self.engine_group = None
@@ -3100,33 +3144,17 @@ class SettingsDialog(Gtk.Dialog):
         # it could not be raised above the dialog at all. Both cards visible at
         # once also makes the expanded rows a readout of what the simple answers
         # resolved to.
-        self.advanced_island = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.advanced_island.get_style_context().add_class("preferences-group")
-
-        self.advanced_expander = Gtk.Expander()
-        header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        title = Gtk.Label(label="Advanced", xalign=0)
-        title.get_style_context().add_class("preferences-group-title")
-        subtitle = Gtk.Label(
-            label="Engine, model size, specialization, and the remote server",
-            xalign=0,
-            wrap=True,
+        (
+            self.advanced_island,
+            self.advanced_expander,
+            self.advanced_box,
+            _,
+        ) = _make_expander_card(
+            "Advanced",
+            "Engine, model size, specialization, and the remote server",
         )
-        subtitle.get_style_context().add_class("preference-row-subtitle")
-        header.pack_start(title, False, False, 0)
-        header.pack_start(subtitle, False, False, 0)
-        self.advanced_expander.set_label_widget(header)
-        self.advanced_expander.set_margin_top(12)
-        self.advanced_expander.set_margin_bottom(12)
-        self.advanced_expander.set_margin_start(16)
-        self.advanced_expander.set_margin_end(16)
-
-        # Everything the detailed view holds is packed in here; the sections
-        # built after this one append to it.
-        self.advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.advanced_box.set_spacing(12)
         self.advanced_box.set_margin_top(8)
-        self.advanced_expander.add(self.advanced_box)
-        self.advanced_island.pack_start(self.advanced_expander, False, False, 0)
         self.content_box.pack_start(self.advanced_island, False, False, 0)
 
         self.advanced_expander.connect("notify::expanded", self._on_advanced_expanded)
@@ -3240,12 +3268,20 @@ class SettingsDialog(Gtk.Dialog):
         # priority or language change did anything, and what it will cost.
         self.simple_page.pack_start(self.model_info_card, False, False, 0)
 
+        (
+            self.unused_island,
+            self.unused_expander,
+            unused_body,
+            self.unused_expander_subtitle,
+        ) = _make_expander_card(
+            "Unused downloads",
+            "On disk, but not the model currently selected",
+        )
         self.unused_models_group = PreferencesGroup(
-            title="Unused downloads",
-            description="On disk, but not the model currently selected",
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
         )
-        self.unused_models_group.get_style_context().add_class("unused-downloads-group")
+        # The island is the card; this group only holds rows for search/delete.
+        self.unused_models_group.get_style_context().remove_class("preferences-group")
 
         self.unused_models_scroll = Gtk.ScrolledWindow()
         self.unused_models_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -3257,18 +3293,21 @@ class SettingsDialog(Gtk.Dialog):
         self.unused_models_scroll.set_overlay_scrolling(False)
 
         # ListBox is GtkScrollable, so wrapping it in a Box forces a Viewport
-        # and lets the card report a real height.
+        # and lets the expander child report a real height.
         list_holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.unused_models_group.remove(self.unused_models_group.listbox)
         list_holder.pack_start(self.unused_models_group.listbox, False, False, 0)
         self.unused_models_scroll.add(list_holder)
         self.unused_models_group.pack_start(self.unused_models_scroll, False, False, 0)
-        # Refresh may run before the dialog is mapped. Remeasure on map so a
-        # short first measurement cannot leave the list clipped.
+        unused_body.pack_start(self.unused_models_group, False, False, 0)
+        self.unused_expander.set_expanded(False)
+        # Refresh may run while collapsed or before map. Remeasure on expand
+        # and on map so a short first measurement cannot leave rows clipped.
+        self.unused_expander.connect(
+            "notify::expanded", lambda *_args: self._fit_unused_downloads_height()
+        )
         self.unused_models_scroll.connect("map", lambda *_args: self._fit_unused_downloads_height())
-        # Sibling of Advanced, not nested in it: an expander inside an expander
-        # measured while collapsed and produced a nested scrollbar.
-        self.content_box.pack_start(self.unused_models_group, False, False, 0)
+        self.content_box.pack_start(self.unused_island, False, False, 0)
 
         # Connect signals
         self.engine_combo.connect("changed", self._on_engine_changed)
@@ -5578,19 +5617,24 @@ class SettingsDialog(Gtk.Dialog):
 
     def _refresh_unused_downloads(self):
         """Rebuild the Unused downloads list, or hide it when empty."""
-        if not hasattr(self, "unused_models_group"):
+        if not hasattr(self, "unused_models_group") or self.unused_island is None:
             return
 
         if self._get_selected_engine() == "remote_api":
-            self.unused_models_group.hide()
+            self.unused_island.hide()
             return
 
         unused = self._list_unused_downloads()
         self.unused_models_group.clear_rows()
         if not unused:
-            self.unused_models_group.hide()
+            self.unused_island.hide()
             return
 
+        count = len(unused)
+        leftover = "leftover model" if count == 1 else "leftover models"
+        self.unused_expander_subtitle.set_text(f"{count} {leftover} on disk")
+
+        was_expanded = self.unused_expander.get_expanded()
         for model_id, title, size_label in unused:
             delete_btn = Gtk.Button(label="Delete")
             delete_btn.set_tooltip_text(f"Delete {title} from disk")
@@ -5609,7 +5653,8 @@ class SettingsDialog(Gtk.Dialog):
             )
             self.unused_models_group.add_row(row)
 
-        self.unused_models_group.show_all()
+        self.unused_island.show_all()
+        self.unused_expander.set_expanded(was_expanded)
         self._fit_unused_downloads_height()
 
     def _fit_unused_downloads_height(self):
@@ -5621,6 +5666,8 @@ class SettingsDialog(Gtk.Dialog):
         counted it (#683).
         """
         if not hasattr(self, "unused_models_scroll"):
+            return
+        if self.unused_expander is not None and not self.unused_expander.get_expanded():
             return
         _, natural_height = self.unused_models_group.listbox.get_preferred_height()
         self.unused_models_scroll.set_min_content_height(
@@ -6212,7 +6259,8 @@ class SettingsDialog(Gtk.Dialog):
         if is_remote:
             self.model_row.hide()
             self.model_variant_row.hide()
-            self.unused_models_group.hide()
+            if self.unused_island is not None:
+                self.unused_island.hide()
             self.model_info_card.hide()
             self.remote_server_group.show_all()
             self.remote_status_label.show()
