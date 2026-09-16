@@ -43,6 +43,21 @@ _LAYOUT_TO_LANGUAGE = {
     "vn": "vi",
 }
 
+# Common GNOME IBus engine ids. Looked up case-insensitively.
+_IBUS_ENGINE_TO_LANGUAGE = {
+    "mozc-jp": "ja",
+    "anthy": "ja",
+    "kkc": "ja",
+    "skk": "ja",
+    "libpinyin": "zh",
+    "pinyin": "zh",
+    "rime": "zh",
+    "chewing": "zh",
+    "hangul": "ko",
+    "unikey": "vi",
+    "bamboo": "vi",
+}
+
 # Locale territory codes that pick a specific catalogue entry.
 _LOCALE_TO_LANGUAGE = {
     "en_in": "en-in",
@@ -329,23 +344,54 @@ def detect_active_keyboard_layout() -> Optional[str]:
     return _xkb_layout_from_source(_active_input_source())
 
 
+def _language_for_ibus_source(source: object, supported: set[str] | dict) -> Optional[str]:
+    """Map a GNOME IBus ``(type, id)`` pair onto a catalogue language."""
+    if not isinstance(source, (list, tuple)) or len(source) != 2:
+        return None
+    source_type, source_id = source
+    if not isinstance(source_type, str) or source_type.lower() != "ibus":
+        return None
+    if not isinstance(source_id, str) or not source_id:
+        return None
+
+    engine = source_id.strip().lower()
+    mapped = _IBUS_ENGINE_TO_LANGUAGE.get(engine)
+    if mapped and mapped in supported:
+        return mapped
+
+    if engine.startswith("m17n:"):
+        lang = engine.split(":", 2)[1]
+        if lang:
+            return _language_for_locale(lang, supported) or _language_for_layout(lang, supported)
+        return None
+
+    if "-" in engine:
+        return _language_for_layout(engine.rsplit("-", 1)[-1], supported)
+    return None
+
+
 def language_for_active_layout(supported: set[str] | dict) -> Optional[str]:
     """Return the catalogue language for the active layout, or None (#821).
 
     Falls back to the configured primary layout where the active one cannot be
-    read, which is what a single-layout install reports anyway.
+    read, which is what a single-layout install reports anyway. An active IBus
+    engine is mapped when we know it; otherwise auto-detect is used rather than
+    borrowing the configured xkb layout.
     """
     active = _active_input_source()
     if active is not None:
         layout = _xkb_layout_from_source(active)
-        if layout is None:
-            # An active IBus engine (mozc-jp, pinyin) is a real answer we cannot
-            # map. Falling back to the configured xkb layout here would pin
-            # English for someone typing Japanese, so say nothing and let the
-            # engine auto-detect instead.
-            logger.debug(f"Active input source {active!r} is not an xkb layout; using auto-detect")
-            return None
-        return _language_for_layout_logged(layout, supported, "active keyboard layout")
+        if layout is not None:
+            return _language_for_layout_logged(layout, supported, "active keyboard layout")
+        language = _language_for_ibus_source(active, supported)
+        if language:
+            logger.debug(f"Language {language} taken from IBus engine {active!r}")
+            return language
+        # An active IBus engine we cannot map is still a real answer. Falling
+        # back to the configured xkb layout here would pin English for someone
+        # typing Japanese, so say nothing and let the engine auto-detect.
+        logger.debug(f"Active input source {active!r} is not an xkb layout; using auto-detect")
+        return None
 
     # Nothing readable -- not GNOME. The configured primary layout is the only
     # signal left, and is what a single-layout install reports anyway.

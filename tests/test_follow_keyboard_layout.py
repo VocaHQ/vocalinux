@@ -176,12 +176,31 @@ def test_following_a_layout_keeps_the_mode_armed():
     manager.reconfigure.assert_not_called()
 
 
-def test_an_english_only_model_never_reloads_the_engine():
-    """Swapping the language without swapping weights would transcribe nonsense."""
+def test_an_english_only_model_reloads_the_multilingual_sibling():
+    """English-only weights cannot honour a non-English layout; swap the sibling.
+
+    reconfigure() stores whatever language it is handed as the new preference,
+    so the resolved language must never be passed in -- only the layout sentinel
+    and the multilingual model id.
+    """
     import vocalinux.speech_recognition.recognition_manager as rm
 
     manager = _manager_stub("small.en")
     with patch.object(rm, "language_for_active_layout", return_value="fr"):
+        with patch.object(rm, "is_model_downloaded", return_value=True):
+            manager._refresh_language_from_layout()
+
+    manager.reconfigure.assert_called_once_with(model_size="small", language="layout")
+    assert manager.language_preference == "layout"
+    assert "fr" not in manager.reconfigure.call_args.args
+
+
+def test_an_english_only_model_skips_reload_when_already_english():
+    """The loaded English-only model already matches an English layout."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    manager = _manager_stub("small.en")
+    with patch.object(rm, "language_for_active_layout", return_value="en-us"):
         manager._refresh_language_from_layout()
 
     manager.reconfigure.assert_not_called()

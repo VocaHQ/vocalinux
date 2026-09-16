@@ -234,16 +234,24 @@ def test_active_layout_language_is_none_without_any_layout():
 
 
 def test_an_active_ibus_engine_does_not_borrow_the_configured_layout():
-    """Typing Japanese through mozc-jp must not resolve to the us layout's English.
-
-    An IBus engine is a real answer that simply cannot be mapped, so the language
-    is left to the engine's own auto-detect. Falling through to the configured
-    xkb layout would confidently pick the wrong language.
-    """
+    """Typing Japanese through mozc-jp must not resolve to the us layout's English."""
     with patch.object(sl, "_active_input_source", return_value=("ibus", "mozc-jp")):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+        configured.assert_not_called()
+
+
+def test_an_unmapped_ibus_engine_does_not_borrow_the_configured_layout():
+    """An unknown IBus engine is still a real answer; leave it to auto-detect."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-engine")):
         with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
             assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
         configured.assert_not_called()
+
+
+def test_ibus_libpinyin_maps_to_chinese():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "libpinyin")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "zh"
 
 
 def test_active_source_prefers_mru_and_falls_back_to_the_index():

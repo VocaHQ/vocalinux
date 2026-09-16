@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..ui.config_manager import _multilingual_sibling
 from ..utils import faster_whisper_model_info as faster_whisper
 from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
@@ -1343,13 +1344,19 @@ class SpeechRecognitionManager:
                 self._faster_whisper_engine.language = target
             return
 
-        # Everything left here needs different weights, not just a different
-        # language string: an English-only whisper model has no non-English
-        # weights, so switching the language alone would transcribe nonsense.
-        # reconfigure() is deliberately not called -- it stores whatever language
-        # it is handed as the new preference, which would overwrite the sentinel
-        # and disarm the mode permanently after a single switch. Settings refuses
-        # the mode for these combinations; this is the belt-and-braces path.
+        # English-only weights cannot honour a non-English layout. Swap to the
+        # multilingual sibling and keep the follow-mode sentinel; handing
+        # ``target`` to reconfigure() would store it as the new preference and
+        # disarm the mode after a single switch.
+        sibling = _multilingual_sibling(self.model_size)
+        # No surprise fetch on the hotkey: only swap if the sibling is already downloaded.
+        if sibling != self.model_size and is_model_downloaded(sibling):
+            try:
+                self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
+                return
+            except Exception:
+                pass
+
         if not self._warned_follow_layout_unsupported:
             self._warned_follow_layout_unsupported = True
             logger.warning(
