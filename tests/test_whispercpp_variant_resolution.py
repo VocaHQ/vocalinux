@@ -225,15 +225,13 @@ def test_unpinned_plain_en_id_still_follows_english(
     assert dialog_class._resolve_saved_whispercpp_variant(dialog, "medium.en") == "medium.en"
 
 
-def test_unpinned_quantized_en_id_is_kept_as_legacy(
+def test_unpinned_quantized_en_id_follows_a_non_english_language(
     settings_dialog: Any, dialog_class: Any
 ) -> None:
-    """``{size}.en-q*`` is a real leftover specialization, not a language default."""
+    """``{size}.en-q*`` cannot transcribe Polish; use the multilingual sibling."""
     dialog = _dialog_stub(settings_dialog, "pl")
 
-    assert (
-        dialog_class._resolve_saved_whispercpp_variant(dialog, "medium.en-q5_0") == "medium.en-q5_0"
-    )
+    assert dialog_class._resolve_saved_whispercpp_variant(dialog, "medium.en-q5_0") == "medium-q5_0"
 
 
 def test_unpinned_save_of_derived_en_persists_bare_size_and_rederives() -> None:
@@ -269,6 +267,20 @@ def test_leftover_en_in_model_size_does_not_block_language_switch() -> None:
     manager.config["speech_recognition"]["language"] = "pl"
 
     assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+
+
+def test_english_only_pin_does_not_block_a_non_english_language() -> None:
+    """A leftover English-only pin must not trap Polish on those weights."""
+    manager = ConfigManager()
+    manager.config["speech_recognition"]["whisper_cpp_model_size"] = "medium"
+    manager.config["speech_recognition"]["whisper_cpp_model_variant"] = "medium.en"
+    manager.config["speech_recognition"]["language"] = "pl"
+
+    assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+    assert resolve_whispercpp_variant("medium.en", "medium.en", "pl") == "medium"
+    assert resolve_whispercpp_variant("medium.en", "medium.en", "auto") == "medium"
+    assert resolve_whispercpp_variant("medium.en-q5_0", "medium.en-q5_0", "fr") == "medium-q5_0"
+    assert resolve_whispercpp_variant("medium.en", "medium.en", "en-us") == "medium.en"
 
 
 def test_pinned_save_persists_the_full_variant() -> None:

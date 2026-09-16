@@ -621,8 +621,8 @@ MODEL_SPECIALIZATION_TOOLTIP = (
     "lower-memory quantized models, Turbo speed, or a legacy large model."
 )
 LANGUAGE_TOOLTIP = (
-    "Choose the language you dictate in. Search the list. English-only models "
-    "limit this list to English."
+    "Choose the language you dictate in. Search the list. Picking a language "
+    "other than English switches off an English-only model."
 )
 
 
@@ -5276,7 +5276,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _default_language_for_engine(self, engine: str) -> str:
         """Return a safe default language for the selected engine and model."""
-        if engine == "vosk" or self._is_selected_whispercpp_model_english_only():
+        if engine == "vosk":
             return "en-us"
         return "auto"
 
@@ -5920,7 +5920,6 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         engine = _engine_from_display(engine)
-        english_only_whispercpp = self._is_selected_whispercpp_model_english_only()
 
         for lang_code, lang_info in SUPPORTED_LANGUAGES.items():
             display_text = lang_info["name"]
@@ -5932,9 +5931,8 @@ class SettingsDialog(Gtk.Dialog):
                 is_downloaded = _is_vosk_model_downloaded("small", lang_code)
                 display_text += " ✓" if is_downloaded else " ↓"
             elif engine in ["whisper", "whisper_cpp", "parakeet", "faster_whisper", "remote_api"]:
-                if english_only_whispercpp and lang_info.get("whisper") != "en":
-                    continue
-                # Both Whisper and whisper.cpp support auto-detect
+                # An English-only model must not hide other languages: picking
+                # Polish (or auto) retargets to the multilingual sibling.
                 if lang_code == "auto":
                     display_text += " ⚠"
             else:
@@ -5976,7 +5974,7 @@ class SettingsDialog(Gtk.Dialog):
         """
         if self._processing_language_change:
             return
-        if self._initializing or self._applying_settings:
+        if self._initializing or self._applying_settings or self._simple_driving:
             return
 
         lang_code = self.language_combo.get_active_id()

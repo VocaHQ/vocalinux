@@ -538,6 +538,7 @@ def test_changing_advanced_language_refreshes_the_simple_readout(settings_dialog
     dialog._processing_language_change = False
     dialog._initializing = False
     dialog._applying_settings = False
+    dialog._simple_driving = False
     dialog.language_combo.get_active_id.return_value = "pl"
     dialog.engine_combo.get_active_text.return_value = "Local (whisper.cpp)"
 

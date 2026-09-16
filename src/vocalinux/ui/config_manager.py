@@ -16,6 +16,7 @@ from ..utils.vosk_model_info import SUPPORTED_LANGUAGES
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, default_variant_for_size
 from ..utils.whispercpp_model_info import get_model_size as get_whispercpp_model_size
+from ..utils.whispercpp_model_info import is_english_only_model as is_english_only_whispercpp_model
 
 logger = logging.getLogger(__name__)
 
@@ -166,16 +167,34 @@ DEFAULT_CONFIG = {
 }
 
 
+def _multilingual_sibling(model_name: str) -> str:
+    """Drop the ``.en`` infix so medium.en / medium.en-q5_0 become multilingual."""
+    if ".en" not in model_name:
+        return model_name
+    stripped = model_name.replace(".en", "", 1)
+    if stripped in WHISPERCPP_MODEL_INFO:
+        return stripped
+    size = get_whispercpp_model_size(model_name)
+    derived = default_variant_for_size(size, language_is_english=False)
+    return derived if derived in WHISPERCPP_MODEL_INFO else model_name
+
+
 def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_id: str) -> str:
     """Resolve the loadable whisper.cpp id for a saved size, pin, and language.
 
-    A pin outranks everything. When unpinned, a plain ``{size}.en`` English-only
-    id is the language-derived default, not a legacy specialization, so a later
-    language change can re-derive. True legacy specializations (quantized, turbo,
-    versioned large, ``{size}.en-q*``) are still honoured.
+    A pin outranks everything except an English-only id when the language is not
+    English: those weights cannot transcribe Polish (or auto-detect), so the
+    multilingual sibling of the same size is used instead. When unpinned, a
+    plain ``{size}.en`` id is the language-derived default, not a leftover
+    specialization. True leftover specializations (turbo, versioned large,
+    quantized multilingual) are still honoured.
     """
+    language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
+
     pinned = pinned_variant.lower() if isinstance(pinned_variant, str) else ""
     if pinned in WHISPERCPP_MODEL_INFO:
+        if not language_is_english and is_english_only_whispercpp_model(pinned):
+            return _multilingual_sibling(pinned)
         return pinned
 
     saved = saved_model.lower() if isinstance(saved_model, str) else ""
@@ -189,9 +208,10 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
         and saved not in WHISPERCPP_MODEL_SIZES
         and saved != f"{size}.en"
     ):
+        if not language_is_english and is_english_only_whispercpp_model(saved):
+            return _multilingual_sibling(saved)
         return saved
 
-    language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
     derived = default_variant_for_size(size, language_is_english)
     if derived in WHISPERCPP_MODEL_INFO:
         return derived

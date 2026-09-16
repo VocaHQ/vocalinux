@@ -659,6 +659,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         self.assertIn("Standard multilingual", MODEL_SPECIALIZATION_TOOLTIP)
         self.assertIn("English-only", LANGUAGE_TOOLTIP)
         self.assertIn("Search the list", LANGUAGE_TOOLTIP)
+        self.assertNotIn("limit this list to English", LANGUAGE_TOOLTIP)
         self.assertIn("only in English", _model_specialization_tooltip("medium.en"))
         self.assertIn("lower-memory systems", _model_specialization_tooltip("medium-q5_0"))
         self.assertIn("Turbo", _model_specialization_tooltip("large-v3-turbo"))
@@ -730,6 +731,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         self.assertEqual(_whispercpp_variant_for_language("medium", "auto"), "medium")
         self.assertEqual(_whispercpp_variant_for_language("medium.en", "auto"), "medium")
         self.assertEqual(_whispercpp_variant_for_language("medium.en", "fr"), "medium")
+        self.assertEqual(_whispercpp_variant_for_language("small.en", "pl"), "small")
 
         # Quantized pairs mirror with language when a match exists.
         self.assertEqual(
@@ -747,6 +749,27 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
             "large-v3-turbo",
         )
         self.assertEqual(_whispercpp_variant_for_language("large", "en-us"), "large")
+
+    def test_english_only_model_does_not_hide_other_languages(self):
+        """Picking .en used to filter the language list, so Polish could not be chosen."""
+        import os
+
+        source_path = os.path.join(
+            os.path.dirname(__file__),
+            "..",
+            "src",
+            "vocalinux",
+            "ui",
+            "settings_dialog.py",
+        )
+        with open(source_path, "r") as handle:
+            source_code = handle.read()
+
+        populate = source_code.split("def _populate_language_options")[1].split("\n    def ")[0]
+        default = source_code.split("def _default_language_for_engine")[1].split("\n    def ")[0]
+        self.assertNotIn("english_only_whispercpp", populate)
+        self.assertNotIn('lang_info.get("whisper") != "en"', populate)
+        self.assertNotIn("_is_selected_whispercpp_model_english_only", default)
 
     def test_whisper_delete_unknown_model(self):
         """Test deleting an unknown Whisper model raises ValueError."""

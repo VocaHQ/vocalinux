@@ -54,6 +54,7 @@ def _dialog_stub(language: str = "en-us") -> Mock:
     # language-changed handler returns before updating dialog.language.
     dialog._initializing = False
     dialog._applying_settings = False
+    dialog._simple_driving = False
     return dialog
 
 
