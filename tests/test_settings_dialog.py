@@ -1109,6 +1109,28 @@ class TestSettingsNavigation(unittest.TestCase):
             "Custom dictionary status",
         ]:
             self.assertIn(accessible_name, body)
+        # Shared status lives on the page, not only in the Corrections stack child.
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_feedback_label, False, False, 0)",
+            body,
+        )
+        switcher_pack = body.find(
+            "self.dictionary_tab.pack_start(self.dictionary_management_switcher"
+        )
+        feedback_pack = body.find(
+            "self.dictionary_tab.pack_start(self.dictionary_feedback_label"
+        )
+        stack_pack = body.find(
+            "self.dictionary_tab.pack_start(self.dictionary_management_stack"
+        )
+        self.assertLess(switcher_pack, feedback_pack)
+        self.assertLess(feedback_pack, stack_pack)
+        corrections_child = body[
+            body.find("corrections_group = PreferencesGroup") : body.find(
+                'corrections_scroller, "corrections"'
+            )
+        ]
+        self.assertNotIn("dictionary_feedback_label", corrections_child)
 
     def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self):
         """Transparent list backgrounds do not cover the card's lower radius."""

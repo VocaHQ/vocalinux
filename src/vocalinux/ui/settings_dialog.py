@@ -3102,6 +3102,13 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_management_switcher.set_halign(Gtk.Align.CENTER)
         self.dictionary_management_switcher.get_accessible().set_name("Custom dictionary section")
         self.dictionary_tab.pack_start(self.dictionary_management_switcher, False, False, 0)
+
+        self.dictionary_feedback_label = Gtk.Label(xalign=0)
+        self.dictionary_feedback_label.set_line_wrap(True)
+        self.dictionary_feedback_label.get_accessible().set_name("Custom dictionary status")
+        self.dictionary_feedback_label.get_style_context().add_class("tip-label")
+        self.dictionary_tab.pack_start(self.dictionary_feedback_label, False, False, 0)
+
         self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)
 
         terms_group = PreferencesGroup(
@@ -3242,13 +3249,6 @@ class SettingsDialog(Gtk.Dialog):
         corrections_list_row.set_activatable(False)
         corrections_list_row.add(self.dictionary_corrections_listbox)
         corrections_group.add_row(corrections_list_row)
-        self.dictionary_feedback_label = Gtk.Label(xalign=0)
-        self.dictionary_feedback_label.set_line_wrap(True)
-        self.dictionary_feedback_label.get_accessible().set_name("Custom dictionary status")
-        self.dictionary_feedback_label.get_style_context().add_class("tip-label")
-        corrections_group.add_row(
-            PreferenceRow(title="Dictionary status", widget=self.dictionary_feedback_label)
-        )
 
         corrections_scroller = Gtk.ScrolledWindow()
         corrections_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
