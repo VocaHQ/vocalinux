@@ -12,7 +12,6 @@ from vocalinux.custom_dictionary import (
     LEGACY_DEFAULT_TERMS_PATH,
     MAX_CORRECTION_CHARACTERS,
     TERMS_FILENAME,
-    TERMS_PATH_SCHEMA_VERSION,
     CustomDictionaryManager,
     apply_corrections,
     normalize_corrections,
@@ -183,7 +182,7 @@ def test_legacy_default_terms_path_migrates_to_xdg_config_home(tmp_path: Path, m
     assert manager.terms_path_text() == xdg_path
     assert manager.terms_path() == tmp_path / TERMS_FILENAME
     assert config.get("dictionary", "file_path") == xdg_path
-    assert config.get("dictionary", "terms_path_schema") == TERMS_PATH_SCHEMA_VERSION
+    assert not config.get("dictionary", "file_path_explicit", False)
 
     failing = FakeConfig(
         {"dictionary": {"file_path": "~/.config/vocalinux/dictionary.txt"}},
@@ -213,11 +212,11 @@ def test_expanded_home_legacy_terms_path_migrates_when_xdg_differs(
 
     assert manager.terms_path_text() == xdg_path
     assert config.get("dictionary", "file_path") == xdg_path
-    assert config.get("dictionary", "terms_path_schema") == TERMS_PATH_SCHEMA_VERSION
+    assert not config.get("dictionary", "file_path_explicit", False)
 
 
-def test_explicit_legacy_terms_path_is_kept_after_schema_stamp(tmp_path: Path, monkeypatch) -> None:
-    """An intentional save of the pre-XDG string is not rewritten when XDG differs."""
+def test_explicit_legacy_terms_path_is_not_migrated(tmp_path: Path, monkeypatch) -> None:
+    """set_terms_path of the pre-XDG string is kept when XDG points elsewhere."""
     monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
     xdg_path = str(tmp_path / TERMS_FILENAME)
     expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
@@ -227,19 +226,15 @@ def test_explicit_legacy_terms_path_is_kept_after_schema_stamp(tmp_path: Path, m
     tilde_manager = CustomDictionaryManager(tilde_config)
     assert tilde_manager.set_terms_path(LEGACY_DEFAULT_TERMS_PATH)
     assert tilde_config.get("dictionary", "file_path") == LEGACY_DEFAULT_TERMS_PATH
-    assert tilde_config.get("dictionary", "terms_path_schema") == TERMS_PATH_SCHEMA_VERSION
+    assert tilde_config.get("dictionary", "file_path_explicit") is True
     assert tilde_manager.terms_path_text() == LEGACY_DEFAULT_TERMS_PATH
     assert tilde_config.get("dictionary", "file_path") == LEGACY_DEFAULT_TERMS_PATH
 
-    expanded_config = FakeConfig(
-        {
-            "dictionary": {
-                "file_path": expanded_legacy,
-                "terms_path_schema": TERMS_PATH_SCHEMA_VERSION,
-            }
-        }
-    )
+    expanded_config = FakeConfig({"dictionary": {"file_path": xdg_path}})
     expanded_manager = CustomDictionaryManager(expanded_config)
+    assert expanded_manager.set_terms_path(expanded_legacy)
+    assert expanded_config.get("dictionary", "file_path") == expanded_legacy
+    assert expanded_config.get("dictionary", "file_path_explicit") is True
     assert expanded_manager.terms_path_text() == expanded_legacy
     assert expanded_config.get("dictionary", "file_path") == expanded_legacy
 
@@ -287,6 +282,7 @@ def test_terms_path_save_failure_preserves_the_previous_configured_path(
 
     assert not manager.set_terms_path(str(tmp_path / "new-terms.txt"))
     assert config.get("dictionary", "file_path") == previous_path
+    assert not config.get("dictionary", "file_path_explicit", False)
 
 
 def test_invalid_transient_terms_path_does_not_crash(tmp_path: Path, monkeypatch) -> None:
@@ -332,6 +328,9 @@ def test_corrections_use_versioned_json_and_live_reload(tmp_path: Path, monkeypa
         "version": 1,
         "corrections": [{"heard": "super base", "replacement": "Supabase"}],
     }
+    assert manager.get_corrections_for_edit() == [
+        {"heard": "super base", "replacement": "Supabase"}
+    ]
     assert manager.apply_corrections("super base is useful") == "Supabase is useful"
 
     assert manager.save_corrections([{"heard": "pie object", "replacement": "PyGObject"}])
@@ -428,26 +427,38 @@ def test_corrections_with_top_level_metadata_cannot_be_destructively_edited(
     assert json.loads(path.read_text(encoding="utf-8")) == original
 
 
-def test_corrections_needing_normalization_cannot_be_destructively_edited(
+def test_corrections_with_whitespace_cannot_be_destructively_edited(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """Whitespace or NFC changes still apply at runtime but block a UI rewrite."""
+    """Leading or trailing whitespace still applies at runtime but blocks a UI rewrite."""
     manager = manager_at(tmp_path, monkeypatch)
     path = tmp_path / CORRECTIONS_FILENAME
     original = {
         "version": 1,
-        "corrections": [
-            {"heard": "  super base  ", "replacement": " Supabase "},
-            {"heard": "e\u0301clair", "replacement": "éclair"},
-        ],
+        "corrections": [{"heard": "  super base  ", "replacement": " Supabase "}],
+    }
+    path.write_text(json.dumps(original), encoding="utf-8")
+
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert manager.apply_corrections("super base is useful") == "Supabase is useful"
+    assert manager.get_corrections_for_edit() is None
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
+def test_corrections_with_decomposed_unicode_cannot_be_destructively_edited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """NFD heard values still apply at runtime but block a UI rewrite to NFC."""
+    manager = manager_at(tmp_path, monkeypatch)
+    path = tmp_path / CORRECTIONS_FILENAME
+    original = {
+        "version": 1,
+        "corrections": [{"heard": "e\u0301clair", "replacement": "éclair"}],
     }
     path.write_text(json.dumps(original, ensure_ascii=False), encoding="utf-8")
 
-    assert manager.get_corrections() == [
-        {"heard": "super base", "replacement": "Supabase"},
-        {"heard": "éclair", "replacement": "éclair"},
-    ]
-    assert manager.apply_corrections("super base and éclair") == "Supabase and éclair"
+    assert manager.get_corrections() == [{"heard": "éclair", "replacement": "éclair"}]
+    assert manager.apply_corrections("e\u0301clair") == "éclair"
     assert manager.get_corrections_for_edit() is None
     assert json.loads(path.read_text(encoding="utf-8")) == original
 

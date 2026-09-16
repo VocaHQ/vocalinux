@@ -20,8 +20,6 @@ TERMS_FILENAME = "dictionary.txt"
 DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
 # Pre-XDG default persisted by older builds; treat as the live config_dir() path.
 LEGACY_DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
-# One-shot stamp so an intentional save of the legacy string is not re-migrated.
-TERMS_PATH_SCHEMA_VERSION = 1
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
 CORRECTIONS_TOP_LEVEL_KEYS = frozenset({"version", "corrections"})
@@ -147,9 +145,8 @@ class CustomDictionaryManager:
     def terms_path_text(self) -> str:
         """Return the configured or session-only terms path without expansion.
 
-        A leftover pre-XDG default is rewritten once to the live XDG path when the
-        config still carries a pre-migration schema stamp. Explicit saves of that
-        same string bump the stamp so they are kept.
+        A leftover pre-XDG default is rewritten to the live XDG path when that
+        string was never an explicit Settings selection.
         """
         if self._transient_terms_path is not None:
             return self._transient_terms_path
@@ -163,19 +160,15 @@ class CustomDictionaryManager:
             return default_path
         return configured
 
-    def _terms_path_schema(self) -> int:
-        """Return the persisted terms-path migration stamp, defaulting to unmigrated."""
-        schema = self.config.get("dictionary", "terms_path_schema", 0)
-        try:
-            return int(schema)
-        except (TypeError, ValueError):
-            return 0
+    def _file_path_is_explicit(self) -> bool:
+        """Return whether Settings persisted the current terms path on purpose."""
+        return bool(self.config.get("dictionary", "file_path_explicit", False))
 
     def _should_migrate_legacy_default_terms_path(self, configured: str, default_path: str) -> bool:
-        """Return whether a leftover pre-XDG default should be rewritten once."""
+        """Return whether a leftover pre-XDG default should be rewritten."""
         if not self._is_legacy_default_terms_path(configured, default_path):
             return False
-        return self._terms_path_schema() < TERMS_PATH_SCHEMA_VERSION
+        return not self._file_path_is_explicit()
 
     @staticmethod
     def _is_legacy_default_terms_path(configured: str, default_path: str) -> bool:
@@ -189,19 +182,19 @@ class CustomDictionaryManager:
         return configured == expanded_legacy and expanded_legacy != default_path
 
     def _migrate_legacy_default_terms_path(self, old_value: str, default_path: str) -> None:
-        """Best-effort one-shot persist of the XDG terms path over a pre-XDG default."""
+        """Best-effort persist of the XDG terms path over a leftover pre-XDG default."""
         if self.is_transient_terms:
             return
-        old_schema = self.config.get("dictionary", "terms_path_schema", 0)
+        old_explicit = self.config.get("dictionary", "file_path_explicit", False)
         if not self.config.set("dictionary", "file_path", default_path):
             return
-        if not self.config.set("dictionary", "terms_path_schema", TERMS_PATH_SCHEMA_VERSION):
+        if not self.config.set("dictionary", "file_path_explicit", False):
             self.config.set("dictionary", "file_path", old_value)
             return
         if self.config.save_config():
             return
         self.config.set("dictionary", "file_path", old_value)
-        self.config.set("dictionary", "terms_path_schema", old_schema)
+        self.config.set("dictionary", "file_path_explicit", old_explicit)
         logger.warning(
             "Could not migrate custom terms path; using the XDG default without saving it"
         )
@@ -236,16 +229,16 @@ class CustomDictionaryManager:
         old_value = self.config.get(
             "dictionary", "file_path", str(Path(config_dir()) / TERMS_FILENAME)
         )
-        old_schema = self.config.get("dictionary", "terms_path_schema", 0)
+        old_explicit = self.config.get("dictionary", "file_path_explicit", False)
         if not self.config.set("dictionary", "file_path", configured):
             return False
-        if not self.config.set("dictionary", "terms_path_schema", TERMS_PATH_SCHEMA_VERSION):
+        if not self.config.set("dictionary", "file_path_explicit", True):
             self.config.set("dictionary", "file_path", old_value)
             return False
         if self.config.save_config():
             return True
         self.config.set("dictionary", "file_path", old_value)
-        self.config.set("dictionary", "terms_path_schema", old_schema)
+        self.config.set("dictionary", "file_path_explicit", old_explicit)
         logger.warning("Could not save custom terms path; keeping previous setting")
         return False
 
