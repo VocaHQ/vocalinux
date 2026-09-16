@@ -75,7 +75,7 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 
 ## What's New in v0.17.0
 
-0.17.0 is a **minor** on the stable line. Default engine is still whisper.cpp. This release adds two optional local engines (Faster Whisper and Parakeet), a simpler Speech Model page, Snap packaging with native Wayland typing, and Flatpak bundles built by the release workflow. It also fixes XWayland/layout paste, a KDE xdotool crash, push-to-talk tray redraw, clipped start/stop cues, HDA analog mics that abort when opened below native channel count, and native GTK installs that ignored OS dark/light.
+0.17.0 is a **minor** on the stable line. Default engine is still whisper.cpp. This release adds two optional local engines (Faster Whisper and Parakeet), a simpler Speech Model page, Snap packaging with native Wayland typing, and Flatpak bundles built by the release workflow. It also fixes XWayland/layout paste, a KDE xdotool crash, push-to-talk tray redraw, clipped start/stop cues, HDA analog mics that abort when opened below native channel count, native GTK installs that ignored OS dark/light, and English-only models that hid every other language.
 
 ### 0.17 series highlights
 
@@ -99,7 +99,9 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 - Timed-out ydotool paste releases Ctrl (#675)
 - Read `WM_CLASS` with `xprop` instead of crashing `xdotool getwindowclassname` on KDE Plasma Wayland (#807)
 - Applying an already-downloaded model no longer freezes Settings (#790)
-- Selected language picks the whisper.cpp variant (English → `.en`) (#795, #780)
+- Selected language picks the whisper.cpp variant (English → `.en`). Picking another language, or auto-detect, switches off `.en` / `.en-q*` instead of hiding the rest of the list (#795, #780, #826)
+- Speech Model labels are nouns (Language, Other languages, Speed vs accuracy). Unused downloads is a sibling expander of Advanced, not nested inside it (#826)
+- About family grid includes VocaWin (#826)
 - Push-to-talk tray icon turns red on every hold (#809)
 - Sink-wake no longer clips start/stop cues (#804)
 - Open 3-8 channel HDA analog mics at native layout instead of forcing 2ch/48kHz, so PortAudio no longer aborts after read() (`free(): corrupted unsorted chunks`); capture is downmixed to mono for engines (#829, fixes #813)
@@ -109,6 +111,7 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 - Hash-pinned exports for VOSK, Parakeet, and Faster Whisper extras so `install.sh` no longer installs those unpinned; extras are version-capped (#828)
 - `just verify-release` checks the published GitHub Release (#791)
 - Distro matrix runs `install.sh` (#810)
+- `install.sh` Faster Whisper box is CPU CTranslate2 / INT8, not NVIDIA CUDA. The whisper.cpp GPU step does not install the CUDA toolkit; Vulkan is first, CUDA only if a toolkit is already on the machine (#826)
 
 AppImage and Flatpak remain whisper.cpp only. Snap ships whisper.cpp plus VOSK. Faster Whisper and Parakeet are optional extras on `install.sh` / source installs.
 

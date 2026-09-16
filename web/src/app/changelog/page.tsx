@@ -16,7 +16,7 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 const releases = [
   {
     version: "v0.17.0",
-    date: "2026-09-12",
+    date: "2026-09-16",
     type: "stable",
     highlights: [
       "Faster Whisper engine: CTranslate2 / INT8 Whisper on CPU, optional extra, installer --engine=faster_whisper (PR #543)",
@@ -33,6 +33,9 @@ const releases = [
       "Layout-aware Ctrl+V paste; ydotool releases Ctrl after a timed-out paste (PR #788, #675, #658)",
       "Read WM_CLASS with xprop so xdotool stops dumping core on KDE Plasma Wayland (PR #807)",
       "Settings freeze on already-downloaded model, English whisper.cpp .en variant, PTT tray redraw, sink-wake audio cues, Parakeet decode survival (PR #790, #795, #780, #809, #804, #803)",
+      "English-only models no longer hide other languages; picking Polish or auto-detect switches to the multilingual sibling (PR #826)",
+      "Speech Model copy and Unused downloads as a sibling expander of Advanced; VocaWin on the About family grid (PR #826)",
+      "install.sh: Faster Whisper is CPU CTranslate2/INT8; GPU backend does not install the CUDA toolkit (PR #826)",
       "HDA analog mics (3-8 channel) open at native layout instead of forced 2ch/48kHz; capture is downmixed to mono (PR #829, fixes #813)",
       "Native GTK installs (AUR / install.sh) follow OS dark/light; skipped when GTK_THEME is set so AppImage and user overrides stay in charge (PR #830, fixes #816)",
       "Lock-derived Flatpak/AUR deps, hash-pinned exports for every engine extra, published-release verification, install.sh distro matrix (PR #819, #828, #791, #810)",

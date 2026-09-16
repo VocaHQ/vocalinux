@@ -105,9 +105,9 @@
   </content_rating>
 
   <releases>
-    <release version="0.17.0" date="2026-09-12">
+    <release version="0.17.0" date="2026-09-16">
       <description>
-        <p>Minor: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, searchable open language picker, localized punctuation commands, bare function-key push-to-talk, Snap packaging with ydotool/uinput, Flatpak bundles attached by the release workflow, and XWayland/layout paste plus settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light). This Flatpak still ships whisper.cpp only.</p>
+        <p>Minor: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, searchable open language picker, localized punctuation commands, bare function-key push-to-talk, Snap packaging with ydotool/uinput, Flatpak bundles attached by the release workflow, and XWayland/layout paste plus settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages). This Flatpak still ships whisper.cpp only.</p>
       </description>
     </release>
     <release version="0.16.2" date="2026-09-05">
