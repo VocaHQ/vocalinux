@@ -3356,11 +3356,14 @@ class SettingsDialog(Gtk.Dialog):
             )
             return
         candidate = {"heard": heard, "replacement": replacement}
-        if not normalize_corrections([candidate]):
+        normalized_entries = normalize_corrections([candidate])
+        if not normalized_entries:
             self.dictionary_feedback_label.set_text("That correction is not valid for the file.")
             return
-        existing = [entry for entry in entries if entry["heard"].casefold() == heard.casefold()]
-        entries = [entry for entry in entries if entry["heard"].casefold() != heard.casefold()]
+        candidate = normalized_entries[0]
+        heard_key = candidate["heard"].casefold()
+        existing = [entry for entry in entries if entry["heard"].casefold() == heard_key]
+        entries = [entry for entry in entries if entry["heard"].casefold() != heard_key]
         entries.append(candidate)
         if not self.dictionary_manager.save_corrections(entries):
             self.dictionary_feedback_label.set_text(
@@ -3370,7 +3373,7 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_heard_entry.set_text("")
         self.dictionary_replacement_entry.set_text("")
         if any(
-            entry["heard"].casefold() == heard.casefold()
+            entry["heard"].casefold() == heard_key
             for entry in self.dictionary_manager.get_corrections()
         ):
             self.dictionary_feedback_label.set_text(

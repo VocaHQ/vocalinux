@@ -547,6 +547,70 @@ def test_invalid_correction_update_does_not_wipe_existing_entry(
     )
 
 
+def test_nfd_correction_update_replaces_nfc_entry(tmp_path: Path, monkeypatch) -> None:
+    """A decomposed heard phrase must update the existing NFC correction."""
+    import importlib
+    import sys
+
+    import vocalinux.ui as ui_pkg
+
+    manager = manager_at(tmp_path, monkeypatch)
+    original = [{"heard": "éclair", "replacement": "OLD"}]
+    assert manager.save_corrections(original)
+    corrections_path = tmp_path / CORRECTIONS_FILENAME
+
+    repository = sys.modules["gi.repository"]
+    bases = {name: type(name, (), {}) for name in ("Box", "ListBoxRow", "Dialog")}
+    saved = sys.modules.pop("vocalinux.ui.settings_dialog", None)
+    try:
+        with patch.object(repository, "Gtk", MagicMock(**bases)):
+            settings_dialog = importlib.import_module("vocalinux.ui.settings_dialog")
+    finally:
+        sys.modules.pop("vocalinux.ui.settings_dialog", None)
+        if saved is not None:
+            sys.modules["vocalinux.ui.settings_dialog"] = saved
+            ui_pkg.settings_dialog = saved
+        else:
+            ui_pkg.__dict__.pop("settings_dialog", None)
+
+    dialog = Mock()
+    dialog._initializing = False
+    dialog._applying_settings = False
+    dialog._dictionary_available.return_value = True
+    dialog.dictionary_manager = manager
+    dialog.dictionary_heard_entry.get_text.return_value = "e\u0301clair"
+    dialog.dictionary_replacement_entry.get_text.return_value = "NEW"
+
+    settings_dialog.SettingsDialog._on_dictionary_add_correction(dialog, None)
+
+    stored = json.loads(corrections_path.read_text(encoding="utf-8"))
+    assert stored == {
+        "version": 1,
+        "corrections": [{"heard": "éclair", "replacement": "NEW"}],
+    }
+    assert manager.get_corrections() == [{"heard": "éclair", "replacement": "NEW"}]
+    dialog.dictionary_feedback_label.set_text.assert_called_once_with("Correction updated.")
+
+
+def test_non_integer_corrections_version_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """Boolean, float, and string versions must not be treated as schema 1."""
+    manager = manager_at(tmp_path, monkeypatch)
+    path = tmp_path / CORRECTIONS_FILENAME
+    cases = (
+        '{"version": true, "corrections": [{"heard": "super base", "replacement": "Supabase"}]}\n',
+        '{"version": 1.0, "corrections": [{"heard": "super base", "replacement": "Supabase"}]}\n',
+        '{"version": "1", "corrections": [{"heard": "super base", "replacement": "Supabase"}]}\n',
+        '{"version": 1e0, "corrections": [{"heard": "super base", "replacement": "Supabase"}]}\n',
+    )
+    for original in cases:
+        path.write_text(original, encoding="utf-8")
+        before = path.read_bytes()
+
+        assert manager.get_corrections() == []
+        assert manager.get_corrections_for_edit() is None
+        assert path.read_bytes() == before
+
+
 def test_invalid_terms_file_is_ignored_and_explained(tmp_path: Path, monkeypatch) -> None:
     """An invalid scanner file leaves prompt bias empty with a clear status."""
     manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))

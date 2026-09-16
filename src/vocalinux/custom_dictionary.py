@@ -401,7 +401,13 @@ class CustomDictionaryManager:
             logger.warning("Could not read custom corrections file %s: %s", path, error)
             return None if for_edit else []
 
-        if not isinstance(payload, dict) or payload.get("version") != CORRECTIONS_VERSION:
+        version = payload.get("version") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or version != CORRECTIONS_VERSION
+        ):
             logger.warning("Ignoring custom corrections file with an unsupported schema")
             return None if for_edit else []
 
