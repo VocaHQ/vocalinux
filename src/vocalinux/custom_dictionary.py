@@ -169,9 +169,10 @@ class CustomDictionaryManager:
         if not isinstance(configured, str) or not configured.strip():
             return default_path
         configured = configured.strip()
-        if self._is_legacy_default_terms_path(
-            configured, default_path
-        ) and not self._file_path_is_explicit():
+        if (
+            self._is_legacy_default_terms_path(configured, default_path)
+            and not self._file_path_is_explicit()
+        ):
             self._stamp_legacy_default_terms_path_explicit()
         return configured
 
