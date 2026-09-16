@@ -658,7 +658,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         self.assertIn("largest model", MODEL_SIZE_TOOLTIP)
         self.assertIn("Standard multilingual", MODEL_SPECIALIZATION_TOOLTIP)
         self.assertIn("English-only", LANGUAGE_TOOLTIP)
-        self.assertIn("Type to search", LANGUAGE_TOOLTIP)
+        self.assertIn("Search the list", LANGUAGE_TOOLTIP)
         self.assertIn("only in English", _model_specialization_tooltip("medium.en"))
         self.assertIn("lower-memory systems", _model_specialization_tooltip("medium-q5_0"))
         self.assertIn("Turbo", _model_specialization_tooltip("large-v3-turbo"))
@@ -705,7 +705,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
                 "mock hardware reason",
                 "en-us",
             ),
-            ("medium.en", "mock hardware reason; English language selected"),
+            ("medium.en", "mock hardware reason"),
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "en-us"), "medium.en")
 
@@ -832,7 +832,7 @@ class TestLanguageComboSearch(unittest.TestCase):
         self.assertIn("completion.set_text_column(0)", source_code)
         self.assertIn("Search languages…", source_code)
         self.assertIn("def _commit_or_restore_language_entry", source_code)
-        self.assertIn("Type to search, or pick from the list", source_code)
+        self.assertIn("Search or pick from the list", source_code)
 
     def test_dictation_tone_picker_in_source(self):
         import os

@@ -324,7 +324,7 @@ def _recommended_whispercpp_variant_for_language(
     english_variant = f"{recommended_size}.en"
 
     if _language_is_english(language_id) and english_variant in WHISPERCPP_MODEL_INFO:
-        return english_variant, f"{reason}; English language selected"
+        return english_variant, reason
 
     return recommended_model, reason
 
@@ -621,8 +621,8 @@ MODEL_SPECIALIZATION_TOOLTIP = (
     "lower-memory quantized models, Turbo speed, or a legacy large model."
 )
 LANGUAGE_TOOLTIP = (
-    "Choose the language you dictate in. Type to search the list. English-only model "
-    "specializations limit this list to English."
+    "Choose the language you dictate in. Search the list. English-only models "
+    "limit this list to English."
 )
 
 
@@ -1212,7 +1212,7 @@ class SearchablePicker(Gtk.Box):
         self.pack_start(self._button, True, True, 0)
 
         self._search = Gtk.SearchEntry()
-        self._search.set_placeholder_text("Type to search…")
+        self._search.set_placeholder_text("Search…")
         self._search.connect("search-changed", self._on_search_changed)
         self._search.connect("activate", self._on_search_activate)
 
@@ -3066,7 +3066,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _build_simple_model_section(self):
         """Build the simple questions and the Advanced reveal (#779)."""
-        self.simple_group = PreferencesGroup(title="What you dictate")
+        self.simple_group = PreferencesGroup(title="Language")
 
         # Searchable, like the advanced row: over thirty languages is too many to
         # scroll, and a list you cannot type into is a step backwards.
@@ -3086,7 +3086,7 @@ class SettingsDialog(Gtk.Dialog):
             )
         self.simple_language_row = PreferenceRow(
             title="Main language",
-            subtitle="Type to search, or pick from the list",
+            subtitle="Search or pick from the list",
             widget=self.simple_language_combo,
             keywords=("language", "speak"),
         )
@@ -3097,8 +3097,8 @@ class SettingsDialog(Gtk.Dialog):
         self.simple_multi_switch = Gtk.Switch()
         self.simple_multi_switch.set_valign(Gtk.Align.CENTER)
         self.simple_multi_row = PreferenceRow(
-            title="I also dictate whole texts in other languages",
-            subtitle="Detects the language per utterance; can be wrong on short ones",
+            title="Other languages",
+            subtitle="Guesses the language each time. Short clips can be wrong.",
             widget=self.simple_multi_switch,
             keywords=("multilingual", "auto", "detect"),
         )
@@ -3110,7 +3110,7 @@ class SettingsDialog(Gtk.Dialog):
         # First entry is the multilingual answer: any language, detected per
         # utterance. Naming one specific second language means the same thing
         # to the engine, but lets the user say which one they had in mind.
-        self.simple_second_language_combo.append("auto", "Any language (auto-detect)")
+        self.simple_second_language_combo.append("auto", "Any language")
         for language_id, info in SUPPORTED_LANGUAGES.items():
             if language_id != "auto":
                 self.simple_second_language_combo.append(language_id, info["name"])
@@ -3121,7 +3121,7 @@ class SettingsDialog(Gtk.Dialog):
             title="Other language",
             # Honest about what the engine does: whisper takes one language or
             # none, so any second language means detection per utterance.
-            subtitle="Recognition detects the language of each utterance",
+            subtitle="Or pick Any language to auto-detect",
             widget=self.simple_second_language_combo,
             keywords=("second", "language", "other"),
         )
@@ -3134,8 +3134,8 @@ class SettingsDialog(Gtk.Dialog):
         for priority in PRIORITIES:
             self.simple_priority_combo.append(priority, PRIORITY_LABELS[priority])
         self.simple_priority_row = PreferenceRow(
-            title="Priority",
-            subtitle="Balanced follows what your hardware can run",
+            title="Speed vs accuracy",
+            subtitle="Balanced is the default for this computer",
             widget=self.simple_priority_combo,
             keywords=("speed", "accuracy", "priority"),
         )
@@ -3160,7 +3160,7 @@ class SettingsDialog(Gtk.Dialog):
             _,
         ) = _make_expander_card(
             "Advanced",
-            "Engine, model size, specialization, and the remote server",
+            "Engine, model, and remote server",
         )
         self.advanced_box.set_spacing(12)
         self.advanced_box.set_margin_top(8)
@@ -3194,7 +3194,7 @@ class SettingsDialog(Gtk.Dialog):
         self.model_combo.set_tooltip_text(MODEL_SIZE_TOOLTIP)
         _prevent_scroll_on_hover(self.model_combo)
         self.model_row = PreferenceRow(
-            title="Model Size",
+            title="Model size",
             subtitle="Larger models are more accurate but slower",
             widget=self.model_combo,
         )
@@ -3226,7 +3226,7 @@ class SettingsDialog(Gtk.Dialog):
             language_entry.connect("focus-out-event", self._on_language_entry_focus_out)
         self.language_row = PreferenceRow(
             title="Language",
-            subtitle="Type to search, or pick from the list",
+            subtitle="Search or pick from the list",
             widget=self.language_combo,
         )
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
@@ -3284,7 +3284,7 @@ class SettingsDialog(Gtk.Dialog):
             self.unused_expander_subtitle,
         ) = _make_expander_card(
             "Unused downloads",
-            "On disk, but not the model currently selected",
+            "Downloaded, but not the one in use",
         )
         self.unused_models_group = PreferencesGroup(
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
@@ -5640,7 +5640,7 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         count = len(unused)
-        leftover = "leftover model" if count == 1 else "leftover models"
+        leftover = "unused model" if count == 1 else "unused models"
         self.unused_expander_subtitle.set_text(f"{count} {leftover} on disk")
 
         was_expanded = self.unused_expander.get_expanded()
@@ -5954,8 +5954,7 @@ class SettingsDialog(Gtk.Dialog):
 
         if self._is_selected_whispercpp_model_english_only():
             self.language_warning.set_markup(
-                "<span foreground='#e5a50a'>⚠ English-only model selected. "
-                "Language choices are limited to English.</span>"
+                "<span foreground='#e5a50a'>⚠ This model only understands English.</span>"
             )
             self.language_warning.show()
         elif lang_info.get("warning"):
@@ -6404,8 +6403,8 @@ class SettingsDialog(Gtk.Dialog):
             if already_have and already_have != model_name:
                 target = already_have
                 message = (
-                    f"You already have {_model_display_name(already_have)} on disk — "
-                    "using it needs no download"
+                    f"You already have {_model_display_name(already_have)} on disk. "
+                    "Using it needs no download."
                 )
 
         if target == model_name:
