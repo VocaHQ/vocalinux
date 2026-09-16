@@ -1366,7 +1366,16 @@ class SpeechRecognitionManager:
                 try:
                     self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
                     return
-                except (RuntimeError, ValueError, FileNotFoundError, OSError):
+                except (
+                    RuntimeError,
+                    ValueError,
+                    FileNotFoundError,
+                    OSError,
+                    ImportError,
+                    TypeError,
+                    AttributeError,
+                    ChecksumError,
+                ):
                     logger.error(
                         "Failed to swap to multilingual sibling %r for layout "
                         "language %s (engine=%s, model=%s)",

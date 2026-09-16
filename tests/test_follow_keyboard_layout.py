@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 import vocalinux.ui
+from vocalinux.utils.model_checksums import ChecksumError
 
 
 @pytest.fixture(scope="module")
@@ -232,6 +233,31 @@ def test_an_english_only_model_skips_reload_when_already_english() -> None:
 
     manager.reconfigure.assert_not_called()
     assert manager.language == "en-us"
+    assert manager.language_preference == "layout"
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        ImportError("missing backend"),
+        TypeError("bad args"),
+        AttributeError("no attr"),
+        ChecksumError("digest mismatch"),
+    ],
+)
+def test_sibling_swap_reconfigure_failure_does_not_abort_dictation(
+    error: Exception,
+) -> None:
+    """A sibling-swap reconfigure error must not block dictation or disarm follow."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    manager = _manager_stub("small.en")
+    manager.reconfigure.side_effect = error
+    with patch.object(rm, "language_for_active_layout", return_value="fr"):
+        with patch.object(rm, "is_model_downloaded", return_value=True):
+            manager._refresh_language_from_layout()
+
+    manager.reconfigure.assert_called_once_with(model_size="small", language="layout")
     assert manager.language_preference == "layout"
 
 
