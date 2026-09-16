@@ -254,14 +254,13 @@ class CustomDictionaryManager:
         return False
 
     def corrections_path(self) -> Path:
-        """Return the structured corrections path beside a vocalinux terms root.
+        """Return the structured corrections path.
 
-        When terms live under a directory named ``vocalinux`` as ``dictionary.txt``
-        (legacy ``~/.config/vocalinux`` or the live XDG config dir), co-locate
-        corrections there. Otherwise keep corrections under ``config_dir()``.
+        Corrections live beside the active terms file when that path resolves;
+        otherwise under config_dir().
         """
         terms = self.terms_path()
-        if terms is not None and terms.name == TERMS_FILENAME and terms.parent.name == "vocalinux":
+        if terms is not None:
             return terms.parent / CORRECTIONS_FILENAME
         return Path(config_dir()) / CORRECTIONS_FILENAME
 
@@ -388,17 +387,38 @@ class CustomDictionaryManager:
         """
         return self._read_corrections(for_edit=True)
 
+    def _read_corrections_text(self, path: Path) -> Optional[str]:
+        """Return corrections JSON text, or None when no file exists.
+
+        If *path* is missing, copy once from ``config_dir()`` when that leftover
+        file exists at a different location so later saves stay co-located.
+        Copy failure still returns the old text so entries are not lost.
+        """
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        old_path = Path(config_dir()) / CORRECTIONS_FILENAME
+        if old_path == path or not old_path.is_file():
+            return None
+        try:
+            contents = old_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        self._atomic_write(path, contents)
+        return contents
+
     def _read_corrections(self, *, for_edit: bool) -> Optional[list[dict[str, str]]]:
         """Read corrections with stricter validation for write-back workflows."""
         path = self.corrections_path()
         try:
-            contents = path.read_text(encoding="utf-8")
+            contents = self._read_corrections_text(path)
+            if contents is None:
+                return self._legacy_corrections()
             payload = json.loads(
                 contents,
                 object_pairs_hook=_object_pairs_without_duplicates if for_edit else None,
             )
-        except FileNotFoundError:
-            return self._legacy_corrections()
         except _DuplicateJsonKeyError:
             logger.warning(
                 "Refusing to edit custom corrections because the source has duplicate JSON keys"

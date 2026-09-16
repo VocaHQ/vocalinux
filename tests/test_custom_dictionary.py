@@ -192,6 +192,133 @@ def test_legacy_vocalinux_terms_root_colocates_corrections(tmp_path: Path, monke
     assert expanded_manager.corrections_path() != tmp_path / CORRECTIONS_FILENAME
 
 
+def test_explicit_legacy_terms_path_colocates_corrections_away_from_xdg(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An explicit leftover pre-XDG terms path keeps corrections as siblings."""
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
+    legacy_root = Path.home() / ".config" / "vocalinux"
+    legacy_corrections = legacy_root / CORRECTIONS_FILENAME
+    expanded_legacy = str(legacy_root / TERMS_FILENAME)
+    assert legacy_corrections != tmp_path / CORRECTIONS_FILENAME
+
+    tilde_manager = CustomDictionaryManager(
+        FakeConfig(
+            {
+                "dictionary": {
+                    "file_path": LEGACY_DEFAULT_TERMS_PATH,
+                    "file_path_explicit": True,
+                }
+            }
+        )
+    )
+    assert tilde_manager.corrections_path() == legacy_corrections
+    assert tilde_manager.corrections_path() != tmp_path / CORRECTIONS_FILENAME
+
+    stamped = FakeConfig({"dictionary": {"file_path": expanded_legacy}})
+    stamped_manager = CustomDictionaryManager(stamped)
+    stamped_manager.terms_path_text()
+    assert stamped.get("dictionary", "file_path_explicit") is True
+    assert stamped_manager.corrections_path() == legacy_corrections
+    assert stamped_manager.corrections_path() != tmp_path / CORRECTIONS_FILENAME
+
+
+def test_corrections_fall_back_from_config_dir_when_primary_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Leftover config_dir corrections are read and copied beside legacy terms."""
+    fake_home = tmp_path / "home"
+    xdg_dir = tmp_path / "xdg-config"
+    legacy_root = fake_home / ".config" / "vocalinux"
+    legacy_root.mkdir(parents=True)
+    xdg_dir.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(xdg_dir))
+
+    old_path = xdg_dir / CORRECTIONS_FILENAME
+    payload = {
+        "version": 1,
+        "corrections": [{"heard": "super base", "replacement": "Supabase"}],
+    }
+    old_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    manager = CustomDictionaryManager(
+        FakeConfig(
+            {
+                "dictionary": {
+                    "file_path": LEGACY_DEFAULT_TERMS_PATH,
+                    "file_path_explicit": True,
+                }
+            }
+        )
+    )
+    primary = Path(LEGACY_DEFAULT_TERMS_PATH).expanduser().parent / CORRECTIONS_FILENAME
+    assert manager.corrections_path() == primary
+    assert primary != old_path
+    assert not primary.exists()
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert primary.is_file()
+    old_path.unlink()
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+
+
+def test_corrections_fallback_survives_copy_failure(tmp_path: Path, monkeypatch) -> None:
+    """A failed copy-once still returns leftover config_dir corrections."""
+    terms_root = tmp_path / "legacy-root"
+    xdg_dir = tmp_path / "xdg-config"
+    terms_root.mkdir()
+    xdg_dir.mkdir()
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(xdg_dir))
+    old_path = xdg_dir / CORRECTIONS_FILENAME
+    payload = {
+        "version": 1,
+        "corrections": [{"heard": "super base", "replacement": "Supabase"}],
+    }
+    old_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    manager = CustomDictionaryManager(
+        FakeConfig(
+            {
+                "dictionary": {
+                    "file_path": str(terms_root / TERMS_FILENAME),
+                    "file_path_explicit": True,
+                }
+            }
+        )
+    )
+    primary = terms_root / CORRECTIONS_FILENAME
+
+    def fail_replace(source: Path, destination: Path) -> None:
+        """Simulate a filesystem failure during atomic replacement."""
+        raise OSError("disk full")
+
+    monkeypatch.setattr("vocalinux.custom_dictionary.os.replace", fail_replace)
+
+    assert manager.corrections_path() == primary
+    assert not primary.exists()
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert not primary.exists()
+
+
+def test_corrections_colocated_with_arbitrary_terms_parent(tmp_path: Path, monkeypatch) -> None:
+    """Corrections follow the terms file even outside a vocalinux directory."""
+    xdg_dir = tmp_path / "xdg-config"
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(xdg_dir))
+    terms = tmp_path / "my-terms.txt"
+    manager = CustomDictionaryManager(
+        FakeConfig(
+            {
+                "dictionary": {
+                    "file_path": str(terms),
+                    "file_path_explicit": True,
+                }
+            }
+        )
+    )
+    assert manager.corrections_path() == tmp_path / CORRECTIONS_FILENAME
+    assert manager.corrections_path() != xdg_dir / CORRECTIONS_FILENAME
+
+
 def test_historical_legacy_looking_path_without_explicit_marker_is_not_migrated(
     tmp_path: Path, monkeypatch
 ) -> None:
