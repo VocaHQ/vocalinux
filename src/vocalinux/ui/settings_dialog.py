@@ -1043,12 +1043,8 @@ spinbutton {
     margin-right: 8px;
 }
 
-/* Unused downloads: one collapsed row until expanded */
-.unused-downloads-expander {
-    padding: 8px 12px;
-}
-
-.unused-downloads-expander list {
+/* Unused downloads: own card on the Speech Model page, not nested in Advanced. */
+.unused-downloads-group list {
     background-color: transparent;
 }
 
@@ -3112,7 +3108,7 @@ class SettingsDialog(Gtk.Dialog):
         title = Gtk.Label(label="Advanced", xalign=0)
         title.get_style_context().add_class("preferences-group-title")
         subtitle = Gtk.Label(
-            label="Engine, model size, specialization, downloads and the remote server",
+            label="Engine, model size, specialization, and the remote server",
             xalign=0,
             wrap=True,
         )
@@ -3245,18 +3241,11 @@ class SettingsDialog(Gtk.Dialog):
         self.simple_page.pack_start(self.model_info_card, False, False, 0)
 
         self.unused_models_group = PreferencesGroup(
+            title="Unused downloads",
+            description="On disk, but not the model currently selected",
             keywords=("delete", "remove", "unused", "disk", "storage", "downloaded"),
         )
-        self.unused_models_group.title = "Unused downloads"
-        self.unused_models_group.description = "On disk, but not the model currently selected"
-
-        self.unused_expander = Gtk.Expander(label="Unused downloads")
-        self.unused_expander.set_expanded(False)
-        self.unused_expander.set_use_underline(False)
-        self.unused_expander.set_tooltip_text(
-            "Leftover model files on disk. Expand to delete them one at a time."
-        )
-        self.unused_expander.get_style_context().add_class("unused-downloads-expander")
+        self.unused_models_group.get_style_context().add_class("unused-downloads-group")
 
         self.unused_models_scroll = Gtk.ScrolledWindow()
         self.unused_models_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -3268,20 +3257,18 @@ class SettingsDialog(Gtk.Dialog):
         self.unused_models_scroll.set_overlay_scrolling(False)
 
         # ListBox is GtkScrollable, so wrapping it in a Box forces a Viewport
-        # and lets the expander child report a real height.
+        # and lets the card report a real height.
         list_holder = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.unused_models_group.remove(self.unused_models_group.listbox)
         list_holder.pack_start(self.unused_models_group.listbox, False, False, 0)
         self.unused_models_scroll.add(list_holder)
-        self.unused_expander.add(self.unused_models_scroll)
-        # Backstop: the refresh measures while the expander is collapsed and
-        # the dialog may not be mapped yet. Remeasure when the user expands,
-        # so a short first measurement can never leave the list clipped.
-        self.unused_expander.connect(
-            "notify::expanded", lambda *_args: self._fit_unused_downloads_height()
-        )
-        self.unused_models_group.pack_start(self.unused_expander, False, False, 0)
-        self.advanced_box.pack_start(self.unused_models_group, False, False, 0)
+        self.unused_models_group.pack_start(self.unused_models_scroll, False, False, 0)
+        # Refresh may run before the dialog is mapped. Remeasure on map so a
+        # short first measurement cannot leave the list clipped.
+        self.unused_models_scroll.connect("map", lambda *_args: self._fit_unused_downloads_height())
+        # Sibling of Advanced, not nested in it: an expander inside an expander
+        # measured while collapsed and produced a nested scrollbar.
+        self.content_box.pack_start(self.unused_models_group, False, False, 0)
 
         # Connect signals
         self.engine_combo.connect("changed", self._on_engine_changed)
@@ -5604,11 +5591,6 @@ class SettingsDialog(Gtk.Dialog):
             self.unused_models_group.hide()
             return
 
-        count = len(unused)
-        leftover = "leftover model" if count == 1 else "leftover models"
-        self.unused_expander.set_label(f"Unused downloads ({count} {leftover})")
-
-        was_expanded = self.unused_expander.get_expanded()
         for model_id, title, size_label in unused:
             delete_btn = Gtk.Button(label="Delete")
             delete_btn.set_tooltip_text(f"Delete {title} from disk")
@@ -5628,7 +5610,6 @@ class SettingsDialog(Gtk.Dialog):
             self.unused_models_group.add_row(row)
 
         self.unused_models_group.show_all()
-        self.unused_expander.set_expanded(was_expanded)
         self._fit_unused_downloads_height()
 
     def _fit_unused_downloads_height(self):
@@ -5639,6 +5620,8 @@ class SettingsDialog(Gtk.Dialog):
         was cut off below the edge of the viewport while the header still
         counted it (#683).
         """
+        if not hasattr(self, "unused_models_scroll"):
+            return
         _, natural_height = self.unused_models_group.listbox.get_preferred_height()
         self.unused_models_scroll.set_min_content_height(
             _clamp_unused_downloads_height(natural_height)

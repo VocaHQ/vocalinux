@@ -770,8 +770,9 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         with open(source_path, "r") as handle:
             source_code = handle.read()
 
-        self.assertIn('label="Unused downloads"', source_code)
-        self.assertIn("self.unused_expander", source_code)
+        self.assertIn('title="Unused downloads"', source_code)
+        self.assertIn("self.content_box.pack_start(self.unused_models_group", source_code)
+        self.assertNotIn("self.unused_expander", source_code)
         self.assertIn("self._on_unused_download_delete_clicked", source_code)
         self.assertNotIn('title="Remove Model"', source_code)
         self.assertIn("self._refresh_unused_downloads()", source_code)
