@@ -13,6 +13,7 @@ import logging
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -122,7 +123,15 @@ def resolve_language_preference(language: str) -> str:
 
     try:
         resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
-    except Exception as exc:  # pragma: no cover - detection must never block dictation
+    except (
+        OSError,
+        FileNotFoundError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ) as exc:
         logger.debug(f"Keyboard layout lookup failed: {exc}")
         return "auto"
 
@@ -1357,7 +1366,7 @@ class SpeechRecognitionManager:
                 try:
                     self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
                     return
-                except Exception:
+                except (RuntimeError, ValueError, FileNotFoundError, OSError):
                     logger.error(
                         "Failed to swap to multilingual sibling %r for layout "
                         "language %s (engine=%s, model=%s)",

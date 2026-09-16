@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import subprocess
 import sys
 from collections.abc import Iterator
 from typing import Any
@@ -157,6 +158,26 @@ def _manager_stub(model_size: str, language: str = "en-us") -> Any:
     manager.command_processor = MagicMock()
     manager.reconfigure = MagicMock()
     return manager
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        OSError("gsettings gone"),
+        FileNotFoundError("gsettings"),
+        subprocess.SubprocessError(),
+        ValueError("bad parse"),
+        TypeError("unexpected type"),
+        KeyError("missing"),
+        AttributeError("no attr"),
+    ],
+)
+def test_layout_lookup_failure_falls_back_to_auto(error: Exception) -> None:
+    """A layout helper error must not block dictation."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    with patch.object(rm, "language_for_active_layout", side_effect=error):
+        assert rm.resolve_language_preference("layout") == "auto"
 
 
 def test_following_a_layout_keeps_the_mode_armed() -> None:
