@@ -184,7 +184,7 @@ sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-This tag's snap ships ydotool and the `uinput` plug. After install: `sudo snap connect vocalinux:uinput` and restart Vocalinux for native GNOME/GTK/Qt windows. Older **v0.16.2** edge (rev 7) has no `uinput` plug; refresh first.
+v0.17.0 includes ydotool and the `uinput` plug. The Store still has to finish review of that plug, so `snap info vocalinux` may still show **v0.16.2** (rev 7) on edge. That revision has no `uinput` plug; `snap connect vocalinux:uinput` fails until a 0.17.0+ revision is listed.
 
 ### From source
 
@@ -331,15 +331,13 @@ Planned:
 
 Vocalinux is part of [VocaHQ](https://vocahq.com). On-device speech-to-text first, one app per platform. Optional [VocaGateway](https://vocagateway.vocahq.com) is self-hosted and not on-device.
 
-| Platform | Project | Website | GitHub | Status |
-|----------|---------|---------|--------|--------|
-| Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) | Available now (`v0.17.0`) |
-| macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) | Beta (`v0.9.0`) |
-| Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) | Unsigned beta (`v0.1.0-beta.1`) |
-| Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) | Android beta / iOS [TestFlight](https://testflight.apple.com/join/wd85wQ3W) |
-| Gateway | **VocaGateway** | [vocagateway.vocahq.com](https://vocagateway.vocahq.com) | [VocaHQ/vocagateway](https://github.com/VocaHQ/vocagateway) | Beta · optional · not on-device |
-
-VocaWin is unsigned. SmartScreen may warn about an unknown publisher. It is not a Microsoft Store ship.
+| Platform | Project | Website | GitHub |
+|----------|---------|---------|--------|
+| Linux | **VocaLinux** | [vocalinux.com](https://vocalinux.com) | [VocaHQ/vocalinux](https://github.com/VocaHQ/vocalinux) |
+| macOS | **VocaMac** | [vocamac.com](https://vocamac.com) | [VocaHQ/vocamac](https://github.com/VocaHQ/vocamac) |
+| Windows | **VocaWin** | [vocawin.com](https://vocawin.com) | [VocaHQ/vocawin](https://github.com/VocaHQ/vocawin) |
+| Phone | **VocaPhone** | [vocaphone.vocahq.com](https://vocaphone.vocahq.com) | [VocaHQ/vocaphone](https://github.com/VocaHQ/vocaphone) |
+| Gateway | **VocaGateway** | [vocagateway.vocahq.com](https://vocagateway.vocahq.com) | [VocaHQ/vocagateway](https://github.com/VocaHQ/vocagateway) |
 
 Talk to us: [Discord](https://discord.gg/t6muquAJbm) · [X @vocahq](https://x.com/vocahq) · [hello@vocahq.com](mailto:hello@vocahq.com)
 
