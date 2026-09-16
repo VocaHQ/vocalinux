@@ -311,6 +311,21 @@ class TestFasterWhisperEngine:
 
             assert text == "Hello, world."
 
+    def test_transcribe_passes_initial_prompt(self):
+        """Test that vocabulary bias is forwarded to faster-whisper."""
+        whisper_mock = self._mock_whisper_model([MagicMock(text="VocaLinux")])
+        with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
+            engine = FasterWhisperEngine(model_size="tiny", device="cpu")
+            engine.init()
+
+            audio = np.array([0, 1000, -1000, 0], dtype=np.int16)
+            engine.transcribe([audio.tobytes()], initial_prompt="VocaLinux")
+
+            assert (
+                whisper_mock.WhisperModel.return_value.transcribe.call_args.kwargs["initial_prompt"]
+                == "VocaLinux"
+            )
+
     def test_transcribe_empty_audio(self):
         """Test that empty audio returns empty text."""
         whisper_mock = self._mock_whisper_model([])
