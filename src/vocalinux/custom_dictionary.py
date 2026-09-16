@@ -253,9 +253,20 @@ class CustomDictionaryManager:
         logger.warning("Could not save custom terms path; keeping previous setting")
         return False
 
-    @staticmethod
-    def corrections_path() -> Path:
-        """Return the fixed structured corrections file path."""
+    def corrections_path(self) -> Path:
+        """Return the structured corrections path beside a vocalinux terms root.
+
+        When terms live under a directory named ``vocalinux`` as ``dictionary.txt``
+        (legacy ``~/.config/vocalinux`` or the live XDG config dir), co-locate
+        corrections there. Otherwise keep corrections under ``config_dir()``.
+        """
+        terms = self.terms_path()
+        if (
+            terms is not None
+            and terms.name == TERMS_FILENAME
+            and terms.parent.name == "vocalinux"
+        ):
+            return terms.parent / CORRECTIONS_FILENAME
         return Path(config_dir()) / CORRECTIONS_FILENAME
 
     def get_terms(self) -> list[str]:
