@@ -20,8 +20,12 @@ TERMS_FILENAME = "dictionary.txt"
 DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
 # Pre-XDG default persisted by older builds; treat as the live config_dir() path.
 LEGACY_DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
+# One-shot stamp so an intentional save of the legacy string is not re-migrated.
+TERMS_PATH_SCHEMA_VERSION = 1
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
+CORRECTIONS_TOP_LEVEL_KEYS = frozenset({"version", "corrections"})
+CORRECTIONS_ENTRY_KEYS = frozenset({"heard", "replacement"})
 DEFAULT_MAX_TERMS = 200
 MAX_TERM_CHARACTERS = 200
 MAX_PROMPT_CHARACTERS = 2_000
@@ -143,8 +147,9 @@ class CustomDictionaryManager:
     def terms_path_text(self) -> str:
         """Return the configured or session-only terms path without expansion.
 
-        A leftover copy of the pre-XDG default is treated as the live XDG path
-        so terms stay alongside corrections.
+        A leftover pre-XDG default is rewritten once to the live XDG path when the
+        config still carries a pre-migration schema stamp. Explicit saves of that
+        same string bump the stamp so they are kept.
         """
         if self._transient_terms_path is not None:
             return self._transient_terms_path
@@ -153,14 +158,28 @@ class CustomDictionaryManager:
         if not isinstance(configured, str) or not configured.strip():
             return default_path
         configured = configured.strip()
-        if self._is_legacy_default_terms_path(configured, default_path):
+        if self._should_migrate_legacy_default_terms_path(configured, default_path):
             self._migrate_legacy_default_terms_path(configured, default_path)
             return default_path
         return configured
 
+    def _terms_path_schema(self) -> int:
+        """Return the persisted terms-path migration stamp, defaulting to unmigrated."""
+        schema = self.config.get("dictionary", "terms_path_schema", 0)
+        try:
+            return int(schema)
+        except (TypeError, ValueError):
+            return 0
+
+    def _should_migrate_legacy_default_terms_path(self, configured: str, default_path: str) -> bool:
+        """Return whether a leftover pre-XDG default should be rewritten once."""
+        if not self._is_legacy_default_terms_path(configured, default_path):
+            return False
+        return self._terms_path_schema() < TERMS_PATH_SCHEMA_VERSION
+
     @staticmethod
     def _is_legacy_default_terms_path(configured: str, default_path: str) -> bool:
-        """Return whether a persisted path is the pre-XDG default, not a custom file."""
+        """Return whether a persisted path matches the pre-XDG default string."""
         if configured == LEGACY_DEFAULT_TERMS_PATH:
             return True
         try:
@@ -170,14 +189,19 @@ class CustomDictionaryManager:
         return configured == expanded_legacy and expanded_legacy != default_path
 
     def _migrate_legacy_default_terms_path(self, old_value: str, default_path: str) -> None:
-        """Best-effort persist the XDG terms path over a leftover pre-XDG default."""
+        """Best-effort one-shot persist of the XDG terms path over a pre-XDG default."""
         if self.is_transient_terms:
             return
+        old_schema = self.config.get("dictionary", "terms_path_schema", 0)
         if not self.config.set("dictionary", "file_path", default_path):
+            return
+        if not self.config.set("dictionary", "terms_path_schema", TERMS_PATH_SCHEMA_VERSION):
+            self.config.set("dictionary", "file_path", old_value)
             return
         if self.config.save_config():
             return
         self.config.set("dictionary", "file_path", old_value)
+        self.config.set("dictionary", "terms_path_schema", old_schema)
         logger.warning(
             "Could not migrate custom terms path; using the XDG default without saving it"
         )
@@ -212,11 +236,16 @@ class CustomDictionaryManager:
         old_value = self.config.get(
             "dictionary", "file_path", str(Path(config_dir()) / TERMS_FILENAME)
         )
+        old_schema = self.config.get("dictionary", "terms_path_schema", 0)
         if not self.config.set("dictionary", "file_path", configured):
+            return False
+        if not self.config.set("dictionary", "terms_path_schema", TERMS_PATH_SCHEMA_VERSION):
+            self.config.set("dictionary", "file_path", old_value)
             return False
         if self.config.save_config():
             return True
         self.config.set("dictionary", "file_path", old_value)
+        self.config.set("dictionary", "terms_path_schema", old_schema)
         logger.warning("Could not save custom terms path; keeping previous setting")
         return False
 
@@ -363,6 +392,12 @@ class CustomDictionaryManager:
             logger.warning("Ignoring custom corrections file with an unsupported schema")
             return None if for_edit else []
 
+        if for_edit and set(payload) - CORRECTIONS_TOP_LEVEL_KEYS:
+            logger.warning(
+                "Refusing to edit custom corrections because the source has extra top-level fields"
+            )
+            return None
+
         raw_entries = payload.get("corrections")
         entries = normalize_corrections(raw_entries)
         if for_edit and (not isinstance(raw_entries, list) or len(entries) != len(raw_entries)):
@@ -371,11 +406,20 @@ class CustomDictionaryManager:
             )
             return None
         if for_edit and any(
-            not isinstance(entry, dict) or set(entry) - {"heard", "replacement"}
+            not isinstance(entry, dict) or set(entry) - CORRECTIONS_ENTRY_KEYS
             for entry in raw_entries
         ):
             logger.warning(
                 "Refusing to edit custom corrections because some source entries have extra fields"
+            )
+            return None
+        if for_edit and any(
+            entry.get("heard") != normalized["heard"]
+            or entry.get("replacement") != normalized["replacement"]
+            for entry, normalized in zip(raw_entries, entries)
+        ):
+            logger.warning(
+                "Refusing to edit custom corrections because normalization would change values"
             )
             return None
         return entries
