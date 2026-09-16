@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 TERMS_FILENAME = "dictionary.txt"
 DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
+# Pre-XDG default persisted by older builds; treat as the live config_dir() path.
+LEGACY_DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
 DEFAULT_MAX_TERMS = 200
@@ -139,14 +141,46 @@ class CustomDictionaryManager:
         return False
 
     def terms_path_text(self) -> str:
-        """Return the configured or session-only terms path without expansion."""
+        """Return the configured or session-only terms path without expansion.
+
+        A leftover copy of the pre-XDG default is treated as the live XDG path
+        so terms stay alongside corrections.
+        """
         if self._transient_terms_path is not None:
             return self._transient_terms_path
         default_path = str(Path(config_dir()) / TERMS_FILENAME)
         configured = self.config.get("dictionary", "file_path", default_path)
         if not isinstance(configured, str) or not configured.strip():
             return default_path
-        return configured.strip()
+        configured = configured.strip()
+        if self._is_legacy_default_terms_path(configured, default_path):
+            self._migrate_legacy_default_terms_path(configured, default_path)
+            return default_path
+        return configured
+
+    @staticmethod
+    def _is_legacy_default_terms_path(configured: str, default_path: str) -> bool:
+        """Return whether a persisted path is the pre-XDG default, not a custom file."""
+        if configured == LEGACY_DEFAULT_TERMS_PATH:
+            return True
+        try:
+            expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
+        except RuntimeError:
+            return False
+        return configured == expanded_legacy and expanded_legacy != default_path
+
+    def _migrate_legacy_default_terms_path(self, old_value: str, default_path: str) -> None:
+        """Best-effort persist the XDG terms path over a leftover pre-XDG default."""
+        if self.is_transient_terms:
+            return
+        if not self.config.set("dictionary", "file_path", default_path):
+            return
+        if self.config.save_config():
+            return
+        self.config.set("dictionary", "file_path", old_value)
+        logger.warning(
+            "Could not migrate custom terms path; using the XDG default without saving it"
+        )
 
     def terms_path(self) -> Optional[Path]:
         """Return the active expanded terms path, or None when it is invalid."""
@@ -334,6 +368,14 @@ class CustomDictionaryManager:
         if for_edit and (not isinstance(raw_entries, list) or len(entries) != len(raw_entries)):
             logger.warning(
                 "Refusing to edit custom corrections because some source entries are invalid"
+            )
+            return None
+        if for_edit and any(
+            not isinstance(entry, dict) or set(entry) - {"heard", "replacement"}
+            for entry in raw_entries
+        ):
+            logger.warning(
+                "Refusing to edit custom corrections because some source entries have extra fields"
             )
             return None
         return entries

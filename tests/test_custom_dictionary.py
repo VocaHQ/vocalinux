@@ -171,6 +171,47 @@ def test_default_terms_path_follows_xdg_config_home(tmp_path: Path, monkeypatch)
     assert manager.corrections_path() == tmp_path / CORRECTIONS_FILENAME
 
 
+def test_legacy_default_terms_path_migrates_to_xdg_config_home(tmp_path: Path, monkeypatch) -> None:
+    """A persisted pre-XDG default follows config_dir and is rewritten on save."""
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
+    xdg_path = str(tmp_path / TERMS_FILENAME)
+    config = FakeConfig({"dictionary": {"file_path": "~/.config/vocalinux/dictionary.txt"}})
+    manager = CustomDictionaryManager(config)
+
+    assert manager.terms_path_text() == xdg_path
+    assert manager.terms_path() == tmp_path / TERMS_FILENAME
+    assert config.get("dictionary", "file_path") == xdg_path
+
+    failing = FakeConfig(
+        {"dictionary": {"file_path": "~/.config/vocalinux/dictionary.txt"}},
+        save_result=False,
+    )
+    failing_manager = CustomDictionaryManager(failing)
+    assert failing_manager.terms_path_text() == xdg_path
+    assert failing.get("dictionary", "file_path") == "~/.config/vocalinux/dictionary.txt"
+
+    custom = str(tmp_path / "custom-terms.txt")
+    custom_config = FakeConfig({"dictionary": {"file_path": custom}})
+    custom_manager = CustomDictionaryManager(custom_config)
+    assert custom_manager.terms_path_text() == custom
+    assert custom_config.get("dictionary", "file_path") == custom
+
+
+def test_expanded_home_legacy_terms_path_migrates_when_xdg_differs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An expanded ~/.config default is leftover when XDG points elsewhere."""
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
+    xdg_path = str(tmp_path / TERMS_FILENAME)
+    expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
+    assert expanded_legacy != xdg_path
+    config = FakeConfig({"dictionary": {"file_path": expanded_legacy}})
+    manager = CustomDictionaryManager(config)
+
+    assert manager.terms_path_text() == xdg_path
+    assert config.get("dictionary", "file_path") == xdg_path
+
+
 def test_invalid_or_unreadable_configured_terms_path_is_not_persisted(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -308,6 +349,30 @@ def test_partially_invalid_corrections_cannot_be_destructively_edited(
     path.write_text(json.dumps(original), encoding="utf-8")
 
     assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert manager.get_corrections_for_edit() is None
+    assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
+def test_corrections_with_extra_fields_cannot_be_destructively_edited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Unknown fields still apply at runtime but block a UI rewrite that would drop them."""
+    manager = manager_at(tmp_path, monkeypatch)
+    path = tmp_path / CORRECTIONS_FILENAME
+    original = {
+        "version": 1,
+        "corrections": [
+            {
+                "heard": "super base",
+                "replacement": "Supabase",
+                "note": "scanner annotation",
+            }
+        ],
+    }
+    path.write_text(json.dumps(original), encoding="utf-8")
+
+    assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
+    assert manager.apply_corrections("super base is useful") == "Supabase is useful"
     assert manager.get_corrections_for_edit() is None
     assert json.loads(path.read_text(encoding="utf-8")) == original
 
