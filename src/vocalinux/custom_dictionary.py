@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 TERMS_FILENAME = "dictionary.txt"
 DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
-# Pre-XDG default persisted by older builds; treat as the live config_dir() path.
+# Pre-XDG default persisted by older builds; keep as a configured path.
 LEGACY_DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
 CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
 CORRECTIONS_VERSION = 1
@@ -159,8 +159,8 @@ class CustomDictionaryManager:
     def terms_path_text(self) -> str:
         """Return the configured or session-only terms path without expansion.
 
-        A leftover pre-XDG default is rewritten to the live XDG path when that
-        string was never an explicit Settings selection.
+        A missing or blank saved path uses the live XDG default. Historical
+        leftover pre-XDG default strings are kept, not rewritten to XDG.
         """
         if self._transient_terms_path is not None:
             return self._transient_terms_path
@@ -169,20 +169,15 @@ class CustomDictionaryManager:
         if not isinstance(configured, str) or not configured.strip():
             return default_path
         configured = configured.strip()
-        if self._should_migrate_legacy_default_terms_path(configured, default_path):
-            self._migrate_legacy_default_terms_path(configured, default_path)
-            return default_path
+        if self._is_legacy_default_terms_path(
+            configured, default_path
+        ) and not self._file_path_is_explicit():
+            self._stamp_legacy_default_terms_path_explicit()
         return configured
 
     def _file_path_is_explicit(self) -> bool:
         """Return whether Settings persisted the current terms path on purpose."""
         return bool(self.config.get("dictionary", "file_path_explicit", False))
-
-    def _should_migrate_legacy_default_terms_path(self, configured: str, default_path: str) -> bool:
-        """Return whether a leftover pre-XDG default should be rewritten."""
-        if not self._is_legacy_default_terms_path(configured, default_path):
-            return False
-        return not self._file_path_is_explicit()
 
     @staticmethod
     def _is_legacy_default_terms_path(configured: str, default_path: str) -> bool:
@@ -195,22 +190,23 @@ class CustomDictionaryManager:
             return False
         return configured == expanded_legacy and expanded_legacy != default_path
 
-    def _migrate_legacy_default_terms_path(self, old_value: str, default_path: str) -> None:
-        """Best-effort persist of the XDG terms path over a leftover pre-XDG default."""
+    def _stamp_legacy_default_terms_path_explicit(self) -> None:
+        """Best-effort persist that a leftover pre-XDG path is an explicit choice.
+
+        Historical configs cannot distinguish leftover defaults from Settings
+        picks. Keep the stored path and mark it explicit so later reads stay
+        stable. Failures leave both the path and the marker unchanged.
+        """
         if self.is_transient_terms:
             return
         old_explicit = self.config.get("dictionary", "file_path_explicit", False)
-        if not self.config.set("dictionary", "file_path", default_path):
-            return
-        if not self.config.set("dictionary", "file_path_explicit", False):
-            self.config.set("dictionary", "file_path", old_value)
+        if not self.config.set("dictionary", "file_path_explicit", True):
             return
         if self.config.save_config():
             return
-        self.config.set("dictionary", "file_path", old_value)
         self.config.set("dictionary", "file_path_explicit", old_explicit)
         logger.warning(
-            "Could not migrate custom terms path; using the XDG default without saving it"
+            "Could not persist custom terms path explicit marker; keeping the configured path"
         )
 
     def terms_path(self) -> Optional[Path]:

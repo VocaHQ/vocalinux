@@ -172,47 +172,47 @@ def test_default_terms_path_follows_xdg_config_home(tmp_path: Path, monkeypatch)
     assert manager.corrections_path() == tmp_path / CORRECTIONS_FILENAME
 
 
-def test_legacy_default_terms_path_migrates_to_xdg_config_home(tmp_path: Path, monkeypatch) -> None:
-    """A persisted pre-XDG default follows config_dir and is rewritten on save."""
+def test_historical_legacy_looking_path_without_explicit_marker_is_not_migrated(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A leftover pre-XDG path stays put when XDG_CONFIG_HOME points elsewhere."""
     monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
     xdg_path = str(tmp_path / TERMS_FILENAME)
-    config = FakeConfig({"dictionary": {"file_path": "~/.config/vocalinux/dictionary.txt"}})
+    tilde_path = LEGACY_DEFAULT_TERMS_PATH
+    expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
+    assert expanded_legacy != xdg_path
+
+    config = FakeConfig({"dictionary": {"file_path": tilde_path}})
     manager = CustomDictionaryManager(config)
 
-    assert manager.terms_path_text() == xdg_path
-    assert manager.terms_path() == tmp_path / TERMS_FILENAME
-    assert config.get("dictionary", "file_path") == xdg_path
-    assert not config.get("dictionary", "file_path_explicit", False)
+    assert manager.terms_path_text() == tilde_path
+    assert manager.terms_path() == Path(tilde_path).expanduser()
+    assert config.get("dictionary", "file_path") == tilde_path
+    assert config.get("dictionary", "file_path") != xdg_path
+    assert config.get("dictionary", "file_path_explicit") is True
 
     failing = FakeConfig(
-        {"dictionary": {"file_path": "~/.config/vocalinux/dictionary.txt"}},
+        {"dictionary": {"file_path": tilde_path}},
         save_result=False,
     )
     failing_manager = CustomDictionaryManager(failing)
-    assert failing_manager.terms_path_text() == xdg_path
-    assert failing.get("dictionary", "file_path") == "~/.config/vocalinux/dictionary.txt"
+    assert failing_manager.terms_path_text() == tilde_path
+    assert failing.get("dictionary", "file_path") == tilde_path
+    assert failing.get("dictionary", "file_path") != xdg_path
+    assert not failing.get("dictionary", "file_path_explicit", False)
+
+    expanded_config = FakeConfig({"dictionary": {"file_path": expanded_legacy}})
+    expanded_manager = CustomDictionaryManager(expanded_config)
+    assert expanded_manager.terms_path_text() == expanded_legacy
+    assert expanded_config.get("dictionary", "file_path") == expanded_legacy
+    assert expanded_config.get("dictionary", "file_path") != xdg_path
+    assert expanded_config.get("dictionary", "file_path_explicit") is True
 
     custom = str(tmp_path / "custom-terms.txt")
     custom_config = FakeConfig({"dictionary": {"file_path": custom}})
     custom_manager = CustomDictionaryManager(custom_config)
     assert custom_manager.terms_path_text() == custom
     assert custom_config.get("dictionary", "file_path") == custom
-
-
-def test_expanded_home_legacy_terms_path_migrates_when_xdg_differs(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """An expanded ~/.config default is leftover when XDG points elsewhere."""
-    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(tmp_path))
-    xdg_path = str(tmp_path / TERMS_FILENAME)
-    expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
-    assert expanded_legacy != xdg_path
-    config = FakeConfig({"dictionary": {"file_path": expanded_legacy}})
-    manager = CustomDictionaryManager(config)
-
-    assert manager.terms_path_text() == xdg_path
-    assert config.get("dictionary", "file_path") == xdg_path
-    assert not config.get("dictionary", "file_path_explicit", False)
 
 
 def test_explicit_legacy_terms_path_is_not_migrated(tmp_path: Path, monkeypatch) -> None:
