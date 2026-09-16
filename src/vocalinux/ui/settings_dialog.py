@@ -451,6 +451,7 @@ def _combo_with_suffix(
 VOCALINUX_SITE_URL = "https://vocalinux.com"
 VOCAHQ_SITE_URL = "https://vocahq.com"
 VOCAMAC_SITE_URL = "https://vocamac.com"
+VOCAWIN_SITE_URL = "https://vocawin.com"
 VOCAPHONE_SITE_URL = "https://vocaphone.vocahq.com"
 VOCAGATEWAY_SITE_URL = "https://vocagateway.vocahq.com"
 GITHUB_REPO_URL = __url__
@@ -465,6 +466,7 @@ _ABOUT_OPEN_URLS = frozenset(
         VOCALINUX_SITE_URL,
         VOCAHQ_SITE_URL,
         VOCAMAC_SITE_URL,
+        VOCAWIN_SITE_URL,
         VOCAPHONE_SITE_URL,
         VOCAGATEWAY_SITE_URL,
         GITHUB_REPO_URL,
@@ -566,6 +568,13 @@ _VOCAHQ_FAMILY_LINKS = (
         "macOS, Beta",
         ("platform-apple",),
         "Open vocamac.com",
+    ),
+    (
+        VOCAWIN_SITE_URL,
+        "VocaWin",
+        "Windows, unsigned beta",
+        ("platform-windows",),
+        "Open vocawin.com",
     ),
     (
         VOCAPHONE_SITE_URL,

@@ -1082,6 +1082,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("After a model is downloaded", self.about)
         self.assertIn("Private dictation for Linux, Mac, Windows, and phone.", self.about)
         self.assertIn("Android beta / iOS TestFlight", self.source)
+        self.assertIn("Windows, unsigned beta", self.source)
         self.assertIn("Self-hosted, headless", self.source)
         self.assertNotIn("iOS source build", self.source)
         self.assertNotIn("SmartScreen", self.about)
@@ -1097,6 +1098,7 @@ class TestAboutPage(unittest.TestCase):
             "https://vocalinux.com",
             "https://vocahq.com",
             "https://vocamac.com",
+            "https://vocawin.com",
             "https://vocaphone.vocahq.com",
             "https://vocagateway.vocahq.com",
             "https://github.com/VocaHQ/vocalinux/issues",
@@ -1123,6 +1125,7 @@ class TestAboutPage(unittest.TestCase):
             "Open vocahq.com",
             "Open vocalinux.com",
             "Open vocamac.com",
+            "Open vocawin.com",
             "Open vocaphone.vocahq.com",
             "Open vocagateway.vocahq.com",
             "Open the Vocalinux GitHub repository",
@@ -1161,6 +1164,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("def _family_tile", self.source)
         self.assertIn("platform-linux", self.source)
         self.assertIn("platform-apple", self.source)
+        self.assertIn("platform-windows", self.source)
         self.assertIn("platform-android", self.source)
         self.assertIn("platform-server", self.source)
         self.assertIn("platform-home", self.source)
@@ -1182,6 +1186,7 @@ class TestAboutPage(unittest.TestCase):
             VOCALINUX_SITE_URL,
             VOCAMAC_SITE_URL,
             VOCAPHONE_SITE_URL,
+            VOCAWIN_SITE_URL,
             _can_open_url,
         )
 
@@ -1189,6 +1194,7 @@ class TestAboutPage(unittest.TestCase):
             VOCALINUX_SITE_URL,
             VOCAHQ_SITE_URL,
             VOCAMAC_SITE_URL,
+            VOCAWIN_SITE_URL,
             VOCAPHONE_SITE_URL,
             VOCAGATEWAY_SITE_URL,
             GITHUB_REPO_URL,
@@ -1294,6 +1300,7 @@ class TestAboutPage(unittest.TestCase):
         for name, title in (
             ("platform-linux", "Linux"),
             ("platform-apple", "Apple"),
+            ("platform-windows", "Windows"),
             ("platform-android", "Android"),
             ("platform-server", "Server"),
             ("platform-home", "Home"),
