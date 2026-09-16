@@ -463,6 +463,40 @@ def test_corrections_with_decomposed_unicode_cannot_be_destructively_edited(
     assert json.loads(path.read_text(encoding="utf-8")) == original
 
 
+def test_corrections_with_duplicate_keys_cannot_be_destructively_edited(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Duplicate JSON keys still apply at runtime but block a UI rewrite that would drop them."""
+    manager = manager_at(tmp_path, monkeypatch)
+    path = tmp_path / CORRECTIONS_FILENAME
+    cases = [
+        (
+            "{\n"
+            '  "version": 1,\n'
+            '  "corrections": [{"heard": "pie object", "replacement": "PyGObject"}],\n'
+            '  "corrections": [{"heard": "super base", "replacement": "Supabase"}]\n'
+            "}\n",
+            [{"heard": "super base", "replacement": "Supabase"}],
+        ),
+        (
+            "{\n"
+            '  "version": 1,\n'
+            '  "corrections": ['
+            '{"heard": "super base", "replacement": "Wrong", "replacement": "Supabase"}'
+            "]\n}\n",
+            [{"heard": "super base", "replacement": "Supabase"}],
+        ),
+    ]
+    for original, expected_runtime in cases:
+        path.write_text(original, encoding="utf-8")
+        before = path.read_bytes()
+
+        assert manager.get_corrections() == expected_runtime
+        assert manager.apply_corrections("super base is useful") == "Supabase is useful"
+        assert manager.get_corrections_for_edit() is None
+        assert path.read_bytes() == before
+
+
 def test_invalid_correction_update_does_not_wipe_existing_entry(
     tmp_path: Path, monkeypatch
 ) -> None:

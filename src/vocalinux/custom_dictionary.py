@@ -31,6 +31,20 @@ MAX_CORRECTIONS = 500
 MAX_CORRECTION_CHARACTERS = 500
 
 
+class _DuplicateJsonKeyError(ValueError):
+    """Raised when a JSON object contains the same key more than once."""
+
+
+def _object_pairs_without_duplicates(pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+    """Return a dict, raising if any key repeats at this object level."""
+    payload: dict[Any, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise _DuplicateJsonKeyError(key)
+        payload[key] = value
+    return payload
+
+
 def normalize_corrections(raw_entries: Any) -> list[dict[str, str]]:
     """Validate correction entries, retaining the first case-insensitive source.
 
@@ -374,9 +388,18 @@ class CustomDictionaryManager:
         """Read corrections with stricter validation for write-back workflows."""
         path = self.corrections_path()
         try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
+            contents = path.read_text(encoding="utf-8")
+            payload = json.loads(
+                contents,
+                object_pairs_hook=_object_pairs_without_duplicates if for_edit else None,
+            )
         except FileNotFoundError:
             return self._legacy_corrections()
+        except _DuplicateJsonKeyError:
+            logger.warning(
+                "Refusing to edit custom corrections because the source has duplicate JSON keys"
+            )
+            return None
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
             logger.warning("Could not read custom corrections file %s: %s", path, error)
             return None if for_edit else []
