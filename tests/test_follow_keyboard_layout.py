@@ -271,7 +271,12 @@ def test_follow_mode_does_not_derive_english_only_from_the_displayed_layout(
 
     assert dialog_class._resolve_saved_whispercpp_variant(dialog, "tiny") == "tiny"
     assert dialog_class._get_default_whispercpp_variant_for_size(dialog, "tiny") == "tiny"
-    recommended, _ = dialog_class._get_recommended_whispercpp_model_for_language(dialog)
+    with patch.object(
+        settings_dialog,
+        "get_recommended_whispercpp_model",
+        return_value=("tiny", "test"),
+    ):
+        recommended, _ = dialog_class._get_recommended_whispercpp_model_for_language(dialog)
     assert not settings_dialog.is_english_only_whispercpp_model(recommended)
 
 
