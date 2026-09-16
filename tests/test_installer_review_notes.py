@@ -185,3 +185,23 @@ def test_agents_does_not_claim_requirements_are_consumed() -> None:
     assert "`uv.lock` is authoritative" in text
     assert "Do not edit `requirements/*.txt` by hand" in text
     assert "https://just.systems" in text
+
+
+def test_interactive_engine_boxes_share_one_width() -> None:
+    """Boxes 4/5 used a wider frame and unpadded bullets, so the right edge
+    wandered. Keep every engine-menu echo at the same width as whisper.cpp."""
+    source = _installer_source()
+    start = source.index('echo "  │  1. WHISPER.CPP')
+    end = source.index("Choose engine [1-5]", start)
+    widths = []
+    for line in source[start:end].splitlines():
+        if 'echo "  │' not in line and 'echo "  ┌' not in line and 'echo "  └' not in line:
+            continue
+        drawn = line.split("echo ", 1)[1].strip()
+        assert drawn[0] == drawn[-1] == '"'
+        widths.append(len(drawn[1:-1]))
+    assert widths
+    assert len(set(widths)) == 1, widths
+    assert "Best performance on NVIDIA GPUs (CUDA)" not in source[start:end]
+    assert "Fast on CPU with INT8 quantization" in source[start:end]
+    assert "Checksum-verified Hugging Face models" in source[start:end]

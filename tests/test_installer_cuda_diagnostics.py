@@ -38,6 +38,17 @@ class InstallerCudaDiagnosticsTests(unittest.TestCase):
         self.assertIn("CUDA_CMAKE_ARGS=$(get_cuda_cmake_args", source)
         self.assertIn("GGML_CUDA=1", source)
 
+    def test_backend_menu_does_not_promise_to_install_cuda_toolkit(self) -> None:
+        """NVIDIA boxes used to say the CUDA toolkit would be installed.
+
+        install.sh never installs it. Vulkan is tried first; CUDA is a fallback
+        only when a complete toolkit is already on the machine.
+        """
+        source = _installer_source()
+        self.assertNotIn("CUDA toolkit will be installed", source)
+        self.assertIn("NVIDIA GPU detected (Vulkan)", source)
+        self.assertIn('printf "  │     • %-*s│\\n" 54 "$RECOMMENDED_REASON"', source)
+
     def test_gpu_build_failures_print_pip_log_tail_before_cpu_fallback(self) -> None:
         """Backend failures should expose the real pip/CMake log."""
         source = _installer_source()

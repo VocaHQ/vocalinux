@@ -1074,22 +1074,30 @@ detect_whispercpp_backends() {
         VULKAN_COMPAT_REASON="NVIDIA GPU uses CUDA"
     fi
 
-    # Determine recommendation (Priority: CUDA > Vulkan > CPU)
-    # IMPORTANT: The installer WILL install dev libraries (libvulkan-dev, glslc, CUDA) later,
-    # so we recommend GPU if there's a compatible GPU regardless of current library status.
+    # Determine recommendation (Priority: Vulkan > CUDA fallback > CPU).
+    # install_whispercpp_with_gpu_support tries Vulkan first on every GPU,
+    # including NVIDIA. CUDA is used only when Vulkan is unavailable or the
+    # Vulkan build fails, and only if a complete toolkit is already present.
+    # The installer never installs the CUDA toolkit.
+    # IMPORTANT: Vulkan *dev* libraries (libvulkan-dev, glslc) are installed
+    # later, so we recommend GPU when a compatible GPU is present even if
+    # those packages are not installed yet.
     local RECOMMENDED_BACKEND="cpu"
     local RECOMMENDED_REASON=""
     local CAN_BUILD_GPU=false
 
-    # NVIDIA GPU - best option, uses CUDA
     if [[ "$HAS_NVIDIA_GPU" == "yes" ]]; then
-        RECOMMENDED_BACKEND="cuda"
-        if [[ "$HAS_CUDA_DEV" == "true" ]]; then
+        CAN_BUILD_GPU=true
+        if [[ "$HAS_VULKAN" == "yes" ]]; then
+            RECOMMENDED_BACKEND="vulkan"
+            RECOMMENDED_REASON="NVIDIA GPU detected (Vulkan)"
+        elif [[ "$HAS_CUDA_DEV" == "true" ]]; then
+            RECOMMENDED_BACKEND="cuda"
             RECOMMENDED_REASON="NVIDIA GPU with CUDA toolkit installed"
         else
-            RECOMMENDED_REASON="NVIDIA GPU detected (CUDA toolkit will be installed)"
+            RECOMMENDED_BACKEND="vulkan"
+            RECOMMENDED_REASON="NVIDIA GPU detected"
         fi
-        CAN_BUILD_GPU=true
     # Vulkan-compatible GPU (AMD, Intel Gen8+) - second choice
     elif [[ "$HAS_VULKAN" == "yes" && "$VULKAN_COMPATIBLE" == "compatible" ]]; then
         RECOMMENDED_BACKEND="vulkan"
@@ -1251,22 +1259,21 @@ EOF
     echo "  │     • Good for basic dictation needs                        │"
     echo "  └─────────────────────────────────────────────────────────────┘"
     echo ""
-    echo "  ┌───────────────────────────────────────────────────────────────┐"
+    echo "  ┌─────────────────────────────────────────────────────────────┐"
     echo "  │  4. FASTER-WHISPER                                          │"
-    echo "  │     • Optional CTranslate2 Whisper backend                     │"
-    echo "  │     • Fast on CPU with INT8 quantization                      │"
-    echo "  │     • Best performance on NVIDIA GPUs (CUDA)                │"
-    echo "  │     • Hugging Face models stay checksum-gated (not auto-dl)  │"
-    echo "  └───────────────────────────────────────────────────────────────┘"
+    echo "  │     • Optional CTranslate2 Whisper backend                  │"
+    echo "  │     • Fast on CPU with INT8 quantization                    │"
+    echo "  │     • Checksum-verified Hugging Face models                 │"
+    echo "  └─────────────────────────────────────────────────────────────┘"
     echo ""
-    echo "  ┌───────────────────────────────────────────────────────────────┐"
-    echo "  │  5. REMOTE API (ADVANCED)                                     │"
-    echo "  │     • Offload processing to a GPU server on your network      │"
-    echo "  │     • Ideal for laptops without GPU                           │"
-    echo "  │     • Supports whisper.cpp server & OpenAI-compatible APIs    │"
-    echo "  │     • Minimal local resources needed                          │"
-    echo "  │     • Requires a remote server to be running                  │"
-    echo "  └───────────────────────────────────────────────────────────────┘"
+    echo "  ┌─────────────────────────────────────────────────────────────┐"
+    echo "  │  5. REMOTE API (ADVANCED)                                   │"
+    echo "  │     • Offload processing to a GPU server on your network    │"
+    echo "  │     • Ideal for laptops without GPU                         │"
+    echo "  │     • Supports whisper.cpp server & OpenAI-compatible APIs  │"
+    echo "  │     • Minimal local resources needed                        │"
+    echo "  │     • Requires a remote server to be running                │"
+    echo "  └─────────────────────────────────────────────────────────────┘"
     echo ""
 
     # Show recommendation
@@ -1358,7 +1365,7 @@ EOF
             echo "  ┌─────────────────────────────────────────────────────────────┐"
             echo "  │  1. GPU (Vulkan/CUDA)  * RECOMMENDED                        │"
             echo "  │     • Fastest performance with GPU acceleration             │"
-            echo "  │     • $RECOMMENDED_REASON                                   │"
+            printf "  │     • %-*s│\n" 54 "$RECOMMENDED_REASON"
             echo "  │     • Requires building from source (takes ~2-5 min)        │"
             echo "  └─────────────────────────────────────────────────────────────┘"
             echo ""
