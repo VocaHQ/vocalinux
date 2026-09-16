@@ -293,6 +293,27 @@ def _is_following_layout(dialog: Any) -> bool:
     return getattr(dialog, "_follow_layout_active", False) is True
 
 
+def _language_for_whispercpp_variant(dialog: Any) -> Optional[str]:
+    """Language that drives .en vs multilingual whisper.cpp derivation.
+
+    Follow-the-layout can land on any language, so it must keep multilingual
+    weights even when the picker is showing the current English layout. Using
+    that display as the derivation language selects ``.en``, Settings then
+    refuses the mode as English-only, and the next auto-apply persists a
+    concrete language and disarms follow (#821).
+    """
+    if _is_following_layout(dialog):
+        return LANGUAGE_FOLLOWS_LAYOUT
+    # Load path: the saved mode is follow, but the switch has not been synced
+    # into ``_follow_layout_active`` yet. ``is True`` so a Mock stays out.
+    if (
+        getattr(dialog, "_follow_layout_saved", False) is True
+        and getattr(dialog, "_initializing", False) is True
+    ):
+        return LANGUAGE_FOLLOWS_LAYOUT
+    return dialog.language_combo.get_active_id() or dialog.language
+
+
 def _language_is_english(language_id: str) -> bool:
     """Return whether a language ID maps to English for Whisper."""
     return SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
@@ -5243,7 +5264,7 @@ class SettingsDialog(Gtk.Dialog):
     def _get_recommended_whispercpp_model_for_language(self) -> tuple[str, str]:
         """Return the recommended whisper.cpp variant for the selected language."""
         recommended_model, reason = get_recommended_whispercpp_model()
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return _recommended_whispercpp_variant_for_language(
             recommended_model,
             reason,
@@ -5262,7 +5283,7 @@ class SettingsDialog(Gtk.Dialog):
         if recommended in WHISPERCPP_MODEL_INFO and is_whispercpp_model_downloaded(recommended):
             return None
 
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         wants_english = _language_is_english(language_id)
         recommended_mb = WHISPERCPP_MODEL_INFO.get(recommended, {}).get("size_mb", 0)
 
@@ -5290,7 +5311,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _get_default_whispercpp_variant_for_size(self, model_size: str) -> Optional[str]:
         """Return the default specialization for a user-selected size."""
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return _default_whispercpp_variant_for_size(model_size, language_id)
 
     def _on_apply_recommendation(self, _button: Any) -> None:
@@ -5516,7 +5537,7 @@ class SettingsDialog(Gtk.Dialog):
         specialization: it is re-derived from the language currently in the combo.
         """
         pinned = self.config_manager.get_model_variant_for_engine("whisper_cpp")
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return resolve_whispercpp_variant(saved_model_for_engine, pinned, language_id)
 
     def _populate_whispercpp_model_options(self, saved_model_for_engine: str):
@@ -5571,11 +5592,13 @@ class SettingsDialog(Gtk.Dialog):
             )
             self.model_variant_combo.append(model_name, display_text)
 
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         model_to_set = selected_model if selected_model in variants else None
         if model_to_set:
             # Bare size ids double as multilingual variants; retarget for language
             # so English picks .en instead of leaving Standard multilingual stuck.
+            # Follow mode uses the layout sentinel here so an English *display*
+            # does not retarget onto .en and then refuse the mode.
             model_to_set = _whispercpp_variant_for_language(model_to_set, language_id)
             if model_to_set not in variants:
                 model_to_set = None

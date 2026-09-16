@@ -235,3 +235,54 @@ def test_english_only_non_whispercpp_does_not_use_whispercpp_catalog(engine):
     downloaded.assert_not_called()
     manager.reconfigure.assert_not_called()
     assert manager.language_preference == "layout"
+
+
+def _variant_dialog(language="en-us", follow_active=False, follow_saved=False, initializing=False):
+    dialog = Mock()
+    dialog.language = language
+    dialog.language_combo.get_active_id.return_value = language
+    dialog.config_manager.get_model_variant_for_engine.return_value = ""
+    dialog._follow_layout_active = follow_active
+    dialog._follow_layout_saved = follow_saved
+    dialog._initializing = initializing
+    return dialog
+
+
+def test_follow_mode_does_not_derive_english_only_from_the_displayed_layout(
+    settings_dialog, dialog_class
+):
+    """The picker shows the current layout while follow is on, often English.
+
+    Deriving .en from that display would make Settings refuse the mode as
+    English-only, and the next auto-apply would persist a concrete language.
+    """
+    dialog = _variant_dialog(follow_active=True)
+
+    assert dialog_class._resolve_saved_whispercpp_variant(dialog, "tiny") == "tiny"
+    assert dialog_class._get_default_whispercpp_variant_for_size(dialog, "tiny") == "tiny"
+    recommended, _ = dialog_class._get_recommended_whispercpp_model_for_language(dialog)
+    assert not settings_dialog.is_english_only_whispercpp_model(recommended)
+
+
+def test_follow_mode_load_path_keeps_multilingual_before_the_switch_is_synced(
+    settings_dialog, dialog_class
+):
+    """On load the saved sentinel is follow, but _follow_layout_active is still false."""
+    dialog = _variant_dialog(follow_saved=True, initializing=True)
+
+    assert dialog_class._resolve_saved_whispercpp_variant(dialog, "tiny") == "tiny"
+    assert dialog_class._get_default_whispercpp_variant_for_size(dialog, "tiny") == "tiny"
+
+
+def test_follow_off_still_derives_english_only_from_an_english_picker(
+    settings_dialog, dialog_class
+):
+    dialog = _variant_dialog()
+
+    assert dialog_class._resolve_saved_whispercpp_variant(dialog, "tiny") == "tiny.en"
+    assert dialog_class._get_default_whispercpp_variant_for_size(dialog, "tiny") == "tiny.en"
+
+
+def test_layout_sentinel_does_not_retarget_a_bare_size_onto_english_only(settings_dialog):
+    assert settings_dialog._whispercpp_variant_for_language("tiny", "layout") == "tiny"
+    assert settings_dialog._whispercpp_variant_for_language("tiny.en", "layout") == "tiny"
