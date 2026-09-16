@@ -1358,7 +1358,15 @@ class SpeechRecognitionManager:
                     self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
                     return
                 except Exception:
-                    pass
+                    logger.error(
+                        "Failed to swap to multilingual sibling %r for layout "
+                        "language %s (engine=%s, model=%s)",
+                        sibling,
+                        target,
+                        self.engine,
+                        self.model_size,
+                        exc_info=True,
+                    )
 
         if not self._warned_follow_layout_unsupported:
             self._warned_follow_layout_unsupported = True

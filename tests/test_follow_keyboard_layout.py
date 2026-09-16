@@ -1,7 +1,11 @@
 """The follow-keyboard-layout mode is a switch over the language picker (#821)."""
 
+from __future__ import annotations
+
 import importlib
 import sys
+from collections.abc import Iterator
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -10,7 +14,7 @@ import vocalinux.ui
 
 
 @pytest.fixture(scope="module")
-def settings_dialog():
+def settings_dialog() -> Iterator[Any]:
     """Import settings_dialog with real base classes for its GTK subclasses.
 
     Same approach as tests/test_simple_model_settings.py; both sys.modules and the
@@ -36,11 +40,11 @@ def settings_dialog():
 
 
 @pytest.fixture
-def dialog_class(settings_dialog):
+def dialog_class(settings_dialog: Any) -> type[Any]:
     return settings_dialog.SettingsDialog
 
 
-def test_mode_is_off_for_a_bare_mock_dialog(settings_dialog):
+def test_mode_is_off_for_a_bare_mock_dialog(settings_dialog: Any) -> None:
     """The guard must not read truthy on a Mock, or it inverts every caller.
 
     Written as a module function precisely because ``self._method()`` on a Mock
@@ -54,20 +58,22 @@ def test_mode_is_off_for_a_bare_mock_dialog(settings_dialog):
     "value,expected",
     [(True, True), (False, False), (None, False), ("yes", False), (1, False)],
 )
-def test_mode_reads_the_cached_bool_strictly(settings_dialog, value, expected):
+def test_mode_reads_the_cached_bool_strictly(
+    settings_dialog: Any, value: object, expected: bool
+) -> None:
     dialog = Mock()
     dialog._follow_layout_active = value
     assert settings_dialog._is_following_layout(dialog) is expected
 
 
-def test_mode_is_off_when_the_attribute_is_absent(settings_dialog):
+def test_mode_is_off_when_the_attribute_is_absent(settings_dialog: Any) -> None:
     class Bare:
         pass
 
     assert settings_dialog._is_following_layout(Bare()) is False
 
 
-def _controls_stub(switch_on, supported, english_only=False):
+def _controls_stub(switch_on: bool, supported: bool, english_only: bool = False) -> Mock:
     dialog = Mock()
     dialog.follow_layout_switch.get_active.return_value = switch_on
     dialog._follow_layout_supported.return_value = supported
@@ -76,7 +82,7 @@ def _controls_stub(switch_on, supported, english_only=False):
     return dialog
 
 
-def test_turning_the_mode_on_disables_the_language_picker(dialog_class):
+def test_turning_the_mode_on_disables_the_language_picker(dialog_class: type[Any]) -> None:
     """The picker still shows a language, but the mode owns it."""
     dialog = _controls_stub(switch_on=True, supported=True)
 
@@ -87,7 +93,7 @@ def test_turning_the_mode_on_disables_the_language_picker(dialog_class):
     dialog.language_row.set_sensitive.assert_called_once_with(False)
 
 
-def test_leaving_the_mode_off_leaves_the_picker_usable(dialog_class):
+def test_leaving_the_mode_off_leaves_the_picker_usable(dialog_class: type[Any]) -> None:
     dialog = _controls_stub(switch_on=False, supported=True)
 
     dialog_class._sync_follow_layout_controls(dialog)
@@ -96,7 +102,7 @@ def test_leaving_the_mode_off_leaves_the_picker_usable(dialog_class):
     dialog.language_row.set_sensitive.assert_called_once_with(True)
 
 
-def test_an_engine_that_cannot_follow_turns_the_mode_off(dialog_class):
+def test_an_engine_that_cannot_follow_turns_the_mode_off(dialog_class: type[Any]) -> None:
     """VOSK loads a model per language; Parakeet ignores the picker entirely."""
     dialog = _controls_stub(switch_on=True, supported=False)
 
@@ -120,12 +126,12 @@ def test_an_engine_that_cannot_follow_turns_the_mode_off(dialog_class):
         ("parakeet", False),
     ],
 )
-def test_engine_support(dialog_class, engine, expected):
+def test_engine_support(dialog_class: type[Any], engine: str, expected: bool) -> None:
     dialog = Mock()
     assert dialog_class._follow_layout_supported(dialog, engine) is expected
 
 
-def test_an_english_only_model_cannot_follow_a_layout(dialog_class):
+def test_an_english_only_model_cannot_follow_a_layout(dialog_class: type[Any]) -> None:
     """small.en has no non-English weights, so the mode would silently do nothing."""
     dialog = _controls_stub(switch_on=True, supported=True, english_only=True)
 
@@ -139,7 +145,7 @@ def test_an_english_only_model_cannot_follow_a_layout(dialog_class):
 # --- The mode must stay armed across dictations -----------------------------
 
 
-def _manager_stub(model_size, language="en-us"):
+def _manager_stub(model_size: str, language: str = "en-us") -> Any:
     from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 
     manager = SpeechRecognitionManager.__new__(SpeechRecognitionManager)
@@ -153,7 +159,7 @@ def _manager_stub(model_size, language="en-us"):
     return manager
 
 
-def test_following_a_layout_keeps_the_mode_armed():
+def test_following_a_layout_keeps_the_mode_armed() -> None:
     """A switch must not turn the sentinel into a concrete language.
 
     reconfigure() stores whatever language it is handed as the new preference,
@@ -176,7 +182,7 @@ def test_following_a_layout_keeps_the_mode_armed():
     manager.reconfigure.assert_not_called()
 
 
-def test_an_english_only_model_reloads_the_multilingual_sibling():
+def test_an_english_only_model_reloads_the_multilingual_sibling() -> None:
     """English-only weights cannot honour a non-English layout; swap the sibling.
 
     reconfigure() stores whatever language it is handed as the new preference,
@@ -195,7 +201,7 @@ def test_an_english_only_model_reloads_the_multilingual_sibling():
     assert "fr" not in manager.reconfigure.call_args.args
 
 
-def test_an_english_only_model_skips_reload_when_already_english():
+def test_an_english_only_model_skips_reload_when_already_english() -> None:
     """The loaded English-only model already matches an English layout."""
     import vocalinux.speech_recognition.recognition_manager as rm
 
@@ -208,7 +214,7 @@ def test_an_english_only_model_skips_reload_when_already_english():
     assert manager.language_preference == "layout"
 
 
-def test_an_english_only_model_skips_reload_when_sibling_is_missing():
+def test_an_english_only_model_skips_reload_when_sibling_is_missing() -> None:
     """Do not fetch the multilingual sibling on the dictation hotkey."""
     import vocalinux.speech_recognition.recognition_manager as rm
 
@@ -222,7 +228,7 @@ def test_an_english_only_model_skips_reload_when_sibling_is_missing():
 
 
 @pytest.mark.parametrize("engine", ["whisper", "faster_whisper"])
-def test_english_only_non_whispercpp_does_not_use_whispercpp_catalog(engine):
+def test_english_only_non_whispercpp_does_not_use_whispercpp_catalog(engine: str) -> None:
     """Follow is offered for these engines; the whisper.cpp download check is the wrong catalog."""
     import vocalinux.speech_recognition.recognition_manager as rm
 
@@ -237,7 +243,12 @@ def test_english_only_non_whispercpp_does_not_use_whispercpp_catalog(engine):
     assert manager.language_preference == "layout"
 
 
-def _variant_dialog(language="en-us", follow_active=False, follow_saved=False, initializing=False):
+def _variant_dialog(
+    language: str = "en-us",
+    follow_active: bool = False,
+    follow_saved: bool = False,
+    initializing: bool = False,
+) -> Mock:
     dialog = Mock()
     dialog.language = language
     dialog.language_combo.get_active_id.return_value = language
@@ -249,8 +260,8 @@ def _variant_dialog(language="en-us", follow_active=False, follow_saved=False, i
 
 
 def test_follow_mode_does_not_derive_english_only_from_the_displayed_layout(
-    settings_dialog, dialog_class
-):
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """The picker shows the current layout while follow is on, often English.
 
     Deriving .en from that display would make Settings refuse the mode as
@@ -265,8 +276,8 @@ def test_follow_mode_does_not_derive_english_only_from_the_displayed_layout(
 
 
 def test_follow_mode_load_path_keeps_multilingual_before_the_switch_is_synced(
-    settings_dialog, dialog_class
-):
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """On load the saved sentinel is follow, but _follow_layout_active is still false."""
     dialog = _variant_dialog(follow_saved=True, initializing=True)
 
@@ -275,14 +286,16 @@ def test_follow_mode_load_path_keeps_multilingual_before_the_switch_is_synced(
 
 
 def test_follow_off_still_derives_english_only_from_an_english_picker(
-    settings_dialog, dialog_class
-):
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     dialog = _variant_dialog()
 
     assert dialog_class._resolve_saved_whispercpp_variant(dialog, "tiny") == "tiny.en"
     assert dialog_class._get_default_whispercpp_variant_for_size(dialog, "tiny") == "tiny.en"
 
 
-def test_layout_sentinel_does_not_retarget_a_bare_size_onto_english_only(settings_dialog):
+def test_layout_sentinel_does_not_retarget_a_bare_size_onto_english_only(
+    settings_dialog: Any,
+) -> None:
     assert settings_dialog._whispercpp_variant_for_language("tiny", "layout") == "tiny"
     assert settings_dialog._whispercpp_variant_for_language("tiny.en", "layout") == "tiny"

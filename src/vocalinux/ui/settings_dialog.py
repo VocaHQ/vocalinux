@@ -6087,7 +6087,7 @@ class SettingsDialog(Gtk.Dialog):
         # rather than going blank, and turning the mode off pins what is shown.
         self.language_row.set_sensitive(not active)
 
-    def _on_follow_layout_toggled(self, *_args) -> None:
+    def _on_follow_layout_toggled(self, *_args: Any) -> None:
         """Apply the follow mode, or pin whatever the picker shows when it goes off."""
         if self._initializing or self._applying_settings or self._processing_language_change:
             return
