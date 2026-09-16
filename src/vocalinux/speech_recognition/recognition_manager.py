@@ -1344,18 +1344,21 @@ class SpeechRecognitionManager:
                 self._faster_whisper_engine.language = target
             return
 
-        # English-only weights cannot honour a non-English layout. Swap to the
-        # multilingual sibling and keep the follow-mode sentinel; handing
-        # ``target`` to reconfigure() would store it as the new preference and
-        # disarm the mode after a single switch.
-        sibling = _multilingual_sibling(self.model_size)
-        # No surprise fetch on the hotkey: only swap if the sibling is already downloaded.
-        if sibling != self.model_size and is_model_downloaded(sibling):
-            try:
-                self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
-                return
-            except Exception:
-                pass
+        # English-only whisper.cpp weights cannot honour a non-English layout.
+        # Swap to the multilingual sibling and keep the follow-mode sentinel;
+        # handing ``target`` to reconfigure() would store it as the new
+        # preference and disarm the mode after a single switch.
+        # is_model_downloaded / _multilingual_sibling are the whisper.cpp
+        # catalog: do not consult them for whisper / faster_whisper .en ids.
+        if self.engine == "whisper_cpp":
+            sibling = _multilingual_sibling(self.model_size)
+            # No surprise fetch on the hotkey: only swap if the sibling is already downloaded.
+            if sibling != self.model_size and is_model_downloaded(sibling):
+                try:
+                    self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
+                    return
+                except Exception:
+                    pass
 
         if not self._warned_follow_layout_unsupported:
             self._warned_follow_layout_unsupported = True

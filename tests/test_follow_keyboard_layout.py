@@ -206,3 +206,32 @@ def test_an_english_only_model_skips_reload_when_already_english():
     manager.reconfigure.assert_not_called()
     assert manager.language == "en-us"
     assert manager.language_preference == "layout"
+
+
+def test_an_english_only_model_skips_reload_when_sibling_is_missing():
+    """Do not fetch the multilingual sibling on the dictation hotkey."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    manager = _manager_stub("small.en")
+    with patch.object(rm, "language_for_active_layout", return_value="fr"):
+        with patch.object(rm, "is_model_downloaded", return_value=False):
+            manager._refresh_language_from_layout()
+
+    manager.reconfigure.assert_not_called()
+    assert manager.language_preference == "layout"
+
+
+@pytest.mark.parametrize("engine", ["whisper", "faster_whisper"])
+def test_english_only_non_whispercpp_does_not_use_whispercpp_catalog(engine):
+    """Follow is offered for these engines; the whisper.cpp download check is the wrong catalog."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    manager = _manager_stub("small.en")
+    manager.engine = engine
+    with patch.object(rm, "language_for_active_layout", return_value="fr"):
+        with patch.object(rm, "is_model_downloaded", return_value=True) as downloaded:
+            manager._refresh_language_from_layout()
+
+    downloaded.assert_not_called()
+    manager.reconfigure.assert_not_called()
+    assert manager.language_preference == "layout"

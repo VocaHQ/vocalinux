@@ -44,8 +44,13 @@ _LAYOUT_TO_LANGUAGE = {
 }
 
 # Common GNOME IBus engine ids. Looked up case-insensitively.
+# Mozc ships mozc-jp by default; mozc-us / mozc-on / mozc-off are documented
+# extra engine names for US-layout and composition-mode variants -- still Japanese.
 _IBUS_ENGINE_TO_LANGUAGE = {
     "mozc-jp": "ja",
+    "mozc-us": "ja",
+    "mozc-on": "ja",
+    "mozc-off": "ja",
     "anthy": "ja",
     "kkc": "ja",
     "skk": "ja",
@@ -365,8 +370,12 @@ def _language_for_ibus_source(source: object, supported: set[str] | dict) -> Opt
             return _language_for_locale(lang, supported) or _language_for_layout(lang, supported)
         return None
 
+    # Only *-jp / *-kr: a generic last-token lookup maps mozc-us and foo-us
+    # onto English via the xkb "us" layout, which is the IBus fallback bug.
     if "-" in engine:
-        return _language_for_layout(engine.rsplit("-", 1)[-1], supported)
+        suffix = engine.rsplit("-", 1)[-1]
+        if suffix in ("jp", "kr"):
+            return _language_for_layout(suffix, supported)
     return None
 
 

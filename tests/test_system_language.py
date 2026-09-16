@@ -249,6 +249,35 @@ def test_an_unmapped_ibus_engine_does_not_borrow_the_configured_layout():
         configured.assert_not_called()
 
 
+@pytest.mark.parametrize("engine_id", ["foo-us", "foo-gb", "foo-fr", "foo-de"])
+def test_hyphen_suffix_does_not_false_map_layout_tokens(engine_id):
+    """rsplit last token is not a language code: mozc-us is Japanese, not xkb us."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", engine_id)):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
+        configured.assert_not_called()
+
+
+def test_ibus_mozc_us_maps_to_japanese():
+    """Mozc's documented US-layout engine is still a Japanese IME."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "mozc-us")):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+        configured.assert_not_called()
+
+
+def test_ibus_hyphen_jp_and_kr_suffixes_still_map():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-jp")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-kr")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ko"
+
+
+def test_ibus_m17n_hi_itrans_maps_to_hindi():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "m17n:hi:itrans")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "hi"
+
+
 def test_ibus_libpinyin_maps_to_chinese():
     with patch.object(sl, "_active_input_source", return_value=("ibus", "libpinyin")):
         assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "zh"
