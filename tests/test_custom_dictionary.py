@@ -4,11 +4,12 @@ import json
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from vocalinux.custom_dictionary import (
     CORRECTIONS_FILENAME,
     DEFAULT_TERMS_PATH,
+    MAX_CORRECTION_CHARACTERS,
     TERMS_FILENAME,
     CustomDictionaryManager,
     apply_corrections,
@@ -309,6 +310,56 @@ def test_partially_invalid_corrections_cannot_be_destructively_edited(
     assert manager.get_corrections() == [{"heard": "super base", "replacement": "Supabase"}]
     assert manager.get_corrections_for_edit() is None
     assert json.loads(path.read_text(encoding="utf-8")) == original
+
+
+def test_invalid_correction_update_does_not_wipe_existing_entry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A too-long replacement must not delete the previous same-heard correction."""
+    import importlib
+    import sys
+
+    import vocalinux.ui as ui_pkg
+
+    manager = manager_at(tmp_path, monkeypatch)
+    original = [{"heard": "super base", "replacement": "Supabase"}]
+    assert manager.save_corrections(original)
+    corrections_path = tmp_path / CORRECTIONS_FILENAME
+    before = corrections_path.read_text(encoding="utf-8")
+
+    repository = sys.modules["gi.repository"]
+    bases = {name: type(name, (), {}) for name in ("Box", "ListBoxRow", "Dialog")}
+    saved = sys.modules.pop("vocalinux.ui.settings_dialog", None)
+    try:
+        with patch.object(repository, "Gtk", MagicMock(**bases)):
+            settings_dialog = importlib.import_module("vocalinux.ui.settings_dialog")
+    finally:
+        sys.modules.pop("vocalinux.ui.settings_dialog", None)
+        if saved is not None:
+            sys.modules["vocalinux.ui.settings_dialog"] = saved
+            ui_pkg.settings_dialog = saved
+        else:
+            ui_pkg.__dict__.pop("settings_dialog", None)
+
+    dialog = Mock()
+    dialog._initializing = False
+    dialog._applying_settings = False
+    dialog._dictionary_available.return_value = True
+    dialog.dictionary_manager = manager
+    dialog.dictionary_heard_entry.get_text.return_value = "super base"
+    dialog.dictionary_replacement_entry.get_text.return_value = "x" * (
+        MAX_CORRECTION_CHARACTERS + 1
+    )
+
+    settings_dialog.SettingsDialog._on_dictionary_add_correction(dialog, None)
+
+    assert corrections_path.read_text(encoding="utf-8") == before
+    assert manager.get_corrections() == original
+    dialog.dictionary_heard_entry.set_text.assert_not_called()
+    dialog.dictionary_replacement_entry.set_text.assert_not_called()
+    dialog.dictionary_feedback_label.set_text.assert_called_once_with(
+        "That correction is not valid for the file."
+    )
 
 
 def test_invalid_terms_file_is_ignored_and_explained(tmp_path: Path, monkeypatch) -> None:

@@ -33,6 +33,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState, _EvdevCaptureDevice  # noqa: E402
+from ..custom_dictionary import normalize_corrections  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.faster_whisper_model_info import delete_model as delete_faster_whisper_model
@@ -3354,9 +3355,13 @@ class SettingsDialog(Gtk.Dialog):
                 "Could not edit corrections: fix or replace the malformed corrections file first."
             )
             return
+        candidate = {"heard": heard, "replacement": replacement}
+        if not normalize_corrections([candidate]):
+            self.dictionary_feedback_label.set_text("That correction is not valid for the file.")
+            return
         existing = [entry for entry in entries if entry["heard"].casefold() == heard.casefold()]
         entries = [entry for entry in entries if entry["heard"].casefold() != heard.casefold()]
-        entries.append({"heard": heard, "replacement": replacement})
+        entries.append(candidate)
         if not self.dictionary_manager.save_corrections(entries):
             self.dictionary_feedback_label.set_text(
                 "Could not save corrections; no correction was changed."

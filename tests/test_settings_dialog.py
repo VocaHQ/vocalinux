@@ -1117,12 +1117,8 @@ class TestSettingsNavigation(unittest.TestCase):
         switcher_pack = body.find(
             "self.dictionary_tab.pack_start(self.dictionary_management_switcher"
         )
-        feedback_pack = body.find(
-            "self.dictionary_tab.pack_start(self.dictionary_feedback_label"
-        )
-        stack_pack = body.find(
-            "self.dictionary_tab.pack_start(self.dictionary_management_stack"
-        )
+        feedback_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_feedback_label")
+        stack_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_management_stack")
         self.assertLess(switcher_pack, feedback_pack)
         self.assertLess(feedback_pack, stack_pack)
         corrections_child = body[
@@ -1146,6 +1142,13 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("Could not save that custom terms path", self.source_code)
         self.assertIn("add_term(term)", self.source_code)
         self.assertIn("remove_term(term)", self.source_code)
+
+    def test_correction_add_validates_candidate_before_save(self):
+        """Invalid replacements must be rejected before the list is rewritten."""
+        body = self.source_code.split("def _on_dictionary_add_correction")[1].split("\n    def ")[0]
+        self.assertIn("normalize_corrections", body)
+        self.assertLess(body.find("normalize_corrections"), body.find("save_corrections"))
+        self.assertLess(body.find("normalize_corrections"), body.find("entries.append"))
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)
