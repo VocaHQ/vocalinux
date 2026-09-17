@@ -146,9 +146,7 @@ def test_snap_backfill_dispatch_input_never_reaches_the_shell() -> None:
     """Same rule as verify-release.yml: interpolating the tag into run: is injection."""
     import re
 
-    text = (REPO_ROOT / ".github" / "workflows" / "snap-backfill.yml").read_text(
-        encoding="utf-8"
-    )
+    text = (REPO_ROOT / ".github" / "workflows" / "snap-backfill.yml").read_text(encoding="utf-8")
     run_lines = [line for line in text.splitlines() if re.match(r"^\s*-?\s*run:", line)]
     assert run_lines, "found no run: step, so this guard is scanning nothing"
     for line in run_lines:
