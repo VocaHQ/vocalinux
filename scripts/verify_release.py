@@ -39,9 +39,10 @@ SLSA_PROVENANCE = "https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1"
 
 
 class ReleaseNotFound(SystemExit):
-    """No release for the tag, as opposed to one that exists and fails to verify.
+    """The API confirmed no release for the tag, with a 404.
 
-    Still a SystemExit, so callers that ignore it keep the old exit code.
+    Only this is forgivable. A rate limit or an auth failure stays a plain
+    SystemExit, or --if-published would pass a release nothing has read.
     """
 
 
@@ -85,6 +86,7 @@ def fetch_release(tag: str | None) -> dict:
     slug = repo_slug()
     candidates = [tag] + ([f"v{tag}"] if tag and tag[0].isdigit() else [])
     errors: list[str] = []
+    absent = True
     for candidate in candidates:
         path = (
             f"/repos/{slug}/releases/tags/{candidate}"
@@ -95,10 +97,11 @@ def fetch_release(tag: str | None) -> dict:
         if done.returncode == 0:
             return _release_from_api(json.loads(done.stdout))
         detail = (done.stderr or done.stdout or "").strip()
+        absent = absent and "HTTP 404" in detail
         errors.append(f"{path}: {detail or f'exit {done.returncode}'}")
     named = " or ".join(c for c in candidates if c) or "the latest stable release"
     hint = "\n".join(errors)
-    raise ReleaseNotFound(
+    raise (ReleaseNotFound if absent else SystemExit)(
         f"no release found for {named}\n{hint}\nusage: verify_release.py [tag], e.g. v0.16.2"
     )
 
