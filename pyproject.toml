@@ -171,6 +171,11 @@ markers = [
     "integration: marks tests as integration tests",
     "audio: marks tests that require audio hardware",
 ]
+filterwarnings = [
+    "ignore:save_settings\\(\\) is deprecated:DeprecationWarning",
+    "ignore:The NumPy module was reloaded:UserWarning",
+    "ignore:There is no current event loop:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source = ["src"]
