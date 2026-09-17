@@ -172,3 +172,184 @@ def test_nb_no_locale_maps_to_norwegian():
         )
 
     assert detected == "no"
+
+
+# --- Follow the active keyboard layout (#821) -------------------------------
+
+
+@pytest.mark.parametrize(
+    "sources,current,expected",
+    [
+        # The bilingual case from the issue: same config, different active index.
+        ("[('xkb', 'us'), ('xkb', 'fr')]", "uint32 0", "us"),
+        ("[('xkb', 'us'), ('xkb', 'fr')]", "uint32 1", "fr"),
+        # A variant is still that layout.
+        ("[('xkb', 'fr+oss')]", "uint32 0", "fr"),
+        # "uint32 1" must not read as index 32 via a bare \d+ search.
+        ("[('xkb', 'us'), ('xkb', 'pl')]", "uint32 1", "pl"),
+        # A stale index outlives a removed source; GNOME falls back to the first.
+        ("[('xkb', 'us'), ('xkb', 'fr')]", "uint32 9", "us"),
+        ("[('xkb', 'us')]", "", "us"),
+        # An IBus engine is not an xkb layout and maps to nothing here.
+        ("[('ibus', 'mozc-jp')]", "uint32 0", None),
+        ("@a(ss) []", "uint32 0", None),
+        ("", "uint32 0", None),
+    ],
+)
+def test_active_source_parsing(sources, current, expected):
+    assert sl._parse_active_source(sources, current) == expected
+
+
+def test_active_layout_reads_gsettings():
+    with patch.object(sl, "_gsettings_get", side_effect=["[('xkb', 'fr')]", "uint32 0"]):
+        assert sl.detect_active_keyboard_layout() == "fr"
+
+
+def test_active_layout_is_none_without_gsettings():
+    with patch.object(sl, "_gsettings_get", return_value=None):
+        assert sl.detect_active_keyboard_layout() is None
+
+
+def test_active_layout_language_maps_onto_catalogue():
+    with patch.object(sl, "_active_input_source", return_value=("xkb", "fr")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "fr"
+
+
+def test_active_layout_falls_back_to_configured_layout():
+    """Outside GNOME there is no readable active source; the configured one remains."""
+    with patch.object(sl, "_active_input_source", return_value=None):
+        with patch.object(sl, "detect_keyboard_layout", return_value="pl"):
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "pl"
+
+
+def test_active_layout_language_is_none_when_unmappable():
+    with patch.object(sl, "_active_input_source", return_value=("xkb", "xyz")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
+
+
+def test_active_layout_language_is_none_without_any_layout():
+    with patch.object(sl, "_active_input_source", return_value=None):
+        with patch.object(sl, "detect_keyboard_layout", return_value=None):
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
+
+
+def test_an_active_ibus_engine_does_not_borrow_the_configured_layout():
+    """Typing Japanese through mozc-jp must not resolve to the us layout's English."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "mozc-jp")):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+        configured.assert_not_called()
+
+
+def test_an_unmapped_ibus_engine_does_not_borrow_the_configured_layout():
+    """An unknown IBus engine is still a real answer; leave it to auto-detect."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-engine")):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
+        configured.assert_not_called()
+
+
+@pytest.mark.parametrize("engine_id", ["foo-us", "foo-gb", "foo-fr", "foo-de"])
+def test_hyphen_suffix_does_not_false_map_layout_tokens(engine_id):
+    """rsplit last token is not a language code: mozc-us is Japanese, not xkb us."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", engine_id)):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) is None
+        configured.assert_not_called()
+
+
+def test_ibus_mozc_us_maps_to_japanese():
+    """Mozc's documented US-layout engine is still a Japanese IME."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "mozc-us")):
+        with patch.object(sl, "detect_keyboard_layout", return_value="us") as configured:
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+        configured.assert_not_called()
+
+
+def test_ibus_hyphen_jp_and_kr_suffixes_still_map():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-jp")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ja"
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "foo-kr")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ko"
+
+
+def test_ibus_m17n_hi_itrans_maps_to_hindi():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "m17n:hi:itrans")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "hi"
+
+
+def test_ibus_libpinyin_maps_to_chinese():
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "libpinyin")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "zh"
+
+
+def test_active_source_prefers_mru_and_falls_back_to_the_index():
+    values = {
+        "mru-sources": "[('ibus', 'mozc-jp'), ('xkb', 'us')]",
+        "sources": "[('xkb', 'us')]",
+        "current": "uint32 0",
+    }
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values[key]):
+        # The MRU answer wins even though it is unmappable.
+        assert tuple(sl._active_input_source()) == ("ibus", "mozc-jp")
+
+    values["mru-sources"] = "@a(ss) []"
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values[key]):
+        assert tuple(sl._active_input_source()) == ("xkb", "us")
+
+
+def test_no_active_source_without_gsettings():
+    with patch.object(sl, "_gsettings_get", return_value=None):
+        assert sl._active_input_source() is None
+
+
+def test_active_layout_prefers_mru_over_stale_current_index():
+    """GNOME's "current" index goes stale; the MRU list is what tracks a switch.
+
+    Observed live: after switching to the second layout, mru-sources led with
+    ('xkb', 'fr') while current still read 0, which points at 'us' (#497, #738).
+    """
+    values = {
+        "mru-sources": "[('xkb', 'fr'), ('xkb', 'us')]",
+        "sources": "[('xkb', 'us'), ('xkb', 'fr')]",
+        "current": "uint32 0",
+    }
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values[key]):
+        assert sl.detect_active_keyboard_layout() == "fr"
+
+
+def test_active_layout_falls_back_to_index_when_mru_is_empty():
+    """A session that has never switched has no MRU list to go on."""
+    values = {
+        "mru-sources": "@a(ss) []",
+        "sources": "[('xkb', 'us'), ('xkb', 'pl')]",
+        "current": "uint32 1",
+    }
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values[key]):
+        assert sl.detect_active_keyboard_layout() == "pl"
+
+
+def test_active_layout_reports_nothing_for_an_ibus_mru_entry():
+    """An IBus engine at the front of the MRU list must not fall through."""
+    values = {
+        "mru-sources": "[('ibus', 'mozc-jp'), ('xkb', 'us')]",
+        "sources": "[('xkb', 'us')]",
+        "current": "uint32 0",
+    }
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values[key]):
+        assert sl.detect_active_keyboard_layout() is None
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        ("[('xkb', 'us'), ('xkb', 'fr')]", [("xkb", "us"), ("xkb", "fr")]),
+        ("@a(ss) [('xkb', 'us')]", [("xkb", "us")]),
+        ("@a(ss) []", []),
+        ("not a list", []),
+        ("", []),
+        (None, []),
+    ],
+)
+def test_source_list_parsing(value, expected):
+    assert sl._parse_sources(value) == expected
