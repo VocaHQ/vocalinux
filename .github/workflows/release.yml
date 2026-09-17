@@ -176,10 +176,22 @@ jobs:
             Whisper.cpp engine only. Hotkeys need device access as documented in
             packaging/flatpak/README.md. Not on Flathub (https://github.com/flathub/flathub/pull/9368).
 
+            ### Snap
+            Tagged releases also attach `vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap`
+            and try the Snap Store (`edge` and `candidate`). `stable` is a manual promote.
+            Super-privileged plugs such as `uinput` can hold the Store revision in human
+            review; the GitHub `.snap` is the sideload in that case:
+            ```bash
+            sudo snap install --dangerous ./vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap
+            sudo snap connect vocalinux:uinput
+            ```
+            `--dangerous` is required because this file is not a Store revision. It will not
+            refresh from the Store. amd64 only.
+
             ### Verifying what you downloaded
-            `SHA256SUMS` covers every file here and is attached once the aarch64 AppImage and
-            both Flatpak builds finish, a few minutes after this release appears. The wheel and
-            sdist below are the same bytes published to PyPI.
+            `SHA256SUMS` covers every file here and is attached once the aarch64 AppImage,
+            both Flatpak builds, and the snap finish, a few minutes after this release appears.
+            The wheel and the sdist below are the same bytes published to PyPI.
             ```bash
             sha256sum -c --ignore-missing SHA256SUMS
             ```
@@ -355,12 +367,12 @@ jobs:
             --repo ${{ github.repository }} \
             --clobber
 
-  # Runs last because the aarch64 AppImage and both Flatpak bundles land after
-  # the release is created: a checksum manifest that covers some of the files
-  # is worse than none, since the missing one looks like the tampered one.
+  # Runs last because the aarch64 AppImage, both Flatpak bundles, and the snap
+  # land after the release is created: a checksum manifest that covers some of
+  # the files is worse than none, since the missing one looks like the tampered one.
   publish-checksums:
     name: Checksums and Provenance
-    needs: [build-and-release, build-appimage-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak]
+    needs: [build-and-release, build-appimage-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak, attach-snap]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -380,7 +392,7 @@ jobs:
           ls -la
           # Bare names, so `sha256sum -c` works in whatever directory the user
           # downloaded the release into.
-          sha256sum -- *.whl *.tar.gz *.AppImage *.flatpak | tee SHA256SUMS
+          sha256sum -- *.whl *.tar.gz *.AppImage *.flatpak *.snap | tee SHA256SUMS
 
       # Attesting from the manifest rather than a second glob: the file we
       # publish and the set we attest cannot drift apart.
@@ -477,12 +489,13 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: 'Release ${{ github.ref_name }}'
 
-  # Store-only: do not attach the .snap to the GitHub Release. grade: stable
-  # allows candidate; do not auto-release to stable — promote after QA.
+  # GitHub Release first, Store second. uinput is super-privileged, so the
+  # Store can queue a human review and refuse edge/candidate; the .snap still
+  # has to land on the tag for sideload. grade: stable allows candidate; do
+  # not auto-release to stable — promote after QA.
   # Secret: SNAPCRAFT_STORE_CREDENTIALS (snapcraft export-login).
-  publish-snap:
-    name: Build and Publish Snap
-    needs: build-and-release
+  build-snap:
+    name: Build Snap
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -490,26 +503,93 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Require Snap Store credentials
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        run: |
-          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
-            echo "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap"
-            exit 1
-          fi
-
       - name: Build snap
         id: build
         uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
 
+      - name: Upload the snap
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snap-amd64
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+          retention-days: 7
+
+  attach-snap:
+    name: Attach Snap
+    needs: [build-and-release, build-snap]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the snap
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: snap-amd64
+          path: dist
+
+      - name: Attach to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          ls -la dist/*.snap
+          gh release upload "${{ github.ref_name }}" \
+            dist/*.snap \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  publish-snap:
+    name: Publish Snap to Store
+    needs: build-snap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check for Snap Store credentials
+        id: store
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap"
+            echo "::warning::SNAPCRAFT_STORE_CREDENTIALS is unset; skipping Store publish. The .snap is still on the GitHub Release."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download the snap
+        if: steps.store.outputs.configured == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: snap-amd64
+          path: dist
+
+      - name: Locate the snap
+        id: snapfile
+        if: steps.store.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          file=$(ls dist/*.snap)
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          ls -la "$file"
+
       - name: Publish snap to edge and candidate
+        id: publish
+        if: steps.store.outputs.configured == 'true'
+        continue-on-error: true
         uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
-          snap: ${{ steps.build.outputs.snap }}
+          snap: ${{ steps.snapfile.outputs.file }}
           release: edge,candidate
+
+      - name: Store publish outcome
+        if: steps.store.outputs.configured == 'true' && steps.publish.outcome != 'success'
+        run: |
+          echo "::warning::Snap Store did not release this revision (often uinput allow-installation review). The .snap is on the GitHub Release for sideload with snap install --dangerous. File a privileged-interfaces request, then re-run this job."
 
   deploy-website:
     name: Deploy Website

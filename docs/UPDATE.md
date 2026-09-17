@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | `sudo snap refresh vocalinux` (`--edge` until stable is promoted). **v0.17.0** ships `uinput`; `sudo snap connect vocalinux:uinput` then restart for native Wayland apps. v0.16.2 rev 7 has no such plug. |
+| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.17.0, sideload `vocalinux_0.17.0_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -88,7 +88,7 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 | **Searchable open picker** | Language list filters while open (#798) |
 | **Localized punctuation commands** | it/fr/de/es/pt/nl/pl/ru; English phrases still work (#642) |
 | **Bare F-keys** | F1–F24 are valid push-to-talk shortcuts (#815) |
-| **Snap** | Store listing, ydotool + `uinput` for native Wayland (#519, #823, #822) |
+| **Snap** | Store listing, ydotool + `uinput` for native Wayland; GitHub `.snap` for sideload while Store review is pending (#519, #823, #822) |
 | **Flatpak on the tag** | Workflow attaches `.flatpak` assets and checksums them (#786) |
 
 ### Also in v0.17.0

@@ -136,7 +136,7 @@ def test_the_manifest_covers_every_kind_of_artifact_we_publish():
     assert "merge-multiple: true" in block, "it collects one artifact, not all of them"
     checksum_line = re.search(r"sha256sum -- (.+)$", block, re.M)
     assert checksum_line, "publish-checksums does not generate SHA256SUMS"
-    for pattern in ("*.whl", "*.tar.gz", "*.AppImage", "*.flatpak"):
+    for pattern in ("*.whl", "*.tar.gz", "*.AppImage", "*.flatpak", "*.snap"):
         assert pattern in checksum_line.group(1), f"{pattern} is published but unchecksummed"
 
 

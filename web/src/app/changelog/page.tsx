@@ -27,7 +27,7 @@ const releases = [
       "Recommended model button sets size and specialization together and will not ignore a file already on disk (PR #797, #778)",
       "Localized punctuation voice commands for it/fr/de/es/pt/nl/pl/ru (PR #642, #640)",
       "Bare F1–F24 push-to-talk shortcuts (PR #815)",
-      "Snap packaging with ydotool and uinput for native Wayland; Store --edge (PR #519, #823, #822)",
+      "Snap packaging with ydotool and uinput for native Wayland; GitHub .snap sideload while Store review of uinput is pending (PR #519, #823, #822)",
       "Release workflow attaches Vocalinux-<version>-{x86_64,aarch64}.flatpak (PR #786, #784)",
       "XWayland clipboard paste instead of layout-garbled xdotool type (PR #680, #657)",
       "Layout-aware Ctrl+V paste; ydotool releases Ctrl after a timed-out paste (PR #788, #675, #658)",

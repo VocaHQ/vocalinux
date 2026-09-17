@@ -8,7 +8,7 @@ How to install Vocalinux on Linux. Short overview: [project README](../README.md
 | [AppImage](#appimage) | Portable binary; no system package install |
 | [AUR](#arch-linux-aur) | Arch / Manjaro |
 | [Flatpak](#flatpak) | Release `.flatpak` or local build |
-| [Snap](#snap-ubuntu-snap-store) | Ubuntu Snap Store (`--edge`) |
+| [Snap](#snap-ubuntu-snap-store) | Ubuntu Snap Store (`--edge`) or GitHub `.snap` |
 | [From source](#from-source) | Contributors or custom trees |
 | [Manual / PyPI](INSTALL_MANUAL.md) | Full control or pip-only workflows |
 | [Troubleshooting](TROUBLESHOOTING.md) | Tray, audio, injection, models |
@@ -112,7 +112,9 @@ Whisper.cpp + Vulkan. It is **not on Flathub** (submission [flathub#9368](https:
 
 ## Snap (Ubuntu Snap Store)
 
-Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases publish to Snap Store `edge` and `candidate` when credentials are set. `stable` is still a manual promote after QA.
+Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases attach `vocalinux_<version>_amd64.snap` to the GitHub Release and try Snap Store `edge` and `candidate` when credentials are set. `stable` is still a manual promote after QA.
+
+Store install, once Canonical lists the revision:
 
 ```bash
 sudo snap install vocalinux --edge
@@ -121,7 +123,18 @@ sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-**v0.17.0** ships ydotool and the `uinput` plug. After `sudo snap install vocalinux --edge`, connect `uinput` and restart Vocalinux for native GNOME/GTK/Qt windows. **v0.16.2 edge (rev 7)** has no such plug and only types into XWayland apps; `sudo snap refresh vocalinux` first.
+**v0.17.0** ships ydotool and the `uinput` plug. That plug is super-privileged, so the Store held 0.17.0 for human review (`allow-installation`). Until a 0.17.0+ revision is listed, `snap info vocalinux` still shows **v0.16.2 (rev 7)** on edge. That revision has no `uinput` plug; `sudo snap connect vocalinux:uinput` fails.
+
+Sideload the GitHub `.snap` (amd64) while the Store is waiting:
+
+```bash
+sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap
+sudo snap connect vocalinux:audio-record
+sudo snap connect vocalinux:raw-input
+sudo snap connect vocalinux:uinput
+```
+
+`--dangerous` is required because this file is not a Store revision. It will not refresh from the Store. After Canonical grants `uinput`, switch to `sudo snap install vocalinux --edge` (or `snap refresh`).
 
 ## From source
 

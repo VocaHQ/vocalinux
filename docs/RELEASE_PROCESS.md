@@ -166,7 +166,8 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 5. `## Bug Fixes` - group by area (IBus, Installer, AUR, Text injection, …)
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
 7. `## Thanks` - external PR authors and issue reporters by `@handle`
-8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak status (honest)
+8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak, Snap
+   (Store channels plus GitHub `.snap` sideload when Store review is pending)
 9. `### Verifying what you downloaded` (required, and easy to lose). `release.yml`
    generates it, with `sha256sum -c --ignore-missing SHA256SUMS` and
    `gh attestation verify`. A hand-written body replaces the generated one, so carry
@@ -380,21 +381,28 @@ After pushing the tag, the GitHub Actions workflow will automatically:
    rebuilding, so the wheel on PyPI is byte-for-byte the wheel on the release
 2. Build and attach AppImages for x86_64 and aarch64, both from that same wheel
 3. Create a GitHub Release with auto-generated notes
-4. Attach `SHA256SUMS` covering all four artifacts, and generate build provenance
-   attestations from that manifest (runs after the aarch64 AppImage lands, so a
-   partial manifest never gets published)
+4. Attach `SHA256SUMS` covering every GitHub asset (wheel, sdist, both AppImages,
+   both Flatpaks, the amd64 snap) and generate build provenance from that
+   manifest (runs after the aarch64 AppImage, both Flatpaks, and the snap land,
+   so a partial manifest never gets published)
 5. Publish to PyPI via trusted publishing
 6. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
 7. Deploy the website to vocalinux.com
-8. Mark as pre-release if version contains alpha/beta/rc
+8. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
+   `edge`/`candidate`. Store human review (for example `uinput` allow-installation)
+   must not block the GitHub `.snap`. `stable` is still a manual promote
+9. Mark as pre-release if version contains alpha/beta/rc
 
 Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 ### Step 9: Post-Release Tasks
 
 - [ ] Verify GitHub Release was created correctly
-- [ ] Verify `SHA256SUMS` is attached and lists all four artifacts (wheel, sdist,
-      both AppImages) - the release notes tell users to run `sha256sum -c` against it
+- [ ] Verify `SHA256SUMS` is attached and lists every GitHub asset (wheel, sdist,
+      both AppImages, both Flatpaks, the amd64 snap) - the release notes tell
+      users to run `sha256sum -c` against it
+- [ ] If the Store held the snap for `uinput` review, confirm the GitHub `.snap`
+      is still attached and the notes document `snap install --dangerous`
 - [ ] Verify provenance: `gh attestation verify <artifact> --repo VocaHQ/vocalinux`
 - [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
       matches the line for that wheel in `SHA256SUMS`

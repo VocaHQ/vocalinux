@@ -1,0 +1,73 @@
+name: Attach snap to an existing release
+
+# v0.17.0 built the snap and then lost it: Store review failed the job, and
+# the workflow did not attach the .snap to the GitHub Release. Run this after
+# that policy change for a tag that already exists:
+#   gh workflow run snap-backfill.yml -f tag=v0.17.0
+#
+# Attests only the snap. Other release assets keep the original provenance.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the snap to (e.g. v0.17.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: Build, attach, checksum, attest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Build snap
+        id: build
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+
+      - name: Stage the snap and extend SHA256SUMS
+        id: stage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          snap="${{ steps.build.outputs.snap }}"
+          test -f "$snap"
+          name=$(basename "$snap")
+          cp -v "$snap" "dist/$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          gh release download "$TAG" --pattern SHA256SUMS --output dist/SHA256SUMS \
+            --repo "${{ github.repository }}"
+          grep -v "  ${name}$" dist/SHA256SUMS > dist/SHA256SUMS.next || true
+          (cd dist && sha256sum -- "$name") >> dist/SHA256SUMS.next
+          mv dist/SHA256SUMS.next dist/SHA256SUMS
+          cat dist/SHA256SUMS
+
+      - name: Attest the snap
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-path: dist/${{ steps.stage.outputs.name }}
+
+      - name: Attach snap and SHA256SUMS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.tag }}" \
+            dist/*.snap \
+            dist/SHA256SUMS \
+            --repo ${{ github.repository }} \
+            --clobber

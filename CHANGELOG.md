@@ -14,7 +14,7 @@ Release history for Vocalinux.
 
 **[v0.17.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0)** (2026-09-16)
 
-Minor on the stable line: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, Snap packaging with ydotool/`uinput`, Flatpak bundles attached by the release workflow, and injection/settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages).
+Minor on the stable line: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, Snap packaging with ydotool/`uinput` (GitHub `.snap` for sideload while Store review is pending), Flatpak bundles attached by the release workflow, and injection/settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages).
 
 See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0170) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0).
 

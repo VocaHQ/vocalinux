@@ -175,7 +175,7 @@ Ships whisper.cpp with Vulkan. It is **not on Flathub** (submission [flathub#936
 
 ### Snap (Ubuntu Snap Store)
 
-Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). `stable` is still a manual promote after QA.
+Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). `stable` is still a manual promote after QA. Tagged releases also attach `vocalinux_<version>_amd64.snap` on GitHub.
 
 ```bash
 sudo snap install vocalinux --edge
@@ -185,6 +185,13 @@ sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
 v0.17.0 includes ydotool and the `uinput` plug. The Store still has to finish review of that plug, so `snap info vocalinux` may still show **v0.16.2** (rev 7) on edge. That revision has no `uinput` plug; `snap connect vocalinux:uinput` fails until a 0.17.0+ revision is listed.
+
+Until then, sideload the GitHub file:
+
+```bash
+sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap
+sudo snap connect vocalinux:uinput
+```
 
 ### From source
 

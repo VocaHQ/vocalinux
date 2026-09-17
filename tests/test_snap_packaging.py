@@ -80,17 +80,53 @@ def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
     assert "python3-gi-cairo" not in stage
 
 
-def test_release_publishes_snap_to_edge_and_candidate() -> None:
-    """v* tags must ship the snap to the store, not attach it to GitHub."""
+def test_release_attaches_snap_then_tries_the_store() -> None:
+    """Store review of uinput must not swallow the GitHub .snap (v0.17.0)."""
     text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "  build-snap:\n" in text
+    assert "  attach-snap:\n" in text
     assert "  publish-snap:\n" in text
-    job = text.split("  publish-snap:\n", 1)[1].split("\n  deploy-website:", 1)[0]
-    assert "needs: build-and-release" in job
-    assert "snapcore/action-build@" in job
-    assert "snapcore/action-publish@" in job
-    assert "release: edge,candidate" in job
-    assert "release: stable" not in job
-    assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap" in job
-    assert "gh release upload" not in job
-    assert "action-gh-release" not in job
-    assert "upload-artifact" not in job
+
+    build = text.split("  build-snap:\n", 1)[1].split("\n  attach-snap:", 1)[0]
+    assert "snapcore/action-build@" in build
+    assert "upload-artifact" in build
+    assert "name: snap-amd64" in build
+    assert "gh release upload" not in build
+    assert "action-publish" not in build
+
+    attach = text.split("  attach-snap:\n", 1)[1].split("\n  publish-snap:", 1)[0]
+    assert "needs: [build-and-release, build-snap]" in attach
+    assert "gh release upload" in attach
+    assert "dist/*.snap" in attach
+    assert "--clobber" in attach
+    assert "contents: write" in attach
+
+    store = text.split("  publish-snap:\n", 1)[1].split("\n  deploy-website:", 1)[0]
+    assert "needs: build-snap" in store
+    assert "snapcore/action-publish@" in store
+    assert "release: edge,candidate" in store
+    assert "release: stable" not in store
+    assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap" in store
+    assert "continue-on-error: true" in store
+    assert "gh release upload" not in store
+    assert "action-gh-release" not in store
+
+
+def test_release_notes_document_snap_sideload() -> None:
+    body = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "snap install --dangerous" in body
+    assert "snap connect vocalinux:uinput" in body
+    assert "vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap" in body
+
+
+def test_snap_backfill_workflow_attests_only_the_snap() -> None:
+    """Existing tags (v0.17.0) need a dispatch that does not re-attest AppImages."""
+    path = REPO_ROOT / ".github" / "workflows" / "snap-backfill.yml"
+    text = path.read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert "snapcore/action-build@" in text
+    assert "gh release upload" in text
+    assert "SHA256SUMS" in text
+    assert "actions/attest-build-provenance@" in text
+    assert "subject-path: dist/${{ steps.stage.outputs.name }}" in text
+    assert "subject-checksums:" not in text
