@@ -13,7 +13,9 @@ release looks like once its run has finished. This reads the release:
 Nothing is downloaded: GitHub reports a sha256 for every asset it stores, and an
 asset it reports none for fails rather than being skipped.
 
-Usage: scripts/verify_release.py [tag]   (default: the latest stable release)
+Usage: scripts/verify_release.py [tag] [--if-published]
+       Default tag: the latest stable release. --if-published passes a tag that
+       published nothing.
 """
 
 from __future__ import annotations
@@ -34,6 +36,14 @@ NOTES_MUST_MENTION = ("sha256sum -c", "gh attestation verify", MANIFEST)
 #: What `gh attestation verify` asks for, so this asks for the same. Pre-encoded:
 #: `gh api` reads an unescaped `://` in a query as a protocol and refuses.
 SLSA_PROVENANCE = "https%3A%2F%2Fslsa.dev%2Fprovenance%2Fv1"
+
+
+class ReleaseNotFound(SystemExit):
+    """The API confirmed no release for the tag, with a 404.
+
+    Only this is forgivable. A rate limit or an auth failure stays a plain
+    SystemExit, or --if-published would pass a release nothing has read.
+    """
 
 
 def _gh(*args: str) -> subprocess.CompletedProcess:
@@ -76,6 +86,7 @@ def fetch_release(tag: str | None) -> dict:
     slug = repo_slug()
     candidates = [tag] + ([f"v{tag}"] if tag and tag[0].isdigit() else [])
     errors: list[str] = []
+    absent = True
     for candidate in candidates:
         path = (
             f"/repos/{slug}/releases/tags/{candidate}"
@@ -86,10 +97,11 @@ def fetch_release(tag: str | None) -> dict:
         if done.returncode == 0:
             return _release_from_api(json.loads(done.stdout))
         detail = (done.stderr or done.stdout or "").strip()
+        absent = absent and "HTTP 404" in detail
         errors.append(f"{path}: {detail or f'exit {done.returncode}'}")
     named = " or ".join(c for c in candidates if c) or "the latest stable release"
     hint = "\n".join(errors)
-    raise SystemExit(
+    raise (ReleaseNotFound if absent else SystemExit)(
         f"no release found for {named}\n{hint}\nusage: verify_release.py [tag], e.g. v0.16.2"
     )
 
@@ -205,9 +217,20 @@ def report(results: list[tuple[str, list[str]]]) -> bool:
 
 
 def main(argv: list[str]) -> int:
-    tag = argv[1] if len(argv) > 1 and argv[1] else None
+    args = [arg for arg in argv[1:] if arg]
+    if_published = "--if-published" in args
+    positional = [arg for arg in args if arg != "--if-published"]
+    tag = positional[0] if positional else None
     slug = repo_slug()
-    release = fetch_release(tag)
+    try:
+        release = fetch_release(tag)
+    except ReleaseNotFound:
+        if not if_published:
+            raise
+        # Nothing published, nothing to be wrong about, and the Release run
+        # has already gone red.
+        print(f"no release published for {tag or 'the latest stable tag'}, nothing to verify")
+        return 0
 
     if release["isDraft"] or release["isPrerelease"]:
         # Nightlies never go through publish-checksums and carry no manifest.
