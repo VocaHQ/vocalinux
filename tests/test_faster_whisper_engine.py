@@ -200,6 +200,18 @@ class TestFasterWhisperModelInfo:
                 model, _reason = get_recommended_model()
                 assert model == "base"
 
+    def test_get_recommended_model_cuda_ceils_fractional_ram(self):
+        """~7.4 GiB must count as 8 GiB so CUDA recommends small, not base."""
+        with patch(
+            "vocalinux.utils.faster_whisper_model_info._has_torch_cuda",
+            return_value=True,
+        ):
+            with patch("psutil.virtual_memory") as mock_mem:
+                mock_mem.return_value.total = int(7.4 * 1024**3)
+                model, reason = get_recommended_model()
+                assert model == "small"
+                assert "8GB" in reason
+
     def test_has_torch_cuda_available(self):
         """Test that torch detection reports CUDA availability."""
         from vocalinux.utils.faster_whisper_model_info import _has_torch_cuda

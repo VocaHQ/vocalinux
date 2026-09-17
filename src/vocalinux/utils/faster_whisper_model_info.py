@@ -7,6 +7,7 @@ loads it, the same way Parakeet and whisper.cpp models are.
 """
 
 import logging
+import math
 import os
 import shutil
 from functools import lru_cache
@@ -238,7 +239,7 @@ def get_recommended_model() -> tuple[str, str]:
     try:
         import psutil
 
-        ram_gb = int(psutil.virtual_memory().total) // (1024**3)
+        ram_gb = math.ceil(int(psutil.virtual_memory().total) / (1024**3))
     except Exception:
         ram_gb = 4
 

@@ -948,6 +948,106 @@ class TestGetRecommendedModel(unittest.TestCase):
                 self.assertIsInstance(reason, str)
                 self.assertGreater(len(reason), 0)
 
+    def test_parse_cuda_vram_mib_and_gb(self):
+        """nvidia-smi reports MiB; older mocks used GB. Both must parse."""
+        from vocalinux.utils.whispercpp_model_info import _parse_cuda_vram_gib
+
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA GeForce RTX 3060 (6144 MiB)"), 6.0)
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA GeForce RTX 3070 (8192 MiB)"), 8.0)
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA RTX 4090 (24GB)"), 24.0)
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA RTX 3080 (10 GB)"), 10.0)
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA RTX 3060 (8 GiB)"), 8.0)
+        self.assertEqual(_parse_cuda_vram_gib("NVIDIA GTX 1650 (4096 MB)"), 4.0)
+        self.assertIsNone(_parse_cuda_vram_gib("NVIDIA GPU"))
+        self.assertIsNone(_parse_cuda_vram_gib(""))
+
+    def test_get_recommended_model_with_cuda_mib_medium(self):
+        """8 GiB of CUDA VRAM reported as MiB must recommend medium."""
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=16 * (1024**3))
+
+        with patch.dict("sys.modules", {"psutil": mock_psutil}):
+            with patch(
+                "vocalinux.utils.whispercpp_model_info.detect_compute_backend"
+            ) as mock_backend:
+                mock_backend.return_value = ("cuda", "NVIDIA GeForce RTX 3070 (8192 MiB)")
+
+                from vocalinux.utils.whispercpp_model_info import get_recommended_model
+
+                model, reason = get_recommended_model()
+
+                self.assertEqual(model, "medium")
+                self.assertIn("VRAM", reason)
+
+    def test_get_recommended_model_with_cuda_mib_small(self):
+        """6 GiB of CUDA VRAM reported as MiB must recommend small."""
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=16 * (1024**3))
+
+        with patch.dict("sys.modules", {"psutil": mock_psutil}):
+            with patch(
+                "vocalinux.utils.whispercpp_model_info.detect_compute_backend"
+            ) as mock_backend:
+                mock_backend.return_value = ("cuda", "NVIDIA GeForce RTX 3060 (6144 MiB)")
+
+                from vocalinux.utils.whispercpp_model_info import get_recommended_model
+
+                model, reason = get_recommended_model()
+
+                self.assertEqual(model, "small")
+
+    def test_get_recommended_model_with_cuda_mib_base(self):
+        """Low CUDA VRAM reported as MiB must recommend base."""
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=8 * (1024**3))
+
+        with patch.dict("sys.modules", {"psutil": mock_psutil}):
+            with patch(
+                "vocalinux.utils.whispercpp_model_info.detect_compute_backend"
+            ) as mock_backend:
+                mock_backend.return_value = ("cuda", "NVIDIA GeForce GTX 1050 (2048 MiB)")
+
+                from vocalinux.utils.whispercpp_model_info import get_recommended_model
+
+                model, reason = get_recommended_model()
+
+                self.assertEqual(model, "base")
+
+    def test_get_recommended_model_with_cuda_unparseable_vram_falls_back(self):
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=16 * (1024**3))
+
+        with patch.dict("sys.modules", {"psutil": mock_psutil}):
+            with patch(
+                "vocalinux.utils.whispercpp_model_info.detect_compute_backend"
+            ) as mock_backend:
+                mock_backend.return_value = ("cuda", "NVIDIA GPU")
+
+                from vocalinux.utils.whispercpp_model_info import get_recommended_model
+
+                model, reason = get_recommended_model()
+
+                self.assertEqual(model, "small")
+                self.assertIn("CUDA GPU detected", reason)
+
+    def test_get_recommended_model_vulkan_ceils_fractional_ram(self):
+        """~7.4 GiB must count as 8 GiB so Vulkan recommends small, not base."""
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=int(7.4 * (1024**3)))
+
+        with patch.dict("sys.modules", {"psutil": mock_psutil}):
+            with patch(
+                "vocalinux.utils.whispercpp_model_info.detect_compute_backend"
+            ) as mock_backend:
+                mock_backend.return_value = ("vulkan", "Intel Arc A770")
+
+                from vocalinux.utils.whispercpp_model_info import get_recommended_model
+
+                model, reason = get_recommended_model()
+
+                self.assertEqual(model, "small")
+                self.assertIn("8GB", reason)
+
 
 class TestGetModelPath(unittest.TestCase):
     """Test cases for get_model_path function."""

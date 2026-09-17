@@ -788,6 +788,54 @@ def _dialog_for_engine_ui(engine_text: str):
     return dialog
 
 
+class _FakeCombo:
+    """ComboBoxText stand-in that records ids the way `_populate_model_options` writes them."""
+
+    def __init__(self) -> None:
+        self._items: list[tuple[str, str]] = []
+        self._active_id: str | None = None
+
+    def remove_all(self) -> None:
+        self._items.clear()
+        self._active_id = None
+
+    def append(self, item_id: str, text: str) -> None:
+        self._items.append((item_id, text))
+
+    def set_active_id(self, item_id: str) -> bool:
+        if any(stored_id == item_id for stored_id, _text in self._items):
+            self._active_id = item_id
+            return True
+        return False
+
+    def set_active(self, index: int) -> None:
+        self._active_id = self._items[index][0]
+
+    def get_active_id(self) -> str | None:
+        return self._active_id
+
+    def get_active_text(self) -> str | None:
+        for stored_id, text in self._items:
+            if stored_id == self._active_id:
+                return text
+        return None
+
+    def get_model(self) -> list[tuple[str, str]]:
+        # Gtk.ComboBoxText stores (display text, id); the populate fallback
+        # compares row[0] against the id it is trying to restore.
+        return [(text, stored_id) for stored_id, text in self._items]
+
+    @property
+    def ids(self) -> list[str]:
+        return [item_id for item_id, _text in self._items]
+
+    def text_for(self, item_id: str) -> str:
+        for stored_id, text in self._items:
+            if stored_id == item_id:
+                return text
+        raise KeyError(item_id)
+
+
 def _dialog_for_selected_settings(engine_text: str, language_id: str, model_id: str = "small"):
     """Stub combos and spins so `get_selected_settings` can run unbound."""
     dialog = _dialog_stub()
@@ -809,6 +857,115 @@ def _dialog_for_selected_settings(engine_text: str, language_id: str, model_id: 
     dialog.advanced_no_speech_thold_spin.get_value.return_value = 0.6
     dialog.gpu_device_combo.get_active_id.return_value = None
     return dialog
+
+
+def _faster_whisper_picker_dialog(
+    dialog_class: type[Any], *, saved_model: str, language: str = "en-us"
+) -> Mock:
+    """Stub enough widgets to run real `_populate_model_options` for Faster Whisper."""
+    dialog = _dialog_for_selected_settings("Faster Whisper", language, model_id=saved_model)
+    dialog.language = language
+    dialog.config_manager.get_model_size_for_engine.return_value = saved_model
+    dialog.model_combo = _FakeCombo()
+    dialog.model_variant_combo = _FakeCombo()
+    _bind_real(dialog, dialog_class, "_populate_model_options", "get_selected_settings")
+    return dialog
+
+
+def _populate_faster_whisper_picker(
+    settings_dialog: Any,
+    dialog_class: type[Any],
+    *,
+    saved_model: str,
+    language: str = "en-us",
+    recommended: str = "small",
+) -> Mock:
+    dialog = _faster_whisper_picker_dialog(dialog_class, saved_model=saved_model, language=language)
+    with (
+        patch.object(
+            settings_dialog,
+            "get_recommended_faster_whisper_model",
+            return_value=(recommended, "CUDA GPU"),
+        ),
+        patch.object(settings_dialog, "is_faster_whisper_model_downloaded", return_value=False),
+    ):
+        dialog._populate_model_options()
+    return dialog
+
+
+def test_faster_whisper_picker_keeps_saved_english_model(settings_dialog, dialog_class):
+    """A tray-persisted ``small.en`` must stay selected instead of falling back."""
+    dialog = _populate_faster_whisper_picker(
+        settings_dialog, dialog_class, saved_model="small.en", language="en-us"
+    )
+
+    assert "small.en" in dialog.model_combo.ids
+    assert "Small.en" not in dialog.model_combo.ids
+    assert dialog.model_combo.get_active_id() == "small.en"
+    assert dialog.get_selected_settings()["model_size"] == "small.en"
+
+
+def test_faster_whisper_english_recommendation_stars_en_variant(settings_dialog, dialog_class):
+    """English language must star ``small.en``, not the bare multilingual row."""
+    dialog = _populate_faster_whisper_picker(
+        settings_dialog,
+        dialog_class,
+        saved_model="tiny",
+        language="en-us",
+        recommended="small",
+    )
+
+    assert " ★" in dialog.model_combo.text_for("small.en")
+    assert " ★" not in dialog.model_combo.text_for("small")
+
+
+def test_faster_whisper_non_english_stars_multilingual_and_keeps_saved_en(
+    settings_dialog, dialog_class
+):
+    """German must star ``small``, not ``small.en``, and must not rewrite a saved .en id."""
+    dialog = _populate_faster_whisper_picker(
+        settings_dialog,
+        dialog_class,
+        saved_model="small.en",
+        language="de",
+        recommended="small",
+    )
+
+    assert dialog.model_combo.get_active_id() == "small.en"
+    assert " ★" in dialog.model_combo.text_for("small")
+    assert " ★" not in dialog.model_combo.text_for("small.en")
+    assert dialog.get_selected_settings()["model_size"] == "small.en"
+
+
+def test_faster_whisper_selected_settings_keep_dotted_id(dialog_class):
+    """Raw combo ids such as ``small.en`` must persist through instant-apply."""
+    dialog = _dialog_for_selected_settings("Faster Whisper", "en-us", model_id="small.en")
+
+    settings = dialog_class.get_selected_settings(dialog)
+
+    assert settings["engine"] == "faster_whisper"
+    assert settings["model_size"] == "small.en"
+
+
+def test_whisper_picker_still_uses_capitalized_combo_ids(settings_dialog, dialog_class):
+    """Raw Faster Whisper ids must not leak into engines whose combo ids are capitalized."""
+    dialog = _dialog_for_selected_settings("Whisper", "en-us", model_id="small")
+    dialog.language = "en-us"
+    dialog.config_manager.get_model_size_for_engine.return_value = "small"
+    dialog.model_combo = _FakeCombo()
+    dialog.model_variant_combo = _FakeCombo()
+    _bind_real(dialog, dialog_class, "_populate_model_options")
+    with (
+        patch.object(
+            settings_dialog, "_get_recommended_whisper_model", return_value=("small", "reason")
+        ),
+        patch.object(settings_dialog, "_is_whisper_model_downloaded", return_value=False),
+    ):
+        dialog._populate_model_options()
+
+    assert "Small" in dialog.model_combo.ids
+    assert "small" not in dialog.model_combo.ids
+    assert dialog.model_combo.get_active_id() == "Small"
 
 
 def test_parakeet_hides_the_language_picker(dialog_class):

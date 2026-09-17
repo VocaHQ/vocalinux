@@ -105,6 +105,38 @@ class TestRecommendedModelForEngine:
     def test_remote_api_has_nothing_to_download(self, settings_dialog):
         assert settings_dialog.recommended_model_for_engine("remote_api", "auto") is None
 
+    def test_faster_whisper_english_gets_the_english_only_variant(self, settings_dialog):
+        with patch.object(
+            settings_dialog,
+            "get_recommended_faster_whisper_model",
+            return_value=("small", "CUDA GPU"),
+        ):
+            result = settings_dialog.recommended_model_for_engine("faster_whisper", "en-us")
+
+        assert result.model_id == "small.en"
+        assert "CUDA GPU" in result.reason
+        assert result.model_id in settings_dialog.ENGINE_MODELS["faster_whisper"]
+
+    def test_faster_whisper_non_english_keeps_the_multilingual_model(self, settings_dialog):
+        with patch.object(
+            settings_dialog,
+            "get_recommended_faster_whisper_model",
+            return_value=("tiny", "4GB RAM"),
+        ):
+            result = settings_dialog.recommended_model_for_engine("faster_whisper", "de")
+
+        assert result.model_id == "tiny"
+
+    def test_faster_whisper_skips_english_variant_when_catalog_has_none(self, settings_dialog):
+        with patch.object(
+            settings_dialog,
+            "get_recommended_faster_whisper_model",
+            return_value=("large-v3", "lots of RAM"),
+        ):
+            result = settings_dialog.recommended_model_for_engine("faster_whisper", "en-us")
+
+        assert result.model_id == "large-v3"
+
 
 class TestOffer:
     """What the notification carries."""

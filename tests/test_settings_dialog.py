@@ -604,6 +604,19 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
 
         self.assertTrue(callable(_get_recommended_whisper_model))
 
+    def test_get_recommended_whisper_model_ceils_fractional_ram(self):
+        """~7.4 GiB must count as 8 GiB so the CPU path recommends small."""
+        from vocalinux.ui.settings_dialog import _get_recommended_whisper_model
+
+        mock_psutil = MagicMock()
+        mock_psutil.virtual_memory.return_value = MagicMock(total=int(7.4 * (1024**3)))
+        torch_mock = MagicMock()
+        torch_mock.cuda.is_available.return_value = False
+        with patch.dict("sys.modules", {"psutil": mock_psutil, "torch": torch_mock}):
+            model, reason = _get_recommended_whisper_model()
+        self.assertEqual(model, "small")
+        self.assertIn("8GB", reason)
+
     def test_get_recommended_vosk_model_function_exists(self):
         """Test that _get_recommended_vosk_model function exists."""
         from vocalinux.ui.settings_dialog import _get_recommended_vosk_model
@@ -621,6 +634,20 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         self.assertIn("large-v3-turbo", WHISPERCPP_MODEL_INFO)
         self.assertIn("large-v3-turbo-q5_0", WHISPERCPP_MODEL_INFO)
         self.assertNotIn("small.en-tdrz", WHISPERCPP_MODEL_INFO)
+
+    def test_faster_whisper_picker_lists_english_only_catalog_ids(self):
+        """Settings must list the same .en ids the tray can persist."""
+        from vocalinux.ui.settings_dialog import ENGINE_MODELS, FASTER_WHISPER_MODEL_INFO
+
+        fw = ENGINE_MODELS["faster_whisper"]
+        for model_id in ("tiny.en", "base.en", "small.en", "medium.en"):
+            self.assertIn(model_id, fw)
+            self.assertIn(model_id, FASTER_WHISPER_MODEL_INFO)
+        self.assertIn("large-v3", fw)
+        self.assertNotIn("large-v3.en", fw)
+        self.assertNotIn("large-v3.en", FASTER_WHISPER_MODEL_INFO)
+        for model_id in fw:
+            self.assertIn(model_id, FASTER_WHISPER_MODEL_INFO)
 
     def test_model_display_name_large_v3_turbo(self):
         """Test display labels for whisper.cpp model variants."""
@@ -719,6 +746,37 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
             ("medium", "mock hardware reason"),
         )
         self.assertEqual(_default_whispercpp_variant_for_size("medium", "auto"), "medium")
+
+    def test_faster_whisper_recommendation_uses_language_for_english_variant(self):
+        """English language nudges Faster Whisper recommendations to .en variants."""
+        from vocalinux.ui.settings_dialog import (
+            _recommended_faster_whisper_variant_for_language,
+        )
+
+        self.assertEqual(
+            _recommended_faster_whisper_variant_for_language(
+                "small",
+                "mock hardware reason",
+                "en-us",
+            ),
+            ("small.en", "mock hardware reason"),
+        )
+        self.assertEqual(
+            _recommended_faster_whisper_variant_for_language(
+                "tiny",
+                "mock hardware reason",
+                "de",
+            ),
+            ("tiny", "mock hardware reason"),
+        )
+        self.assertEqual(
+            _recommended_faster_whisper_variant_for_language(
+                "large-v3",
+                "mock hardware reason",
+                "en-us",
+            ),
+            ("large-v3", "mock hardware reason"),
+        )
 
     def test_whispercpp_variant_for_language_retargets_ambiguous_size_ids(self):
         """Bare size ids must follow language, not stick on multilingual."""
@@ -940,6 +998,18 @@ class TestSettingsSearch(unittest.TestCase):
         self.assertIn("collect_groups", source)
         self.assertIn("Gtk.Container", source)
         self.assertIn("widget.get_children()", source)
+
+    def test_unused_island_follows_nested_group_during_search(self):
+        """The Unused downloads expander header must not leak next to unrelated hits."""
+        source = self._settings_source()
+        search_body = source.split("def _on_search_changed(self, entry)")[1].split("def ")[0]
+        self.assertIn("self.unused_island.set_visible", search_body)
+        self.assertIn("self.unused_models_group.get_visible()", search_body)
+        snapshot_body = source.split("def _snapshot_search_baseline")[1].split("def ")[0]
+        self.assertIn("self.unused_island", snapshot_body)
+        restore_body = source.split("def _restore_search_baseline")[1].split("def ")[0]
+        self.assertIn("widget.set_visible(visible)", restore_body)
+        self.assertIn('self.unused_models_group.title = "Unused downloads"', source)
 
     def test_search_respects_closed_revealers(self):
         """A locked Advanced section must not leak controls into search."""
