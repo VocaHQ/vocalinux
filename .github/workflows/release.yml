@@ -531,13 +531,11 @@ jobs:
       - name: Attach to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           ls -la dist/*.snap
-          gh release upload "${{ github.ref_name }}" \
-            dist/*.snap \
-            --repo ${{ github.repository }} \
-            --clobber
+          gh release upload "$TAG" dist/*.snap --clobber
 
   publish-snap:
     name: Publish Snap to Store
@@ -546,21 +544,16 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Check for Snap Store credentials
-        id: store
+      - name: Require Snap Store credentials
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         run: |
           if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
-            echo "configured=false" >> "$GITHUB_OUTPUT"
             echo "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap"
-            echo "::warning::SNAPCRAFT_STORE_CREDENTIALS is unset; skipping Store publish. The .snap is still on the GitHub Release."
-          else
-            echo "configured=true" >> "$GITHUB_OUTPUT"
+            exit 1
           fi
 
       - name: Download the snap
-        if: steps.store.outputs.configured == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: snap-amd64
@@ -568,28 +561,37 @@ jobs:
 
       - name: Locate the snap
         id: snapfile
-        if: steps.store.outputs.configured == 'true'
         run: |
           set -euo pipefail
           file=$(ls dist/*.snap)
           echo "file=$file" >> "$GITHUB_OUTPUT"
           ls -la "$file"
 
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+
       - name: Publish snap to edge and candidate
-        id: publish
-        if: steps.store.outputs.configured == 'true'
-        continue-on-error: true
-        uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40 # v1
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        with:
-          snap: ${{ steps.snapfile.outputs.file }}
-          release: edge,candidate
-
-      - name: Store publish outcome
-        if: steps.store.outputs.configured == 'true' && steps.publish.outcome != 'success'
+          SNAP_FILE: ${{ steps.snapfile.outputs.file }}
         run: |
-          echo "::warning::Snap Store did not release this revision (often uinput allow-installation review). The .snap is on the GitHub Release for sideload with snap install --dangerous. File a privileged-interfaces request, then re-run this job."
+          set -euo pipefail
+          log=/tmp/snap-upload.log
+          set +e
+          /snap/bin/snapcraft upload "$SNAP_FILE" --release edge,candidate >"$log" 2>&1
+          status=$?
+          set -e
+          cat "$log"
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if grep -F -q "will need manual review" "$log" \
+            && grep -F -q "allow-installation" "$log"; then
+            echo "::warning::Snap Store queued a human review (allow-installation). The .snap is on the GitHub Release."
+            exit 0
+          fi
+          echo "::error::Snap Store publish failed (exit $status) for a reason other than allow-installation review."
+          exit "$status"
 
   deploy-website:
     name: Deploy Website

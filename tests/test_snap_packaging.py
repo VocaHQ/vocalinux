@@ -100,14 +100,21 @@ def test_release_attaches_snap_then_tries_the_store() -> None:
     assert "dist/*.snap" in attach
     assert "--clobber" in attach
     assert "contents: write" in attach
+    assert "TAG: ${{ github.ref_name }}" in attach
+    assert 'gh release upload "$TAG"' in attach
+    assert '"${{ github.ref_name }}"' not in attach
 
     store = text.split("  publish-snap:\n", 1)[1].split("\n  deploy-website:", 1)[0]
     assert "needs: build-snap" in store
-    assert "snapcore/action-publish@" in store
-    assert "release: edge,candidate" in store
+    assert "--release edge,candidate" in store
     assert "release: stable" not in store
     assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap" in store
-    assert "continue-on-error: true" in store
+    assert "will need manual review" in store
+    assert "allow-installation" in store
+    assert "continue-on-error" not in store
+    assert "snapcore/action-publish" not in store
+    assert "SNAP_FILE:" in store
+    assert 'snapcraft upload "$SNAP_FILE"' in store
     assert "gh release upload" not in store
     assert "action-gh-release" not in store
 
@@ -130,3 +137,21 @@ def test_snap_backfill_workflow_attests_only_the_snap() -> None:
     assert "actions/attest-build-provenance@" in text
     assert "subject-path: dist/${{ steps.stage.outputs.name }}" in text
     assert "subject-checksums:" not in text
+    assert "  verify:\n" in text
+    assert "scripts/verify_release.py" in text
+    assert 'python3 scripts/verify_release.py "$TAG"' in text
+
+
+def test_snap_backfill_dispatch_input_never_reaches_the_shell() -> None:
+    """Same rule as verify-release.yml: interpolating the tag into run: is injection."""
+    import re
+
+    text = (REPO_ROOT / ".github" / "workflows" / "snap-backfill.yml").read_text(
+        encoding="utf-8"
+    )
+    run_lines = [line for line in text.splitlines() if re.match(r"^\s*-?\s*run:", line)]
+    assert run_lines, "found no run: step, so this guard is scanning nothing"
+    for line in run_lines:
+        assert "${{" not in line, f"a run: step interpolates a template expression: {line.strip()}"
+    assert "TAG: ${{ inputs.tag }}" in text
+    assert 'gh release upload "$TAG"' in text

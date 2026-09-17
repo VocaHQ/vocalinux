@@ -6,6 +6,7 @@ name: Attach snap to an existing release
 #   gh workflow run snap-backfill.yml -f tag=v0.17.0
 #
 # Attests only the snap. Other release assets keep the original provenance.
+# Caller-supplied tag values stay in the environment, never in run: source.
 
 on:
   workflow_dispatch:
@@ -27,6 +28,23 @@ jobs:
       id-token: write
       attestations: write
     steps:
+      - name: Require a version tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*) ;;
+            *)
+              echo "refusing tag that is not v<digit>…: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          if printf '%s' "$TAG" | grep -q '[^A-Za-z0-9._-]'; then
+            echo "refusing tag with unexpected characters: $TAG" >&2
+            exit 1
+          fi
+
       - name: Checkout the tagged commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,16 +59,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.tag }}
+          SNAP_PATH: ${{ steps.build.outputs.snap }}
         run: |
           set -euo pipefail
           mkdir -p dist
-          snap="${{ steps.build.outputs.snap }}"
-          test -f "$snap"
-          name=$(basename "$snap")
-          cp -v "$snap" "dist/$name"
+          test -f "$SNAP_PATH"
+          name=$(basename "$SNAP_PATH")
+          cp -v "$SNAP_PATH" "dist/$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
-          gh release download "$TAG" --pattern SHA256SUMS --output dist/SHA256SUMS \
-            --repo "${{ github.repository }}"
+          gh release download "$TAG" --pattern SHA256SUMS --output dist/SHA256SUMS
           grep -v "  ${name}$" dist/SHA256SUMS > dist/SHA256SUMS.next || true
           (cd dist && sha256sum -- "$name") >> dist/SHA256SUMS.next
           mv dist/SHA256SUMS.next dist/SHA256SUMS
@@ -64,10 +81,21 @@ jobs:
       - name: Attach snap and SHA256SUMS
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          gh release upload "${{ inputs.tag }}" \
-            dist/*.snap \
-            dist/SHA256SUMS \
-            --repo ${{ github.repository }} \
-            --clobber
+          gh release upload "$TAG" dist/*.snap dist/SHA256SUMS --clobber
+
+  verify:
+    name: Verify the published release
+    needs: backfill
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: python3 scripts/verify_release.py "$TAG"

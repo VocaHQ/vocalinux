@@ -88,7 +88,9 @@ Install `just` from https://just.systems or the distro package `just`.
 
 `verify-release.yml` runs the same check when the release workflow finishes.
 It cannot see a hand edit made afterwards, which is how every v0.16.2 defect
-arrived, so run it yourself after touching a published release.
+arrived, so run it yourself after touching a published release. The one
+exception is `snap-backfill.yml`: that workflow attaches the snap, rewrites
+`SHA256SUMS`, and then runs `scripts/verify_release.py` itself.
 
 ## Detailed Release Steps
 
