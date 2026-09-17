@@ -8,9 +8,11 @@ Key focus areas:
 """
 
 import base64
+import json
 import os
 import sys
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +33,7 @@ from vocalinux.utils.model_checksums import VERIFICATION_STAMP_NAME, ChecksumErr
 from vocalinux.utils.model_checksums import verify_model_file as verify_model_file_real
 from vocalinux.utils.parakeet_model_info import MODEL_FILES as PARAKEET_MODEL_FILES
 from vocalinux.utils.parakeet_model_info import manifest_key as parakeet_manifest_key
+from vocalinux.utils.parakeet_model_info import model_files as parakeet_model_files
 
 
 def _make_manager(engine="whisper_cpp", **kw):
@@ -802,6 +805,85 @@ class TestParakeetDownloadVerifiesExistingFiles:
             os.path.basename(path) == encoder_name + ".tmp" for path in streamed
         ), "an existing bad file must be removed and re-downloaded"
         assert encoder.read_bytes() == b"good-enough"
+
+
+class TestParakeetReleaseManifestRecovery:
+    """Invalid publisher metadata must leave a retryable, unloaded model."""
+
+    @pytest.mark.parametrize("cached", [False, True])
+    @pytest.mark.parametrize("invalid_manifest", ['{"files": []}', '{"files": [{}]}'])
+    def test_invalid_manifest_is_removed_and_retry_reuses_weights(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        skip_checksum: MagicMock,
+        cached: bool,
+        invalid_manifest: str,
+    ) -> None:
+        from vocalinux.utils import parakeet_model_info as parakeet
+
+        model_name = "orukeet-v0.1.0"
+        model_dir = tmp_path / model_name
+        model_dir.mkdir()
+        names = parakeet_model_files(model_name)
+        manifest_path = model_dir / "manifest.json"
+        records = []
+        for name in names[1:]:
+            expected = expected_for(parakeet_manifest_key(model_name, name))
+            assert expected is not None
+            records.append({"path": name, "sha256": expected.digest, "bytes": expected.size})
+            if cached:
+                (model_dir / name).write_bytes(b"verified model file")
+        if cached:
+            manifest_path.write_text(invalid_manifest, encoding="utf-8")
+
+        manager = _make_manager(engine="parakeet")
+        manager.model_size = model_name
+        manager._defer_download = cached
+        progress = MagicMock()
+        manager._download_progress_callback = progress
+        streamed = []
+        content = invalid_manifest
+
+        def stream(url: str, destination: str) -> None:
+            streamed.append(os.path.basename(destination))
+            with open(destination, "wb") as target:
+                target.write(
+                    content.encode()
+                    if destination.endswith("manifest.json.tmp")
+                    else b"verified model file"
+                )
+
+        mock_sherpa = MagicMock()
+        mock_requests = MagicMock()
+        mock_requests.exceptions.RequestException = FakeRequestError
+        monkeypatch.setitem(sys.modules, "sherpa_onnx", mock_sherpa)
+        monkeypatch.setitem(sys.modules, "requests", mock_requests)
+        monkeypatch.setattr(parakeet, "get_model_path", lambda _: str(model_dir))
+        monkeypatch.setattr(manager, "_stream_model_download", stream)
+
+        if cached:
+            manager._init_parakeet()
+        else:
+            with pytest.raises(ChecksumError):
+                manager._init_parakeet()
+            assert manager.state == RecognitionState.ERROR
+        assert not manager._model_initialized
+        mock_sherpa.OfflineRecognizer.from_transducer.assert_not_called()
+        assert not manifest_path.exists()
+        assert not parakeet.is_model_downloaded(model_name)
+        assert manager._download_progress_callback is progress
+        assert all(call.args[2] != "Complete!" for call in progress.call_args_list)
+        assert all((model_dir / name).read_bytes() == b"verified model file" for name in names[1:])
+
+        content = json.dumps({"files": records})
+        manager._defer_download = False
+        streamed.clear()
+        manager._init_parakeet()
+        assert manager._model_initialized
+        assert parakeet.is_model_downloaded(model_name)
+        assert streamed == ["manifest.json.tmp"]
+        assert progress.call_args.args == (1.0, 0, "Complete!")
 
 
 class TestFasterWhisperRejectsAnUnverifiedModelOnDisk:

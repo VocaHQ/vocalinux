@@ -388,3 +388,18 @@ corresponding source available.
 ## Star Chart
 
 [![Star History Chart](https://api.star-history.com/chart?repos=VocaHQ/vocalinux&type=date&legend=top-left&sealed_token=ZWyQQLhSORoR4mKf6UXMGFSCBXRxM_yEZgc8MFCH_ysBjaFUm_OCH-bI3TD7OivczEzm-ADRIpF9xCWFOMHvBPW95eQBxzfRMpNksChz7rN_eiqL7AIMDw)](https://www.star-history.com/?type=date&repos=VocaHQ%2Fvocalinux)
+
+### Optional Orukeet model
+
+With the Parakeet engine installed, Settings → Speech Model → Parakeet also
+offers `orukeet-v0.1.0`. It uses the existing local sherpa-onnx recognizer for
+25 European languages; the recommended Parakeet model and default whisper.cpp
+engine stay unchanged.
+
+The download comes from a pinned revision of
+[oruk/orukeet on Hugging Face](https://huggingface.co/oruk/orukeet). Vocalinux
+checks every file against its bundled SHA-256 pins and checks the publisher's
+release manifest against those same pins. The manifest download participates
+in Hugging Face's normal model-download accounting. Cached recognition works
+offline and does not send audio or usage events. The model occupies about
+641 MiB; its CC BY-SA 4.0 weights license and NVIDIA attribution are included.

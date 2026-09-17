@@ -2145,7 +2145,7 @@ class SpeechRecognitionManager:
         # its own slice of the bundle: the bar advances once across the whole
         # download instead of restarting for each of the four files.
         outer_callback = self._download_progress_callback
-        total_files = len(parakeet.MODEL_FILES)
+        total_files = len(parakeet.model_files(self.model_size))
 
         def file_progress(index: int, name: str) -> Callable[[float, float, str], None]:
             def report(fraction: float, speed: float, status: str) -> None:
@@ -2160,7 +2160,7 @@ class SpeechRecognitionManager:
 
         temp_file = None
         try:
-            for index, filename in enumerate(parakeet.MODEL_FILES):
+            for index, filename in enumerate(parakeet.model_files(self.model_size)):
                 dest_path = os.path.join(model_dir, filename)
                 key = parakeet.manifest_key(self.model_size, filename)
                 # Existence is not enough: a leftover or copied-in file must
@@ -2199,6 +2199,8 @@ class SpeechRecognitionManager:
                 os.rename(temp_file, dest_path)
                 temp_file = None
 
+            self._validate_parakeet_release_manifest(self.model_size, model_dir)
+
         # RequestException=Exception under the test mocks; do not catch
         # Timeout separately (it is not a real exception type there).
         except requests.exceptions.RequestException as e:
@@ -2225,6 +2227,17 @@ class SpeechRecognitionManager:
             self._download_progress_callback(1.0, 0, "Complete!")
 
     @staticmethod
+    def _validate_parakeet_release_manifest(model_size: str, model_dir: str) -> None:
+        """Discard failed publisher metadata so retries can reuse verified weights."""
+        try:
+            parakeet.validate_release_manifest(model_size, model_dir)
+        except ChecksumError:
+            filename = parakeet.PARAKEET_MODEL_INFO[model_size].get("manifest")
+            if filename:
+                os.remove(os.path.join(model_dir, filename))
+            raise
+
+    @staticmethod
     def _parakeet_model_is_verified(model_size: str, model_dir: str) -> bool:
         """Hash each bundle file against its pin. Delete only a digest/size mismatch.
 
@@ -2232,7 +2245,7 @@ class SpeechRecognitionManager:
         so the caller does not hand the files to sherpa-onnx.
         """
         verified = True
-        for filename in parakeet.MODEL_FILES:
+        for filename in parakeet.model_files(model_size):
             path = os.path.join(model_dir, filename)
             key = parakeet.manifest_key(model_size, filename)
             try:
@@ -2248,6 +2261,12 @@ class SpeechRecognitionManager:
                     logger.error("Could not remove %s: %s", path, remove_error)
                     return False
                 logger.info("Removed the unverified model file; it will be downloaded again")
+        if verified:
+            try:
+                SpeechRecognitionManager._validate_parakeet_release_manifest(model_size, model_dir)
+            except (ChecksumError, OSError, ValueError) as error:
+                logger.error("Parakeet release manifest verification failed: %s", error)
+                return False
         return verified
 
     def _init_parakeet(self) -> None:
@@ -2316,7 +2335,7 @@ class SpeechRecognitionManager:
             logger.error("Please install it with 'pip install sherpa-onnx'")
             self.state = RecognitionState.ERROR
             raise
-        except (FileNotFoundError, RuntimeError, OSError) as e:
+        except (ChecksumError, FileNotFoundError, RuntimeError, OSError) as e:
             logger.error(f"Failed to initialize Parakeet engine: {e}", exc_info=True)
             self.state = RecognitionState.ERROR
             raise

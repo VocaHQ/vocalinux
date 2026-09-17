@@ -132,9 +132,10 @@ def _parakeet_entries() -> list[Entry]:
     """
     sys.path.insert(0, str(SRC))
     from vocalinux.utils.parakeet_model_info import (
-        MODEL_FILES,
         PARAKEET_MODEL_INFO,
+        get_model_file_url,
         manifest_key,
+        model_files,
     )
 
     entries = []
@@ -150,12 +151,13 @@ def _parakeet_entries() -> list[Entry]:
             if digest:
                 published[sibling["rfilename"]] = (digest, int(lfs.get("size", 0)))
 
-        for filename in MODEL_FILES:
+        for filename in model_files(model_name):
             key = manifest_key(model_name, filename)
-            if filename in published:
-                digest, size = published[filename]
+            remote_name = "/".join(part for part in (info.get("subdir", ""), filename) if part)
+            if remote_name in published:
+                digest, size = published[remote_name]
             else:
-                url = f"https://huggingface.co/{repo}/resolve/{revision}/{filename}?download=true"
+                url = get_model_file_url(model_name, filename)
                 print(f"    {key} (not LFS, hashing bytes)...", flush=True)
                 digest, size = _download_and_hash(url, "")
             entries.append(Entry(key, "sha256", digest, size))
