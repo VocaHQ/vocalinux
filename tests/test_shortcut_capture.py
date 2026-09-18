@@ -10,7 +10,6 @@ Also drives `_EvdevShortcutRecorder` with mocked evdev devices and GLib watches
 """
 
 import importlib
-import sys
 import types
 from typing import Any, Optional
 from unittest.mock import MagicMock
@@ -285,7 +284,8 @@ def evdev_recorder(monkeypatch: pytest.MonkeyPatch) -> _EvdevRecorderHarness:
         timeout_add=harness.timeout_add,
         source_remove=harness.source_remove,
     )
-    monkeypatch.setattr(sys.modules[_EvdevShortcutRecorder.__module__], "GLib", fake_glib)
+    # Methods close over the original module dict, not a reimported sys.modules entry.
+    monkeypatch.setitem(_EvdevShortcutRecorder.start.__globals__, "GLib", fake_glib)
     monkeypatch.setattr(
         "vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE",
         True,
