@@ -4,7 +4,7 @@ This module provides type definitions to avoid circular imports.
 """
 
 from enum import Enum, auto
-from typing import Callable, Optional, Protocol  # noqa: F401
+from typing import Any, Callable, Iterable, Optional, Protocol  # noqa: F401
 
 
 class RecognitionState(Enum):
@@ -78,4 +78,24 @@ class TextInjectorProtocol(Protocol):
 
     def inject_text(self, text: str) -> bool:
         """Inject text into the active application."""
+        ...
+
+
+class _EvdevCaptureDevice(Protocol):
+    """Minimal evdev InputDevice surface used by the shortcut recorder."""
+
+    def fileno(self) -> int:
+        """Return the device file descriptor for GLib.io_add_watch."""
+        ...
+
+    def read(self) -> Iterable[Any]:
+        """Return pending input events."""
+        ...
+
+    def close(self) -> None:
+        """Close the device file."""
+        ...
+
+    def active_keys(self) -> Iterable[int]:
+        """Return evdev codes currently down on this device."""
         ...

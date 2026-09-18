@@ -9,10 +9,12 @@ Also drives `_EvdevShortcutRecorder` with mocked evdev devices and GLib watches
 (no `/dev/input`, no SettingsDialog construction).
 """
 
+import importlib
+import sys
+import types
 from typing import Any, Optional
 from unittest.mock import MagicMock
 
-import evdev
 import pytest
 
 from vocalinux.ui.keyboard_backends.evdev_backend import DEVICE_RESCAN_SECONDS
@@ -272,17 +274,18 @@ class _EvdevRecorderHarness:
 
 @pytest.fixture
 def evdev_recorder(monkeypatch: pytest.MonkeyPatch) -> _EvdevRecorderHarness:
-    import vocalinux.ui.settings_dialog as settings_dialog
-
     harness = _EvdevRecorderHarness()
-    monkeypatch.setattr(settings_dialog.GLib, "IO_IN", _IO_IN)
-    monkeypatch.setattr(settings_dialog.GLib, "IO_OUT", _IO_OUT)
-    monkeypatch.setattr(settings_dialog.GLib, "IO_PRI", _IO_PRI)
-    monkeypatch.setattr(settings_dialog.GLib, "IO_ERR", _IO_ERR)
-    monkeypatch.setattr(settings_dialog.GLib, "IO_HUP", _IO_HUP)
-    monkeypatch.setattr(settings_dialog.GLib, "io_add_watch", harness.io_add_watch)
-    monkeypatch.setattr(settings_dialog.GLib, "timeout_add", harness.timeout_add)
-    monkeypatch.setattr(settings_dialog.GLib, "source_remove", harness.source_remove)
+    fake_glib = types.SimpleNamespace(
+        IO_IN=_IO_IN,
+        IO_OUT=_IO_OUT,
+        IO_PRI=_IO_PRI,
+        IO_ERR=_IO_ERR,
+        IO_HUP=_IO_HUP,
+        io_add_watch=harness.io_add_watch,
+        timeout_add=harness.timeout_add,
+        source_remove=harness.source_remove,
+    )
+    monkeypatch.setattr(sys.modules[_EvdevShortcutRecorder.__module__], "GLib", fake_glib)
     monkeypatch.setattr(
         "vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE",
         True,
@@ -291,7 +294,15 @@ def evdev_recorder(monkeypatch: pytest.MonkeyPatch) -> _EvdevRecorderHarness:
         "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices",
         harness.find_keyboard_devices,
     )
-    monkeypatch.setattr(evdev, "InputDevice", harness._input_device)
+    # Keyboard tests pop sys.modules["evdev"]; patch the live module, not a stale import.
+    evdev_mod = importlib.import_module("evdev")
+    monkeypatch.setattr(evdev_mod, "InputDevice", harness._input_device)
+    try:
+        evdev_device = importlib.import_module("evdev.device")
+    except ImportError:
+        pass
+    else:
+        monkeypatch.setattr(evdev_device, "InputDevice", harness._input_device)
     return harness
 
 

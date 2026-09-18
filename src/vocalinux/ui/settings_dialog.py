@@ -22,7 +22,7 @@ import os
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable, Iterable, NamedTuple, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
 import gi
 
@@ -31,7 +31,7 @@ gi.require_version("Gdk", "3.0")
 # Need GLib for idle_add
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from ..common_types import RecognitionState  # noqa: E402
+from ..common_types import RecognitionState, _EvdevCaptureDevice  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.faster_whisper_model_info import (
@@ -1703,26 +1703,6 @@ def _gdk_capture_to_shortcut(
 
 # linux/input.h EV_KEY; python-evdev uses the same value.
 _EVDEV_EV_KEY = 1
-
-
-class _EvdevCaptureDevice(Protocol):
-    """Minimal evdev InputDevice surface used by the shortcut recorder."""
-
-    def fileno(self) -> int:
-        """Return the device file descriptor for GLib.io_add_watch."""
-        ...
-
-    def read(self) -> Iterable[Any]:
-        """Return pending input events."""
-        ...
-
-    def close(self) -> None:
-        """Close the device file."""
-        ...
-
-    def active_keys(self) -> Iterable[int]:
-        """Return evdev codes currently down on this device."""
-        ...
 
 
 class _EvdevShortcutRecorder:
