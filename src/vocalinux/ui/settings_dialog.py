@@ -114,6 +114,7 @@ from .keyboard_backends import (  # noqa: E402
     is_valid_shortcut,
     parse_shortcut_spec,
 )
+from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
 
 # Avoid circular imports for type checking
 if TYPE_CHECKING:
@@ -1644,12 +1645,198 @@ def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
     return None
 
 
+def function_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[str]:
+    """Map XKB/GDK hardware keycodes 191–202 (FK13–FK24) to f13–f24.
+
+    Default evdev maps those keys to XF86* keysyms or NoSymbol; the XKB
+    keycode is the unambiguous signal. F1–F12 use other keycodes and already
+    arrive as F1–F12 keysyms.
+    """
+    try:
+        code = int(hardware_keycode)
+    except (TypeError, ValueError):
+        return None
+    if 191 <= code <= 202:
+        return f"f{code - 178}"
+    return None
+
+
+def function_token_from_evdev_code(code: int) -> Optional[str]:
+    """Map evdev KEY_F13–KEY_F24 (183–194) to f13–f24."""
+    try:
+        key = int(code)
+    except (TypeError, ValueError):
+        return None
+    if 183 <= key <= 194:
+        return f"f{key - 170}"
+    return None
+
+
+def modifiers_from_active_evdev_codes(active_codes: set[int]) -> list[str]:
+    """Return ctrl/alt/shift/super currently held in *active_codes*, in that order."""
+    held: list[str] = []
+    for name in ("ctrl", "alt", "shift", "super"):
+        if active_codes & MODIFIER_KEY_CODES[name]:
+            held.append(name)
+    return held
+
+
 def _shortcut_from_capture(modifiers: list[str], token: Optional[str]) -> Optional[str]:
     """Build a canonical shortcut from recorded modifiers and a main key."""
     if token is None:
         return None
     candidate = "+".join((*modifiers, token)) if modifiers else token
     return candidate if is_valid_shortcut(candidate) else None
+
+
+def _gdk_capture_to_shortcut(
+    modifiers: list[str],
+    keyval_name: Optional[str],
+    hardware_keycode: int = 0,
+) -> Optional[str]:
+    """Build a shortcut from recorder inputs, preferring FK13–FK24 keycodes."""
+    token = function_token_from_gdk_hardware_keycode(hardware_keycode)
+    if token is None:
+        token = _gdk_keyname_to_token(keyval_name)
+    return _shortcut_from_capture(modifiers, token)
+
+
+# linux/input.h EV_KEY; python-evdev uses the same value.
+_EVDEV_EV_KEY = 1
+
+
+class _EvdevShortcutRecorder:
+    """Read-only F13–F24 capture from keyboard evdev nodes (no grab, no thread).
+
+    GTK 3 on Wayland drops XKB NoSymbol keys before they become GdkEvents, so
+    FK19/FK24 never reach the dialog key-press handler on the default map.
+    """
+
+    def __init__(self, on_shortcut) -> None:
+        self._on_shortcut = on_shortcut
+        self._devices: list[Any] = []
+        self._watch_ids: list[Any] = []
+        self._held: dict[int, set[int]] = {}
+
+    def start(self) -> None:
+        try:
+            from .keyboard_backends.evdev_backend import EVDEV_AVAILABLE, find_keyboard_devices
+        except ImportError:
+            logger.debug("evdev unavailable for shortcut recording; using GDK events only")
+            return
+        if not EVDEV_AVAILABLE:
+            logger.debug("evdev unavailable for shortcut recording; using GDK events only")
+            return
+        try:
+            from evdev import InputDevice
+        except ImportError:
+            logger.debug("evdev unavailable for shortcut recording; using GDK events only")
+            return
+
+        try:
+            paths = find_keyboard_devices()
+        except Exception as e:
+            logger.warning("Cannot list keyboard devices for shortcut recording: %s", e)
+            return
+        if not paths:
+            logger.debug("No keyboard devices found for shortcut recording")
+            return
+
+        open_error: Optional[tuple[str, BaseException]] = None
+        for path in paths:
+            try:
+                device = InputDevice(path)
+            except (OSError, IOError) as e:
+                if open_error is None:
+                    open_error = (path, e)
+                continue
+            # Do not grab: compositor and the runtime backend must still see keys.
+            try:
+                held = set(device.active_keys())
+            except Exception:
+                held = set()
+            try:
+                watch_id = GLib.io_add_watch(
+                    device.fileno(),
+                    GLib.IO_IN | GLib.IO_ERR | GLib.IO_HUP,
+                    self._make_io_callback(device),
+                )
+            except Exception as e:
+                logger.debug("GLib.io_add_watch failed for %s: %s", path, e)
+                try:
+                    device.close()
+                except Exception:
+                    pass
+                continue
+            self._devices.append(device)
+            self._watch_ids.append(watch_id)
+            self._held[id(device)] = held
+
+        if not self._devices:
+            if open_error is not None:
+                logger.warning(
+                    "Cannot open keyboard devices for shortcut recording "
+                    "(%s: %s); F-keys without keysyms will not be captured",
+                    open_error[0],
+                    open_error[1],
+                )
+            else:
+                logger.debug("No keyboard devices opened for shortcut recording")
+
+    def stop(self) -> None:
+        for watch_id in self._watch_ids:
+            try:
+                GLib.source_remove(watch_id)
+            except Exception:
+                pass
+        self._watch_ids.clear()
+        for device in self._devices:
+            try:
+                device.close()
+            except Exception:
+                pass
+        self._devices.clear()
+        self._held.clear()
+
+    def _make_io_callback(self, device):
+        def _on_io(fd, condition):
+            return self._on_fd(device, condition)
+
+        return _on_io
+
+    def _on_fd(self, device, condition) -> bool:
+        if not self._watch_ids:
+            return False
+        try:
+            if condition & (GLib.IO_ERR | GLib.IO_HUP):
+                return False
+        except Exception:
+            pass
+        held = self._held.setdefault(id(device), set())
+        try:
+            events = list(device.read())
+        except BlockingIOError:
+            return True
+        except (OSError, IOError):
+            return False
+
+        for event in events:
+            if getattr(event, "type", None) != _EVDEV_EV_KEY:
+                continue
+            code = event.code
+            value = event.value
+            if value == 1:
+                held.add(code)
+                token = function_token_from_evdev_code(code)
+                if token is None:
+                    continue
+                shortcut = _shortcut_from_capture(modifiers_from_active_evdev_codes(held), token)
+                if shortcut:
+                    self._on_shortcut(shortcut)
+                    return False
+            elif value == 0:
+                held.discard(code)
+        return True
 
 
 def _row_matches_query(query: str, title: str, subtitle: str = "", keywords=()) -> bool:
@@ -3667,7 +3854,9 @@ class SettingsDialog(Gtk.Dialog):
 
         # Key-capture state for the Record button.
         self._recording_shortcut = False
+        self._evdev_shortcut_recorder = None
         self.connect("key-press-event", self._on_shortcut_key_press)
+        self.connect("destroy", self._on_shortcut_recorder_destroy)
 
         self.shortcuts_tab.pack_start(group, False, False, 0)
 
@@ -3816,11 +4005,50 @@ class SettingsDialog(Gtk.Dialog):
         self.shortcut_info_label.set_markup(
             "<i>Press a modifier + key (e.g. Alt+R), or an F-key. Press Esc to cancel.</i>"
         )
+        self._start_evdev_shortcut_recorder()
 
     def _stop_recording_shortcut(self):
         """Exit key-capture mode and restore the Record button."""
         self._recording_shortcut = False
-        self.record_shortcut_button.set_label("Record")
+        self._stop_evdev_shortcut_recorder()
+        if getattr(self, "record_shortcut_button", None) is not None:
+            try:
+                self.record_shortcut_button.set_label("Record")
+            except Exception:
+                pass
+
+    def _start_evdev_shortcut_recorder(self) -> None:
+        """Listen on keyboard evdev nodes for F13–F24 while recording."""
+        self._stop_evdev_shortcut_recorder()
+        recorder = _EvdevShortcutRecorder(self._on_evdev_recorded_shortcut)
+        recorder.start()
+        self._evdev_shortcut_recorder = recorder
+
+    def _stop_evdev_shortcut_recorder(self) -> None:
+        recorder = getattr(self, "_evdev_shortcut_recorder", None)
+        if recorder is not None:
+            recorder.stop()
+            self._evdev_shortcut_recorder = None
+
+    def _on_shortcut_recorder_destroy(self, widget) -> None:
+        """Drop evdev watches if the dialog closes while recording."""
+        self._recording_shortcut = False
+        self._stop_evdev_shortcut_recorder()
+
+    def _commit_recorded_shortcut(self, shortcut: Optional[str]) -> bool:
+        """Apply a captured shortcut if still recording. Returns True if consumed."""
+        if not getattr(self, "_recording_shortcut", False):
+            return False
+        if not shortcut or not is_valid_shortcut(shortcut):
+            return False
+        self.custom_shortcut_entry.set_text(shortcut)
+        self._stop_recording_shortcut()
+        self._apply_custom_shortcut(shortcut)
+        return True
+
+    def _on_evdev_recorded_shortcut(self, shortcut: str) -> None:
+        """Apply an F13–F24 capture from the evdev watcher (main loop)."""
+        self._commit_recorded_shortcut(shortcut)
 
     def _gdk_event_to_shortcut(self, event) -> Optional[str]:
         """Build a canonical shortcut string from a GDK key-press event."""
@@ -3834,8 +4062,8 @@ class SettingsDialog(Gtk.Dialog):
             modifiers.append("shift")
         if state & Gdk.ModifierType.SUPER_MASK:
             modifiers.append("super")
-        token = _gdk_keyname_to_token(Gdk.keyval_name(event.keyval))
-        return _shortcut_from_capture(modifiers, token)
+        hardware = getattr(event, "hardware_keycode", 0) or 0
+        return _gdk_capture_to_shortcut(modifiers, Gdk.keyval_name(event.keyval), hardware)
 
     def _on_shortcut_key_press(self, widget, event):
         """Capture a pressed combo while recording; otherwise pass through."""
@@ -3847,20 +4075,19 @@ class SettingsDialog(Gtk.Dialog):
             return True  # wait for the non-modifier key
 
         shortcut = self._gdk_event_to_shortcut(event)
+        if self._commit_recorded_shortcut(shortcut):
+            return True
+        if not getattr(self, "_recording_shortcut", False):
+            return True
         if keyname == "Escape" and not shortcut:
             self._stop_recording_shortcut()
             self.shortcut_info_label.set_text("Recording cancelled.")
             return True
 
-        if shortcut and is_valid_shortcut(shortcut):
-            self.custom_shortcut_entry.set_text(shortcut)
-            self._stop_recording_shortcut()
-            self._apply_custom_shortcut(shortcut)
-        else:
-            self.shortcut_info_label.set_markup(
-                "<span foreground='#e01b24'>Need a modifier + key, or an F1–F24 "
-                "function key alone. Try again or press Esc to cancel.</span>"
-            )
+        self.shortcut_info_label.set_markup(
+            "<span foreground='#e01b24'>Need a modifier + key, or an F1–F24 "
+            "function key alone. Try again or press Esc to cancel.</span>"
+        )
         return True
 
     def _update_shortcut_ui_for_mode(self, mode: str):
@@ -7269,6 +7496,8 @@ For now, the engine has been reverted to VOSK."""
 
     def _on_dialog_destroy(self, widget):
         """Clean up callbacks when dialog is destroyed."""
+        self._recording_shortcut = False
+        self._stop_evdev_shortcut_recorder()
         if hasattr(self, "speech_engine") and self.speech_engine:
             if self._on_recognition_state_changed in self.speech_engine.state_callbacks:
                 self.speech_engine.state_callbacks.remove(self._on_recognition_state_changed)
