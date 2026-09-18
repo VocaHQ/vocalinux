@@ -188,6 +188,59 @@ def _release_from_payload(
     )
 
 
+def _html_url_from_relative_update_url(update_url: object, repo_url: str) -> str:
+    """Return a trusted tag URL from a relative GitHub ``update_url``, or empty."""
+    if not isinstance(update_url, str):
+        return ""
+    if not update_url.startswith("/") or update_url.startswith("//"):
+        return ""
+    if ".." in update_url or "\\" in update_url or "?" in update_url or "#" in update_url:
+        return ""
+    if ":" in update_url or any(ch.isspace() for ch in update_url):
+        return ""
+    candidate = "https://github.com" + update_url
+    if not is_trusted_release_url(candidate, repo_url):
+        return ""
+    return candidate
+
+
+def _fetch_stable_from_releases_page(
+    requests, repo_url: str, timeout: float
+) -> Optional[ReleaseInfo]:
+    """Look up the latest stable tag from github.com when the REST API is blocked."""
+    owner, repo = _repo_parts(repo_url)
+    url = f"https://github.com/{owner}/{repo}/releases/latest"
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Vocalinux-UpdateChecker",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        final_url = getattr(response, "url", "") or ""
+        parsed = urlparse(final_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc.lower() != "github.com"
+            or not is_trusted_release_url(final_url, repo_url)
+            or response.status_code != 200
+        ):
+            logger.debug("Stable release HTML fallback unsuccessful for %s", url)
+            return None
+        data = response.json()
+        if not isinstance(data, dict) or not (data.get("tag_name") or ""):
+            logger.debug("Stable release HTML fallback unsuccessful for %s", url)
+            return None
+        html_url = _html_url_from_relative_update_url(data.get("update_url"), repo_url)
+        return _release_from_payload(
+            {"tag_name": data.get("tag_name"), "html_url": html_url},
+            "stable",
+            repo_url,
+        )
+    except (requests.exceptions.RequestException, ValueError, TypeError) as exc:
+        logger.debug("Stable release HTML fallback failed for %s: %s", url, exc)
+        return None
+
+
 def fetch_latest_release(
     repo_url: str = __url__,
     timeout: float = 10.0,
@@ -209,9 +262,8 @@ def fetch_latest_release(
             if response.status_code == 404:
                 logger.warning("No latest release found for %s", api_base)
                 return None
-            if response.status_code == 403:
-                logger.warning("GitHub API rate-limited or forbidden for %s", api_base)
-                return None
+            if response.status_code in (403, 429):
+                return _fetch_stable_from_releases_page(requests, repo_url, timeout)
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict):
@@ -228,8 +280,8 @@ def fetch_latest_release(
                 params={"per_page": 30, "page": page},
                 timeout=timeout,
             )
-            if response.status_code == 403:
-                logger.warning("GitHub API rate-limited or forbidden for %s", api_base)
+            if response.status_code in (403, 429):
+                logger.debug("GitHub API rate-limited or forbidden for %s", api_base)
                 return None
             response.raise_for_status()
             releases = response.json()
