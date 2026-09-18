@@ -1,5 +1,6 @@
 """Tests for the GitHub Releases update checker."""
 
+import logging
 from unittest.mock import MagicMock, patch
 
 from vocalinux.utils.update_checker import (
@@ -144,6 +145,9 @@ class TestFetchLatestRelease:
         assert isinstance(release, ReleaseInfo)
         assert release.version == "0.15.0"
         assert release.html_url.endswith("/v0.15.0")
+        mock_requests.get.assert_called_once()
+        api_url = mock_requests.get.call_args[0][0]
+        assert api_url == "https://api.github.com/repos/VocaHQ/vocalinux/releases/latest"
 
     def test_drops_untrusted_html_url(self):
         mock_response = MagicMock()
@@ -246,3 +250,160 @@ class TestFetchLatestRelease:
         assert mock_requests.get.call_count == 2
         assert mock_requests.get.call_args_list[0].kwargs["params"]["page"] == 1
         assert mock_requests.get.call_args_list[1].kwargs["params"]["page"] == 2
+
+    def test_stable_api_403_uses_html_fallback(self, caplog):
+        release = self._fetch_stable_with_rate_limit(403, caplog)
+        assert isinstance(release, ReleaseInfo)
+        assert release.version == "0.17.0"
+        assert release.channel == "stable"
+        assert release.html_url == "https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0"
+
+    def test_stable_api_429_uses_html_fallback(self, caplog):
+        release = self._fetch_stable_with_rate_limit(429, caplog)
+        assert isinstance(release, ReleaseInfo)
+        assert release.version == "0.17.0"
+        assert release.channel == "stable"
+        assert release.html_url == "https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0"
+
+    def test_stable_api_403_fallback_failures_return_none_quietly(self, caplog):
+        api_response = _mock_response(403)
+        failures = [
+            _mock_response(
+                500,
+                url="https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0",
+            ),
+            Exception("offline"),
+            _mock_response(
+                200,
+                json_value=["not", "a", "dict"],
+                url="https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0",
+            ),
+            _mock_response(
+                200,
+                json_value={"update_url": "/VocaHQ/vocalinux/releases/tag/v0.17.0"},
+                url="https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0",
+            ),
+        ]
+        caplog.set_level(logging.WARNING, logger="vocalinux.utils.update_checker")
+        for failure in failures:
+            mock_requests = _requests_mock([api_response, failure])
+            with patch.dict("sys.modules", {"requests": mock_requests}):
+                assert fetch_latest_release() is None
+            assert _checker_warnings(caplog) == []
+            caplog.clear()
+
+    def test_evil_update_url_does_not_become_html_url(self, caplog):
+        tag_url = "https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0"
+        evil_paths = [
+            "/evil/vocalinux/releases/tag/v9",
+            "https://evil.example/x",
+            "/VocaHQ/vocalinux/releases/../evil",
+        ]
+        caplog.set_level(logging.WARNING, logger="vocalinux.utils.update_checker")
+        for update_url in evil_paths:
+            api_response = _mock_response(403)
+            fallback = _mock_response(
+                200,
+                json_value={"tag_name": "v0.17.0", "update_url": update_url},
+                url=tag_url,
+            )
+            mock_requests = _requests_mock([api_response, fallback])
+            with patch.dict("sys.modules", {"requests": mock_requests}):
+                release = fetch_latest_release()
+            assert release is not None
+            assert release.version == "0.17.0"
+            assert release.html_url == ""
+            assert _checker_warnings(caplog) == []
+            caplog.clear()
+
+    def test_untrusted_fallback_final_url_is_rejected(self, caplog):
+        payload = {
+            "tag_name": "v0.17.0",
+            "update_url": "/VocaHQ/vocalinux/releases/tag/v0.17.0",
+        }
+        untrusted_urls = (
+            "https://evil.example/VocaHQ/vocalinux/releases/tag/v0.17.0",
+            "https://github.com/evil/vocalinux/releases/tag/v0.17.0",
+            "http://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0",
+        )
+        caplog.set_level(logging.WARNING, logger="vocalinux.utils.update_checker")
+        for final_url in untrusted_urls:
+            api_response = _mock_response(403)
+            fallback = _mock_response(200, json_value=payload, url=final_url)
+            mock_requests = _requests_mock([api_response, fallback])
+            with patch.dict("sys.modules", {"requests": mock_requests}):
+                assert fetch_latest_release() is None
+            assert _checker_warnings(caplog) == []
+            caplog.clear()
+
+    def test_nightly_api_403_returns_none_without_html_fallback(self, caplog):
+        api_response = _mock_response(403)
+        mock_requests = _requests_mock([api_response])
+        caplog.set_level(logging.WARNING, logger="vocalinux.utils.update_checker")
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            assert fetch_latest_release(channel="nightly") is None
+        mock_requests.get.assert_called_once()
+        requested = mock_requests.get.call_args[0][0]
+        assert requested == "https://api.github.com/repos/VocaHQ/vocalinux/releases"
+        assert _checker_warnings(caplog) == []
+
+    def _fetch_stable_with_rate_limit(self, status_code: int, caplog):
+        tag_url = "https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0"
+        api_response = _mock_response(status_code)
+        fallback = _mock_response(
+            200,
+            json_value={
+                "tag_name": "v0.17.0",
+                "update_url": "/VocaHQ/vocalinux/releases/tag/v0.17.0",
+                "id": 1,
+                "edit_url": "/VocaHQ/vocalinux/releases/tag/v0.17.0/edit",
+                "delete_url": "/VocaHQ/vocalinux/releases/tag/v0.17.0",
+                "update_authenticity_token": "csrf-update",
+                "delete_authenticity_token": "csrf-delete",
+            },
+            url=tag_url,
+        )
+        mock_requests = _requests_mock([api_response, fallback])
+        caplog.set_level(logging.WARNING, logger="vocalinux.utils.update_checker")
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            release = fetch_latest_release()
+
+        assert mock_requests.get.call_count == 2
+        first, second = mock_requests.get.call_args_list
+        assert first[0][0] == "https://api.github.com/repos/VocaHQ/vocalinux/releases/latest"
+        assert first.kwargs["headers"]["Accept"] == "application/vnd.github+json"
+        assert first.kwargs["headers"]["User-Agent"] == "Vocalinux-UpdateChecker"
+        assert "Authorization" not in first.kwargs["headers"]
+        assert second[0][0] == "https://github.com/VocaHQ/vocalinux/releases/latest"
+        assert second.kwargs["headers"]["Accept"] == "application/json"
+        assert second.kwargs["headers"]["User-Agent"] == "Vocalinux-UpdateChecker"
+        assert "Authorization" not in second.kwargs["headers"]
+        assert fallback.url == tag_url
+        assert _checker_warnings(caplog) == []
+        assert release is not None
+        assert "csrf-update" not in repr(release)
+        assert "csrf-delete" not in repr(release)
+        return release
+
+
+def _mock_response(status_code, json_value=None, url=""):
+    mock_response = MagicMock()
+    mock_response.status_code = status_code
+    mock_response.url = url
+    mock_response.json.return_value = json_value
+    return mock_response
+
+
+def _requests_mock(side_effect):
+    mock_requests = MagicMock()
+    mock_requests.get.side_effect = side_effect
+    mock_requests.exceptions.RequestException = Exception
+    return mock_requests
+
+
+def _checker_warnings(caplog):
+    return [
+        record
+        for record in caplog.records
+        if record.name == "vocalinux.utils.update_checker" and record.levelno >= logging.WARNING
+    ]
