@@ -22,7 +22,7 @@ import os
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterable, NamedTuple, Optional, Protocol
 
 import gi
 
@@ -1705,22 +1705,52 @@ def _gdk_capture_to_shortcut(
 _EVDEV_EV_KEY = 1
 
 
+class _EvdevCaptureDevice(Protocol):
+    """Minimal evdev InputDevice surface used by the shortcut recorder."""
+
+    def fileno(self) -> int:
+        """Return the device file descriptor for GLib.io_add_watch."""
+        ...
+
+    def read(self) -> Iterable[Any]:
+        """Return pending input events."""
+        ...
+
+    def close(self) -> None:
+        """Close the device file."""
+        ...
+
+    def active_keys(self) -> Iterable[int]:
+        """Return evdev codes currently down on this device."""
+        ...
+
+
 class _EvdevShortcutRecorder:
     """Read-only F13–F24 capture from keyboard evdev nodes (no grab, no thread).
 
     GTK 3 on Wayland drops XKB NoSymbol keys before they become GdkEvents, so
     FK19/FK24 never reach the dialog key-press handler on the default map.
+    Unions modifiers across watched keyboards, and drops a failed device while
+    still scanning until recording stops.
     """
 
-    def __init__(self, on_shortcut) -> None:
+    def __init__(self, on_shortcut: Callable[[str], None]) -> None:
         self._on_shortcut = on_shortcut
-        self._devices: list[Any] = []
-        self._watch_ids: list[Any] = []
-        self._held: dict[int, set[int]] = {}
+        self._active = False
+        self._devices: dict[str, _EvdevCaptureDevice] = {}
+        self._watch_ids: dict[str, Any] = {}
+        self._held: dict[str, set[int]] = {}
+        self._scan_timeout_id: Optional[Any] = None
+        self._input_device_cls: Any = None
+        self._find_keyboard_devices: Optional[Callable[[], list[str]]] = None
 
     def start(self) -> None:
         try:
-            from .keyboard_backends.evdev_backend import EVDEV_AVAILABLE, find_keyboard_devices
+            from .keyboard_backends.evdev_backend import (
+                DEVICE_RESCAN_SECONDS,
+                EVDEV_AVAILABLE,
+                find_keyboard_devices,
+            )
         except ImportError:
             logger.debug("evdev unavailable for shortcut recording; using GDK events only")
             return
@@ -1733,44 +1763,23 @@ class _EvdevShortcutRecorder:
             logger.debug("evdev unavailable for shortcut recording; using GDK events only")
             return
 
+        self._active = True
+        self._input_device_cls = InputDevice
+        self._find_keyboard_devices = find_keyboard_devices
+
+        paths: list[str] = []
+        listed = False
         try:
-            paths = find_keyboard_devices()
+            paths = list(find_keyboard_devices())
+            listed = True
         except Exception as e:
             logger.warning("Cannot list keyboard devices for shortcut recording: %s", e)
-            return
-        if not paths:
-            logger.debug("No keyboard devices found for shortcut recording")
-            return
 
         open_error: Optional[tuple[str, BaseException]] = None
         for path in paths:
-            try:
-                device = InputDevice(path)
-            except (OSError, IOError) as e:
-                if open_error is None:
-                    open_error = (path, e)
-                continue
-            # Do not grab: compositor and the runtime backend must still see keys.
-            try:
-                held = set(device.active_keys())
-            except Exception:
-                held = set()
-            try:
-                watch_id = GLib.io_add_watch(
-                    device.fileno(),
-                    GLib.IO_IN | GLib.IO_ERR | GLib.IO_HUP,
-                    self._make_io_callback(device),
-                )
-            except Exception as e:
-                logger.debug("GLib.io_add_watch failed for %s: %s", path, e)
-                try:
-                    device.close()
-                except Exception:
-                    pass
-                continue
-            self._devices.append(device)
-            self._watch_ids.append(watch_id)
-            self._held[id(device)] = held
+            err = self._attach_device(path)
+            if err is not None and open_error is None:
+                open_error = (path, err)
 
         if not self._devices:
             if open_error is not None:
@@ -1780,44 +1789,148 @@ class _EvdevShortcutRecorder:
                     open_error[0],
                     open_error[1],
                 )
-            else:
+            elif listed and not paths:
+                logger.debug("No keyboard devices found for shortcut recording")
+            elif listed:
                 logger.debug("No keyboard devices opened for shortcut recording")
 
+        if self._active:
+            self._scan_timeout_id = GLib.timeout_add(
+                int(DEVICE_RESCAN_SECONDS * 1000),
+                self._on_device_rescan,
+            )
+
     def stop(self) -> None:
-        for watch_id in self._watch_ids:
+        self._active = False
+        timeout_id = self._scan_timeout_id
+        self._scan_timeout_id = None
+        if timeout_id is not None:
+            try:
+                GLib.source_remove(timeout_id)
+            except Exception:
+                pass
+        for watch_id in list(self._watch_ids.values()):
             try:
                 GLib.source_remove(watch_id)
             except Exception:
                 pass
         self._watch_ids.clear()
-        for device in self._devices:
-            try:
-                device.close()
-            except Exception:
-                pass
+        for device in list(self._devices.values()):
+            self._close_device(device)
         self._devices.clear()
         self._held.clear()
 
-    def _make_io_callback(self, device):
-        def _on_io(fd, condition):
+    def _close_device(self, device: _EvdevCaptureDevice) -> None:
+        try:
+            device.close()
+        except Exception:
+            pass
+
+    def _attach_device(self, path: str, *, hotplug: bool = False) -> Optional[BaseException]:
+        """Open and watch *path* if recording is active and it is not already watched.
+
+        Returns the InputDevice open error, or None if attached/skipped.
+        """
+        if not self._active or path in self._devices or self._input_device_cls is None:
+            return None
+        try:
+            device = self._input_device_cls(path)
+        except (OSError, IOError) as e:
+            return e
+        if not self._active:
+            self._close_device(device)
+            return None
+        # Do not grab: compositor and the runtime backend must still see keys.
+        try:
+            held = set(device.active_keys())
+        except Exception:
+            held = set()
+        try:
+            watch_id = GLib.io_add_watch(
+                device.fileno(),
+                GLib.IO_IN | GLib.IO_ERR | GLib.IO_HUP,
+                self._make_io_callback(device),
+            )
+        except Exception as e:
+            logger.debug("GLib.io_add_watch failed for %s: %s", path, e)
+            self._close_device(device)
+            return None
+        if not self._active:
+            try:
+                GLib.source_remove(watch_id)
+            except Exception:
+                pass
+            self._close_device(device)
+            return None
+        self._devices[path] = device
+        self._watch_ids[path] = watch_id
+        self._held[path] = held
+        if hotplug:
+            logger.debug("Added keyboard for shortcut recording: %s", path)
+        return None
+
+    def _drop_device(self, path: str) -> None:
+        """Close and forget *path* without source_remove of its in-flight watch."""
+        self._watch_ids.pop(path, None)
+        device = self._devices.pop(path, None)
+        self._held.pop(path, None)
+        if device is not None:
+            self._close_device(device)
+        logger.debug("Dropped keyboard from shortcut recording: %s", path)
+
+    def _union_held_codes(self) -> set[int]:
+        union: set[int] = set()
+        for codes in self._held.values():
+            union.update(codes)
+        return union
+
+    def _path_for_device(self, device: _EvdevCaptureDevice) -> Optional[str]:
+        for path, tracked in self._devices.items():
+            if tracked is device:
+                return path
+        return None
+
+    def _on_device_rescan(self) -> bool:
+        if not self._active:
+            return False
+        finder = self._find_keyboard_devices
+        if finder is None:
+            return False
+        try:
+            paths = list(finder())
+        except Exception:
+            return True
+        for path in paths:
+            if not self._active:
+                return False
+            self._attach_device(path, hotplug=True)
+        return self._active
+
+    def _make_io_callback(self, device: _EvdevCaptureDevice) -> Callable[[int, int], bool]:
+        def _on_io(fd: int, condition: int) -> bool:
             return self._on_fd(device, condition)
 
         return _on_io
 
-    def _on_fd(self, device, condition) -> bool:
-        if not self._watch_ids:
+    def _on_fd(self, device: _EvdevCaptureDevice, condition: int) -> bool:
+        if not self._active:
+            return False
+        path = self._path_for_device(device)
+        if path is None:
             return False
         try:
             if condition & (GLib.IO_ERR | GLib.IO_HUP):
+                self._drop_device(path)
                 return False
         except Exception:
             pass
-        held = self._held.setdefault(id(device), set())
+        held = self._held.setdefault(path, set())
         try:
             events = list(device.read())
         except BlockingIOError:
             return True
         except (OSError, IOError):
+            self._drop_device(path)
             return False
 
         for event in events:
@@ -1830,8 +1943,14 @@ class _EvdevShortcutRecorder:
                 token = function_token_from_evdev_code(code)
                 if token is None:
                     continue
-                shortcut = _shortcut_from_capture(modifiers_from_active_evdev_codes(held), token)
+                shortcut = _shortcut_from_capture(
+                    modifiers_from_active_evdev_codes(self._union_held_codes()),
+                    token,
+                )
                 if shortcut:
+                    # Pop before on_shortcut: the dialog stop() must not
+                    # source_remove this in-flight watch (returning False does).
+                    self._watch_ids.pop(path, None)
                     self._on_shortcut(shortcut)
                     return False
             elif value == 0:
