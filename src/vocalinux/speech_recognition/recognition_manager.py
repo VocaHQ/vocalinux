@@ -1036,6 +1036,12 @@ def _get_system_model_paths() -> list:
 # Alternative locations for pre-installed models (now dynamic)
 SYSTEM_MODELS_DIRS = _get_system_model_paths()
 
+# vosk.Model()'s peak RSS during loading runs well above the model's on-disk
+# size (issue #676: an RNNLM-bearing model's load-time spike was ~1.5-2x its
+# file size). Require this multiple of available memory before attempting
+# the load.
+_VOSK_MODEL_MEMORY_SAFETY_MARGIN = 1.5
+
 
 def detect_pywhispercpp_gpu_backend() -> str:
     """Detect whether pywhispercpp's native library actually has GPU support."""
@@ -1296,6 +1302,8 @@ class SpeechRecognitionManager:
                 else:
                     logger.info(f"Using existing VOSK model from {self.vosk_model_path}")
 
+            self._check_vosk_model_memory(self.vosk_model_path)
+
             logger.info(f"Loading VOSK model from {self.vosk_model_path}")
             # Ensure previous model/recognizer are released if re-initializing
             self.model = None
@@ -1309,6 +1317,56 @@ class SpeechRecognitionManager:
             logger.error("Failed to import VOSK. Please install it with 'pip install vosk'")
             self.state = RecognitionState.ERROR
             raise
+
+    @staticmethod
+    def _vosk_model_size_bytes(model_path: str) -> int:
+        """Sum on-disk file sizes under a VOSK model directory.
+
+        Walks the whole directory rather than reading a catalog size, since
+        the RNNLM component (rnnlm/final.raw) that drives the memory spike
+        this guards against is only present for some languages/models and
+        is not reflected in VOSK_MODEL_INFO's nominal download size.
+        """
+        total = 0
+        for root, _dirs, files in os.walk(model_path):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+        return total
+
+    def _check_vosk_model_memory(self, model_path: str) -> None:
+        """Refuse to load a VOSK model that would exhaust available memory.
+
+        vosk.Model() allocates the whole model (acoustic model plus, for
+        models that ship one, the RNNLM rescoring component) in one spike
+        during loading. There is no way to load it incrementally or query
+        vosk for how much it will need up front, so the only guard
+        available here is comparing the model's on-disk footprint against
+        currently available memory before calling into the native loader
+        (issue #676: this spike killed the process via the kernel OOM
+        killer on a 16GB machine, with no exception Vocalinux could catch).
+        """
+        import psutil
+
+        model_bytes = self._vosk_model_size_bytes(model_path)
+        if model_bytes <= 0:
+            return
+
+        available_bytes = psutil.virtual_memory().available
+        required_bytes = model_bytes * _VOSK_MODEL_MEMORY_SAFETY_MARGIN
+
+        if available_bytes < required_bytes:
+            model_mb = model_bytes / (1024 * 1024)
+            available_mb = available_bytes / (1024 * 1024)
+            raise RuntimeError(
+                f"Not enough memory to load the VOSK model at {model_path} "
+                f"(model is ~{model_mb:.0f}MB on disk, {available_mb:.0f}MB "
+                "available). Loading it would likely be killed by the "
+                "system's out-of-memory killer partway through. Close other "
+                "applications or switch to a smaller model size in Settings."
+            )
 
     def _init_whisper(self):
         """Initialize the Whisper speech recognition engine."""
