@@ -1040,7 +1040,7 @@ SYSTEM_MODELS_DIRS = _get_system_model_paths()
 # size (issue #676: an RNNLM-bearing model's load-time spike was ~1.5-2x its
 # file size). Require this multiple of available memory before attempting
 # the load.
-_VOSK_MODEL_MEMORY_SAFETY_MARGIN = 1.5
+_VOSK_MODEL_MEMORY_SAFETY_MARGIN = 2.0
 
 
 def detect_pywhispercpp_gpu_backend() -> str:

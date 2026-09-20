@@ -98,12 +98,12 @@ class TestCheckVoskModelMemory:
     def test_raises_when_available_memory_is_below_the_safety_margin(self, tmp_path):
         model_dir = tmp_path / "vosk-model-ru-0.22"
         model_dir.mkdir()
-        # 100MB on disk; guard requires 1.5x = 150MB available.
+        # 100MB on disk; guard requires 2.0x = 200MB available.
         _write_file_of_size(str(model_dir / "final.raw"), 100 * 1024 * 1024)
 
         manager = _make_manager()
         with patch("psutil.virtual_memory") as mock_mem:
-            mock_mem.return_value.available = 120 * 1024 * 1024  # below the 150MB requirement
+            mock_mem.return_value.available = 120 * 1024 * 1024  # below the 200MB requirement
             with pytest.raises(RuntimeError, match="Not enough memory"):
                 manager._check_vosk_model_memory(str(model_dir))
 
