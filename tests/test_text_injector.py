@@ -180,7 +180,10 @@ class TestTextInjector(unittest.TestCase):
             mock_process.stderr = "compositor does not support virtual keyboard protocol"
             self.mock_subprocess.return_value = mock_process
 
-            with patch.object(TextInjector, "_uinput_usable", return_value=True):
+            with (
+                patch.object(TextInjector, "_is_ydotoold_running", return_value=False),
+                patch.object(TextInjector, "_uinput_usable", return_value=True),
+            ):
                 injector = TextInjector()
 
             self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
@@ -202,7 +205,10 @@ class TestTextInjector(unittest.TestCase):
             mock_process.stderr = "compositor does not support virtual keyboard protocol"
             self.mock_subprocess.return_value = mock_process
 
-            with patch.object(TextInjector, "_uinput_usable", return_value=False):
+            with (
+                patch.object(TextInjector, "_is_ydotoold_running", return_value=False),
+                patch.object(TextInjector, "_uinput_usable", return_value=False),
+            ):
                 injector = TextInjector()
 
             self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_XDOTOOL)
@@ -416,7 +422,11 @@ class TestTextInjector(unittest.TestCase):
         """Plasma Wayland GTK apps often keep XDG_SESSION_TYPE=x11 (#752)."""
         with patch.dict(
             "os.environ",
-            {"XDG_SESSION_TYPE": "x11", "WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"},
+            {
+                "XDG_SESSION_TYPE": "x11",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "DISPLAY": ":0",
+            },
             clear=True,
         ):
             with patch.object(TextInjector, "_check_dependencies"):
@@ -615,7 +625,10 @@ class TestTextInjector(unittest.TestCase):
             self.assertTrue(injector._has_non_ascii("café"))
             self.assertTrue(injector._has_non_ascii("niño"))
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -645,7 +658,10 @@ class TestTextInjector(unittest.TestCase):
             self.assertTrue(has_ydotool_key, "Should use ydotool key for Ctrl+V")
             self.assertFalse(has_ydotool_type, "Should NOT use ydotool type for non-ASCII")
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -684,7 +700,10 @@ class TestTextInjector(unittest.TestCase):
                 "Should NOT use layout-dependent ydotool type",
             )
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -767,7 +786,10 @@ class TestTextInjector(unittest.TestCase):
             self.assertEqual(kwargs.get("stderr"), subprocess.DEVNULL)
             self.assertNotEqual(kwargs.get("stderr"), subprocess.PIPE)
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -910,7 +932,11 @@ class TestTextInjector(unittest.TestCase):
         return injector
 
     def _inject_failing_paste(
-        self, injector: TextInjector, mock_run: MagicMock, paste_cmd: list, error: BaseException
+        self,
+        injector: TextInjector,
+        mock_run: MagicMock,
+        paste_cmd: list,
+        error: BaseException,
     ) -> bool:
         def run_side_effect(cmd, **kwargs):
             if cmd == paste_cmd:
@@ -1071,7 +1097,10 @@ class TestTextInjector(unittest.TestCase):
 
             self.assertFalse(result)
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     def test_clipboard_paste_returns_false_when_no_clipboard_tools(
@@ -1090,7 +1119,10 @@ class TestTextInjector(unittest.TestCase):
 
             self.assertFalse(result)
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -1503,7 +1535,9 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 "must not fall back to layout-dependent xdotool type when paste succeeds",
             )
 
-    def test_inject_with_xdotool_xwayland_types_when_x11_clipboard_missing(self) -> None:
+    def test_inject_with_xdotool_xwayland_types_when_x11_clipboard_missing(
+        self,
+    ) -> None:
         """No xclip/xsel: type, even if ydotool/wl-copy exist.
 
         ydotool+wl-copy writes the Wayland clipboard; an XWayland window
@@ -1598,7 +1632,9 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 elif "DISPLAY" in os.environ:
                     del os.environ["DISPLAY"]
 
-    def test_inject_with_xdotool_xwayland_falls_back_without_any_paste_tool(self) -> None:
+    def test_inject_with_xdotool_xwayland_falls_back_without_any_paste_tool(
+        self,
+    ) -> None:
         """Neither xclip/xsel nor ydotool installed: keeps typing via xdotool."""
 
         def which_side_effect(cmd):
@@ -2149,8 +2185,14 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         self.patch_which.stop()
         self.patch_subprocess.stop()
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     def test_runtime_fallback_from_x11_ibus_to_xdotool(
@@ -2179,8 +2221,14 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(injector.environment, DesktopEnvironment.X11)
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     def test_runtime_fallback_from_wayland_ibus_to_wtype(
@@ -2238,7 +2286,11 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
         self.assertEqual(injector.wayland_tool, "ydotool")
         self.mock_subprocess.assert_any_call(
-            ["ydotool", "type", ""], check=True, stderr=subprocess.PIPE, timeout=2, env=mock.ANY
+            ["ydotool", "type", ""],
+            check=True,
+            stderr=subprocess.PIPE,
+            timeout=2,
+            env=mock.ANY,
         )
 
     def test_switch_from_wayland_ibus_falls_back_when_ydotool_daemon_down(self):
@@ -2294,8 +2346,14 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         self.assertTrue(injector._switch_to_non_ibus_backend())
         self.assertEqual(injector.environment, DesktopEnvironment.X11)
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     def test_successful_ibus_injection_still_copies_to_clipboard_when_enabled(
@@ -2320,8 +2378,14 @@ class TestIBusRuntimeFallback(unittest.TestCase):
         mock_thread.assert_called_once()
         mock_thread.return_value.start.assert_called_once()
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     def test_uninitialized_ibus_injector_uses_non_ibus_fallback(
@@ -2410,19 +2474,21 @@ class TestCompositorIBusBridging(unittest.TestCase):
     def test_bridge_probe_not_consulted_for_bridged_desktops(self):
         """GNOME and friends never reach the probe; behaviour there is unchanged."""
         injector = self._bare_injector()
-        with patch.dict(
-            "os.environ",
-            {
-                "XDG_CURRENT_DESKTOP": "GNOME",
-                "XDG_SESSION_DESKTOP": "GNOME",
-                "DESKTOP_SESSION": "GNOME",
-                "KDE_FULL_SESSION": "",
-            },
-            clear=False,
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "GNOME",
+                    "DESKTOP_SESSION": "GNOME",
+                    "KDE_FULL_SESSION": "",
+                },
+                clear=False,
+            ),
+            patch.object(TextInjector, "_ibus_wayland_bridge_running") as probe,
         ):
-            with patch.object(TextInjector, "_ibus_wayland_bridge_running") as probe:
-                self.assertTrue(injector._wayland_compositor_bridges_ibus())
-                probe.assert_not_called()
+            self.assertTrue(injector._wayland_compositor_bridges_ibus())
+            probe.assert_not_called()
 
     def test_bridge_probe_detects_running_process(self):
         """The probe shells out to pgrep -x ibus-wayland."""
@@ -2448,34 +2514,38 @@ class TestCompositorIBusBridging(unittest.TestCase):
     def test_kde_wayland_virtual_keyboard_disabled_skips_ibus(self):
         """KDE Wayland with KWin VirtualKeyboard disabled must not use IBus (#574)."""
         injector = self._bare_injector()
-        with patch.dict(
-            "os.environ",
-            {
-                "XDG_SESSION_TYPE": "wayland",
-                "XDG_CURRENT_DESKTOP": "KDE",
-                "XDG_SESSION_DESKTOP": "KDE",
-                "DESKTOP_SESSION": "plasma",
-                "KDE_FULL_SESSION": "true",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+            ),
+            patch.object(injector, "_kde_virtual_keyboard_enabled", return_value=False),
         ):
-            with patch.object(injector, "_kde_virtual_keyboard_enabled", return_value=False):
-                self.assertFalse(injector._wayland_compositor_bridges_ibus())
+            self.assertFalse(injector._wayland_compositor_bridges_ibus())
 
     def test_kde_wayland_virtual_keyboard_enabled_allows_ibus(self):
         """KDE Wayland with KWin VirtualKeyboard enabled may still use IBus (#574)."""
         injector = self._bare_injector()
-        with patch.dict(
-            "os.environ",
-            {
-                "XDG_SESSION_TYPE": "wayland",
-                "XDG_CURRENT_DESKTOP": "KDE",
-                "XDG_SESSION_DESKTOP": "KDE",
-                "DESKTOP_SESSION": "plasma",
-                "KDE_FULL_SESSION": "true",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+            ),
+            patch.object(injector, "_kde_virtual_keyboard_enabled", return_value=True),
         ):
-            with patch.object(injector, "_kde_virtual_keyboard_enabled", return_value=True):
-                self.assertTrue(injector._wayland_compositor_bridges_ibus())
+            self.assertTrue(injector._wayland_compositor_bridges_ibus())
 
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
     def test_kde_virtual_keyboard_enabled_parses_gdbus_true(self, mock_run):
@@ -2505,8 +2575,14 @@ class TestCompositorIBusBridging(unittest.TestCase):
         injector = self._bare_injector()
         self.assertFalse(injector._kde_virtual_keyboard_enabled())
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -2527,26 +2603,34 @@ class TestCompositorIBusBridging(unittest.TestCase):
         }.get(cmd)
         mock_run.return_value = MagicMock(returncode=0, stdout="(<<false>>,)\n", stderr="")
 
-        with patch.dict(
-            "os.environ",
-            {
-                "XDG_SESSION_TYPE": "wayland",
-                "WAYLAND_DISPLAY": "wayland-0",
-                "XDG_CURRENT_DESKTOP": "KDE",
-                "XDG_SESSION_DESKTOP": "KDE",
-                "DESKTOP_SESSION": "plasma",
-                "KDE_FULL_SESSION": "true",
-            },
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+            ),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=True),
         ):
-            with patch.object(TextInjector, "_is_ydotoold_running", return_value=True):
-                injector = TextInjector()
+            injector = TextInjector()
 
         self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND)
         self.assertEqual(injector.wayland_tool, "ydotool")
         mock_ibus_class.assert_not_called()
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -2662,7 +2746,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     def test_ensure_ydotoold_ready_when_only_ydotool_cli(self, mock_which: MagicMock) -> None:
         """Host ydotool 0.1.x without ydotoold is still considered ready."""
-        mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        mock_which.side_effect = lambda cmd: ("/usr/bin/ydotool" if cmd == "ydotool" else None)
         injector = self._bare_injector()
         with patch.object(injector, "_is_ydotoold_running", return_value=False):
             with patch.object(injector, "_uinput_usable", return_value=True):
@@ -2671,14 +2755,17 @@ class TestCompositorIBusBridging(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     def test_ensure_ydotoold_false_when_uinput_not_writable(self, mock_which: MagicMock) -> None:
         """0.1.x ydotool without /dev/uinput write access is not ready (Snap)."""
-        mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        mock_which.side_effect = lambda cmd: ("/usr/bin/ydotool" if cmd == "ydotool" else None)
         injector = self._bare_injector()
         with patch.object(injector, "_is_ydotoold_running", return_value=False):
             with patch.object(injector, "_uinput_usable", return_value=False):
                 self.assertFalse(injector._ensure_ydotoold())
 
     @patch.object(TextInjector, "_uinput_usable", return_value=False)
-    @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
+    @patch(
+        "vocalinux.text_injection.text_injector.shutil.which",
+        return_value="/app/bin/ydotoold",
+    )
     def test_ensure_ydotoold_false_without_uinput(
         self, _mock_which: MagicMock, _mock_uinput: MagicMock
     ) -> None:
@@ -2688,7 +2775,10 @@ class TestCompositorIBusBridging(unittest.TestCase):
 
     @patch.object(TextInjector, "_uinput_usable", return_value=True)
     @patch("vocalinux.text_injection.text_injector.subprocess.Popen")
-    @patch("vocalinux.text_injection.text_injector.shutil.which", return_value="/app/bin/ydotoold")
+    @patch(
+        "vocalinux.text_injection.text_injector.shutil.which",
+        return_value="/app/bin/ydotoold",
+    )
     def test_ensure_ydotoold_starts_daemon(
         self, _mock_which: MagicMock, mock_popen: MagicMock, _mock_uinput: MagicMock
     ) -> None:
@@ -2699,8 +2789,14 @@ class TestCompositorIBusBridging(unittest.TestCase):
                 self.assertTrue(injector._ensure_ydotoold())
         mock_popen.assert_called_once()
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=True)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=True,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
@@ -2715,7 +2811,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
         mock_daemon,
     ):
         """On COSMIC, even with IBus active, injection must use wtype, not IBus."""
-        mock_which.side_effect = lambda cmd: "/usr/bin/wtype" if cmd == "wtype" else None
+        mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
         mock_run.return_value = MagicMock(returncode=0, stderr="")
 
         with patch.dict(
@@ -2751,7 +2847,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     def test_ydotool_direct_mode_when_no_daemon_and_no_wtype(self, mock_which, _mock_ibus):
         """ydotool present without a daemon and no wtype falls back to ydotool direct mode."""
-        mock_which.side_effect = lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        mock_which.side_effect = lambda cmd: ("/usr/bin/ydotool" if cmd == "ydotool" else None)
         with patch.object(TextInjector, "_is_ydotoold_running", return_value=False):
             with patch.dict(
                 "os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}
@@ -2786,8 +2882,14 @@ class TestForcedBackend(unittest.TestCase):
 class TestKdeSkipsInactiveIbus(unittest.TestCase):
     """KDE without IBus as the session IM must not take the scoped IBus path (#752)."""
 
-    @patch("vocalinux.text_injection.text_injector.is_ibus_daemon_running", return_value=True)
-    @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method", return_value=False)
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
     @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     @patch("vocalinux.text_injection.text_injector.shutil.which")
@@ -2797,7 +2899,7 @@ class TestKdeSkipsInactiveIbus(unittest.TestCase):
         mock_ibus_class,
         *_args,
     ):
-        mock_which.side_effect = lambda cmd: "/usr/bin/wtype" if cmd == "wtype" else None
+        mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
         with patch.dict(
             "os.environ",
             {

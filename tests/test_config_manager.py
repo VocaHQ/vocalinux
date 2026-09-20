@@ -9,6 +9,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 # Update import path to use the new package structure
 from vocalinux.ui.config_manager import DEFAULT_CONFIG, ConfigManager
 
@@ -366,6 +368,7 @@ class TestConfigManager(unittest.TestCase):
         # Verify the vosk setting wasn't changed
         self.assertEqual(config_manager.config["speech_recognition"]["vosk_model_size"], "large")
 
+    @pytest.mark.filterwarnings("ignore:save_settings\\(\\) is deprecated:DeprecationWarning")
     def test_save_settings(self):
         """Test the save_settings method (alias for save_config)."""
         config_manager = ConfigManager()
