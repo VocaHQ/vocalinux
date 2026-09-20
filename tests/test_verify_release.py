@@ -11,6 +11,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "verify-release.yml"
 SCRIPT = REPO_ROOT / "scripts" / "verify_release.py"
@@ -242,3 +244,84 @@ def test_pypi_version_uses_removeprefix_not_lstrip():
     source = inspect.getsource(verify.main)
     assert 'removeprefix("v")' in source
     assert 'lstrip("v")' not in source
+
+
+def test_the_job_is_not_skipped_when_the_release_run_fails() -> None:
+    """v0.17.0 published seven assets from a run that failed on publish-snap.
+
+    The conclusion guard skipped it, and a skipped job is green.
+    """
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert "workflow_run.conclusion" not in text, "the job is gated on the release run's conclusion"
+    assert not re.search(r"^\s*if:", text, re.M), "the verify job carries a job-level if:"
+    assert "--if-published" in text, "nothing tells the script a missing release is not a failure"
+
+
+def test_only_the_workflow_run_trigger_forgives_a_missing_release() -> None:
+    """A person naming a tag by hand should get an error, not a pass."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+    flag = re.search(r"IF_PUBLISHED: \$\{\{ (?P<expr>.+?) \}\}", text)
+    assert flag, "no IF_PUBLISHED expression to check"
+    assert "github.event_name == 'workflow_run'" in flag.group("expr")
+
+
+def test_a_tag_that_published_nothing_passes_under_if_published(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fake_fetch(_tag: str | None) -> dict:
+        raise verify.ReleaseNotFound("no release found for v9.9.9")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "fetch_release", fake_fetch)
+
+    assert verify.main(["verify_release.py", "v9.9.9", "--if-published"]) == 0
+    assert "nothing to verify" in capsys.readouterr().out
+
+
+def test_the_same_tag_fails_without_the_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`just verify-release v9.9.9` must still say the release is not there."""
+
+    def fake_fetch(_tag: str | None) -> dict:
+        raise verify.ReleaseNotFound("no release found for v9.9.9")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "fetch_release", fake_fetch)
+
+    with pytest.raises(verify.ReleaseNotFound):
+        verify.main(["verify_release.py", "v9.9.9"])
+
+
+def test_the_flag_is_not_mistaken_for_a_tag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`--if-published` alone must still mean the latest stable release."""
+    seen: list[str | None] = []
+
+    def fake_fetch(tag: str | None) -> dict:
+        seen.append(tag)
+        raise verify.ReleaseNotFound("no release found")
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "fetch_release", fake_fetch)
+
+    assert verify.main(["verify_release.py", "", "--if-published"]) == 0
+    assert seen == [None], f"the flag or an empty tag was read as a tag: {seen}"
+
+
+def test_an_api_error_that_is_not_a_404_is_not_forgiven(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A rate limit must not read as a tag that published nothing.
+
+    Otherwise --if-published turns every API outage into a green check over a
+    release nothing has read.
+    """
+
+    class Done:
+        returncode = 1
+        stdout = ""
+        stderr = "gh: API rate limit exceeded (HTTP 403)"
+
+    monkeypatch.setenv("GITHUB_REPOSITORY", "VocaHQ/vocalinux")
+    monkeypatch.setattr(verify, "_gh", lambda *args: Done())
+
+    with pytest.raises(SystemExit) as raised:
+        verify.main(["verify_release.py", "v0.17.0", "--if-published"])
+    assert not isinstance(raised.value, verify.ReleaseNotFound)
+    assert "HTTP 403" in str(raised.value)

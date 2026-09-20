@@ -23,12 +23,14 @@ jobs:
   verify:
     name: Verify the published release
     runs-on: ubuntu-latest
-    # A failed release run has already said so, and half a release cannot verify.
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    # No conclusion guard: v0.17.0 published seven assets from a run that
+    # failed on publish-snap, and the guard skipped it. --if-published covers
+    # the other direction, a run that published nothing.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Through the environment: a dispatch input is caller supplied text.
           TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
-        run: python3 scripts/verify_release.py "$TAG"
+          IF_PUBLISHED: ${{ github.event_name == 'workflow_run' && '--if-published' || '' }}
+        run: python3 scripts/verify_release.py "$TAG" ${IF_PUBLISHED:+"$IF_PUBLISHED"}
