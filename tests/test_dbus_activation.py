@@ -234,9 +234,14 @@ def test_register_handles_bus_own_name_failure():
     """A failure while requesting the bus name is logged, not raised."""
     from vocalinux import dbus_service
 
-    with patch.object(dbus_service.Gio, "bus_own_name", side_effect=RuntimeError("no bus")):
-        # __init__ calls _register(); it must not propagate the error.
-        service = _make_service()
+    # Patch GLib.Error to a real class so both the raise and the `except` clause
+    # reference the same type and the GLib.Error branch is exercised.
+    with patch.object(dbus_service.GLib, "Error", RuntimeError):
+        with patch.object(
+            dbus_service.Gio, "bus_own_name", side_effect=RuntimeError("no bus")
+        ):
+            # __init__ calls _register(); it must not propagate the error.
+            service = _make_service()
     assert service._owner_id == 0
 
 
@@ -257,11 +262,16 @@ def test_on_bus_acquired_registers_object():
 
 def test_on_bus_acquired_handles_register_failure():
     """A failed object registration is caught and leaves the id unset."""
+    from vocalinux import dbus_service
+
     service = _make_service()
     connection = MagicMock()
     connection.register_object.side_effect = RuntimeError("register failed")
 
-    service._on_bus_acquired(connection, "com.vocalinux.Vocalinux")
+    # Patch GLib.Error to a real class so both the raise and the `except` clause
+    # reference the same type and the GLib.Error branch is exercised.
+    with patch.object(dbus_service.GLib, "Error", RuntimeError):
+        service._on_bus_acquired(connection, "com.vocalinux.Vocalinux")
 
     assert service._registration_id == 0
 
@@ -295,9 +305,14 @@ def test_shutdown_swallows_unregister_and_unown_errors():
     service._registration_id = 42
     service._owner_id = 7
 
-    with patch.object(dbus_service.Gio, "bus_unown_name", side_effect=RuntimeError("unown failed")):
-        # Must not raise despite both cleanup calls failing.
-        service.shutdown()
+    # Patch GLib.Error to a real class so both the raise and the `except` clause
+    # reference the same type and the GLib.Error branch is exercised.
+    with patch.object(dbus_service.GLib, "Error", RuntimeError):
+        with patch.object(
+            dbus_service.Gio, "bus_unown_name", side_effect=RuntimeError("unown failed")
+        ):
+            # Must not raise despite both cleanup calls failing.
+            service.shutdown()
 
     assert service._registration_id == 0
     assert service._owner_id == 0
