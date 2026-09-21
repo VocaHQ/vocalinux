@@ -7,6 +7,7 @@ import argparse
 import atexit
 import logging
 import sys
+from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
@@ -91,7 +92,56 @@ def parse_arguments():
         action="store_true",
         help="Start minimized to system tray",
     )
+    # External activation triggers: forward a control command to a running
+    # instance over D-Bus (e.g. from a KDE Plasma global shortcut) and exit.
+    parser.add_argument(
+        "--toggle",
+        action="store_true",
+        help="Toggle voice typing on a running instance (via D-Bus) and exit",
+    )
+    parser.add_argument(
+        "--start",
+        action="store_true",
+        help="Start voice typing on a running instance (via D-Bus) and exit",
+    )
+    parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop voice typing on a running instance (via D-Bus) and exit",
+    )
     return parser.parse_args()
+
+
+# CLI flags that trigger a running instance instead of starting a new one.
+_TRIGGER_FLAGS = ("toggle", "start", "stop")
+
+
+def _selected_trigger(args) -> Optional[str]:
+    """Return the external-activation command requested via CLI, if any."""
+    for name in _TRIGGER_FLAGS:
+        # Explicit `is True` guards against MagicMock args in tests, whose
+        # attributes are truthy by default.
+        if getattr(args, name, False) is True:
+            return name
+    return None
+
+
+def _dispatch_trigger(command: str) -> int:
+    """Forward a control command to a running instance over D-Bus.
+
+    Returns a process exit code (0 on success, 1 if no instance is reachable).
+    """
+    from .dbus_service import send_command
+
+    if send_command(command):
+        logger.info("Sent '%s' command to running Vocalinux instance", command)
+        return 0
+
+    logger.error(
+        "Could not reach a running Vocalinux instance to '%s'. Is Vocalinux running?",
+        command,
+    )
+    return 1
 
 
 def check_dependencies():
@@ -252,6 +302,17 @@ def main():
     # another instance already holds the single-instance lock
     args = parse_arguments()
 
+    # Configure debug logging if requested
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled")
+
+    # External activation: forward the command to a running instance over D-Bus
+    # and exit without acquiring the lock or starting a second full instance.
+    trigger = _selected_trigger(args)
+    if trigger is not None:
+        sys.exit(_dispatch_trigger(trigger))
+
     # Check for single instance BEFORE any initialization
     from . import single_instance
 
@@ -278,11 +339,6 @@ def main():
 
     # Register cleanup to release lock on exit
     atexit.register(single_instance.release_lock)
-
-    # Configure debug logging if requested
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
-        logger.debug("Debug logging enabled")
 
     # Check dependencies first (before importing GTK-dependent modules)
     if not check_dependencies():
