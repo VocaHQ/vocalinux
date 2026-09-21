@@ -105,6 +105,10 @@ DEFAULT_CONFIG = {
     "shortcuts": {
         "toggle_recognition": "right_alt+right_alt",
         "mode": "push_to_talk",  # "toggle" or "push_to_talk"
+        # When True, the internal evdev/pynput listener is not started; activation
+        # comes in over D-Bus instead (e.g. a KDE Plasma global shortcut running
+        # `vocalinux --toggle`). Avoids /dev/input access and the input group.
+        "disable_internal_hotkey": False,
         # Pure-modifier gestures: "ctrl+ctrl", "alt+alt", "shift+shift" (and
         # left_/right_ variants) — double-tap (toggle) or hold (push_to_talk).
         # Modifier+key combos are also supported, e.g. "alt+r", "ctrl+alt+r",
