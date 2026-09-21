@@ -1048,6 +1048,14 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("Gtk.Separator", before_close)
         self.assertIn("footer.pack_start(close_separator", before_close)
 
+    def test_test_dictation_scrolled_window_has_no_shadow(self):
+        """GTK3 ScrolledWindow default shadow is a left stripe on GNOME/Wayland (#847)."""
+        footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
+        scrolled_block = footer_body.split("scrolled_window = Gtk.ScrolledWindow()")[1].split(
+            "self.test_textview = Gtk.TextView()"
+        )[0]
+        self.assertIn("scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)", scrolled_block)
+
     def test_sidebar_icons_use_adwaita_names(self):
         """Sidebar icons must resolve in the stock Adwaita theme."""
         for icon in [
