@@ -235,6 +235,24 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         self._drive(probs=[0.95] * 20, vad_sensitivity=3)
         self.assertEqual(len(self.enqueued), 0, "speech should keep silence counter at 0, no flush")
 
+    def test_reload_keeps_speech_across_silence(self) -> None:
+        """Speech during reload stays together despite intervening silence."""
+        self.mgr._reload_pending = True
+        self._drive(probs=[0.95] * 6 + [0.05] * 20)
+        self.assertEqual(self.enqueued, [])
+        self.assertEqual(len(self.mgr.audio_buffer), 26)
+        self.assertTrue(self.mgr._recording_segment_has_speech)
+
+    def test_reload_buffer_limit_reports_error_without_trimming_speech(self) -> None:
+        """A stalled load must not silently discard the start of an utterance."""
+        self.mgr._reload_pending = True
+        self.mgr._buffered_reload_session = True
+        self.mgr._max_buffer_size = 4
+        self._drive(probs=[0.95] * 20)
+        self.assertEqual(len(self.mgr.audio_buffer), 4)
+        self.assertTrue(self.mgr._buffered_capture_failed)
+        self.assertEqual(self.mgr.state, RecognitionState.ERROR)
+
     def test_sensitivity_lowest_blocks_borderline_speech(self):
         """At sensitivity=1 (threshold 0.8), prob=0.6 is silence."""
         # 20 chunks of borderline prob; with strict threshold these read as silence

@@ -2886,6 +2886,16 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(timeout_row)
 
+        self.model_reload_buffer_switch = Gtk.Switch()
+        group.add_row(
+            PreferenceRow(
+                title="Record while model reloads",
+                subtitle="Start speaking immediately. Audio is kept in memory until the model is ready.",
+                widget=self.model_reload_buffer_switch,
+            )
+        )
+        self.model_reload_buffer_switch.connect("state-set", self._on_model_reload_buffer_toggled)
+
         self.power_tab.pack_start(group, False, False, 0)
 
         self.model_keepalive_switch.connect("state-set", self._on_model_keepalive_enabled_toggled)
@@ -2896,6 +2906,17 @@ class SettingsDialog(Gtk.Dialog):
     def _update_model_keepalive_sensitivity(self, enabled: bool) -> None:
         """Gray out the idle timeout selector while idle unload is disabled."""
         self.model_keepalive_timeout_combo.set_sensitive(enabled)
+        self.model_reload_buffer_switch.set_sensitive(enabled)
+
+    def _on_model_reload_buffer_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Apply and save recording during idle model reloads."""
+        if self._initializing or self._applying_settings:
+            return False
+        enabled = bool(state)
+        self.speech_engine.buffer_during_reload = enabled
+        self.config_manager.set("model_keepalive", "buffer_during_reload", enabled)
+        self.config_manager.save_settings()
+        return False
 
     def _on_model_keepalive_enabled_toggled(self, widget, state):
         enabled = bool(state)
@@ -5049,6 +5070,9 @@ class SettingsDialog(Gtk.Dialog):
         keepalive_settings = self.config_manager.get_settings().get("model_keepalive", {})
         keepalive_enabled = bool(keepalive_settings.get("enabled", False))
         self.model_keepalive_switch.set_active(keepalive_enabled)
+        self.model_reload_buffer_switch.set_active(
+            bool(keepalive_settings.get("buffer_during_reload", False))
+        )
         self._update_model_keepalive_sensitivity(keepalive_enabled)
         timeout_seconds = int(keepalive_settings.get("idle_timeout_seconds", 300) or 300)
         if not self.model_keepalive_timeout_combo.set_active_id(str(timeout_seconds)):

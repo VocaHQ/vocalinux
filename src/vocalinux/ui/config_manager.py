@@ -131,6 +131,7 @@ DEFAULT_CONFIG = {
         # let the dGPU sleep. Next dictation lazy-reloads the model (cold start).
         "enabled": False,
         "idle_timeout_seconds": 300,  # 5 minutes when enabled
+        "buffer_during_reload": False,  # Record while the idle model loads
     },
     "text_injection": {
         "copy_to_clipboard": False,  # Disabled by default; users can enable in Settings
