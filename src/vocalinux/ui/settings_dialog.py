@@ -6886,11 +6886,18 @@ class SettingsDialog(Gtk.Dialog):
 
         return False
 
-    def _wait_for_idle_then_restore_callbacks(self):
+    def _wait_for_idle_then_restore_callbacks(self) -> bool:
         """Poll until recognition is idle, then restore callbacks / check result.
 
         Returns True so GLib.timeout_add keeps scheduling while the buffered
         reload worker is still PROCESSING.
+
+        On the ~3 minute timeout, never restore live injector callbacks while a
+        buffered reload worker may still deliver text (privacy-adjacent Test
+        Dictation inject-into-app race). Prefer cancelling via
+        ``_cancel_reload_recording`` (off the GTK thread — it joins) and only
+        then restoring; if cancel is unavailable, leave test callbacks installed
+        and surface an error.
         """
         if not hasattr(self, "_saved_text_callbacks"):
             self._test_active = False
@@ -6909,17 +6916,84 @@ class SettingsDialog(Gtk.Dialog):
             # ~3 minutes at 100ms — generous for cold large-model reload.
             if self._test_idle_wait_ticks < 1800:
                 return True
-            logger.warning(
-                "Test Dictation: timed out waiting for recognition IDLE; " "restoring callbacks"
-            )
+            return self._on_test_idle_wait_timeout()
 
+        return self._finish_test_restore_ui()
+
+    def _on_test_idle_wait_timeout(self) -> bool:
+        """Handle idle-wait timeout without restoring live injectors early."""
+        cancel = getattr(self.speech_engine, "_cancel_reload_recording", None)
+        if callable(cancel):
+            logger.warning(
+                "Test Dictation: timed out waiting for recognition IDLE; "
+                "cancelling buffered reload before restoring callbacks"
+            )
+            self.test_button.set_sensitive(False)
+            self.test_button.set_label("Cancelling…")
+            self.update_recognition_progress("Cancelling")
+            threading.Thread(
+                target=self._cancel_buffered_reload_then_restore,
+                daemon=True,
+                name="vocalinux-test-dictation-cancel",
+            ).start()
+            return False
+
+        logger.error(
+            "Test Dictation: timed out waiting for recognition IDLE with no "
+            "cancel API; leaving test callbacks installed"
+        )
+        self._leave_test_callbacks_after_timeout(
+            "(Timed out waiting for recognition to finish. "
+            "Test output callbacks were left in place so the utterance cannot "
+            "inject into another app.)"
+        )
+        return False
+
+    def _cancel_buffered_reload_then_restore(self) -> None:
+        """Cancel buffered reload off the GTK thread, then restore on idle."""
+        cancel = getattr(self.speech_engine, "_cancel_reload_recording", None)
+        try:
+            if callable(cancel):
+                cancel()
+        except Exception:
+            logger.exception(
+                "Test Dictation: failed to cancel buffered reload after idle-wait timeout"
+            )
+            GLib.idle_add(self._on_buffered_cancel_failed)
+            return
+        GLib.idle_add(self._finish_test_after_buffered_cancel)
+
+    def _on_buffered_cancel_failed(self) -> bool:
+        """Keep test callbacks if cancel failed — never restore live injectors."""
+        self._leave_test_callbacks_after_timeout(
+            "(Timed out waiting for recognition, and cancelling the buffered "
+            "reload failed. Test output callbacks were left in place so the "
+            "utterance cannot inject into another app.)"
+        )
+        return False
+
+    def _finish_test_after_buffered_cancel(self) -> bool:
+        """Restore live callbacks only after cancel has discarded the session."""
+        return self._finish_test_restore_ui()
+
+    def _leave_test_callbacks_after_timeout(self, message: str) -> None:
+        """End the test UI but keep test callbacks to avoid inject-into-app."""
+        self._test_active = False
+        self.test_button.set_sensitive(True)
+        self.test_button.set_label("Test Dictation")
+        self.update_recognition_progress("Idle")
+        if hasattr(self, "test_buffer"):
+            self.test_buffer.set_text(message)
+
+    def _finish_test_restore_ui(self) -> bool:
+        """Reset Test Dictation chrome and restore saved live callbacks."""
         self._test_active = False
         self.test_button.set_sensitive(True)
         self.test_button.set_label("Test Dictation")
         self.update_recognition_progress("Idle")
         return self._restore_callbacks_and_check_result()
 
-    def _restore_callbacks_and_check_result(self):
+    def _restore_callbacks_and_check_result(self) -> bool:
         """Restore callbacks and check test result after delay."""
         # Restore original text callbacks
         if hasattr(self, "_saved_text_callbacks"):
