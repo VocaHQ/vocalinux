@@ -21,8 +21,15 @@ Session = tuple[
 @pytest.fixture
 def session(monkeypatch: pytest.MonkeyPatch) -> Generator[Session, None, None]:
     """Use real worker threads with a deterministic, blocked model loader."""
-    monkeypatch.setattr(rm.SpeechRecognitionManager, "_init_vosk", lambda self: None)
-    monkeypatch.setattr(rm, "load_silero_vad", lambda: None)
+
+    def skip_vosk_init(_manager: rm.SpeechRecognitionManager) -> None:
+        return None
+
+    def skip_silero_load() -> None:
+        return None
+
+    monkeypatch.setattr(rm.SpeechRecognitionManager, "_init_vosk", skip_vosk_init)
+    monkeypatch.setattr(rm, "load_silero_vad", skip_silero_load)
     for name in ("play_start_sound", "play_stop_sound", "play_error_sound", "_show_notification"):
         monkeypatch.setattr(rm, name, Mock())
     manager = rm.SpeechRecognitionManager(engine="vosk", buffer_during_reload=True)
@@ -45,9 +52,12 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Generator[Session, None, None]:
         manager.model = object()
         manager._model_initialized = True
 
+    def collect_transcription(audio: list[bytes]) -> None:
+        transcribed.append(audio)
+
     monkeypatch.setattr(manager, "_record_audio", record)
     monkeypatch.setattr(manager, "_init_selected_engine", load)
-    monkeypatch.setattr(manager, "_process_audio_buffer", lambda audio: transcribed.append(audio))
+    monkeypatch.setattr(manager, "_process_audio_buffer", collect_transcription)
     yield manager, captured, loading, release_load, transcribed
     release_load.set()
     if manager.should_record:
@@ -144,6 +154,26 @@ def test_reload_failure_after_release_allows_retry(
     assert manager.start_recognition()
     manager.stop_recognition()
     assert manager.state == RecognitionState.IDLE
+
+
+def test_reload_that_returns_without_a_ready_model_stops_and_allows_retry(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, captured, _loading, _release_load, transcribed = session
+
+    def leave_model_unready() -> None:
+        assert captured.wait(1)
+
+    monkeypatch.setattr(manager, "_init_selected_engine", leave_model_unready)
+    assert manager.start_recognition()
+    manager.recognition_thread.join(2)
+
+    assert not manager.recognition_thread.is_alive()
+    assert not manager.should_record
+    assert manager.state == RecognitionState.IDLE
+    assert manager.audio_buffer == []
+    assert transcribed == []
+    assert manager.is_idle_unloaded
 
 
 def test_unload_cancels_pending_transcription(session: Session) -> None:
