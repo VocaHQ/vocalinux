@@ -6859,8 +6859,26 @@ class SettingsDialog(Gtk.Dialog):
 
         self.speech_engine.stop_recognition()
 
-        # Wait a bit for any pending transcription to complete before restoring callbacks
-        # This ensures the test callback receives the transcription result
+        # Buffered reload's stop_recognition() returns while PROCESSING; the
+        # worker may still deliver the test utterance via current text_callbacks.
+        # Keep the test callbacks installed (and block auto-apply / re-test)
+        # until recognition reaches IDLE so we never restore the live injector
+        # early. Use GLib polling — never join the worker on the GTK thread.
+        state = getattr(self.speech_engine, "state", RecognitionState.IDLE)
+        buffered = getattr(self.speech_engine, "_buffered_reload_session", False)
+        if (
+            state in (RecognitionState.LISTENING, RecognitionState.PROCESSING)
+            or buffered
+        ):
+            self.test_button.set_sensitive(False)
+            self.test_button.set_label("Processing…")
+            self.update_recognition_progress("Processing")
+            self._test_idle_wait_ticks = 0
+            GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)
+            return False
+
+        # Non-buffered stop already joined to IDLE; brief settle for any
+        # GLib.idle_add text delivery still in flight.
         GLib.timeout_add(500, self._restore_callbacks_and_check_result)
 
         self._test_active = False
@@ -6870,6 +6888,40 @@ class SettingsDialog(Gtk.Dialog):
         self.update_recognition_progress("Idle")
 
         return False
+
+    def _wait_for_idle_then_restore_callbacks(self):
+        """Poll until recognition is idle, then restore callbacks / check result.
+
+        Returns True so GLib.timeout_add keeps scheduling while the buffered
+        reload worker is still PROCESSING.
+        """
+        if not hasattr(self, "_saved_text_callbacks"):
+            self._test_active = False
+            self.test_button.set_sensitive(True)
+            self.test_button.set_label("Test Dictation")
+            return False
+
+        state = getattr(self.speech_engine, "state", RecognitionState.IDLE)
+        still_busy = state in (
+            RecognitionState.LISTENING,
+            RecognitionState.PROCESSING,
+        ) or getattr(self.speech_engine, "_buffered_reload_session", False)
+
+        if still_busy:
+            self._test_idle_wait_ticks = getattr(self, "_test_idle_wait_ticks", 0) + 1
+            # ~3 minutes at 100ms — generous for cold large-model reload.
+            if self._test_idle_wait_ticks < 1800:
+                return True
+            logger.warning(
+                "Test Dictation: timed out waiting for recognition IDLE; "
+                "restoring callbacks"
+            )
+
+        self._test_active = False
+        self.test_button.set_sensitive(True)
+        self.test_button.set_label("Test Dictation")
+        self.update_recognition_progress("Idle")
+        return self._restore_callbacks_and_check_result()
 
     def _restore_callbacks_and_check_result(self):
         """Restore callbacks and check test result after delay."""
