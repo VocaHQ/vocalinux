@@ -8,7 +8,7 @@ import os
 import unittest
 
 
-def _get_source_code():
+def _get_source_code() -> str:
     """Read the settings dialog source file."""
     source_path = os.path.join(
         os.path.dirname(__file__),

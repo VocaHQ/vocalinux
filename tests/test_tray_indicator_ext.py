@@ -524,7 +524,7 @@ class TestExternalActivationGate(unittest.TestCase):
     """
 
     @staticmethod
-    def _fake_indicator(active):
+    def _fake_indicator(active: bool) -> MagicMock:
         """Minimal stand-in for calling _setup_keyboard_shortcuts in isolation.
 
         ``active`` stubs _external_activation_active() directly rather than
@@ -582,7 +582,7 @@ class TestExternalActivationActiveGate(unittest.TestCase):
     D-Bus service has already failed to register this run."""
 
     @staticmethod
-    def _fake_indicator(disable_internal_hotkey, unavailable):
+    def _fake_indicator(disable_internal_hotkey: bool, unavailable: bool) -> MagicMock:
         fake = MagicMock()
         fake.config_manager.get_bool.return_value = disable_internal_hotkey
         fake._external_activation_unavailable = unavailable
@@ -614,7 +614,7 @@ class TestDBusRegistrationFailedFallback(unittest.TestCase):
     could not register, so the user is never left with no activation path."""
 
     @staticmethod
-    def _fake_indicator(disable_internal_hotkey):
+    def _fake_indicator(disable_internal_hotkey: bool) -> MagicMock:
         fake = MagicMock()
         fake.config_manager.get_bool.return_value = disable_internal_hotkey
         return fake
