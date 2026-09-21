@@ -302,6 +302,8 @@ class TestTrayIndicatorResumeFlow(unittest.TestCase):
             indicator = TrayIndicator.__new__(TrayIndicator)
 
         indicator.speech_engine = MagicMock()
+        indicator.config_manager = MagicMock()
+        indicator.config_manager.get_bool.return_value = False
         indicator._setup_keyboard_shortcuts = MagicMock()
         indicator._input_monitor = None
         indicator._settle_timer_id = None
@@ -342,6 +344,19 @@ class TestTrayIndicatorResumeFlow(unittest.TestCase):
         assert calls[0][0][1] == indicator._reinit_speech_after_resume
         assert calls[1][0][0] == 2
         assert calls[1][0][1] == indicator._start_input_device_monitor
+
+    @patch("vocalinux.ui.tray_indicator.GLib")
+    def test_on_system_resume_skips_monitor_for_external_activation(self, mock_glib):
+        """External activation promises no /dev/input access; a resume must
+        not open the device monitor that (re)starts the internal listener."""
+        indicator = self._make_tray_indicator()
+        indicator.config_manager.get_bool.return_value = True
+
+        indicator._on_system_resume()
+
+        calls = mock_glib.timeout_add_seconds.call_args_list
+        assert len(calls) == 1
+        assert calls[0][0][1] == indicator._reinit_speech_after_resume
 
     @patch("vocalinux.ui.tray_indicator.Gio")
     @patch("vocalinux.ui.tray_indicator.GLib")
@@ -565,6 +580,7 @@ class TestTrayAutoPauseWiring(unittest.TestCase):
     def test_system_resume_skips_reinit_when_auto_paused(self, mock_glib):
         indicator = self._make_tray_indicator()
         indicator.speech_engine.is_auto_paused = True
+        indicator.config_manager.get_bool.return_value = False
         indicator._start_input_device_monitor = MagicMock()
 
         indicator._on_system_resume()
@@ -578,6 +594,7 @@ class TestTrayAutoPauseWiring(unittest.TestCase):
     def test_system_resume_reinits_when_not_auto_paused(self, mock_glib):
         indicator = self._make_tray_indicator()
         indicator.speech_engine.is_auto_paused = False
+        indicator.config_manager.get_bool.return_value = False
         indicator._reinit_speech_after_resume = MagicMock()
         indicator._start_input_device_monitor = MagicMock()
 

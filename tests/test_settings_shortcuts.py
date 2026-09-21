@@ -288,14 +288,17 @@ class TestExternalActivationToggle(unittest.TestCase):
     def test_handler_guards_during_initialization(self):
         """The handler is inert while the dialog is initializing/applying."""
         self.assertIn(
-            "def _on_disable_internal_hotkey_toggled(self, widget, state):", self.source_code
+            "def _on_disable_internal_hotkey_toggled(self, widget: Gtk.Switch, state: bool)"
+            " -> bool:",
+            self.source_code,
         )
         self.assertIn("if self._initializing or self._applying_settings:", self.source_code)
 
     def test_sensitivity_helper_greys_internal_rows(self):
         """External activation greys out the built-in shortcut rows."""
         self.assertIn(
-            "def _update_internal_hotkey_sensitivity(self, disabled: bool):", self.source_code
+            "def _update_internal_hotkey_sensitivity(self, disabled: bool) -> None:",
+            self.source_code,
         )
         self.assertIn(
             "for row in (self.mode_row, self.shortcut_row, self.custom_shortcut_row):",
