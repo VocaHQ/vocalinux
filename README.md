@@ -40,6 +40,7 @@ No Voca account is required. Models download once. After that, speech-to-text st
 - **On-device after model download**: Local engines; speech-to-text stays on your machine
 - **X11 and Wayland**: Text injection via xdotool, IBus, wtype, ydotool, or clipboard fallback
 - **Several engines**: whisper.cpp (default), OpenAI Whisper, Faster Whisper, VOSK, Parakeet, plus optional remote HTTP API
+- **Custom vocabulary**: Bias recognition toward your names and jargon (Settings → Speech Engine; Whisper, whisper.cpp, Faster Whisper, and Remote API engines)
 - **GPU acceleration**: Vulkan for AMD, Intel, and NVIDIA with whisper.cpp
 - **Toggle or push-to-talk**: New installs default to hold Right Alt; existing configs keep their shortcut
 - **System tray + settings**: Searchable sidebar, Speech Model simple setup with Advanced as an island, status icons, audio feedback
