@@ -7522,6 +7522,7 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         self._test_active = True
+        self._test_timeout_cancel_attempted = False
         self.test_button.set_sensitive(False)
         self.test_button.set_label("Testing… Speak Now!")
         self.test_output_revealer.set_reveal_child(True)
@@ -7571,6 +7572,7 @@ class SettingsDialog(Gtk.Dialog):
             self.test_button.set_label("Processing…")
             self.update_recognition_progress("Processing")
             self._test_idle_wait_ticks = 0
+            self._test_timeout_cancel_attempted = False
             GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)
             return False
 
@@ -7661,7 +7663,7 @@ class SettingsDialog(Gtk.Dialog):
         try:
             if callable(cancel):
                 cancel()
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, TypeError):
             logger.exception(
                 "Test Dictation: failed to cancel buffered reload after idle-wait timeout"
             )
@@ -7696,6 +7698,7 @@ class SettingsDialog(Gtk.Dialog):
     def _finish_test_restore_ui(self) -> bool:
         """Reset Test Dictation chrome and restore saved live callbacks."""
         self._test_active = False
+        self._test_timeout_cancel_attempted = False
         self.test_button.set_sensitive(True)
         self.test_button.set_label("Test Dictation")
         self.update_recognition_progress("Idle")

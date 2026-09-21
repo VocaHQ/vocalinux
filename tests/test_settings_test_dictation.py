@@ -454,3 +454,39 @@ def test_keep_waiting_then_idle_restores_live_callbacks() -> None:
     assert not hasattr(dialog, "_saved_text_callbacks")
     assert dialog._test_active is False
     glib.timeout_add.assert_called_once_with(300, dialog._check_test_result)
+
+
+def test_timeout_cancel_flag_resets_on_new_finalize_wait() -> None:
+    """A later Test Dictation session must be allowed to cancel again."""
+    dialog = _dialog_for_finalize(state=RecognitionState.PROCESSING, buffered_reload=True)
+    dialog._test_timeout_cancel_attempted = True
+    dialog._test_idle_wait_ticks = 0
+
+    with patch.object(settings_dialog, "GLib") as glib:
+        SettingsDialog._finalize_test(dialog)
+
+    assert dialog._test_timeout_cancel_attempted is False
+    assert dialog._test_idle_wait_ticks == 0
+    glib.timeout_add.assert_called_once_with(100, dialog._wait_for_idle_then_restore_callbacks)
+
+    dialog._test_idle_wait_ticks = 1799
+    with patch.object(settings_dialog.threading, "Thread") as thread_cls:
+        assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is False
+    thread_cls.assert_called_once()
+    assert thread_cls.call_args.kwargs["target"] == dialog._cancel_buffered_reload_then_restore
+
+
+def test_cancel_worker_reraises_unexpected_defect() -> None:
+    """Programming defects must not be swallowed as cancel-failed recovery."""
+    dialog = _dialog_for_finalize(state=RecognitionState.PROCESSING, buffered_reload=True)
+    dialog.speech_engine._cancel_reload_recording.side_effect = KeyError("bug")
+
+    with patch.object(settings_dialog, "GLib") as glib:
+        try:
+            SettingsDialog._cancel_buffered_reload_then_restore(dialog)
+            raised = False
+        except KeyError:
+            raised = True
+
+    assert raised is True
+    glib.idle_add.assert_not_called()
