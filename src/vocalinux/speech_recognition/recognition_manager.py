@@ -43,6 +43,7 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
+from .vocab_prompt import build_vocab_prompt
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 
@@ -1145,6 +1146,8 @@ class SpeechRecognitionManager:
         self.remote_api_key = kwargs.get("remote_api_key", "")
         self.remote_api_endpoint = kwargs.get("remote_api_endpoint", "/inference")
         self.remote_api_model = kwargs.get("remote_api_model", "whisper-1")
+        # Custom vocabulary to bias whisper-family engines with (prompt/hotwords).
+        self.custom_vocabulary: list[str] = list(kwargs.get("custom_vocabulary", []) or [])
         self._http_session = None
 
         self._faster_whisper_engine = None
@@ -1248,6 +1251,7 @@ class SpeechRecognitionManager:
         "remote_api_key",
         "remote_api_endpoint",
         "remote_api_model",
+        "custom_vocabulary",
     )
 
     def _snapshot_reconfigure_state(self) -> dict[str, object]:
@@ -2501,6 +2505,9 @@ class SpeechRecognitionManager:
 
         files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
         data = {"model": self.remote_api_model or "whisper-1"}
+        vocab_prompt = build_vocab_prompt(self.custom_vocabulary)
+        if vocab_prompt:
+            data["prompt"] = vocab_prompt
         if lang:
             data["language"] = lang
 
@@ -2582,6 +2589,9 @@ class SpeechRecognitionManager:
             "temperature_inc": "0.2",
             "response_format": "json",
         }
+        vocab_prompt = build_vocab_prompt(self.custom_vocabulary)
+        if vocab_prompt:
+            data["prompt"] = vocab_prompt
         if lang:
             data["language"] = lang
 
@@ -3862,6 +3872,8 @@ class SpeechRecognitionManager:
             self.remote_api_endpoint = kwargs.get("remote_api_endpoint", "/inference")
         if "remote_api_model" in kwargs:
             self.remote_api_model = kwargs.get("remote_api_model", "whisper-1")
+        if "custom_vocabulary" in kwargs:
+            self.custom_vocabulary = list(kwargs.get("custom_vocabulary") or [])
 
         self._voice_commands_enabled = self._resolve_voice_commands_enabled()
 

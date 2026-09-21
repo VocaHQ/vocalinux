@@ -846,5 +846,82 @@ class TestReinitializeAfterResumeSessionClose(unittest.TestCase):
         self.assertIsNone(manager._http_session)
 
 
+class TestRemoteAPIVocabularyBiasing(unittest.TestCase):
+    """Custom vocabulary is injected as a prompt into remote API requests."""
+
+    def _make_manager(self, **kwargs):
+        SpeechRecognitionManager = _import_manager()
+        _setup_requests_get_ok()
+        defaults = dict(
+            engine="remote_api",
+            remote_api_url="http://localhost:9090",
+            remote_api_endpoint="/v1/audio/transcriptions",
+        )
+        defaults.update(kwargs)
+        return SpeechRecognitionManager(**defaults)
+
+    def _mock_response(self):
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = {"text": "hello"}
+        return response
+
+    def test_init_stores_custom_vocabulary(self):
+        manager = self._make_manager(custom_vocabulary=["Cyrille", "Kubernetes"])
+        self.assertEqual(manager.custom_vocabulary, ["Cyrille", "Kubernetes"])
+
+    def test_init_defaults_to_empty_vocabulary(self):
+        manager = self._make_manager()
+        self.assertEqual(manager.custom_vocabulary, [])
+
+    def test_reconfigure_updates_vocabulary(self):
+        manager = self._make_manager(custom_vocabulary=[])
+        manager.reconfigure(custom_vocabulary=["Cyrille"])
+        self.assertEqual(manager.custom_vocabulary, ["Cyrille"])
+
+    def test_openai_api_sends_prompt_when_vocabulary_set(self):
+        manager = self._make_manager(custom_vocabulary=["Cyrille", "Kubernetes"])
+        session = MagicMock()
+        session.post.return_value = self._mock_response()
+
+        manager._try_openai_api(b"audio", "en", {}, session)
+
+        _, kwargs = session.post.call_args
+        self.assertEqual(kwargs["data"]["prompt"], "Cyrille, Kubernetes")
+
+    def test_openai_api_omits_prompt_when_vocabulary_empty(self):
+        manager = self._make_manager(custom_vocabulary=[])
+        session = MagicMock()
+        session.post.return_value = self._mock_response()
+
+        manager._try_openai_api(b"audio", "en", {}, session)
+
+        _, kwargs = session.post.call_args
+        self.assertNotIn("prompt", kwargs["data"])
+
+    def test_whispercpp_server_api_sends_prompt_when_vocabulary_set(self):
+        manager = self._make_manager(
+            remote_api_endpoint="/inference",
+            custom_vocabulary=["Cyrille"],
+        )
+        session = MagicMock()
+        session.post.return_value = self._mock_response()
+
+        manager._try_whispercpp_server_api(b"audio", "en", {}, session)
+
+        _, kwargs = session.post.call_args
+        self.assertEqual(kwargs["data"]["prompt"], "Cyrille")
+
+    def test_whispercpp_server_api_omits_prompt_when_vocabulary_empty(self):
+        manager = self._make_manager(remote_api_endpoint="/inference", custom_vocabulary=[])
+        session = MagicMock()
+        session.post.return_value = self._mock_response()
+
+        manager._try_whispercpp_server_api(b"audio", "en", {}, session)
+
+        _, kwargs = session.post.call_args
+        self.assertNotIn("prompt", kwargs["data"])
+
+
 if __name__ == "__main__":
     unittest.main()
