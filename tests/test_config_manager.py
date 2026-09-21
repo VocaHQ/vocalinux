@@ -187,9 +187,7 @@ class TestConfigManager(unittest.TestCase):
         with open(self.temp_config_file, "w") as f:
             json.dump({"speech_recognition": {"engine": "remote_api"}}, f)
         config_manager = ConfigManager()
-        self.assertEqual(
-            config_manager.get("speech_recognition", "custom_vocabulary", None), []
-        )
+        self.assertEqual(config_manager.get("speech_recognition", "custom_vocabulary", None), [])
 
     def test_get_existing_value(self):
         """Test getting an existing configuration value from defaults."""

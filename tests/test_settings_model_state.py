@@ -70,6 +70,8 @@ def _dialog_stub() -> Mock:
     # The real attribute is an enum member; a bare "idle" string would compare
     # unequal and send every test down the stop_recognition + sleep(0.5) branch.
     dialog.speech_engine.state = RecognitionState.IDLE
+    # Custom vocabulary textarea: empty buffer parses to an empty list.
+    dialog.vocab_buffer.get_text.return_value = ""
     return dialog
 
 

@@ -43,8 +43,8 @@ from ..utils.whisper_model_info import (
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
 from ..version import __version__
 from .command_processor import CommandProcessor
-from .vocab_prompt import build_vocab_prompt
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
+from .vocab_prompt import build_vocab_prompt
 
 
 def _pywhispercpp_distribution_version() -> Optional[tuple[int, ...]]:

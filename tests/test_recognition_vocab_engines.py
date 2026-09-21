@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+
 # autouse fixture: mock heavy deps so manager import works headless.
 @pytest.fixture(autouse=True)
 def _mock_heavy_deps(monkeypatch):
@@ -139,12 +140,8 @@ class TestFasterWhisperVocabulary:
         import numpy as np
 
         engine = self._engine_with_mock_model(["Cyrille"])
-        with patch(
-            "vocalinux.speech_recognition.engines.faster_whisper_engine.np"
-        ) as mock_np:
-            mock_np.frombuffer.return_value.astype.return_value = np.zeros(
-                1600, dtype=np.float32
-            )
+        with patch("vocalinux.speech_recognition.engines.faster_whisper_engine.np") as mock_np:
+            mock_np.frombuffer.return_value.astype.return_value = np.zeros(1600, dtype=np.float32)
             engine.transcribe([b"\x00\x00" * 1600])
 
         _, kwargs = engine._model.transcribe.call_args
@@ -154,12 +151,8 @@ class TestFasterWhisperVocabulary:
         import numpy as np
 
         engine = self._engine_with_mock_model([])
-        with patch(
-            "vocalinux.speech_recognition.engines.faster_whisper_engine.np"
-        ) as mock_np:
-            mock_np.frombuffer.return_value.astype.return_value = np.zeros(
-                1600, dtype=np.float32
-            )
+        with patch("vocalinux.speech_recognition.engines.faster_whisper_engine.np") as mock_np:
+            mock_np.frombuffer.return_value.astype.return_value = np.zeros(1600, dtype=np.float32)
             engine.transcribe([b"\x00\x00" * 1600])
 
         _, kwargs = engine._model.transcribe.call_args

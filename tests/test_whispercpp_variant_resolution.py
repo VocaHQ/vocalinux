@@ -86,6 +86,7 @@ def _selection_dialog(
     dialog.advanced_no_timestamps_switch.get_active.return_value = True
     dialog.advanced_no_context_switch.get_active.return_value = True
     dialog.advanced_initial_prompt_buffer.get_text.return_value = ""
+    dialog.vocab_buffer.get_text.return_value = ""
     dialog.advanced_temperature_spin.get_value.return_value = 0.0
     dialog.advanced_temperature_inc_spin.get_value.return_value = -1.0
     dialog.advanced_entropy_thold_spin.get_value.return_value = 2.4

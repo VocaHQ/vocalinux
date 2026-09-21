@@ -238,6 +238,7 @@ class TestMainModule(unittest.TestCase):
                 remote_api_key="",
                 remote_api_endpoint="/inference",
                 remote_api_model="whisper-1",
+                custom_vocabulary=[],
             )
             mock_text.assert_called_once_with(wayland_mode=True)
             mock_action_handler.assert_called_once_with(mock_text_instance)

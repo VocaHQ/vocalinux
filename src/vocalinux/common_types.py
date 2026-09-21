@@ -42,6 +42,14 @@ class Engine(Protocol):
         """Transcribe the captured audio and return the recognized text."""
         ...
 
+    def is_ready(self) -> bool:
+        """Return True if the engine is initialized and ready to transcribe."""
+        ...
+
+    def cleanup(self) -> None:
+        """Release any engine resources."""
+        ...
+
 
 class VocabBiasEngine(Protocol):
     """Optional engine hook for vocabulary biasing.
@@ -52,14 +60,6 @@ class VocabBiasEngine(Protocol):
     """
 
     custom_vocabulary: list[str]
-
-    def is_ready(self) -> bool:
-        """Return True if the engine is initialized and ready to transcribe."""
-        ...
-
-    def cleanup(self) -> None:
-        """Release any engine resources."""
-        ...
 
 
 class SpeechRecognitionManagerProtocol(Protocol):
