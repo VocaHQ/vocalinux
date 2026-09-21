@@ -61,12 +61,14 @@ class VocalinuxDBusService:
         on_toggle: Callable[[], None],
         on_start: Callable[[], None],
         on_stop: Callable[[], None],
-    ):
+        on_registration_failed: Optional[Callable[[], None]] = None,
+    ) -> None:
         self._callbacks = {
             "Toggle": on_toggle,
             "Start": on_start,
             "Stop": on_stop,
         }
+        self._on_registration_failed = on_registration_failed
         self._owner_id = 0
         self._registration_id = 0
         self._connection: Optional[Gio.DBusConnection] = None
@@ -87,6 +89,7 @@ class VocalinuxDBusService:
             logger.info("Requested D-Bus name %s on session bus", BUS_NAME)
         except Exception:
             logger.warning("Failed to own D-Bus name %s", BUS_NAME, exc_info=True)
+            self._notify_registration_failed()
 
     def _on_bus_acquired(self, connection: Gio.DBusConnection, name: str) -> None:
         """Register the control object once the bus connection is available."""
@@ -101,12 +104,23 @@ class VocalinuxDBusService:
             )
         except Exception:
             logger.warning("Failed to register D-Bus object", exc_info=True)
+            self._notify_registration_failed()
 
     def _on_name_acquired(self, connection: Gio.DBusConnection, name: str) -> None:
         logger.info("Acquired D-Bus name %s", name)
 
     def _on_name_lost(self, connection: Gio.DBusConnection, name: str) -> None:
         logger.warning("Could not acquire or lost D-Bus name %s", name)
+        self._notify_registration_failed()
+
+    def _notify_registration_failed(self) -> None:
+        """Tell the caller the service is not reachable on the bus.
+
+        Without this, a config that also disables the internal evdev/pynput
+        listener would leave the user with no way to start or stop dictation.
+        """
+        if self._on_registration_failed is not None:
+            self._on_registration_failed()
 
     def _handle_method_call(
         self,

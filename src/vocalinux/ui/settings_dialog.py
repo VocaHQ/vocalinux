@@ -3722,7 +3722,7 @@ class SettingsDialog(Gtk.Dialog):
         # Update UI based on initial mode
         self._update_shortcut_ui_for_mode(current_mode)
 
-    def _update_internal_hotkey_sensitivity(self, disabled: bool):
+    def _update_internal_hotkey_sensitivity(self, disabled: bool) -> None:
         """Grey out the built-in shortcut controls when external activation is on."""
         for row in (self.mode_row, self.shortcut_row, self.custom_shortcut_row):
             row.set_sensitive(not disabled)
@@ -3738,7 +3738,7 @@ class SettingsDialog(Gtk.Dialog):
                 self.config_manager.get_str("shortcuts", "mode", "toggle")
             )
 
-    def _on_disable_internal_hotkey_toggled(self, widget, state):
+    def _on_disable_internal_hotkey_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
         """Handle toggle of the external-activation switch."""
         if self._initializing or self._applying_settings:
             return False

@@ -228,10 +228,47 @@ class TrayIndicator:
             on_toggle=self._toggle_recognition,
             on_start=self._external_start,
             on_stop=self._external_stop,
+            on_registration_failed=self._on_dbus_registration_failed,
         )
 
-    def _setup_keyboard_shortcuts(self):
-        """Set up keyboard shortcuts based on configured mode."""
+    def _on_dbus_registration_failed(self) -> None:
+        """Fall back to the internal listener if external activation cannot work.
+
+        Runs when the D-Bus service could not claim its bus name or register
+        its object (no session bus, name already owned, etc.). If the internal
+        evdev/pynput listener is also disabled, the user would otherwise be
+        left with no way to start or stop dictation at all.
+        """
+        if not self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False):
+            return
+        logger.error(
+            "D-Bus activation unavailable and the internal listener is disabled; "
+            "falling back to the internal listener"
+        )
+        notifications.notify(
+            "External activation unavailable",
+            "The D-Bus service could not start, so Vocalinux is using the "
+            "internal keyboard shortcut instead. Check Settings -> Shortcuts.",
+            "dialog-warning",
+        )
+        self._setup_keyboard_shortcuts(force_enable=True)
+
+    def _setup_keyboard_shortcuts(self, force_enable: bool = False):
+        """Set up keyboard shortcuts based on configured mode.
+
+        Args:
+            force_enable: Start the listener even if external activation is
+                configured. Used as a runtime-only fallback when the D-Bus
+                service failed to register; the saved setting is left alone.
+        """
+        # Reconfiguring (e.g. live-toggling external activation) tears down the
+        # release callback below. A push-to-talk session held at that moment
+        # would then never see its release, leaving recognition and the
+        # microphone running with no way back except another control surface.
+        if self.speech_engine.state != RecognitionState.IDLE:
+            logger.info("Stopping active recognition before reconfiguring shortcuts")
+            self._stop_recognition()
+
         # Stop existing shortcut manager if running
         if self.shortcut_manager.active:
             logger.info("Stopping existing shortcut manager before reconfiguration")
@@ -245,7 +282,9 @@ class TrayIndicator:
         # External-activation mode: skip the internal evdev/pynput listener
         # entirely so no /dev/input access is required. Activation then comes
         # in over D-Bus (see VocalinuxDBusService).
-        if self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False):
+        if not force_enable and self.config_manager.get_bool(
+            "shortcuts", "disable_internal_hotkey", False
+        ):
             logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
             return
 
@@ -1092,7 +1131,14 @@ class TrayIndicator:
             logger.info("Skipping resume reinit: auto-pause still active")
         else:
             GLib.timeout_add_seconds(2, self._reinit_speech_after_resume)
-        GLib.timeout_add_seconds(2, self._start_input_device_monitor)
+
+        # External-activation mode never started the /dev/input listener in
+        # the first place; watching it here on every resume would open the
+        # very file descriptor that mode promises to avoid.
+        if self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False):
+            logger.info("Skipping input device monitor: external activation via D-Bus")
+        else:
+            GLib.timeout_add_seconds(2, self._start_input_device_monitor)
 
     def _reinit_speech_after_resume(self):
         try:
