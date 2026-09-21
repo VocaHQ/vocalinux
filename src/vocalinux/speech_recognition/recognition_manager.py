@@ -3282,7 +3282,7 @@ class SpeechRecognitionManager:
                 raise RuntimeError("Audio capture failed during model reload")
             if not self._cancel_buffered_session.is_set():
                 self._perform_recognition()
-        except Exception:
+        except (ChecksumError, ImportError, OSError, RuntimeError, ValueError):
             logger.exception("Failed to reload model or transcribe buffered speech")
             play_error_sound()
             _show_notification(

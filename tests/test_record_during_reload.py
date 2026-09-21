@@ -176,6 +176,25 @@ def test_reload_that_returns_without_a_ready_model_stops_and_allows_retry(
     assert manager.is_idle_unloaded
 
 
+def test_reload_does_not_hide_unexpected_worker_errors(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager, _captured, _loading, _release_load, _transcribed = session
+
+    def fail_with_programming_error() -> None:
+        raise AssertionError("worker defect")
+
+    manager._buffered_reload_session = True
+    manager._capture_finished.set()
+    monkeypatch.setattr(manager, "_init_selected_engine", fail_with_programming_error)
+
+    with pytest.raises(AssertionError, match="worker defect"):
+        manager._reload_and_recognize()
+
+    assert manager.state == RecognitionState.IDLE
+    assert not manager._buffered_reload_session
+
+
 def test_unload_cancels_pending_transcription(session: Session) -> None:
     manager, captured, loading, release_load, transcribed = session
     assert manager.start_recognition()
