@@ -524,19 +524,24 @@ class TestExternalActivationGate(unittest.TestCase):
     """
 
     @staticmethod
-    def _fake_indicator(disable_internal_hotkey):
-        """Minimal stand-in for calling _setup_keyboard_shortcuts in isolation."""
+    def _fake_indicator(active):
+        """Minimal stand-in for calling _setup_keyboard_shortcuts in isolation.
+
+        ``active`` stubs _external_activation_active() directly rather than
+        the config it normally derives from -- that derivation (including the
+        once-failed-stays-off persistence) has its own tests below.
+        """
         fake = MagicMock()
         fake.shortcut_manager.active = False
-        fake.config_manager.get_bool.return_value = disable_internal_hotkey
         fake.config_manager.get_str.return_value = "toggle"
+        fake._external_activation_active.return_value = active
         return fake
 
     def test_external_mode_skips_listener_start(self):
         """With the option enabled, the evdev/pynput listener is not started."""
         from vocalinux.ui.tray_indicator import TrayIndicator
 
-        fake = self._fake_indicator(disable_internal_hotkey=True)
+        fake = self._fake_indicator(active=True)
         TrayIndicator._setup_keyboard_shortcuts(fake)
         fake.shortcut_manager.start.assert_not_called()
         fake.shortcut_manager.register_toggle_callback.assert_called_once_with(None)
@@ -545,7 +550,7 @@ class TestExternalActivationGate(unittest.TestCase):
         """With the option disabled (default), the listener starts as before."""
         from vocalinux.ui.tray_indicator import TrayIndicator
 
-        fake = self._fake_indicator(disable_internal_hotkey=False)
+        fake = self._fake_indicator(active=False)
         TrayIndicator._setup_keyboard_shortcuts(fake)
         fake.shortcut_manager.start.assert_called_once()
 
@@ -556,7 +561,7 @@ class TestExternalActivationGate(unittest.TestCase):
         from vocalinux.common_types import RecognitionState
         from vocalinux.ui.tray_indicator import TrayIndicator
 
-        fake = self._fake_indicator(disable_internal_hotkey=True)
+        fake = self._fake_indicator(active=True)
         fake.speech_engine.state = RecognitionState.LISTENING
         TrayIndicator._setup_keyboard_shortcuts(fake)
         fake._stop_recognition.assert_called_once_with()
@@ -566,20 +571,42 @@ class TestExternalActivationGate(unittest.TestCase):
         from vocalinux.common_types import RecognitionState
         from vocalinux.ui.tray_indicator import TrayIndicator
 
-        fake = self._fake_indicator(disable_internal_hotkey=False)
+        fake = self._fake_indicator(active=False)
         fake.speech_engine.state = RecognitionState.IDLE
         TrayIndicator._setup_keyboard_shortcuts(fake)
         fake._stop_recognition.assert_not_called()
 
-    def test_force_enable_starts_listener_despite_config(self):
-        """force_enable bypasses the config gate without changing the saved
-        setting, for the D-Bus-registration-failed fallback."""
+
+class TestExternalActivationActiveGate(unittest.TestCase):
+    """Tests for _external_activation_active(): the saved setting, unless the
+    D-Bus service has already failed to register this run."""
+
+    @staticmethod
+    def _fake_indicator(disable_internal_hotkey, unavailable):
+        fake = MagicMock()
+        fake.config_manager.get_bool.return_value = disable_internal_hotkey
+        fake._external_activation_unavailable = unavailable
+        return fake
+
+    def test_true_when_configured_and_available(self):
         from vocalinux.ui.tray_indicator import TrayIndicator
 
-        fake = self._fake_indicator(disable_internal_hotkey=True)
-        TrayIndicator._setup_keyboard_shortcuts(fake, force_enable=True)
-        fake.shortcut_manager.start.assert_called_once()
-        fake.config_manager.set.assert_not_called()
+        fake = self._fake_indicator(disable_internal_hotkey=True, unavailable=False)
+        assert TrayIndicator._external_activation_active(fake) is True
+
+    def test_false_when_not_configured(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=False, unavailable=False)
+        assert TrayIndicator._external_activation_active(fake) is False
+
+    def test_false_once_unavailable_even_if_still_configured(self):
+        """Once the service has failed, the saved setting is overridden for
+        the rest of the process -- it does not retry."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=True, unavailable=True)
+        assert TrayIndicator._external_activation_active(fake) is False
 
 
 class TestDBusRegistrationFailedFallback(unittest.TestCase):
@@ -598,8 +625,36 @@ class TestDBusRegistrationFailedFallback(unittest.TestCase):
 
         fake = self._fake_indicator(disable_internal_hotkey=True)
         TrayIndicator._on_dbus_registration_failed(fake)
-        fake._setup_keyboard_shortcuts.assert_called_once_with(force_enable=True)
+        assert fake._external_activation_unavailable is True
+        fake._setup_keyboard_shortcuts.assert_called_once_with()
         mock_notifications.notify.assert_called_once()
+
+    @patch("vocalinux.ui.tray_indicator.notifications")
+    def test_fallback_persists_across_a_later_reconfigure(self, mock_notifications):
+        """The exact regression this fixes: a reconfigure after the fallback
+        (mode change, settings toggle, resume) must not re-disable the only
+        working activation path just because the saved setting still asks
+        for external activation."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        with patch.object(TrayIndicator, "__init__", lambda self: None):
+            indicator = TrayIndicator.__new__(TrayIndicator)
+        indicator._external_activation_unavailable = False
+        indicator.config_manager = MagicMock()
+        indicator.config_manager.get_bool.return_value = True
+        indicator.config_manager.get_str.return_value = "toggle"
+        indicator.speech_engine = MagicMock()
+        indicator.shortcut_manager = MagicMock()
+        indicator.shortcut_manager.active = False
+
+        indicator._on_dbus_registration_failed()
+        indicator.shortcut_manager.start.assert_called_once()
+
+        # A later reconfigure -- e.g. the mode combo changing in Settings --
+        # calls this with no knowledge of the earlier failure.
+        indicator.shortcut_manager.reset_mock()
+        indicator._setup_keyboard_shortcuts()
+        indicator.shortcut_manager.start.assert_called_once()
 
     def test_noop_when_internal_listener_already_active(self):
         """Nothing to fall back to/from if the internal listener was already

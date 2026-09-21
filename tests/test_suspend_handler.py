@@ -304,6 +304,7 @@ class TestTrayIndicatorResumeFlow(unittest.TestCase):
         indicator.speech_engine = MagicMock()
         indicator.config_manager = MagicMock()
         indicator.config_manager.get_bool.return_value = False
+        indicator._external_activation_unavailable = False
         indicator._setup_keyboard_shortcuts = MagicMock()
         indicator._input_monitor = None
         indicator._settle_timer_id = None
@@ -512,6 +513,7 @@ class TestTrayAutoPauseWiring(unittest.TestCase):
         indicator.speech_engine.reinitialize_after_resume = MagicMock()
         indicator.speech_engine.is_auto_paused = False
         indicator.config_manager = MagicMock()
+        indicator._external_activation_unavailable = False
         indicator._setup_keyboard_shortcuts = MagicMock()
         indicator._input_monitor = None
         indicator._settle_timer_id = None
