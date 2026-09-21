@@ -237,9 +237,7 @@ def test_register_handles_bus_own_name_failure():
     # Patch GLib.Error to a real class so both the raise and the `except` clause
     # reference the same type and the GLib.Error branch is exercised.
     with patch.object(dbus_service.GLib, "Error", RuntimeError):
-        with patch.object(
-            dbus_service.Gio, "bus_own_name", side_effect=RuntimeError("no bus")
-        ):
+        with patch.object(dbus_service.Gio, "bus_own_name", side_effect=RuntimeError("no bus")):
             # __init__ calls _register(); it must not propagate the error.
             service = _make_service()
     assert service._owner_id == 0
