@@ -207,3 +207,109 @@ def test_append_test_result_shows_callback_text():
     SettingsDialog._append_test_result(dialog, "hello")
 
     assert dialog.test_buffer._text == "hello"
+
+
+def _dialog_for_finalize(*, state, buffered_reload=False, saved_callbacks=None):
+    """Minimal dialog wired for _finalize_test / idle-wait helpers."""
+    dialog = Mock()
+    dialog._test_active = True
+    dialog._test_idle_wait_ticks = 0
+    dialog.test_button = Mock()
+    dialog.update_recognition_progress = Mock()
+    dialog._saved_text_callbacks = (
+        list(saved_callbacks) if saved_callbacks is not None else [Mock(name="live")]
+    )
+    dialog._test_text_callback = Mock(name="test_cb")
+    dialog._restore_callbacks_and_check_result = (
+        SettingsDialog._restore_callbacks_and_check_result.__get__(dialog)
+    )
+    dialog._wait_for_idle_then_restore_callbacks = (
+        SettingsDialog._wait_for_idle_then_restore_callbacks.__get__(dialog)
+    )
+    dialog._check_test_result = Mock(return_value=False)
+
+    engine = Mock()
+    engine.state = state
+    engine._buffered_reload_session = buffered_reload
+    engine.stop_recognition = Mock()
+    engine.set_text_callbacks = Mock()
+    dialog.speech_engine = engine
+    return dialog
+
+
+def test_finalize_test_buffered_reload_waits_for_idle_before_restore():
+    """stop_recognition may return while PROCESSING; keep test callbacks."""
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.PROCESSING, buffered_reload=True
+    )
+    live = dialog._saved_text_callbacks[0]
+
+    with patch.object(settings_dialog, "GLib") as glib:
+        SettingsDialog._finalize_test(dialog)
+
+    dialog.speech_engine.stop_recognition.assert_called_once()
+    # Must not restore live injector yet — worker still holds the utterance.
+    dialog.speech_engine.set_text_callbacks.assert_not_called()
+    assert dialog._saved_text_callbacks == [live]
+    assert dialog._test_active is True
+    dialog.test_button.set_label.assert_called_with("Processing…")
+    glib.timeout_add.assert_called_once_with(
+        100, dialog._wait_for_idle_then_restore_callbacks
+    )
+
+
+def test_wait_for_idle_keeps_polling_while_processing():
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.PROCESSING, buffered_reload=True
+    )
+
+    assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is True
+    dialog.speech_engine.set_text_callbacks.assert_not_called()
+    assert dialog._test_active is True
+    assert dialog._test_idle_wait_ticks == 1
+
+
+def test_wait_for_idle_restores_only_after_idle():
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.IDLE, buffered_reload=False
+    )
+    live = dialog._saved_text_callbacks[0]
+
+    with patch.object(settings_dialog, "GLib") as glib:
+        result = SettingsDialog._wait_for_idle_then_restore_callbacks(dialog)
+
+    assert result is False
+    dialog.speech_engine.set_text_callbacks.assert_called_once_with([live])
+    assert not hasattr(dialog, "_saved_text_callbacks")
+    assert dialog._test_active is False
+    dialog.test_button.set_label.assert_called_with("Test Dictation")
+    glib.timeout_add.assert_called_once_with(300, dialog._check_test_result)
+
+
+def test_wait_for_idle_treats_buffered_flag_as_busy_even_if_state_idle():
+    """Defensive: session flag can lag a frame behind state transitions."""
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.IDLE, buffered_reload=True
+    )
+
+    assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is True
+    dialog.speech_engine.set_text_callbacks.assert_not_called()
+
+
+def test_finalize_test_idle_path_uses_settle_delay():
+    """Non-buffered stop already reached IDLE — keep the legacy 500ms settle."""
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.IDLE, buffered_reload=False
+    )
+
+    with patch.object(settings_dialog, "GLib") as glib:
+        SettingsDialog._finalize_test(dialog)
+
+    dialog.speech_engine.stop_recognition.assert_called_once()
+    assert dialog._test_active is False
+    dialog.test_button.set_label.assert_called_with("Test Dictation")
+    glib.timeout_add.assert_called_once_with(
+        500, dialog._restore_callbacks_and_check_result
+    )
+    # Live callbacks still saved until the settle timeout fires.
+    assert hasattr(dialog, "_saved_text_callbacks")
