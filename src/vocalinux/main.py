@@ -116,7 +116,7 @@ def parse_arguments():
 _TRIGGER_FLAGS = ("toggle", "start", "stop")
 
 
-def _selected_trigger(args) -> Optional[str]:
+def _selected_trigger(args: argparse.Namespace) -> Optional[str]:
     """Return the external-activation command requested via CLI, if any."""
     for name in _TRIGGER_FLAGS:
         # Explicit `is True` guards against MagicMock args in tests, whose

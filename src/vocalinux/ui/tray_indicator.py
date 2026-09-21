@@ -521,7 +521,7 @@ class TrayIndicator:
         if self.speech_engine.state == RecognitionState.IDLE:
             self.speech_engine.start_recognition(mode="push_to_talk")
 
-    def _external_start(self):
+    def _external_start(self) -> None:
         """Start recognition for an external (D-Bus) trigger.
 
         Uses normal start semantics — not push-to-talk — so a single
@@ -531,7 +531,7 @@ class TrayIndicator:
         if self.speech_engine.state == RecognitionState.IDLE:
             self.speech_engine.start_recognition()
 
-    def _external_stop(self):
+    def _external_stop(self) -> None:
         """Stop recognition for an external (D-Bus) trigger."""
         if self.speech_engine.state != RecognitionState.IDLE:
             self.speech_engine.stop_recognition()
