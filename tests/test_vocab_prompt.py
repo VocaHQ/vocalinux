@@ -3,6 +3,7 @@
 from vocalinux.speech_recognition.vocab_prompt import (
     MAX_VOCAB_WORDS,
     build_vocab_prompt,
+    parse_vocab_text,
 )
 
 
@@ -38,3 +39,23 @@ class TestBuildVocabPrompt:
         words = [f"word{i}" for i in range(MAX_VOCAB_WORDS + 40)]
         result = build_vocab_prompt(words)
         assert len(result.split(", ")) == MAX_VOCAB_WORDS
+
+
+class TestParseVocabText:
+    """Test parse_vocab_text for the settings UI textarea."""
+
+    def test_empty_text(self):
+        assert parse_vocab_text("") == []
+        assert parse_vocab_text("\n\n  \n") == []
+
+    def test_one_word_per_line(self):
+        assert parse_vocab_text("Cyrille\nKubernetes") == ["Cyrille", "Kubernetes"]
+
+    def test_strips_and_drops_blanks(self):
+        assert parse_vocab_text("  Cyrille \n\n\t\nKubernetes\n") == [
+            "Cyrille",
+            "Kubernetes",
+        ]
+
+    def test_dedupes_case_insensitive(self):
+        assert parse_vocab_text("Cyrille\ncyrille") == ["Cyrille"]

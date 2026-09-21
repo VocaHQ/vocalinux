@@ -36,3 +36,19 @@ def build_vocab_prompt(words: list[str]) -> str:
         )
         cleaned = cleaned[:MAX_VOCAB_WORDS]
     return ", ".join(cleaned)
+
+
+def parse_vocab_text(text: str) -> list[str]:
+    """Parse one-word-per-line UI text into a cleaned vocabulary list.
+
+    Trims each line and drops blanks and duplicates (first spelling wins).
+    """
+    seen: set[str] = set()
+    result: list[str] = []
+    for line in text.splitlines():
+        entry = line.strip()
+        if not entry or entry.lower() in seen:
+            continue
+        seen.add(entry.lower())
+        result.append(entry)
+    return result

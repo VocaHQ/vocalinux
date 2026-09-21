@@ -33,6 +33,7 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
+from ..speech_recognition.vocab_prompt import parse_vocab_text  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.faster_whisper_model_info import (
     FASTER_WHISPER_MODEL_INFO,
@@ -3232,6 +3233,29 @@ class SettingsDialog(Gtk.Dialog):
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
         group.add_row(self.language_row)
 
+        # Custom vocabulary (prompt biasing for whisper-family engines)
+        vocab_help = (
+            "Names and terms to recognize better, one per line. Used by the "
+            "Whisper, whisper.cpp, faster-whisper, and Remote API engines."
+        )
+        self.vocab_textview = Gtk.TextView()
+        self.vocab_textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.vocab_textview.set_tooltip_text(vocab_help)
+        self.vocab_textview.set_size_request(250, 80)
+        vocab_scrolled = Gtk.ScrolledWindow()
+        vocab_scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        vocab_scrolled.set_min_content_height(80)
+        vocab_scrolled.set_tooltip_text(vocab_help)
+        vocab_scrolled.add(self.vocab_textview)
+        vocab_row = PreferenceRow(
+            title="Custom vocabulary",
+            subtitle="Names and terms to bias recognition with",
+            widget=vocab_scrolled,
+        )
+        vocab_row.set_tooltip_text(vocab_help)
+        group.add_row(vocab_row)
+        self.vocab_buffer = self.vocab_textview.get_buffer()
+
         # Lives inside the revealer built above, so the Advanced switch slides it out.
         self.advanced_box.pack_start(group, False, False, 0)
 
@@ -5110,6 +5134,10 @@ class SettingsDialog(Gtk.Dialog):
         self.voice_commands_switch.set_active(voice_commands_enabled)
 
         advanced_settings = self.config_manager.get_settings().get("advanced", {})
+        sr_settings_for_vocab = self.config_manager.get_settings().get("speech_recognition", {})
+        self.vocab_buffer.set_text(
+            "\n".join(sr_settings_for_vocab.get("custom_vocabulary", [])), -1
+        )
         power_user_mode = advanced_settings.get("power_user_mode", False)
         self.power_user_switch.set_active(power_user_mode)
         self.advanced_revealer.set_reveal_child(power_user_mode)
@@ -6692,6 +6720,13 @@ class SettingsDialog(Gtk.Dialog):
         vad = int(self.vad_spin.get_value())
         silence = self.silence_spin.get_value()
 
+        vocab_text = self.vocab_buffer.get_text(
+            self.vocab_buffer.get_start_iter(),
+            self.vocab_buffer.get_end_iter(),
+            False,
+        )
+        custom_vocabulary = parse_vocab_text(vocab_text)
+
         settings = {
             "engine": engine,
             "model_size": model_size,
@@ -6699,6 +6734,7 @@ class SettingsDialog(Gtk.Dialog):
             "language": language,
             "vad_sensitivity": vad,
             "silence_timeout": silence,
+            "custom_vocabulary": custom_vocabulary,
             "whispercpp_no_timestamps": self.advanced_no_timestamps_switch.get_active(),
             "whispercpp_no_context": self.advanced_no_context_switch.get_active(),
             "whispercpp_initial_prompt": self.advanced_initial_prompt_buffer.get_text(
