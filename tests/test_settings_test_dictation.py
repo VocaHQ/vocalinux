@@ -239,9 +239,7 @@ def _dialog_for_finalize(*, state, buffered_reload=False, saved_callbacks=None):
 
 def test_finalize_test_buffered_reload_waits_for_idle_before_restore():
     """stop_recognition may return while PROCESSING; keep test callbacks."""
-    dialog = _dialog_for_finalize(
-        state=RecognitionState.PROCESSING, buffered_reload=True
-    )
+    dialog = _dialog_for_finalize(state=RecognitionState.PROCESSING, buffered_reload=True)
     live = dialog._saved_text_callbacks[0]
 
     with patch.object(settings_dialog, "GLib") as glib:
@@ -253,15 +251,11 @@ def test_finalize_test_buffered_reload_waits_for_idle_before_restore():
     assert dialog._saved_text_callbacks == [live]
     assert dialog._test_active is True
     dialog.test_button.set_label.assert_called_with("Processing…")
-    glib.timeout_add.assert_called_once_with(
-        100, dialog._wait_for_idle_then_restore_callbacks
-    )
+    glib.timeout_add.assert_called_once_with(100, dialog._wait_for_idle_then_restore_callbacks)
 
 
 def test_wait_for_idle_keeps_polling_while_processing():
-    dialog = _dialog_for_finalize(
-        state=RecognitionState.PROCESSING, buffered_reload=True
-    )
+    dialog = _dialog_for_finalize(state=RecognitionState.PROCESSING, buffered_reload=True)
 
     assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is True
     dialog.speech_engine.set_text_callbacks.assert_not_called()
@@ -270,9 +264,7 @@ def test_wait_for_idle_keeps_polling_while_processing():
 
 
 def test_wait_for_idle_restores_only_after_idle():
-    dialog = _dialog_for_finalize(
-        state=RecognitionState.IDLE, buffered_reload=False
-    )
+    dialog = _dialog_for_finalize(state=RecognitionState.IDLE, buffered_reload=False)
     live = dialog._saved_text_callbacks[0]
 
     with patch.object(settings_dialog, "GLib") as glib:
@@ -288,9 +280,7 @@ def test_wait_for_idle_restores_only_after_idle():
 
 def test_wait_for_idle_treats_buffered_flag_as_busy_even_if_state_idle():
     """Defensive: session flag can lag a frame behind state transitions."""
-    dialog = _dialog_for_finalize(
-        state=RecognitionState.IDLE, buffered_reload=True
-    )
+    dialog = _dialog_for_finalize(state=RecognitionState.IDLE, buffered_reload=True)
 
     assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is True
     dialog.speech_engine.set_text_callbacks.assert_not_called()
@@ -298,9 +288,7 @@ def test_wait_for_idle_treats_buffered_flag_as_busy_even_if_state_idle():
 
 def test_finalize_test_idle_path_uses_settle_delay():
     """Non-buffered stop already reached IDLE — keep the legacy 500ms settle."""
-    dialog = _dialog_for_finalize(
-        state=RecognitionState.IDLE, buffered_reload=False
-    )
+    dialog = _dialog_for_finalize(state=RecognitionState.IDLE, buffered_reload=False)
 
     with patch.object(settings_dialog, "GLib") as glib:
         SettingsDialog._finalize_test(dialog)
@@ -308,8 +296,6 @@ def test_finalize_test_idle_path_uses_settle_delay():
     dialog.speech_engine.stop_recognition.assert_called_once()
     assert dialog._test_active is False
     dialog.test_button.set_label.assert_called_with("Test Dictation")
-    glib.timeout_add.assert_called_once_with(
-        500, dialog._restore_callbacks_and_check_result
-    )
+    glib.timeout_add.assert_called_once_with(500, dialog._restore_callbacks_and_check_result)
     # Live callbacks still saved until the settle timeout fires.
     assert hasattr(dialog, "_saved_text_callbacks")

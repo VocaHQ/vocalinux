@@ -6866,10 +6866,7 @@ class SettingsDialog(Gtk.Dialog):
         # early. Use GLib polling — never join the worker on the GTK thread.
         state = getattr(self.speech_engine, "state", RecognitionState.IDLE)
         buffered = getattr(self.speech_engine, "_buffered_reload_session", False)
-        if (
-            state in (RecognitionState.LISTENING, RecognitionState.PROCESSING)
-            or buffered
-        ):
+        if state in (RecognitionState.LISTENING, RecognitionState.PROCESSING) or buffered:
             self.test_button.set_sensitive(False)
             self.test_button.set_label("Processing…")
             self.update_recognition_progress("Processing")
@@ -6913,8 +6910,7 @@ class SettingsDialog(Gtk.Dialog):
             if self._test_idle_wait_ticks < 1800:
                 return True
             logger.warning(
-                "Test Dictation: timed out waiting for recognition IDLE; "
-                "restoring callbacks"
+                "Test Dictation: timed out waiting for recognition IDLE; " "restoring callbacks"
             )
 
         self._test_active = False
