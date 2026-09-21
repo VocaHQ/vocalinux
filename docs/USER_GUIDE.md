@@ -85,7 +85,50 @@ Open **Settings → Speech Model**. The page starts with a simple setup (languag
 
 Parakeet runs NVIDIA NeMo ASR models through sherpa-onnx. The default bundle is **v3-european** (25 European languages). **v2-english** is English-only. Parakeet ignores the catalog language picker (language is treated as auto).
 
-### Model size (whisper.cpp / Whisper)
+### Activation via a KDE Plasma global shortcut
+
+Instead of the built-in hotkey listener, you can let your desktop's global
+shortcut system trigger Vocalinux. On Wayland the built-in listener reads
+`/dev/input` (requiring membership in the `input` group and effectively acting
+as a system-wide key reader). Delegating activation to the compositor avoids
+this entirely — no `/dev/input` access and no `input` group needed just to
+start/stop dictation. Text injection is unaffected.
+
+A running instance exposes a D-Bus service on the session bus
+(`com.vocalinux.Vocalinux`), and the CLI can forward commands to it:
+
+```bash
+vocalinux --toggle   # start if idle, stop if active
+vocalinux --start    # start voice typing
+vocalinux --stop     # stop voice typing
+```
+
+To use it on KDE Plasma:
+
+1. Disable the internal hotkey listener by adding this to your Vocalinux config
+   file (`~/.config/vocalinux/config.json`) under `shortcuts`:
+
+   ```json
+   "shortcuts": {
+       "disable_internal_hotkey": true
+   }
+   ```
+
+   Then restart Vocalinux. The internal evdev/pynput listener will not start, so
+   no `/dev/input` access is required for activation.
+
+2. Open **System Settings -> Keyboard -> Shortcuts -> Add New -> Command or Script**
+   (older Plasma: **System Settings -> Shortcuts -> Custom Shortcuts -> Edit ->
+   New -> Global Shortcut -> Command/URL**).
+
+3. Bind a key combination of your choice to the command `vocalinux --toggle`.
+
+Now your chosen key combination toggles dictation, handled by the compositor
+rather than by Vocalinux reading the keyboard directly. This works the same way
+on other compositors that support binding a key to a command (e.g. GNOME custom
+shortcuts, Sway/Hyprland `bindsym`/`bind`).
+
+### Model Settings
 
 | Size | Approx. size | Tradeoff |
 |------|--------------|----------|
