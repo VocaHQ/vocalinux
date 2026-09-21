@@ -1160,6 +1160,12 @@ class SpeechRecognitionManager:
         self._auto_paused = False
         # True while idle keep-alive has unloaded the model (dictation may lazy-reload)
         self._idle_unloaded = False
+        self.buffer_during_reload = bool(kwargs.get("buffer_during_reload", False))
+        self._buffered_reload_session = False
+        self._reload_pending = False
+        self._buffered_capture_failed = False
+        self._capture_finished = threading.Event()
+        self._cancel_buffered_session = threading.Event()
 
         # Speech detection parameters (load defaults, will be overridden by configure)
         self.vad_sensitivity = kwargs.get("vad_sensitivity", 3)
@@ -3426,6 +3432,8 @@ class SpeechRecognitionManager:
             True if recognition actually started (state is LISTENING), False if
             blocked (wrong state, auto-paused, or model not ready).
         """
+        if getattr(self, "_buffered_reload_session", False):
+            return False
         if self.state != RecognitionState.IDLE:
             logger.warning(f"Cannot start recognition in current state: {self.state}")
             return False
@@ -3443,11 +3451,13 @@ class SpeechRecognitionManager:
             )
             return False
 
+        reload_in_background = False
         # Check if model is ready (lazy-reload after idle keep-alive unload)
         if not self.model_ready:
             if self._idle_unloaded:
-                logger.info("Model was unloaded by keep-alive; reloading before dictation")
-                if not self.ensure_model_loaded():
+                logger.info("Model was unloaded by keep-alive; reloading for dictation")
+                reload_in_background = getattr(self, "buffer_during_reload", False)
+                if not reload_in_background and not self.ensure_model_loaded():
                     play_error_sound()
                     _show_notification(
                         "Model Reload Failed",
@@ -3471,10 +3481,16 @@ class SpeechRecognitionManager:
                     )
                 return False
 
+        self._buffered_reload_session = reload_in_background
+        self._reload_pending = reload_in_background
+        if reload_in_background:
+            self._buffered_capture_failed = False
+            self._capture_finished.clear()
+            self._cancel_buffered_session.clear()
+
         # Last thing before listening, so the language matches the layout the
         # user is typing in right now rather than the one they had at startup.
         self._refresh_language_from_layout()
-
         logger.info("Starting speech recognition")
         self._update_state(RecognitionState.LISTENING)
 
@@ -3493,7 +3509,8 @@ class SpeechRecognitionManager:
         self.audio_thread.start()
 
         # Start the recognition thread
-        self.recognition_thread = threading.Thread(target=self._perform_recognition)
+        target = self._reload_and_recognize if reload_in_background else self._perform_recognition
+        self.recognition_thread = threading.Thread(target=target)
         self.recognition_thread.daemon = True
         self.recognition_thread.start()
         # After the threads exist: a start that returned early must not duck.
@@ -3505,6 +3522,8 @@ class SpeechRecognitionManager:
         if self.state == RecognitionState.IDLE:
             return
 
+        if getattr(self, "_buffered_reload_session", False) and not self.should_record:
+            return
         logger.info("Stopping speech recognition")
 
         # Mark recording over before touching the duck so a concurrent arm
@@ -3549,6 +3568,14 @@ class SpeechRecognitionManager:
                 self.audio_buffer = []
             self._recording_segment_has_speech = False
 
+        if getattr(self, "_buffered_reload_session", False):
+            # Keep the session busy until its queued audio has been transcribed.
+            # In particular, key release must not wait for a cold model load.
+            self._update_state(RecognitionState.PROCESSING)
+            self._signal_recognition_stop()
+            self._capture_finished.set()
+            return
+
         # Wake up recognition thread so it can drain queued segments and stop
         self._signal_recognition_stop()
 
@@ -3561,6 +3588,55 @@ class SpeechRecognitionManager:
 
         self._recognition_mode = "toggle"
         self._update_state(RecognitionState.IDLE)
+
+    def _reload_and_recognize(self) -> None:
+        """Reload an idle model while the recording thread captures speech."""
+        failed = False
+        try:
+            # Idle unload already released the engine resources. Resume reinit
+            # cannot be used here because it stops the active microphone.
+            with self._model_lock:
+                if not self._cancel_buffered_session.is_set():
+                    self._init_selected_engine()
+                    if not self.model_ready:
+                        raise RuntimeError("Speech model did not become ready")
+                    self._idle_unloaded = False
+            self._reload_pending = False
+            if self._buffered_capture_failed or self.state == RecognitionState.ERROR:
+                raise RuntimeError("Audio capture failed during model reload")
+            if not self._cancel_buffered_session.is_set():
+                self._perform_recognition()
+        except Exception:
+            failed = True
+            logger.exception("Failed to reload model or transcribe buffered speech")
+            play_error_sound()
+            _show_notification(
+                "Dictation Failed",
+                "Could not reload the speech model or transcribe the recording. Please try again.",
+                "dialog-warning",
+            )
+        finally:
+            self._reload_pending = False
+            if self.should_record:
+                self.stop_recognition()
+            # stop_recognition owns the final buffer. Do not finish or allow a
+            # new session until key release has completed that handoff.
+            self._capture_finished.wait()
+            with self._buffer_lock:
+                self.audio_buffer = []
+            self._segment_queue = queue.Queue(maxsize=32)
+            self._recognition_mode = "toggle"
+            self._buffered_reload_session = False
+            self._update_state(RecognitionState.ERROR if failed else RecognitionState.IDLE)
+
+    def _cancel_reload_recording(self) -> None:
+        """Discard a buffered session before changing or releasing its engine."""
+        if not getattr(self, "_buffered_reload_session", False):
+            return
+        self._cancel_buffered_session.set()
+        self.stop_recognition()
+        if self.recognition_thread and self.recognition_thread is not threading.current_thread():
+            self.recognition_thread.join()
 
     def _record_audio(self):
         """Record audio from the microphone with reconnection logic."""
@@ -3576,6 +3652,7 @@ class SpeechRecognitionManager:
             self.should_record = False
             self.release_playback_duck()
             play_error_sound()
+            self._buffered_capture_failed = True
             self._update_state(RecognitionState.ERROR)
             return
 
@@ -3685,6 +3762,7 @@ class SpeechRecognitionManager:
                         self.release_playback_duck()
                         play_error_sound()
                         audio.terminate()
+                        self._buffered_capture_failed = True
                         self._update_state(RecognitionState.ERROR)
                         return
 
@@ -3714,6 +3792,8 @@ class SpeechRecognitionManager:
                     # Check buffer size and enforce limits (with lock for thread safety)
                     with self._buffer_lock:
                         if len(self.audio_buffer) >= self._max_buffer_size:
+                            if getattr(self, "_reload_pending", False):
+                                raise RuntimeError("Audio buffer filled while reloading the model")
                             logger.warning(
                                 f"Audio buffer limit reached ({len(self.audio_buffer)} chunks). Clearing oldest data."
                             )
@@ -3820,10 +3900,11 @@ class SpeechRecognitionManager:
                                         "Silence detected with no speech, dropping audio buffer"
                                     )
                                     self.audio_buffer = []
-                                elif self._recognition_mode == "push_to_talk":
+                                elif self._recognition_mode == "push_to_talk" or getattr(
+                                    self, "_reload_pending", False
+                                ):
                                     logger.debug(
-                                        "Silence detected in push-to-talk mode, "
-                                        "deferring transcription until key release"
+                                        "Keeping speech until key release or model reload completes"
                                     )
                                 else:
                                     logger.debug("Silence detected, queueing audio segment")
@@ -3874,6 +3955,9 @@ class SpeechRecognitionManager:
                 except Exception as e:
                     logger.error(f"Unexpected error reading audio data: {e}")
                     capture_failed = True
+                    if getattr(self, "_buffered_reload_session", False):
+                        self._buffered_capture_failed = True
+                        self._update_state(RecognitionState.ERROR)
                     break
 
             # A dead microphone must not leave other audio lowered, or the
@@ -3915,6 +3999,7 @@ class SpeechRecognitionManager:
             self.should_record = False
             self.release_playback_duck()
             play_error_sound()
+            self._buffered_capture_failed = True
             self._update_state(RecognitionState.ERROR)
 
     def _process_final_buffer(self):
@@ -3931,6 +4016,11 @@ class SpeechRecognitionManager:
     def _process_audio_buffer(self, audio_buffer: list[bytes]):
         """Process an immutable audio segment for transcription and commands."""
         if not audio_buffer:
+            return
+        if (
+            getattr(self, "_buffered_reload_session", False)
+            and self._cancel_buffered_session.is_set()
+        ):
             return
 
         if self.engine == "vosk":
@@ -3976,6 +4066,12 @@ class SpeechRecognitionManager:
             logger.error(f"Unknown engine: {self.engine}")
             return
 
+        if (
+            getattr(self, "_buffered_reload_session", False)
+            and self._cancel_buffered_session.is_set()
+        ):
+            return
+
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
@@ -4008,12 +4104,23 @@ class SpeechRecognitionManager:
         logger.debug("_perform_recognition thread started")
         try:
             while True:
+                if (
+                    getattr(self, "_buffered_reload_session", False)
+                    and self._buffered_capture_failed
+                ):
+                    raise RuntimeError("Audio capture failed during buffered dictation")
                 logger.debug(
                     f"Recognition loop - should_record={self.should_record}, queue_empty={self._segment_queue.empty()}"
                 )
                 try:
                     segment = self._segment_queue.get(timeout=0.1)
                 except queue.Empty:
+                    if (
+                        getattr(self, "_buffered_reload_session", False)
+                        and not self.should_record
+                        and not self._capture_finished.is_set()
+                    ):
+                        continue
                     # Only exit if we're not recording AND queue is empty
                     if not self.should_record and self._segment_queue.empty():
                         logger.debug(
@@ -4126,6 +4233,8 @@ class SpeechRecognitionManager:
             f"language={language}, vad={vad_sensitivity}, silence={silence_timeout}, "
             f"audio_device={audio_device_index}, audio_device_name={audio_device_name}"
         )
+
+        self._cancel_reload_recording()
 
         whispercpp_attrs = tuple(
             name for name in self._RECONFIGURE_STATE_ATTRS if name.startswith("whispercpp_")
@@ -4394,6 +4503,7 @@ class SpeechRecognitionManager:
                   lazy-reload via :meth:`ensure_model_loaded`.
                 - ``"manual"`` / other: unload only without setting pause/idle flags.
         """
+        self._cancel_reload_recording()
         logger.info("Unloading speech model (reason=%s)", reason)
 
         if self.state != RecognitionState.IDLE:
@@ -4473,6 +4583,7 @@ class SpeechRecognitionManager:
 
         Also used after auto-pause / idle keep-alive to reload the model.
         """
+        self._cancel_reload_recording()
         logger.info("Reinitializing speech engine after system resume")
 
         if self.state != RecognitionState.IDLE:

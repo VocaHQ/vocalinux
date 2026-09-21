@@ -446,6 +446,9 @@ def main():
             vad_sensitivity=vad_sensitivity,
             silence_timeout=silence_timeout,
             stop_sound_guard_ms=stop_sound_guard_ms,
+            buffer_during_reload=config_manager.get_bool(
+                "model_keepalive", "buffer_during_reload", False
+            ),
             voice_commands_enabled=voice_commands_enabled,
             audio_device_index=audio_device_index,
             audio_device_name=audio_device_name,
