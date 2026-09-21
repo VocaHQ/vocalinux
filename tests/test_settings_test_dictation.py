@@ -223,6 +223,7 @@ def _dialog_for_finalize(
     dialog = Mock()
     dialog._test_active = True
     dialog._test_idle_wait_ticks = 0
+    dialog._test_timeout_cancel_attempted = False
     dialog.test_button = Mock()
     dialog.test_buffer = _text_buffer()
     dialog.update_recognition_progress = Mock()
@@ -244,9 +245,7 @@ def _dialog_for_finalize(
     dialog._finish_test_after_buffered_cancel = (
         SettingsDialog._finish_test_after_buffered_cancel.__get__(dialog)
     )
-    dialog._leave_test_callbacks_after_timeout = (
-        SettingsDialog._leave_test_callbacks_after_timeout.__get__(dialog)
-    )
+    dialog._keep_waiting_after_timeout = SettingsDialog._keep_waiting_after_timeout.__get__(dialog)
     dialog._finish_test_restore_ui = SettingsDialog._finish_test_restore_ui.__get__(dialog)
     dialog._check_test_result = Mock(return_value=False)
 
@@ -354,8 +353,8 @@ def test_timeout_does_not_restore_live_while_buffered_starts_cancel() -> None:
     assert thread_cls.call_args.kwargs["daemon"] is True
 
 
-def test_timeout_without_cancel_keeps_test_callbacks() -> None:
-    """If cancel API is missing, never restore live injectors on timeout."""
+def test_timeout_without_cancel_keeps_waiting_active() -> None:
+    """If cancel API is missing, keep polling with test callbacks / _test_active."""
     dialog = _dialog_for_finalize(
         state=RecognitionState.PROCESSING, buffered_reload=True, has_cancel=False
     )
@@ -365,13 +364,21 @@ def test_timeout_without_cancel_keeps_test_callbacks() -> None:
     with patch.object(settings_dialog.threading, "Thread") as thread_cls:
         result = SettingsDialog._wait_for_idle_then_restore_callbacks(dialog)
 
-    assert result is False
+    assert result is True
     thread_cls.assert_not_called()
     dialog.speech_engine.set_text_callbacks.assert_not_called()
     assert dialog._saved_text_callbacks == [live]
-    assert dialog._test_active is False
+    assert dialog._test_active is True
+    assert dialog._test_timeout_cancel_attempted is True
+    dialog.test_button.set_sensitive.assert_called_with(False)
+    dialog.test_button.set_label.assert_called_with("Still processing…")
     assert "Timed out" in dialog.test_buffer._text
-    assert "left in place" in dialog.test_buffer._text
+    assert "Still waiting" in dialog.test_buffer._text
+
+    # Subsequent ticks past timeout must keep waiting, not restore.
+    result2 = SettingsDialog._wait_for_idle_then_restore_callbacks(dialog)
+    assert result2 is True
+    dialog.speech_engine.set_text_callbacks.assert_not_called()
 
 
 def test_finish_after_buffered_cancel_restores_live_callbacks() -> None:
@@ -398,17 +405,52 @@ def test_cancel_buffered_reload_then_restore_schedules_finish() -> None:
     glib.idle_add.assert_called_once_with(dialog._finish_test_after_buffered_cancel)
 
 
-def test_cancel_buffered_reload_failure_leaves_test_callbacks() -> None:
+def test_cancel_buffered_reload_failure_resumes_idle_wait() -> None:
     dialog = _dialog_for_finalize(state=RecognitionState.PROCESSING, buffered_reload=True)
     live = dialog._saved_text_callbacks[0]
+    dialog._test_timeout_cancel_attempted = True
     dialog.speech_engine._cancel_reload_recording.side_effect = RuntimeError("boom")
 
     with patch.object(settings_dialog, "GLib") as glib:
         SettingsDialog._cancel_buffered_reload_then_restore(dialog)
 
     glib.idle_add.assert_called_once_with(dialog._on_buffered_cancel_failed)
-    # Failure path itself must not restore.
-    SettingsDialog._on_buffered_cancel_failed(dialog)
+
+    with patch.object(settings_dialog, "GLib") as glib2:
+        SettingsDialog._on_buffered_cancel_failed(dialog)
+
     dialog.speech_engine.set_text_callbacks.assert_not_called()
     assert dialog._saved_text_callbacks == [live]
-    assert "cancelling the buffered" in dialog.test_buffer._text
+    assert dialog._test_active is True
+    dialog.test_button.set_sensitive.assert_called_with(False)
+    dialog.test_button.set_label.assert_called_with("Still processing…")
+    assert "cancel" in dialog.test_buffer._text.lower()
+    glib2.timeout_add.assert_called_once_with(100, dialog._wait_for_idle_then_restore_callbacks)
+
+    # Resumed poll must not restore while still busy, and must not re-cancel.
+    with patch.object(settings_dialog.threading, "Thread") as thread_cls:
+        assert SettingsDialog._wait_for_idle_then_restore_callbacks(dialog) is True
+    thread_cls.assert_not_called()
+    dialog.speech_engine.set_text_callbacks.assert_not_called()
+
+
+def test_keep_waiting_then_idle_restores_live_callbacks() -> None:
+    """After a no-cancel timeout, IDLE eventually restores live injectors."""
+    dialog = _dialog_for_finalize(
+        state=RecognitionState.PROCESSING, buffered_reload=True, has_cancel=False
+    )
+    live = dialog._saved_text_callbacks[0]
+    dialog._test_idle_wait_ticks = 1799
+    SettingsDialog._wait_for_idle_then_restore_callbacks(dialog)
+    assert dialog._test_active is True
+
+    dialog.speech_engine.state = RecognitionState.IDLE
+    dialog.speech_engine._buffered_reload_session = False
+    with patch.object(settings_dialog, "GLib") as glib:
+        result = SettingsDialog._wait_for_idle_then_restore_callbacks(dialog)
+
+    assert result is False
+    dialog.speech_engine.set_text_callbacks.assert_called_once_with([live])
+    assert not hasattr(dialog, "_saved_text_callbacks")
+    assert dialog._test_active is False
+    glib.timeout_add.assert_called_once_with(300, dialog._check_test_result)

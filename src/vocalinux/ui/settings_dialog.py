@@ -6896,8 +6896,9 @@ class SettingsDialog(Gtk.Dialog):
         buffered reload worker may still deliver text (privacy-adjacent Test
         Dictation inject-into-app race). Prefer cancelling via
         ``_cancel_reload_recording`` (off the GTK thread — it joins) and only
-        then restoring; if cancel is unavailable, leave test callbacks installed
-        and surface an error.
+        then restoring. If cancel is unavailable or fails, keep polling with
+        test callbacks and ``_test_active`` so live injectors are not restored
+        early and later dictation cannot be hijacked into the test buffer.
         """
         if not hasattr(self, "_saved_text_callbacks"):
             self._test_active = False
@@ -6916,7 +6917,12 @@ class SettingsDialog(Gtk.Dialog):
             # ~3 minutes at 100ms — generous for cold large-model reload.
             if self._test_idle_wait_ticks < 1800:
                 return True
-            return self._on_test_idle_wait_timeout()
+            if not getattr(self, "_test_timeout_cancel_attempted", False):
+                self._test_timeout_cancel_attempted = True
+                return self._on_test_idle_wait_timeout()
+            # Cancel already tried (or unavailable): keep waiting — never
+            # restore live injectors and never mark the test inactive while busy.
+            return True
 
         return self._finish_test_restore_ui()
 
@@ -6940,14 +6946,14 @@ class SettingsDialog(Gtk.Dialog):
 
         logger.error(
             "Test Dictation: timed out waiting for recognition IDLE with no "
-            "cancel API; leaving test callbacks installed"
+            "cancel API; keeping test callbacks until IDLE"
         )
-        self._leave_test_callbacks_after_timeout(
+        self._keep_waiting_after_timeout(
             "(Timed out waiting for recognition to finish. "
-            "Test output callbacks were left in place so the utterance cannot "
-            "inject into another app.)"
+            "Still waiting so live injectors are not restored early and later "
+            "dictation cannot be hijacked into the test buffer.)"
         )
-        return False
+        return True
 
     def _cancel_buffered_reload_then_restore(self) -> None:
         """Cancel buffered reload off the GTK thread, then restore on idle."""
@@ -6964,24 +6970,26 @@ class SettingsDialog(Gtk.Dialog):
         GLib.idle_add(self._finish_test_after_buffered_cancel)
 
     def _on_buffered_cancel_failed(self) -> bool:
-        """Keep test callbacks if cancel failed — never restore live injectors."""
-        self._leave_test_callbacks_after_timeout(
+        """Resume idle-wait polling if cancel failed — do not end the test early."""
+        self._keep_waiting_after_timeout(
             "(Timed out waiting for recognition, and cancelling the buffered "
-            "reload failed. Test output callbacks were left in place so the "
-            "utterance cannot inject into another app.)"
+            "reload failed. Still waiting for IDLE before restoring live callbacks.)"
         )
+        # _test_timeout_cancel_attempted is already True, so the resumed poll
+        # will not re-enter cancel — it only waits for IDLE.
+        GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)
         return False
 
     def _finish_test_after_buffered_cancel(self) -> bool:
         """Restore live callbacks only after cancel has discarded the session."""
         return self._finish_test_restore_ui()
 
-    def _leave_test_callbacks_after_timeout(self, message: str) -> None:
-        """End the test UI but keep test callbacks to avoid inject-into-app."""
-        self._test_active = False
-        self.test_button.set_sensitive(True)
-        self.test_button.set_label("Test Dictation")
-        self.update_recognition_progress("Idle")
+    def _keep_waiting_after_timeout(self, message: str) -> None:
+        """Keep Test Dictation active with test callbacks until recognition IDLE."""
+        self._test_active = True
+        self.test_button.set_sensitive(False)
+        self.test_button.set_label("Still processing…")
+        self.update_recognition_progress("Processing")
         if hasattr(self, "test_buffer"):
             self.test_buffer.set_text(message)
 
