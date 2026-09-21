@@ -12,6 +12,7 @@ returning scripted speech probabilities. Verifies:
 """
 
 import sys
+import time
 import unittest  # noqa: E402
 from unittest.mock import MagicMock, patch  # noqa: E402
 
@@ -270,6 +271,28 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         ):
             self.mgr._record_audio()
 
+        self.assertTrue(self.mgr._buffered_capture_failed)
+        self.assertEqual(self.mgr.state, RecognitionState.ERROR)
+
+    def test_reload_rapid_audio_error_marks_capture_failed(self) -> None:
+        """A repeated microphone error during reload must fail the capture."""
+        self.mgr._buffered_reload_session = True
+        self.mgr._last_audio_error_time = time.time()
+        stream = MagicMock()
+        stream.read.side_effect = OSError("microphone still disconnected")
+        pyaudio_mod, _audio = _make_pyaudio_module(stream)
+
+        with (
+            patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                return_value=(1, 16000, stream),
+            ),
+            patch.object(self.mgr, "_attempt_audio_reconnection") as reconnect,
+        ):
+            self.mgr._record_audio()
+
+        reconnect.assert_not_called()
         self.assertTrue(self.mgr._buffered_capture_failed)
         self.assertEqual(self.mgr.state, RecognitionState.ERROR)
 
