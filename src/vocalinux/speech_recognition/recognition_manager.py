@@ -3268,7 +3268,6 @@ class SpeechRecognitionManager:
 
     def _reload_and_recognize(self) -> None:
         """Reload an idle model while the recording thread captures speech."""
-        failed = False
         try:
             # Idle unload already released the engine resources. Resume reinit
             # cannot be used here because it stops the active microphone.
@@ -3284,7 +3283,6 @@ class SpeechRecognitionManager:
             if not self._cancel_buffered_session.is_set():
                 self._perform_recognition()
         except Exception:
-            failed = True
             logger.exception("Failed to reload model or transcribe buffered speech")
             play_error_sound()
             _show_notification(
@@ -3304,7 +3302,10 @@ class SpeechRecognitionManager:
             self._segment_queue = queue.Queue(maxsize=32)
             self._recognition_mode = "toggle"
             self._buffered_reload_session = False
-            self._update_state(RecognitionState.ERROR if failed else RecognitionState.IDLE)
+            # The notification above reports the failed attempt. Return to IDLE
+            # so a release that happened during reload cannot strand the manager
+            # in ERROR and block every later dictation attempt.
+            self._update_state(RecognitionState.IDLE)
 
     def _cancel_reload_recording(self) -> None:
         """Discard a buffered session before changing or releasing its engine."""
@@ -3616,11 +3617,17 @@ class SpeechRecognitionManager:
                             continue  # Continue recording with new stream
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
+                            if getattr(self, "_buffered_reload_session", False):
+                                self._buffered_capture_failed = True
+                                self._update_state(RecognitionState.ERROR)
                             break
                     else:
                         logger.warning(
                             "Audio error occurred too soon after last error, stopping recording"
                         )
+                        if getattr(self, "_buffered_reload_session", False):
+                            self._buffered_capture_failed = True
+                            self._update_state(RecognitionState.ERROR)
                         break
                 except Exception as e:
                     logger.error(f"Unexpected error reading audio data: {e}")

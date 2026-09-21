@@ -253,6 +253,26 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         self.assertTrue(self.mgr._buffered_capture_failed)
         self.assertEqual(self.mgr.state, RecognitionState.ERROR)
 
+    def test_reload_reconnection_failure_marks_capture_failed(self) -> None:
+        """Losing the microphone during reload must fail instead of dropping audio."""
+        self.mgr._buffered_reload_session = True
+        stream = MagicMock()
+        stream.read.side_effect = OSError("microphone disconnected")
+        pyaudio_mod, _audio = _make_pyaudio_module(stream)
+
+        with (
+            patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                return_value=(1, 16000, stream),
+            ),
+            patch.object(self.mgr, "_attempt_audio_reconnection", return_value=False),
+        ):
+            self.mgr._record_audio()
+
+        self.assertTrue(self.mgr._buffered_capture_failed)
+        self.assertEqual(self.mgr.state, RecognitionState.ERROR)
+
     def test_sensitivity_lowest_blocks_borderline_speech(self):
         """At sensitivity=1 (threshold 0.8), prob=0.6 is silence."""
         # 20 chunks of borderline prob; with strict threshold these read as silence
