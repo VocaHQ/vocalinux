@@ -8,9 +8,13 @@ Covers:
 """
 
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+if TYPE_CHECKING:
+    from vocalinux.dbus_service import VocalinuxDBusService
 
 # gi is mocked globally by conftest. All vocalinux imports are done lazily
 # inside the individual tests. Importing them at module level would bind their
@@ -218,7 +222,7 @@ def test_send_command_returns_false_on_glib_error():
 # -- Service lifecycle & error paths --------------------------------------
 
 
-def _make_service():
+def _make_service() -> "VocalinuxDBusService":
     from vocalinux import dbus_service
 
     return dbus_service.VocalinuxDBusService(
