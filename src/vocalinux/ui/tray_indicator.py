@@ -131,6 +131,11 @@ class TrayIndicator:
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
+        # Set once by _on_dbus_registration_failed and never cleared: the
+        # service does not retry, so every later reconfigure (mode change,
+        # settings toggle, resume) must keep honoring the fallback rather
+        # than reapplying a disable_internal_hotkey setting D-Bus cannot serve.
+        self._external_activation_unavailable = False
         self._syncing_autostart_menu = False
 
         # Get configured shortcut and mode from config
@@ -231,6 +236,20 @@ class TrayIndicator:
             on_registration_failed=self._on_dbus_registration_failed,
         )
 
+    def _external_activation_active(self) -> bool:
+        """Whether the internal listener should stay off right now.
+
+        True only when the saved setting asks for it *and* the D-Bus service
+        has not already failed to register this run. The service does not
+        retry, so once it has failed, this stays False for the rest of the
+        process regardless of the saved setting — every later reconfigure
+        (mode change, settings toggle, resume) must keep using the fallback
+        instead of re-disabling the only working activation path.
+        """
+        if self._external_activation_unavailable:
+            return False
+        return self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False)
+
     def _on_dbus_registration_failed(self) -> None:
         """Fall back to the internal listener if external activation cannot work.
 
@@ -251,16 +270,11 @@ class TrayIndicator:
             "internal keyboard shortcut instead. Check Settings -> Shortcuts.",
             "dialog-warning",
         )
-        self._setup_keyboard_shortcuts(force_enable=True)
+        self._external_activation_unavailable = True
+        self._setup_keyboard_shortcuts()
 
-    def _setup_keyboard_shortcuts(self, force_enable: bool = False):
-        """Set up keyboard shortcuts based on configured mode.
-
-        Args:
-            force_enable: Start the listener even if external activation is
-                configured. Used as a runtime-only fallback when the D-Bus
-                service failed to register; the saved setting is left alone.
-        """
+    def _setup_keyboard_shortcuts(self):
+        """Set up keyboard shortcuts based on configured mode."""
         # Reconfiguring (e.g. live-toggling external activation) tears down the
         # release callback below. A push-to-talk session held at that moment
         # would then never see its release, leaving recognition and the
@@ -282,9 +296,7 @@ class TrayIndicator:
         # External-activation mode: skip the internal evdev/pynput listener
         # entirely so no /dev/input access is required. Activation then comes
         # in over D-Bus (see VocalinuxDBusService).
-        if not force_enable and self.config_manager.get_bool(
-            "shortcuts", "disable_internal_hotkey", False
-        ):
+        if self._external_activation_active():
             logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
             return
 
@@ -1135,7 +1147,7 @@ class TrayIndicator:
         # External-activation mode never started the /dev/input listener in
         # the first place; watching it here on every resume would open the
         # very file descriptor that mode promises to avoid.
-        if self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False):
+        if self._external_activation_active():
             logger.info("Skipping input device monitor: external activation via D-Bus")
         else:
             GLib.timeout_add_seconds(2, self._start_input_device_monitor)
