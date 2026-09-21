@@ -1048,7 +1048,7 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("Gtk.Separator", before_close)
         self.assertIn("footer.pack_start(close_separator", before_close)
 
-    def test_test_dictation_scrolled_window_has_no_shadow(self):
+    def test_test_dictation_scrolled_window_has_no_shadow(self) -> None:
         """GTK3 ScrolledWindow default shadow is a left stripe on GNOME/Wayland (#847)."""
         footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
         scrolled_block = footer_body.split("scrolled_window = Gtk.ScrolledWindow()")[1].split(
