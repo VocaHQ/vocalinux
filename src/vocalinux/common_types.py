@@ -42,6 +42,17 @@ class Engine(Protocol):
         """Transcribe the captured audio and return the recognized text."""
         ...
 
+
+class VocabBiasEngine(Protocol):
+    """Optional engine hook for vocabulary biasing.
+
+    Engines that support prompt/hotword biasing expose a settable
+    ``custom_vocabulary`` attribute (list of words); the manager keeps it in
+    sync with the user's settings.
+    """
+
+    custom_vocabulary: list[str]
+
     def is_ready(self) -> bool:
         """Return True if the engine is initialized and ready to transcribe."""
         ...

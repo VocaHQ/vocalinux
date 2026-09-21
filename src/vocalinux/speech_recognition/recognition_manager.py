@@ -1437,6 +1437,7 @@ class SpeechRecognitionManager:
                     temperature=0.0,  # Greedy decoding for consistency
                     no_speech_threshold=0.6,
                     fp16=use_fp16,  # Explicitly set to avoid warning on CPU
+                    prompt=build_vocab_prompt(self.custom_vocabulary) or None,
                 )
 
             text = result.get("text", "").strip()
@@ -1653,6 +1654,7 @@ class SpeechRecognitionManager:
                 logger.warning("faster-whisper engine not ready during transcription")
                 return ""
 
+            self._faster_whisper_engine.custom_vocabulary = self.custom_vocabulary
             return self._faster_whisper_engine.transcribe(audio_buffer)
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
@@ -2097,7 +2099,15 @@ class SpeechRecognitionManager:
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
                 transcribe_start = time.time()
-                segments = self.model.transcribe(audio_float, language=lang)
+                whispercpp_prompt = build_vocab_prompt(self.custom_vocabulary)
+                if self.whispercpp_initial_prompt:
+                    whispercpp_prompt = (
+                        f"{self.whispercpp_initial_prompt} {whispercpp_prompt}".strip()
+                    )
+                whispercpp_kwargs: dict = {"language": lang}
+                if whispercpp_prompt:
+                    whispercpp_kwargs["initial_prompt"] = whispercpp_prompt
+                segments = self.model.transcribe(audio_float, **whispercpp_kwargs)
                 transcribe_duration = time.time() - transcribe_start
 
             # Extract text from segments, filtering non-speech tokens

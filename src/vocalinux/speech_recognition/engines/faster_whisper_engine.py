@@ -18,6 +18,7 @@ from ...utils.faster_whisper_model_info import (
     get_model_path,
     get_recommended_model,
 )
+from ..vocab_prompt import build_vocab_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class FasterWhisperEngine:
         self._device = device
         self._model: Optional[_WhisperModel] = None
         self._model_initialized = False
+        self.custom_vocabulary: list[str] = []
 
     @property
     def device(self) -> str:
@@ -157,6 +159,7 @@ class FasterWhisperEngine:
                 beam_size=5,
                 best_of=5,
                 condition_on_previous_text=False,
+                hotwords=build_vocab_prompt(self.custom_vocabulary) or None,
             )
 
             text_parts = [segment.text.strip() for segment in segments if segment.text]
