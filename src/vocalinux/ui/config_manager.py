@@ -93,6 +93,9 @@ DEFAULT_CONFIG = {
         "remote_api_key": "",  # Remote server API key (optional)
         "remote_api_endpoint": "/inference",  # Remote server API endpoint format
         "remote_api_model": "whisper-1",  # Model name sent to compatible remote APIs
+        # User vocabulary to bias whisper-family engines with (names, jargon).
+        # Injected as a prompt/hotwords hint, never used as a hard grammar.
+        "custom_vocabulary": [],
     },
     "audio": {
         "device_index": None,  # Audio input device index (None for system default)

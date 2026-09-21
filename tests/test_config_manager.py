@@ -173,6 +173,24 @@ class TestConfigManager(unittest.TestCase):
             self.assertFalse(result)
             self.mock_logger.error.assert_called()
 
+    def test_default_config_has_custom_vocabulary(self):
+        """Custom vocabulary defaults to an empty list."""
+        import importlib
+
+        import vocalinux.ui.config_manager as cm
+
+        importlib.reload(cm)
+        self.assertEqual(cm.DEFAULT_CONFIG["speech_recognition"]["custom_vocabulary"], [])
+
+    def test_custom_vocabulary_survives_user_config_merge(self):
+        """A config file without the key still yields the default empty list."""
+        with open(self.temp_config_file, "w") as f:
+            json.dump({"speech_recognition": {"engine": "remote_api"}}, f)
+        config_manager = ConfigManager()
+        self.assertEqual(
+            config_manager.get("speech_recognition", "custom_vocabulary", None), []
+        )
+
     def test_get_existing_value(self):
         """Test getting an existing configuration value from defaults."""
         # Test that DEFAULT_CONFIG constant has the expected default engine
