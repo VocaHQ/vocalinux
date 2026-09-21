@@ -91,11 +91,17 @@ Instead of the built-in hotkey listener, you can let your desktop's global
 shortcut system trigger Vocalinux. On Wayland the built-in listener reads
 `/dev/input` (requiring membership in the `input` group and effectively acting
 as a system-wide key reader). Delegating activation to the compositor avoids
-this entirely — no `/dev/input` access and no `input` group needed just to
+this entirely: no `/dev/input` access and no `input` group needed just to
 start/stop dictation. Text injection is unaffected.
 
-A running instance exposes a D-Bus service on the session bus
-(`com.vocalinux.Vocalinux`), and the CLI can forward commands to it:
+Enable it in Vocalinux:
+
+1. Open **Settings → Shortcuts**
+2. Turn on **External Activation (Desktop Shortcut)**
+
+The change applies immediately; you do not need to restart. The built-in key
+listener stops, and a running instance exposes a D-Bus service on the session
+bus (`com.vocalinux.Vocalinux`). The CLI can forward commands to it:
 
 ```bash
 vocalinux --toggle   # start if idle, stop if active
@@ -103,32 +109,32 @@ vocalinux --start    # start voice typing
 vocalinux --stop     # stop voice typing
 ```
 
-To use it on KDE Plasma:
+Then bind a compositor shortcut to `vocalinux --toggle`. On KDE Plasma:
 
-1. Disable the internal hotkey listener by adding this to your Vocalinux config
-   file (`~/.config/vocalinux/config.json`) under `shortcuts`:
-
-   ```json
-   "shortcuts": {
-       "disable_internal_hotkey": true
-   }
-   ```
-
-   Then restart Vocalinux. The internal evdev/pynput listener will not start, so
-   no `/dev/input` access is required for activation.
-
-2. Open **System Settings -> Keyboard -> Shortcuts -> Add New -> Command or Script**
+1. Open **System Settings -> Keyboard -> Shortcuts -> Add New -> Command or Script**
    (older Plasma: **System Settings -> Shortcuts -> Custom Shortcuts -> Edit ->
    New -> Global Shortcut -> Command/URL**).
 
-3. Bind a key combination of your choice to the command `vocalinux --toggle`.
+2. Bind a key combination of your choice to the command `vocalinux --toggle`.
 
 Now your chosen key combination toggles dictation, handled by the compositor
 rather than by Vocalinux reading the keyboard directly. This works the same way
 on other compositors that support binding a key to a command (e.g. GNOME custom
 shortcuts, Sway/Hyprland `bindsym`/`bind`).
 
-### Model Settings
+As an advanced alternative, you can set the same option in
+`~/.config/vocalinux/config.json` under `shortcuts`:
+
+```json
+"shortcuts": {
+    "disable_internal_hotkey": true
+}
+```
+
+Restart Vocalinux only if you edit that file by hand while the app is not
+using Settings.
+
+### Model size (whisper.cpp / Whisper)
 
 | Size | Approx. size | Tradeoff |
 |------|--------------|----------|
