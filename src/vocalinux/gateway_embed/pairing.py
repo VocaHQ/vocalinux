@@ -7,7 +7,7 @@ import logging
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 from .urls import is_unusable_phone_url, reject_loopback_url
 
@@ -17,6 +17,12 @@ logger = logging.getLogger(__name__)
 MAX_QR_SVG_BYTES = 512 * 1024
 MAX_PAIRING_JSON_BYTES = 64 * 1024
 DEFAULT_TIMEOUT = 3.0
+
+
+class _Readable(Protocol):
+    """Minimal read() surface for urlopen responses."""
+
+    def read(self, n: int = ...) -> bytes: ...
 
 
 @dataclass(frozen=True)
@@ -36,7 +42,7 @@ class PairingInfo:
         return bool(self.display_url and self.token)
 
 
-def _read_capped(response, limit: int) -> bytes:
+def _read_capped(response: _Readable, limit: int) -> bytes:
     chunks: list[bytes] = []
     total = 0
     while True:
