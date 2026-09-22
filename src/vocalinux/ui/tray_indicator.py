@@ -366,9 +366,9 @@ class TrayIndicator:
         self._gateway_stop_menu_item.hide()
         self._gateway_manager = get_gateway_embed_manager()
         self._gateway_manager.add_listener(self._on_gateway_status_for_tray)
-        self._sync_gateway_stop_menu(
-            self._gateway_manager.status, self._gateway_manager.managed_by_us
-        )
+        # Runtime detect + leftover compose probe (Quit does not stop compose).
+        self._gateway_manager.begin_runtime_detection()
+        self._sync_gateway_stop_menu(self._gateway_manager.status)
 
         # Update the UI based on the initial state
         self._update_ui(RecognitionState.IDLE)
@@ -1141,17 +1141,14 @@ class TrayIndicator:
 
     def _on_gateway_status_for_tray(self, status: GatewayStatus, detail: str) -> None:
         """Update tray Stop local Gateway visibility from a worker thread."""
-        GLib.idle_add(
-            self._sync_gateway_stop_menu,
-            status,
-            get_gateway_embed_manager().managed_by_us,
-        )
+        GLib.idle_add(self._sync_gateway_stop_menu, status)
 
-    def _sync_gateway_stop_menu(self, status: GatewayStatus, managed: bool) -> bool:
+    def _sync_gateway_stop_menu(self, status: GatewayStatus) -> bool:
         item = getattr(self, "_gateway_stop_menu_item", None)
         if item is None:
             return False
-        show = bool(managed) and status in {
+        # Show Stop for leftover compose too; managed_by_us is session memory only.
+        show = status in {
             GatewayStatus.STARTING,
             GatewayStatus.LIVE,
             GatewayStatus.PAIRABLE,
@@ -1165,10 +1162,8 @@ class TrayIndicator:
         return False
 
     def _on_stop_local_gateway_clicked(self, widget: Any) -> None:
-        """Stop a gateway started by this Vocalinux session."""
-        manager = get_gateway_embed_manager()
-        if manager.managed_by_us:
-            manager.stop_async()
+        """Stop local compose, including leftovers from a previous session."""
+        get_gateway_embed_manager().stop_async()
 
     def _on_quit_clicked(self, widget):
         """Handle click on the Quit menu item."""

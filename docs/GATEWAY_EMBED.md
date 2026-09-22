@@ -39,7 +39,7 @@ you want Vocalinux to talk to the gateway over the existing Remote API settings
 
 | Status | Meaning |
 | --- | --- |
-| Stopped | Not running (or not managed). |
+| Stopped | Not running. |
 | Starting | Compose up in progress, or live probe not green yet. |
 | Live | Process answers `/health/live`. |
 | Pairable | Live, plus a **non-loopback** phone URL and bearer token (QR-safe). |
@@ -56,10 +56,16 @@ access for Phone** to set `VOCAGATEWAY_PUBLISH_HOST=0.0.0.0` and to advertise a
 LAN URL in pairing. Open port `8765` in your firewall only on trusted networks.
 Never put `127.0.0.1` / `localhost` in the phone QR.
 
-## Tray
+## Tray and Quit
 
-While this Vocalinux session started the gateway, the tray menu offers **Stop
-local Gateway**. Vocalinux does not auto-start the gateway on login in v1.
+The tray menu offers **Stop local Gateway** whenever compose is actually running
+(Starting, Live, Pairable, Ready, or Error), including a leftover from a previous
+Vocalinux session. Vocalinux does not auto-start the gateway on login in v1.
+
+**Quit does not stop compose.** The pinned compose file uses `restart:
+unless-stopped`, so a LAN-published gateway on `0.0.0.0:8765` keeps running after
+you quit Vocalinux. Use **Stop local Gateway** in Settings or the tray when you
+want it gone. Do not assume Quit tears it down.
 
 ## Honesty
 

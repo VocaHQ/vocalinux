@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import socket
 import threading
 from typing import Any, Callable, List, Optional
@@ -109,9 +110,7 @@ class GatewayEmbedManager:
         return self.runner.runtime_ready
 
     def begin_runtime_detection(self) -> None:
-        """Probe podman/docker off the GTK main thread."""
-        if self.runner.runtime_ready:
-            return
+        """Probe podman/docker off the GTK main thread, then adopt leftover compose."""
         with self._lock:
             if self._runtime_detect_started:
                 return
@@ -122,11 +121,25 @@ class GatewayEmbedManager:
                 self.runner.ensure_runtime()
             except Exception:  # noqa: BLE001
                 logger.exception("container runtime detection failed")
-            detail = ""
             if not self.runner.available:
-                detail = self.runner.unavailable_hint
-            self._emit(self._status, detail)
+                self._emit(self._status, self.runner.unavailable_hint)
+                return
+            try:
+                from .paths_embed import ensure_token_file, token_file_path
 
+                if os.path.isfile(token_file_path()):
+                    self._token = ensure_token_file()
+            except Exception:  # noqa: BLE001
+                logger.exception("could not load existing gateway token")
+            status = self.refresh_status()
+            if status is not GatewayStatus.STOPPED:
+                self._start_polling()
+
+        # Runtime already resolved (tests, or a runner passed in): probe now.
+        # Production still uses the worker thread so GTK never waits on compose ps.
+        if self.runner.runtime_ready:
+            _worker()
+            return
         threading.Thread(
             target=_worker,
             name="vocalinux-gateway-runtime",

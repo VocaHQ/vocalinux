@@ -579,6 +579,120 @@ class TestLanPublishGate(unittest.TestCase):
             self.assertNotIn("VOCAGATEWAY_PUBLIC_URL=", body)
 
 
+class TestOrphanComposeDetect(unittest.TestCase):
+    """Leftover compose after Quit must not look Stopped."""
+
+    def _manager(self):
+        from vocalinux.gateway_embed.manager import GatewayEmbedManager
+        from vocalinux.gateway_embed.runner import GatewayRunner
+        from vocalinux.gateway_embed.runtime import RuntimeInfo
+
+        runner = GatewayRunner(
+            runtime=RuntimeInfo(
+                kind=ContainerRuntime.PODMAN,
+                binary="/usr/bin/podman",
+                compose_args=("/usr/bin/podman", "compose"),
+            ),
+            sandbox=detect_sandbox({}),
+            run=MagicMock(),
+        )
+        runner.managed_by_us = False
+        return GatewayEmbedManager(runner=runner), runner
+
+    def test_refresh_status_does_not_stay_stopped_for_orphan(self):
+        manager, runner = self._manager()
+        self.assertFalse(manager.managed_by_us)
+        self.assertEqual(manager.status, GatewayStatus.STOPPED)
+
+        with patch.object(runner, "is_compose_running", return_value=True):
+            with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                health.return_value = MagicMock(live=True, ready=False, error="")
+                status = manager.refresh_status()
+
+        self.assertEqual(status, GatewayStatus.LIVE)
+        self.assertNotEqual(status, GatewayStatus.STOPPED)
+        self.assertFalse(manager.managed_by_us)
+        stoppable = {
+            GatewayStatus.STARTING,
+            GatewayStatus.LIVE,
+            GatewayStatus.PAIRABLE,
+            GatewayStatus.READY,
+            GatewayStatus.ERROR,
+        }
+        self.assertIn(status, stoppable)
+
+    def test_refresh_status_starting_when_compose_up_but_not_live(self):
+        manager, runner = self._manager()
+        with patch.object(runner, "is_compose_running", return_value=True):
+            with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                health.return_value = MagicMock(live=False, ready=False, error="")
+                status = manager.refresh_status()
+        self.assertEqual(status, GatewayStatus.STARTING)
+        self.assertNotEqual(status, GatewayStatus.STOPPED)
+
+    def test_runtime_ready_probe_adopts_orphan_and_starts_polling(self):
+        manager, runner = self._manager()
+        self.assertTrue(manager.runtime_ready)
+        self.assertFalse(manager._runtime_detect_started)
+
+        with patch.object(runner, "is_compose_running", return_value=True):
+            with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                health.return_value = MagicMock(live=True, ready=False, error="")
+                with patch.object(manager, "_start_polling") as poll:
+                    manager.begin_runtime_detection()
+
+        self.assertEqual(manager.status, GatewayStatus.LIVE)
+        poll.assert_called_once()
+
+    def test_orphan_probe_loads_existing_token(self):
+        import tempfile
+
+        manager, runner = self._manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            token_path = f"{tmp}/token"
+            existing = "ab" * 32
+            with open(token_path, "w", encoding="utf-8") as handle:
+                handle.write(existing + "\n")
+            with patch(
+                "vocalinux.gateway_embed.paths_embed.token_file_path",
+                return_value=token_path,
+            ):
+                with patch.object(runner, "is_compose_running", return_value=True):
+                    with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                        health.return_value = MagicMock(live=False, ready=False, error="")
+                        with patch.object(manager, "_start_polling"):
+                            manager.begin_runtime_detection()
+            self.assertEqual(manager._token, existing)
+
+    def test_stop_worker_stops_orphan_without_managed_by_us(self):
+        from vocalinux.gateway_embed.runner import RunnerResult
+
+        manager, runner = self._manager()
+        self.assertFalse(manager.managed_by_us)
+
+        with patch.object(
+            runner, "stop", return_value=RunnerResult(ok=True, message="stopped")
+        ) as stop:
+            manager._stop_worker()
+
+        stop.assert_called_once_with(wipe_volumes=False)
+        self.assertEqual(manager.status, GatewayStatus.STOPPED)
+        self.assertFalse(manager.managed_by_us)
+
+    def test_stop_async_starts_worker_for_orphan(self):
+        manager, runner = self._manager()
+        self.assertFalse(manager.managed_by_us)
+        with patch("threading.Thread") as fake_thread:
+            started = MagicMock()
+            fake_thread.return_value = started
+            manager.stop_async()
+            fake_thread.assert_called_once()
+            kwargs = fake_thread.call_args.kwargs
+            self.assertEqual(kwargs.get("name"), "vocalinux-gateway-stop")
+            self.assertEqual(kwargs.get("target").__func__, manager._stop_worker.__func__)
+            started.start.assert_called_once()
+
+
 class TestManagerListenerCleanup(unittest.TestCase):
     def test_remove_listener_stops_callbacks(self):
         """Settings destroy must be able to detach without further emits."""
