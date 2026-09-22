@@ -64,7 +64,8 @@ Vocalinux session. Vocalinux does not auto-start the gateway on login in v1.
 
 **Quit does not stop compose.** The pinned compose file uses `restart:
 unless-stopped`, so a LAN-published gateway on `0.0.0.0:8765` keeps running after
-you quit Vocalinux. Use **Stop local Gateway** in Settings or the tray when you
+you quit Vocalinux. The next launch restores the Allow LAN switch from the running
+compose publish host. Use **Stop local Gateway** in Settings or the tray when you
 want it gone. Do not assume Quit tears it down.
 
 ## Honesty

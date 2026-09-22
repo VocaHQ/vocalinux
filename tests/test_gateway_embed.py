@@ -382,6 +382,22 @@ class TestImagePin(unittest.TestCase):
             body = Path(env_path).read_text(encoding="utf-8")
             self.assertNotIn("VOCAGATEWAY_PUBLIC_URL=", body)
 
+    def test_read_lan_publish_from_env_matches_write(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import (
+            read_lan_publish_from_env,
+            write_env_file,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(token="a" * 32, lan_publish=True, path=env_path)
+            self.assertTrue(read_lan_publish_from_env(env_path))
+            write_env_file(token="a" * 32, lan_publish=False, path=env_path)
+            self.assertFalse(read_lan_publish_from_env(env_path))
+            self.assertFalse(read_lan_publish_from_env(f"{tmp}/missing.env"))
+
 
 class TestTokenFileCap(unittest.TestCase):
     def test_oversized_token_file_regenerated(self):
@@ -691,6 +707,101 @@ class TestOrphanComposeDetect(unittest.TestCase):
             self.assertEqual(kwargs.get("name"), "vocalinux-gateway-stop")
             self.assertEqual(kwargs.get("target").__func__, manager._stop_worker.__func__)
             started.start.assert_called_once()
+
+    def test_orphan_adopt_restores_lan_on_from_env(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import write_env_file
+
+        manager, runner = self._manager()
+        self.assertFalse(runner.managed_by_us)
+        manager.lan_publish = False
+        manager._compose_lan_publish = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(token="a" * 32, lan_publish=True, path=env_path)
+            with patch(
+                "vocalinux.gateway_embed.runner.env_file_path",
+                return_value=env_path,
+            ):
+                with patch.object(runner, "is_compose_running", return_value=True):
+                    with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                        health.return_value = MagicMock(live=True, ready=False, error="")
+                        with patch.object(manager, "_start_polling"):
+                            manager.begin_runtime_detection()
+
+        self.assertIs(manager._compose_lan_publish, True)
+        self.assertTrue(manager.lan_publish)
+        self.assertTrue(runner.managed_by_us)
+        self.assertTrue(manager.managed_by_us)
+
+    def test_orphan_adopt_restores_lan_off_from_loopback_env(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import write_env_file
+
+        manager, runner = self._manager()
+        manager.lan_publish = True
+        manager._compose_lan_publish = None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(token="a" * 32, lan_publish=False, path=env_path)
+            with patch(
+                "vocalinux.gateway_embed.runner.env_file_path",
+                return_value=env_path,
+            ):
+                with patch.object(runner, "is_compose_running", return_value=True):
+                    with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                        health.return_value = MagicMock(live=True, ready=False, error="")
+                        with patch.object(manager, "_start_polling"):
+                            manager.begin_runtime_detection()
+
+        self.assertIs(manager._compose_lan_publish, False)
+        self.assertFalse(manager.lan_publish)
+        self.assertTrue(runner.managed_by_us)
+
+    def test_apply_lan_publish_republishes_after_orphan_lan_adopt(self):
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import RunnerResult, write_env_file
+
+        manager, runner = self._manager()
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            write_env_file(token="a" * 32, lan_publish=True, path=env_path)
+            with patch(
+                "vocalinux.gateway_embed.runner.env_file_path",
+                return_value=env_path,
+            ):
+                with patch.object(runner, "is_compose_running", return_value=True):
+                    with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                        health.return_value = MagicMock(live=True, ready=False, error="")
+                        with patch.object(manager, "_start_polling"):
+                            manager.begin_runtime_detection()
+
+        self.assertTrue(runner.managed_by_us)
+        self.assertIs(manager._compose_lan_publish, True)
+
+        calls = {"n": 0}
+
+        def fake_republish(*, lan_publish, public_url=None):
+            calls["n"] += 1
+            self.assertFalse(lan_publish)
+            return RunnerResult(ok=True, message="republished")
+
+        with patch("threading.Thread") as fake_thread:
+            fake_thread.return_value = MagicMock()
+            with patch.object(runner, "republish", side_effect=fake_republish):
+                with patch.object(manager, "refresh_status", return_value=GatewayStatus.LIVE):
+                    manager.apply_lan_publish(False)
+                    self.assertTrue(manager._republish_started)
+                    manager._republish_worker()
+
+        self.assertEqual(calls["n"], 1)
+        self.assertIs(manager._compose_lan_publish, False)
+        self.assertFalse(manager.lan_publish)
 
 
 class TestManagerListenerCleanup(unittest.TestCase):

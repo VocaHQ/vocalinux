@@ -11,7 +11,7 @@ from typing import Any, Callable, List, Optional
 from .health import probe_health
 from .pairing import PairingInfo, fetch_pairing
 from .preset import apply_remote_api_preset, remote_api_preset_from_pairing
-from .runner import GatewayRunner
+from .runner import GatewayRunner, read_lan_publish_from_env
 from .status import GatewayStatus
 from .urls import reject_loopback_url
 
@@ -131,6 +131,7 @@ class GatewayEmbedManager:
                     self._token = ensure_token_file()
             except Exception:  # noqa: BLE001
                 logger.exception("could not load existing gateway token")
+            self._adopt_orphan_compose()
             status = self.refresh_status()
             if status is not GatewayStatus.STOPPED:
                 self._start_polling()
@@ -145,6 +146,18 @@ class GatewayEmbedManager:
             name="vocalinux-gateway-runtime",
             daemon=True,
         ).start()
+
+    def _adopt_orphan_compose(self) -> None:
+        """Restore LAN truth and take ownership of leftover compose after Quit."""
+        if self.runner.managed_by_us:
+            return
+        if not self.runner.is_compose_running():
+            return
+        published = read_lan_publish_from_env()
+        self._compose_lan_publish = published
+        self.lan_publish = published
+        self.runner.managed_by_us = True
+        logger.info("adopted leftover vocagateway compose (lan_publish=%s)", published)
 
     def start_async(self, *, lan_publish: bool = False) -> None:
         self.lan_publish = lan_publish
