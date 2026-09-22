@@ -565,7 +565,7 @@ _VOCAHQ_FAMILY_LINKS = (
     (
         VOCAMAC_SITE_URL,
         "VocaMac",
-        "macOS, Beta",
+        "macOS, available now",
         ("platform-apple",),
         "Open vocamac.com",
     ),
