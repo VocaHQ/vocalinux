@@ -149,6 +149,23 @@ def test_bootstrap_uses_only_hashed_wheels(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("kind", ["missing", "empty"])
+def test_bootstrap_rejects_missing_or_empty_export(tmp_path: Path, kind: str) -> None:
+    """Reject missing pins before invoking pip, including in a conditional."""
+    requirements = tmp_path / "requirements"
+    requirements.mkdir()
+    export = requirements / "installer-build.txt"
+    if kind == "empty":
+        export.touch()
+    result = _run(
+        tmp_path,
+        f"INSTALL_DIR={shlex.quote(str(tmp_path))}\n" "install_pinned_build_tools || exit 23",
+    )
+    assert result.returncode == 23, result.stdout + result.stderr
+    assert f"Missing or empty pinned requirements: {export}" in result.stderr
+    assert not _calls(tmp_path)
+
+
 def test_remote_handoff_runs_the_tag_with_original_arguments(tmp_path: Path) -> None:
     """A main bootstrap must not require new files from a pre-pinning tag."""
     clone = tmp_path / "old tagged tree"

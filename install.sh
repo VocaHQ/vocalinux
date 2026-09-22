@@ -2656,10 +2656,15 @@ setup_virtual_environment
 # Also run for reused venvs: setup_virtual_environment returns early for those.
 # Wheels only here so bootstrapping cannot itself resolve unpinned build deps.
 install_pinned_build_tools() {
+    local reqs_file="$INSTALL_DIR/requirements/installer-build.txt"
+    if [ ! -s "$reqs_file" ]; then
+        print_error "Missing or empty pinned requirements: $reqs_file"
+        return 1
+    fi
     print_info "Installing pinned pip and source-build tools..."
     "$VENV_DIR/bin/python" -m pip install --require-hashes --no-deps \
         --only-binary=:all: --ignore-installed \
-        -r "$INSTALL_DIR/requirements/installer-build.txt" --log "$VOCALINUX_TMP_DIR/bootstrap.log"
+        -r "$reqs_file" --log "$VOCALINUX_TMP_DIR/bootstrap.log"
 }
 install_pinned_build_tools || {
     print_error "Failed to install the pinned build tools. Check requirements/installer-build.txt."
