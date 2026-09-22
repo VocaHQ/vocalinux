@@ -5595,7 +5595,10 @@ class SettingsDialog(Gtk.Dialog):
 
         self.advanced_box.pack_start(self.gateway_embed_group, False, False, 0)
 
+        self._gateway_manager.add_listener(self._on_gateway_status_from_worker)
+        self.connect("destroy", self._on_gateway_embed_dialog_destroy)
         # Runtime probe is async so Settings never blocks on podman/docker.
+        # When runtime is already ready, this probes leftover compose immediately.
         self._gateway_manager.begin_runtime_detection()
         if not self._gateway_manager.runtime_ready:
             self.gateway_run_btn.set_sensitive(False)
@@ -5608,8 +5611,6 @@ class SettingsDialog(Gtk.Dialog):
             if hint:
                 self.gateway_detail_label.set_text(hint)
 
-        self._gateway_manager.add_listener(self._on_gateway_status_from_worker)
-        self.connect("destroy", self._on_gateway_embed_dialog_destroy)
         self._apply_gateway_status_ui(
             self._gateway_manager.status, self._gateway_manager.status_detail
         )
@@ -5639,6 +5640,7 @@ class SettingsDialog(Gtk.Dialog):
             GatewayStatus.LIVE,
             GatewayStatus.PAIRABLE,
             GatewayStatus.READY,
+            GatewayStatus.ERROR,
         }
         if not self._gateway_manager.runtime_ready:
             self.gateway_run_btn.set_sensitive(False)
@@ -5723,6 +5725,7 @@ class SettingsDialog(Gtk.Dialog):
                 GatewayStatus.LIVE,
                 GatewayStatus.PAIRABLE,
                 GatewayStatus.READY,
+                GatewayStatus.ERROR,
             }
             or self._gateway_manager.managed_by_us
         ):
