@@ -166,43 +166,60 @@ def test_bootstrap_rejects_missing_or_empty_export(tmp_path: Path, kind: str) ->
     assert not _calls(tmp_path)
 
 
-def test_remote_handoff_runs_the_tag_with_original_arguments(tmp_path: Path) -> None:
-    """A main bootstrap must not require new files from a pre-pinning tag."""
+@pytest.mark.parametrize("remote_aware", [False, True])
+def test_remote_handoff_preserves_tagged_behavior(tmp_path: Path, remote_aware: bool) -> None:
+    """A main bootstrap must preserve remote behavior for every tag."""
     clone = tmp_path / "old tagged tree"
     clone.mkdir()
+    marker = 'CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"\n' if remote_aware else ""
     (clone / "install.sh").write_text(
-        '#!/bin/bash\nprintf "%s\\n" "$VOCALINUX_REMOTE_INSTALL" "$PWD" "$@"\n'
+        "#!/bin/bash\n"
+        + marker
+        + 'printf "%s\\n" "${VOCALINUX_REMOTE_INSTALL:-no}" "$PWD" "$@"\n'
+        + "helper=activate-vocalinux.sh\n"
+        + 'if [ "${VOCALINUX_REMOTE_INSTALL:-no}" = yes ]; then\n'
+        + '  mkdir -p "$HOME/.local/bin"\n'
+        + '  helper="$HOME/.local/bin/activate-vocalinux.sh"\n'
+        + "fi\n"
+        + 'printf helper > "$helper"\n'
     )
     scratch = tmp_path / "scratch"
     scratch.mkdir()
     text = INSTALLER.read_text()
-    start = text.index("    export VOCALINUX_REMOTE_INSTALL=yes")
-    end = text.index("\nfi", start)
+    start = text.index("handoff_to_tagged_installer() {")
+    end = text.index("\n}", start) + 2
     handoff = text[start:end]
+    home = tmp_path / "home"
+    home.mkdir()
     result = subprocess.run(
         [
             "bash",
             "-c",
-            f"set -eu\ncd {shlex.quote(str(clone))}\n"
+            f"set -eu\n{handoff}\ncd {shlex.quote(str(clone))}\n"
             f"INSTALL_DIR={shlex.quote(str(clone))}\n"
             f"VOCALINUX_TMP_DIR={shlex.quote(str(scratch))}\n"
-            "VENV_DIR='/remote venv'\n"
-            "INSTALLER_ARGS=(--auto --tag=v0.17.0 --engine=remote_api)\n" + handoff,
+            "INSTALLER_ARGS=(--auto --tag=v0.17.0 --engine=remote_api)\n"
+            'print_error() { echo "$*" >&2; }\n'
+            "handoff_to_tagged_installer",
         ],
+        env={**os.environ, "HOME": str(home)},
         capture_output=True,
         text=True,
         timeout=10,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "yes",
+        "yes" if remote_aware else "no",
         str(clone),
         "--auto",
         "--tag=v0.17.0",
         "--engine=remote_api",
-        "--venv-dir=/remote venv",
+        f"--venv-dir={home}/.local/share/vocalinux/venv",
     ]
-    assert not scratch.exists()
+    assert scratch.exists() != remote_aware
+    helper = home / ".local/bin/activate-vocalinux.sh"
+    assert helper.read_text() == "helper"
+    assert not (clone / "activate-vocalinux.sh").exists()
 
 
 def test_every_pip_install_has_an_explicit_resolution_boundary() -> None:

@@ -490,6 +490,26 @@ REPO_URL="https://github.com/VocaHQ/vocalinux.git"
 INSTALL_DIR=""
 CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"
 
+handoff_to_tagged_installer() {
+    local tagged_installer="$INSTALL_DIR/install.sh"
+    local remote_venv="$HOME/.local/share/vocalinux/venv"
+
+    if grep -q 'CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"' "$tagged_installer"; then
+        export VOCALINUX_REMOTE_INSTALL=yes
+        export TMPDIR="$(dirname "$VOCALINUX_TMP_DIR")"
+        rmdir "$VOCALINUX_TMP_DIR"
+        exec bash "$tagged_installer" "${INSTALLER_ARGS[@]}" "--venv-dir=$remote_venv"
+    fi
+
+    bash "$tagged_installer" "${INSTALLER_ARGS[@]}" "--venv-dir=$remote_venv" || return $?
+    if [ ! -f "$INSTALL_DIR/activate-vocalinux.sh" ]; then
+        print_error "The tagged installer did not create activate-vocalinux.sh."
+        return 1
+    fi
+    mkdir -p "$HOME/.local/bin"
+    mv "$INSTALL_DIR/activate-vocalinux.sh" "$HOME/.local/bin/activate-vocalinux.sh"
+}
+
 # Function to check and install git if needed
 ensure_git_installed() {
     if command -v git >/dev/null 2>&1; then
@@ -662,19 +682,10 @@ else
     CLEANUP_ON_EXIT="yes"
     print_info "Repository cloned to: $INSTALL_DIR"
 
-    # When running remotely, install venv to user's home directory
-    VENV_DIR="$HOME/.local/share/vocalinux/venv"
-
-    # Run the installer and its requirement exports from the same revision.
-    # In particular, a bootstrap fetched from main must still install an older
-    # tag that predates scripts/installer_requirements.py and the build export.
-    # The cloned tree is detected as local on re-entry, so this cannot recurse.
-    export VOCALINUX_REMOTE_INSTALL=yes
-    # No downloads have used the scratch directory yet. exec skips EXIT traps,
-    # so remove this empty directory before the tagged installer creates its own.
-    export TMPDIR="$(dirname "$VOCALINUX_TMP_DIR")"
-    rmdir "$VOCALINUX_TMP_DIR"
-    exec bash "$INSTALL_DIR/install.sh" "${INSTALLER_ARGS[@]}" "--venv-dir=$VENV_DIR"
+    # Keep the installer and exports on the selected tag. Legacy tags do not
+    # understand the remote marker, so the handoff relocates their helper.
+    handoff_to_tagged_installer
+    exit "$EXIT_OK"
 fi
 
 # Change to install directory
