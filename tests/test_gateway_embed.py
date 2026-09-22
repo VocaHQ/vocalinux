@@ -804,6 +804,149 @@ class TestOrphanComposeDetect(unittest.TestCase):
         self.assertFalse(manager.lan_publish)
 
 
+class TestFailedRepublishEnvRestore(unittest.TestCase):
+    """Failed force-recreate must not leave .env lying about the live bind."""
+
+    def _podman_runner(self, run):
+        from vocalinux.gateway_embed.runner import GatewayRunner
+        from vocalinux.gateway_embed.runtime import RuntimeInfo
+
+        return GatewayRunner(
+            runtime=RuntimeInfo(
+                kind=ContainerRuntime.PODMAN,
+                binary="/usr/bin/podman",
+                compose_args=("/usr/bin/podman", "compose"),
+            ),
+            sandbox=detect_sandbox({}),
+            run=run,
+        )
+
+    def test_failed_republish_restores_previous_env_publish_host(self):
+        import os
+        import tempfile
+
+        from vocalinux.gateway_embed.runner import (
+            read_lan_publish_from_env,
+            write_env_file,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            checkout = f"{tmp}/checkout"
+            os.makedirs(checkout)
+            Path(checkout, "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+            write_env_file(token="a" * 32, lan_publish=True, path=env_path)
+            self.assertTrue(read_lan_publish_from_env(env_path))
+
+            def fake_run(argv, **_kwargs):
+                completed = MagicMock()
+                completed.returncode = 1
+                completed.stdout = b""
+                completed.stderr = b"force-recreate failed"
+                return completed
+
+            runner = self._podman_runner(fake_run)
+            runner.managed_by_us = True
+            with patch("vocalinux.gateway_embed.runner.env_file_path", return_value=env_path):
+                with patch(
+                    "vocalinux.gateway_embed.runner.ensure_gateway_checkout",
+                    return_value=checkout,
+                ):
+                    with patch(
+                        "vocalinux.gateway_embed.runner.ensure_token_file",
+                        return_value="a" * 32,
+                    ):
+                        result = runner.republish(lan_publish=False)
+
+            self.assertFalse(result.ok)
+            self.assertTrue(read_lan_publish_from_env(env_path))
+            body = Path(env_path).read_text(encoding="utf-8")
+            self.assertIn("VOCAGATEWAY_PUBLISH_HOST=0.0.0.0", body)
+            self.assertNotIn("VOCAGATEWAY_PUBLISH_HOST=127.0.0.1", body)
+
+    def test_failed_republish_reverts_manager_lan_publish_to_compose(self):
+        from vocalinux.gateway_embed.manager import GatewayEmbedManager
+        from vocalinux.gateway_embed.runner import RunnerResult
+
+        runner = self._podman_runner(MagicMock())
+        runner.managed_by_us = True
+        manager = GatewayEmbedManager(runner=runner)
+        manager.lan_publish = False
+        manager._compose_lan_publish = True
+        manager._republish_started = True
+
+        def fake_republish(*, lan_publish, public_url=None):
+            self.assertFalse(lan_publish)
+            return RunnerResult(ok=False, message="force-recreate failed")
+
+        with patch("threading.Thread") as fake_thread:
+            fake_thread.return_value = MagicMock()
+            with patch.object(runner, "republish", side_effect=fake_republish):
+                manager._republish_worker()
+
+        self.assertIs(manager._compose_lan_publish, True)
+        self.assertTrue(manager.lan_publish)
+        self.assertEqual(manager.status, GatewayStatus.ERROR)
+        self.assertIn("previous bind is still in use", manager.status_detail)
+        self.assertIn("Stop and Run", manager.status_detail)
+        self.assertFalse(manager._republish_started)
+
+    def test_orphan_adopt_after_failed_republish_still_sees_lan_from_env(self):
+        import os
+        import tempfile
+
+        from vocalinux.gateway_embed.manager import GatewayEmbedManager
+        from vocalinux.gateway_embed.runner import (
+            read_lan_publish_from_env,
+            write_env_file,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = f"{tmp}/.env"
+            checkout = f"{tmp}/checkout"
+            os.makedirs(checkout)
+            Path(checkout, "compose.yaml").write_text("services: {}\n", encoding="utf-8")
+            write_env_file(token="a" * 32, lan_publish=True, path=env_path)
+
+            def fake_run(argv, **_kwargs):
+                completed = MagicMock()
+                completed.returncode = 1
+                completed.stdout = b""
+                completed.stderr = b"force-recreate failed"
+                return completed
+
+            runner = self._podman_runner(fake_run)
+            runner.managed_by_us = True
+            with patch("vocalinux.gateway_embed.runner.env_file_path", return_value=env_path):
+                with patch(
+                    "vocalinux.gateway_embed.runner.ensure_gateway_checkout",
+                    return_value=checkout,
+                ):
+                    with patch(
+                        "vocalinux.gateway_embed.runner.ensure_token_file",
+                        return_value="a" * 32,
+                    ):
+                        result = runner.republish(lan_publish=False)
+                        self.assertFalse(result.ok)
+                        self.assertTrue(read_lan_publish_from_env(env_path))
+
+                        next_runner = self._podman_runner(MagicMock())
+                        manager = GatewayEmbedManager(runner=next_runner)
+                        manager.lan_publish = False
+                        manager._compose_lan_publish = None
+                        with patch.object(next_runner, "is_compose_running", return_value=True):
+                            with patch("vocalinux.gateway_embed.manager.probe_health") as health:
+                                health.return_value = MagicMock(
+                                    live=True, ready=False, error=""
+                                )
+                                with patch.object(manager, "_start_polling"):
+                                    manager.begin_runtime_detection()
+
+            self.assertTrue(manager.lan_publish)
+            self.assertIs(manager._compose_lan_publish, True)
+            self.assertTrue(next_runner.managed_by_us)
+
+
 class TestManagerListenerCleanup(unittest.TestCase):
     def test_remove_listener_stops_callbacks(self):
         """Settings destroy must be able to detach without further emits."""

@@ -125,6 +125,37 @@ def read_lan_publish_from_env(path: str | None = None) -> bool:
     return False
 
 
+def _read_env_bytes(path: str) -> bytes | None:
+    """Return existing compose ``.env`` bytes, or None when missing."""
+    try:
+        with open(path, "rb") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _write_env_bytes(path: str, content: bytes) -> None:
+    """Replace compose ``.env`` with *content* (mode 600). Never log it."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(content)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def _restore_env_snapshot(path: str, snapshot: bytes | None) -> None:
+    """Put a pre-republish ``.env`` back so file truth matches a live bind."""
+    if snapshot is None:
+        return
+    try:
+        _write_env_bytes(path, snapshot)
+    except OSError:
+        logger.warning("could not restore gateway embed .env after failed republish")
+
+
 def ensure_gateway_checkout(
     *,
     cache_dir: str | None = None,
@@ -381,6 +412,10 @@ class GatewayRunner:
 
         Used when LAN is toggled while compose is already managed by us so the
         phone-facing bind and pairing URL match the new setting.
+
+        ``prepare`` writes the new ``VOCAGATEWAY_PUBLISH_HOST`` before
+        ``compose up --force-recreate``. If recreate fails, the old container
+        is still bound to the previous host, so restore the snapshot ``.env``.
         """
         with self._lock:
             if not self.managed_by_us:
@@ -389,11 +424,14 @@ class GatewayRunner:
                     message="gateway is not managed by this session",
                     returncode=1,
                 )
+            env_path = env_file_path()
+            previous_env = _read_env_bytes(env_path)
             try:
                 checkout, _token, env_path = self.prepare(
                     lan_publish=lan_publish, public_url=public_url
                 )
             except Exception as exc:  # noqa: BLE001
+                _restore_env_snapshot(env_file_path(), previous_env)
                 self.last_error = str(exc)
                 return RunnerResult(ok=False, message=str(exc), returncode=1)
 
@@ -414,6 +452,7 @@ class GatewayRunner:
                 timeout=300,
             )
             if completed.returncode != 0:
+                _restore_env_snapshot(env_path, previous_env)
                 stderr = (completed.stderr or b"").decode("utf-8", errors="replace")
                 message = stderr.strip()[-800:] or "compose republish failed"
                 self.last_error = message

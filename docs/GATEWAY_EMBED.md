@@ -54,7 +54,9 @@ downloading.
 By default the published host is `127.0.0.1` (desktop-only). Turn on **Allow LAN
 access for Phone** to set `VOCAGATEWAY_PUBLISH_HOST=0.0.0.0` and to advertise a
 LAN URL in pairing. Open port `8765` in your firewall only on trusted networks.
-Never put `127.0.0.1` / `localhost` in the phone QR.
+Never put `127.0.0.1` / `localhost` in the phone QR. If a LAN toggle fails,
+compose keeps the previous bind, Vocalinux restores the embed `.env`, and the
+switch snaps back with an error (Stop and Run again, or retry).
 
 ## Tray and Quit
 
