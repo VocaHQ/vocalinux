@@ -936,9 +936,7 @@ class TestFailedRepublishEnvRestore(unittest.TestCase):
                         manager._compose_lan_publish = None
                         with patch.object(next_runner, "is_compose_running", return_value=True):
                             with patch("vocalinux.gateway_embed.manager.probe_health") as health:
-                                health.return_value = MagicMock(
-                                    live=True, ready=False, error=""
-                                )
+                                health.return_value = MagicMock(live=True, ready=False, error="")
                                 with patch.object(manager, "_start_polling"):
                                     manager.begin_runtime_detection()
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Mapping
+from typing import Any, Mapping
 
 from .urls import reject_loopback_url
 
@@ -42,7 +42,7 @@ def remote_api_preset_from_pairing(
     }
 
 
-def apply_remote_api_preset(config_manager, preset: Mapping[str, str]) -> None:
+def apply_remote_api_preset(config_manager: Any, preset: Mapping[str, str]) -> None:
     """Write *preset* into an existing ConfigManager and save."""
     for key, value in preset.items():
         config_manager.set("speech_recognition", key, value)
