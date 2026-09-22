@@ -127,8 +127,8 @@ def find_keyboard_devices() -> list[str]:
 
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
-    confinement even with raw-input, which grants /dev/input/event* but may
-    still deny /proc/bus/input/devices).
+    confinement: raw-input grants /dev/input/event*, while hardware-observe
+    is the plug that grants /proc/bus/input/devices).
 
     Returns:
         List of device paths for keyboard devices
@@ -424,7 +424,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
                                 return (
                                     "Snap is missing input-device access. "
                                     "Connect once, then restart:\n"
-                                    "sudo snap connect vocalinux:raw-input"
+                                    "sudo snap connect vocalinux:raw-input\n"
+                                    "sudo snap connect vocalinux:hardware-observe"
                                 )
                             return (
                                 "Add your user to the 'input' group and log out/in:\n"
@@ -432,11 +433,13 @@ class EvdevKeyboardBackend(KeyboardBackend):
                             )
                 return None
 
-            # No devices found — snap without raw-input often cannot list anything.
+            # No devices found: snap without raw-input and hardware-observe
+            # often cannot list anything.
             if in_snap:
                 return (
                     "Snap is missing input-device access. Connect once, then restart:\n"
-                    "sudo snap connect vocalinux:raw-input"
+                    "sudo snap connect vocalinux:raw-input\n"
+                    "sudo snap connect vocalinux:hardware-observe"
                 )
 
             try:
