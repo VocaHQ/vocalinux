@@ -32,6 +32,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState  # noqa: E402
+from ..dictionary_manager import default_dictionary_file  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.faster_whisper_model_info import (
@@ -4101,7 +4102,9 @@ class SettingsDialog(Gtk.Dialog):
         group.add_row(
             PreferenceRow(
                 title="Enable custom dictionary",
-                subtitle="Bias Whisper and whisper.cpp toward terms in a text file",
+                subtitle=(
+                    "Bias Whisper, Faster Whisper, and whisper.cpp toward terms in a text file"
+                ),
                 widget=self.dictionary_enabled_switch,
             )
         )
@@ -4109,7 +4112,7 @@ class SettingsDialog(Gtk.Dialog):
         path_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         self.dictionary_path_entry = Gtk.Entry()
         self.dictionary_path_entry.set_hexpand(True)
-        self.dictionary_path_entry.set_placeholder_text("~/.config/vocalinux/dictionary.txt")
+        self.dictionary_path_entry.set_placeholder_text(default_dictionary_file())
         path_box.pack_start(self.dictionary_path_entry, True, True, 0)
         self.dictionary_file_button = Gtk.FileChooserButton(title="Choose Dictionary File")
         path_box.pack_start(self.dictionary_file_button, False, False, 0)

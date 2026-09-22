@@ -5,8 +5,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
-from vocalinux.dictionary_manager import DEFAULT_DICTIONARY_FILE, DictionaryManager
+from vocalinux.dictionary_manager import (
+    LEGACY_DEFAULT_DICTIONARY_FILE,
+    DictionaryManager,
+    default_dictionary_file,
+)
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+from vocalinux.utils.paths import config_dir
 
 
 class MemoryConfig:
@@ -34,11 +39,12 @@ def _manager(
     with patch.object(SpeechRecognitionManager, "_init_vosk"):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
             with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
-                return SpeechRecognitionManager(
-                    engine=engine,
-                    dictionary_manager=dictionary,
-                    whispercpp_initial_prompt=advanced_prompt,
-                )
+                with patch.object(SpeechRecognitionManager, "_init_faster_whisper"):
+                    return SpeechRecognitionManager(
+                        engine=engine,
+                        dictionary_manager=dictionary,
+                        whispercpp_initial_prompt=advanced_prompt,
+                    )
 
 
 def _mock_numpy() -> MagicMock:
@@ -52,8 +58,20 @@ def _mock_numpy() -> MagicMock:
 
 def test_dictionary_uses_default_contract_for_empty_path() -> None:
     dictionary = DictionaryManager(MemoryConfig(""))
-    assert str(dictionary.get_path()).endswith(DEFAULT_DICTIONARY_FILE.removeprefix("~/"))
+    assert dictionary.get_path() == Path(default_dictionary_file()).expanduser()
     assert not dictionary.set_path("   ")
+
+
+def test_dictionary_default_path_colocates_with_config_dir(
+    monkeypatch: Any, tmp_path: Path
+) -> None:
+    xdg_home = tmp_path / "xdg-config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_home))
+    expected = Path(config_dir()) / "dictionary.txt"
+
+    assert expected == xdg_home / "vocalinux" / "dictionary.txt"
+    assert DictionaryManager(MemoryConfig("")).get_path() == expected
+    assert DictionaryManager(MemoryConfig(LEGACY_DEFAULT_DICTIONARY_FILE)).get_path() == expected
 
 
 def test_transient_dictionary_never_changes_saved_settings(tmp_path: Path) -> None:
@@ -147,6 +165,24 @@ def test_whisper_receives_live_dictionary_prompt(tmp_path: Path) -> None:
     with patch.dict("sys.modules", {"numpy": _mock_numpy(), "torch": MagicMock()}):
         assert manager._transcribe_with_whisper([b"\x00\x00"]) == "ok"
     assert manager.model.transcribe.call_args.kwargs["initial_prompt"] == "VocaLinux"
+
+
+def test_faster_whisper_receives_live_dictionary_prompt(tmp_path: Path) -> None:
+    path = tmp_path / "dictionary.txt"
+    path.write_text("VocaLinux\n", encoding="utf-8")
+    config = MemoryConfig(str(path))
+    manager = _manager("faster_whisper", DictionaryManager(config))
+    engine = MagicMock()
+    engine.is_ready.return_value = True
+    engine.transcribe.return_value = "ok"
+    manager._faster_whisper_engine = engine
+
+    assert manager._transcribe_with_faster_whisper([b"\x00\x00"]) == "ok"
+    config.values["dictionary"]["enabled"] = False
+    assert manager._transcribe_with_faster_whisper([b"\x00\x00"]) == "ok"
+
+    prompts = [call.kwargs["initial_prompt"] for call in engine.transcribe.call_args_list]
+    assert prompts == ["VocaLinux", ""]
 
 
 def test_whispercpp_composes_advanced_prompt_and_live_dictionary(tmp_path: Path) -> None:

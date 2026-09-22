@@ -145,7 +145,7 @@ DEFAULT_CONFIG = {
     },
     "dictionary": {
         "enabled": False,
-        "file_path": "~/.config/vocalinux/dictionary.txt",
+        "file_path": os.path.join(CONFIG_DIR, "dictionary.txt"),
         "max_words": 200,
     },
     "advanced": {

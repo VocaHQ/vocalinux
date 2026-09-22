@@ -1686,7 +1686,8 @@ class SpeechRecognitionManager:
                 logger.warning("faster-whisper engine not ready during transcription")
                 return ""
 
-            return self._faster_whisper_engine.transcribe(audio_buffer)
+            prompt = self._get_dictionary_prompt()
+            return self._faster_whisper_engine.transcribe(audio_buffer, initial_prompt=prompt or "")
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
             return ""

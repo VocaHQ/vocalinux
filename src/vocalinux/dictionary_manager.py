@@ -4,13 +4,20 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from .utils.paths import config_dir
+
 if TYPE_CHECKING:
     from .ui.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DICTIONARY_FILE = "~/.config/vocalinux/dictionary.txt"
+LEGACY_DEFAULT_DICTIONARY_FILE = "~/.config/vocalinux/dictionary.txt"
 DEFAULT_MAX_WORDS = 200
+
+
+def default_dictionary_file() -> str:
+    """Return the live XDG dictionary path next to other Vocalinux config."""
+    return str(Path(config_dir()) / "dictionary.txt")
 
 
 class DictionaryManager:
@@ -48,9 +55,11 @@ class DictionaryManager:
         """Return a safely expanded dictionary path, or ``None`` when invalid."""
         configured = self._transient_path
         if configured is None:
-            configured = self.config.get("dictionary", "file_path", DEFAULT_DICTIONARY_FILE)
+            configured = self.config.get("dictionary", "file_path", default_dictionary_file())
         if not isinstance(configured, str) or not configured.strip():
-            configured = DEFAULT_DICTIONARY_FILE
+            configured = default_dictionary_file()
+        elif configured.strip() == LEGACY_DEFAULT_DICTIONARY_FILE:
+            configured = default_dictionary_file()
         try:
             return Path(configured).expanduser()
         except RuntimeError as error:
