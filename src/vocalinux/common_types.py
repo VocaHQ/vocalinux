@@ -79,3 +79,9 @@ class TextInjectorProtocol(Protocol):
     def inject_text(self, text: str) -> bool:
         """Inject text into the active application."""
         ...
+
+
+class Readable(Protocol):
+    """Minimal read() surface for urlopen-like responses."""
+
+    def read(self, n: int = ...) -> bytes: ...
