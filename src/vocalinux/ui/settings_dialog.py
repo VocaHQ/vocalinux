@@ -4916,8 +4916,12 @@ class SettingsDialog(Gtk.Dialog):
     def _build_gateway_embed_section(self) -> None:
         """Optional local VocaGateway controls (podman-first). Lives on the Advanced island."""
         self._gateway_manager = get_gateway_embed_manager()
-        lan_publish = bool(self.config_manager.get("gateway_embed", "lan_publish", False))
-        self._gateway_manager.lan_publish = lan_publish
+        # Do not clobber LAN restored from leftover compose (orphan adopt).
+        if not self._gateway_manager.managed_by_us:
+            self._gateway_manager.lan_publish = bool(
+                self.config_manager.get("gateway_embed", "lan_publish", False)
+            )
+        lan_publish = bool(self._gateway_manager.lan_publish)
 
         self.gateway_embed_group = PreferencesGroup(
             title="Local VocaGateway",
@@ -5087,8 +5091,24 @@ class SettingsDialog(Gtk.Dialog):
 
         can_use = status in {GatewayStatus.PAIRABLE, GatewayStatus.READY}
         self.gateway_use_btn.set_sensitive(can_use)
+        self._sync_gateway_lan_switch()
         self._update_gateway_pairing_widgets()
         return False
+
+    def _sync_gateway_lan_switch(self) -> None:
+        """Keep Allow LAN honest with compose; skip the toggle handler."""
+        desired = bool(self._gateway_manager.lan_publish)
+        if bool(self.gateway_lan_switch.get_active()) != desired:
+            was_init = bool(getattr(self, "_initializing", False))
+            self._initializing = True
+            try:
+                self.gateway_lan_switch.set_active(desired)
+            finally:
+                self._initializing = was_init
+        saved = bool(self.config_manager.get("gateway_embed", "lan_publish", False))
+        if saved != desired:
+            self.config_manager.set("gateway_embed", "lan_publish", desired)
+            self.config_manager.save_config()
 
     def _update_gateway_pairing_widgets(self) -> None:
         info = self._gateway_manager.pairing

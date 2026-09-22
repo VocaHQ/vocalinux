@@ -112,6 +112,19 @@ def write_env_file(
     return env_path
 
 
+def read_lan_publish_from_env(path: str | None = None) -> bool:
+    """True when embed ``.env`` publishes ``0.0.0.0`` (Allow LAN on)."""
+    env_path = path or env_file_path()
+    try:
+        with open(env_path, encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VOCAGATEWAY_PUBLISH_HOST="):
+                    return line.split("=", 1)[1].strip() == "0.0.0.0"
+    except OSError:
+        return False
+    return False
+
+
 def ensure_gateway_checkout(
     *,
     cache_dir: str | None = None,
