@@ -291,3 +291,25 @@ def test_real_pip_checks_hash_before_install(tmp_path: Path, tamper: bool) -> No
     assert (result.returncode != 0) == tamper, result.stdout + result.stderr
     if tamper:
         assert "HASHES" in result.stderr
+
+
+def test_source_built_runtime_packages_have_build_deps_on_split_devel_distros() -> None:
+    """The pinned runtime builds these from source; distro lists that split
+    -devel packages must carry their build deps."""
+    runtime = (ROOT / "requirements/runtime.txt").read_text(encoding="utf-8")
+    installer = INSTALLER.read_text(encoding="utf-8")
+
+    def package_line(prefix: str) -> str:
+        return next(line for line in installer.splitlines() if f"local {prefix}=" in line)
+
+    build_deps = {
+        "pycairo": ("cairo-devel", "libcairo2-dev"),
+        "pyaudio": ("portaudio-devel", "portaudio19-dev"),
+        "evdev": ("python3-devel", "python3-dev"),
+    }
+    for name, (dnf_pkg, apt_pkg) in build_deps.items():
+        if not re.search(rf"^{name}==", runtime, re.MULTILINE):
+            continue  # wheels-only or dropped: nothing to build
+        assert dnf_pkg in package_line("DNF_PACKAGES"), name
+        assert apt_pkg in package_line("APT_PACKAGES_UBUNTU"), name
+        assert apt_pkg in package_line("APT_PACKAGES_DEBIAN_BASE"), name
