@@ -220,9 +220,13 @@ class GatewayEmbedManager:
                 logger.info("LAN republish enabled but LAN IP could not be guessed")
             result = self.runner.republish(lan_publish=published, public_url=public_url)
             if not result.ok:
+                # Recreate failed: live bind is still the previous publish mode.
+                if self._compose_lan_publish is not None:
+                    self.lan_publish = bool(self._compose_lan_publish)
                 self._emit(
                     GatewayStatus.ERROR,
-                    result.message or "Could not update LAN publish. Stop and Run again.",
+                    "Could not update LAN publish; the previous bind is still in use. "
+                    "Stop and Run again, or retry.",
                 )
                 return
             self._compose_lan_publish = published
