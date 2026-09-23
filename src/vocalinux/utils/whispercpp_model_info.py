@@ -6,6 +6,7 @@ for whisper.cpp, supporting Vulkan, CUDA, and CPU backends.
 """
 
 import logging
+import math
 import os
 import re
 import subprocess
@@ -426,6 +427,24 @@ def detect_cpu_info() -> str:
     return "CPU"
 
 
+def _parse_cuda_vram_gib(backend_info: str) -> Optional[float]:
+    """Parse VRAM in GiB from nvidia-smi-style backend info.
+
+    Accepts MiB/MB/GiB/GB (case-insensitive). MiB and MB are converted by
+    dividing by 1024. Returns None when no size can be parsed.
+    """
+    if not isinstance(backend_info, str) or not backend_info:
+        return None
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(gi?b|mi?b)", backend_info, flags=re.IGNORECASE)
+    if not match:
+        return None
+    amount = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit in {"mb", "mib"}:
+        amount /= 1024.0
+    return amount
+
+
 def get_recommended_model() -> tuple[str, str]:
     """
     Get the recommended whisper.cpp model based on system configuration.
@@ -436,7 +455,7 @@ def get_recommended_model() -> tuple[str, str]:
     try:
         import psutil
 
-        ram_gb = psutil.virtual_memory().total // (1024**3)
+        ram_gb = math.ceil(psutil.virtual_memory().total / (1024**3))
 
         # Detect available compute backends
         backend, backend_info = detect_compute_backend()
@@ -448,19 +467,14 @@ def get_recommended_model() -> tuple[str, str]:
             else:
                 return "base", f"Vulkan GPU with {ram_gb}GB RAM"
         elif backend == ComputeBackend.CUDA:
-            # CUDA has more VRAM typically
-            if "GB" in backend_info:
-                try:
-                    vram_gb = int(backend_info.split("GB")[0].split("(")[-1].strip())
-                    if vram_gb >= 8:
-                        return "medium", f"CUDA GPU with {vram_gb}GB VRAM"
-                    elif vram_gb >= 4:
-                        return "small", f"CUDA GPU with {vram_gb}GB VRAM"
-                    else:
-                        return "base", f"CUDA GPU with limited VRAM"
-                except (ValueError, IndexError):
-                    pass
-            return "small", f"CUDA GPU detected"
+            vram_gb = _parse_cuda_vram_gib(backend_info or "")
+            if vram_gb is not None:
+                if vram_gb >= 8:
+                    return "medium", f"CUDA GPU with {vram_gb:g}GB VRAM"
+                if vram_gb >= 4:
+                    return "small", f"CUDA GPU with {vram_gb:g}GB VRAM"
+                return "base", "CUDA GPU with limited VRAM"
+            return "small", "CUDA GPU detected"
         else:
             # CPU-only recommendations based on RAM
             if ram_gb >= 16:
