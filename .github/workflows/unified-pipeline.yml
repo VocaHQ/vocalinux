@@ -48,6 +48,7 @@ jobs:
               # pywhispercpp pin out of install.sh and installs the desktop
               # entry and the icon into the AppDir.
               - 'install.sh'
+              - 'install.d/**'
               - 'vocalinux.desktop'
               - 'resources/**'
               - 'justfile'

@@ -160,7 +160,9 @@ src/vocalinux/
 └── resources/                  # SVG icons + WAV cues (also repo resources/)
 ```
 
-Also: `tests/`, `docs/`, `packaging/` (AppImage, AUR, Flatpak), `scripts/`, `install.sh`, `uninstall.sh`, `web/`.
+Also: `tests/`, `docs/`, `packaging/` (AppImage, AUR, Flatpak), `scripts/`,
+`install.sh` (bootstrap and orchestration), `install.d/` (sourced installer modules),
+`uninstall.sh`, `web/`.
 
 | Task | Start here |
 |---|---|

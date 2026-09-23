@@ -19,6 +19,15 @@ from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = ROOT / "install.sh"
+INSTALLER_MODULES = ROOT / "install.d"
+
+
+def installer_source() -> str:
+    """Read the installer entry point and all sourced implementation modules."""
+    parts = [INSTALLER, *sorted(INSTALLER_MODULES.glob("*.sh"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in parts)
+
+
 SELECTOR = ROOT / "scripts/installer_requirements.py"
 
 
@@ -331,7 +340,7 @@ def test_source_built_runtime_packages_have_build_deps_on_split_devel_distros() 
     """The pinned runtime builds these from source; distro lists that split
     -devel packages must carry their build deps."""
     runtime = (ROOT / "requirements/runtime.txt").read_text(encoding="utf-8")
-    installer = INSTALLER.read_text(encoding="utf-8")
+    installer = installer_source()
 
     def package_line(prefix: str) -> str:
         return next(line for line in installer.splitlines() if f"local {prefix}=" in line)
