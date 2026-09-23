@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import gi
 
@@ -37,6 +37,7 @@ from gi.repository import GdkPixbuf, Gio, GLib, GObject, Gtk
 # Import local modules - Use protocols to avoid circular imports
 from ..auto_pause_monitor import DEFAULT_POLL_INTERVAL_SECONDS, AutoPauseMonitor
 from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, TextInjectorProtocol
+from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
 from ..suspend_handler import SuspendHandler
 from ..utils.host_process import host_env
@@ -337,6 +338,11 @@ class TrayIndicator:
         self._add_menu_separator()
         self._add_menu_item("Settings", self._on_settings_clicked)
         self._add_menu_item("View Logs", self._on_logs_clicked)
+        self._gateway_stop_menu_item = self._add_menu_item(
+            "Stop local Gateway", self._on_stop_local_gateway_clicked
+        )
+        self._gateway_stop_menu_item.set_no_show_all(True)
+        self._gateway_stop_menu_item.hide()
         self._add_menu_separator()
         # Hidden until a background check finds a newer release.
         self._update_menu_item = self._add_menu_item(
@@ -357,6 +363,12 @@ class TrayIndicator:
             self._update_menu_item.hide()
         else:
             self._show_update_menu_item(self._pending_update)
+        self._gateway_stop_menu_item.hide()
+        self._gateway_manager = get_gateway_embed_manager()
+        self._gateway_manager.add_listener(self._on_gateway_status_for_tray)
+        # Runtime detect + leftover compose probe (Quit does not stop compose).
+        self._gateway_manager.begin_runtime_detection()
+        self._sync_gateway_stop_menu(self._gateway_manager.status)
 
         # Update the UI based on the initial state
         self._update_ui(RecognitionState.IDLE)
@@ -1126,6 +1138,32 @@ class TrayIndicator:
         if getattr(self, "_input_monitor", None) is not None:
             self._input_monitor.cancel()
             self._input_monitor = None
+
+    def _on_gateway_status_for_tray(self, status: GatewayStatus, detail: str) -> None:
+        """Update tray Stop local Gateway visibility from a worker thread."""
+        GLib.idle_add(self._sync_gateway_stop_menu, status)
+
+    def _sync_gateway_stop_menu(self, status: GatewayStatus) -> bool:
+        item = getattr(self, "_gateway_stop_menu_item", None)
+        if item is None:
+            return False
+        # Show Stop for leftover compose too; managed_by_us is session memory only.
+        show = status in {
+            GatewayStatus.STARTING,
+            GatewayStatus.LIVE,
+            GatewayStatus.PAIRABLE,
+            GatewayStatus.READY,
+            GatewayStatus.ERROR,
+        }
+        if show:
+            item.show()
+        else:
+            item.hide()
+        return False
+
+    def _on_stop_local_gateway_clicked(self, widget: Any) -> None:
+        """Stop local compose, including leftovers from a previous session."""
+        get_gateway_embed_manager().stop_async()
 
     def _on_quit_clicked(self, widget):
         """Handle click on the Quit menu item."""

@@ -39,7 +39,7 @@ No Voca account is required. Models download once. After that, speech-to-text st
 
 - **On-device after model download**: Local engines; speech-to-text stays on your machine
 - **X11 and Wayland**: Text injection via xdotool, IBus, wtype, ydotool, or clipboard fallback
-- **Several engines**: whisper.cpp (default), OpenAI Whisper, Faster Whisper, VOSK, Parakeet, plus optional remote HTTP API
+- **Several engines**: whisper.cpp (default), OpenAI Whisper, Faster Whisper, VOSK, Parakeet, plus optional remote HTTP API or local VocaGateway from Settings (not on-device)
 - **GPU acceleration**: Vulkan for AMD, Intel, and NVIDIA with whisper.cpp
 - **Toggle or push-to-talk**: New installs default to hold Right Alt; existing configs keep their shortcut
 - **System tray + settings**: Searchable sidebar, Speech Model simple setup with Advanced as an island, status icons, audio feedback
@@ -299,6 +299,7 @@ Neural VAD (Silero) is used when `onnxruntime` is available; install via `pip in
 | [Support](SUPPORT.md) | Where to get help |
 | [Distribution compatibility](docs/DISTRO_COMPATIBILITY.md) | Distro matrix and session notes |
 | [Remote HTTP API](docs/HTTP_REMOTE.md) | Offload transcription to a server |
+| [Local VocaGateway (optional)](docs/GATEWAY_EMBED.md) | Start a local gateway from Settings; not on-device |
 | [Contributing](CONTRIBUTING.md) | Dev setup, style, PR process |
 | [Security](SECURITY.md) | Supported versions and vulnerability reporting |
 | [Docs index](docs/README.md) | Full documentation map |
