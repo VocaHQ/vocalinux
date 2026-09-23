@@ -79,3 +79,31 @@ class TextInjectorProtocol(Protocol):
     def inject_text(self, text: str) -> bool:
         """Inject text into the active application."""
         ...
+
+
+class SinkVolumeControl(Protocol):
+    """Default playback sink. Tests supply a fake; production uses wpctl or pactl."""
+
+    def default_sink(self) -> Optional[tuple[str, tuple[float, ...]]]:
+        """``(sink_id, per_channel_linear_volume)``, or None if it cannot be read."""
+        ...
+
+    def volume_of(self, sink_id: str) -> Optional[tuple[float, ...]]:
+        """Per-channel linear volume of ``sink_id``, or None if it cannot be read."""
+        ...
+
+    def sink_exists(self, sink_id: str) -> Optional[bool]:
+        """True if present, False if gone, None if presence could not be checked."""
+        ...
+
+    def set_volume(self, sink_id: str, channels: tuple[float, ...]) -> bool:
+        """Set ``sink_id`` only. False on failure. Never substitute another sink."""
+        ...
+
+
+class CancelableTimer(Protocol):
+    """A scheduled call that can be dropped before it runs."""
+
+    def cancel(self) -> None:
+        """Drop the scheduled call if it has not started."""
+        ...

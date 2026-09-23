@@ -2538,6 +2538,50 @@ class SettingsDialog(Gtk.Dialog):
         self.sound_tone_combo.connect("changed", self._on_sound_tone_changed)
         self.preview_tone_btn.connect("clicked", self._on_preview_tone_clicked)
 
+        # Other audio: opt-in duck of the default sink for the length of a dictation.
+        other_audio = PreferencesGroup(
+            title="Other audio",
+            keywords=("duck", "volume", "speakers", "music"),
+        )
+        self.duck_playback_switch = Gtk.Switch()
+        self.duck_playback_switch.set_tooltip_text(
+            "Turn speakers and headphones down while the microphone is open, "
+            "then put the volume back"
+        )
+        duck_switch_row = PreferenceRow(
+            title="Lower other audio while dictating",
+            subtitle=(
+                "Turn speakers and headphones down while the microphone is open, "
+                "then put the volume back."
+            ),
+            widget=self.duck_playback_switch,
+            keywords=("duck", "volume", "speakers", "music", "headphones"),
+        )
+        other_audio.add_row(duck_switch_row)
+
+        self.duck_level_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.duck_level_scale.set_digits(0)
+        self.duck_level_scale.set_round_digits(0)
+        self.duck_level_scale.set_value_pos(Gtk.PositionType.RIGHT)
+        self.duck_level_scale.set_value(20)
+        self.duck_level_scale.set_draw_value(True)
+        self.duck_level_scale.set_size_request(180, -1)
+        self.duck_level_scale.set_hexpand(False)
+        self.duck_level_scale.set_halign(Gtk.Align.END)
+        self.duck_level_scale.set_sensitive(False)
+        self.duck_level_scale.set_tooltip_text("Percent of the current volume. 0 is silent.")
+        _prevent_scroll_on_hover(self.duck_level_scale)
+        duck_level_row = PreferenceRow(
+            title="Level while dictating",
+            subtitle="Percent of the current volume. 0 is silent.",
+            widget=self.duck_level_scale,
+            keywords=("duck", "volume", "speakers", "music"),
+        )
+        other_audio.add_row(duck_level_row)
+        self.audio_tab.pack_start(other_audio, False, False, 0)
+        self.duck_playback_switch.connect("state-set", self._on_duck_playback_toggled)
+        self.duck_level_scale.connect("value-changed", self._on_duck_level_changed)
+
         # Populate devices
         self._populate_audio_devices()
         self.audio_device_combo.connect("changed", self._on_audio_device_changed)
@@ -3018,6 +3062,24 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
         return False
+
+    def _on_duck_playback_toggled(self, _widget: Gtk.Widget, state: bool) -> bool:
+        enabled = bool(state)
+        self.duck_level_scale.set_sensitive(enabled)
+        if self._initializing or self._applying_settings:
+            return False
+        logger.info("Lower other audio while dictating toggled: %s", enabled)
+        self.config_manager.set_playback_duck_enabled(enabled)
+        self.config_manager.save_settings()
+        return False
+
+    def _on_duck_level_changed(self, scale: Gtk.Scale) -> None:
+        if self._initializing or self._applying_settings:
+            return
+        percent = int(round(scale.get_value()))
+        logger.info("Playback duck level set to %s%%", percent)
+        self.config_manager.set_playback_duck_percent(percent)
+        self.config_manager.save_settings()
 
     def _sync_tone_preview_button(self, tone_id: str) -> None:
         """Update the two-stage preview button next to the tone combo."""
@@ -5036,6 +5098,10 @@ class SettingsDialog(Gtk.Dialog):
         if not self.paste_shortcut_combo.set_active_id(paste_shortcut):
             self.paste_shortcut_combo.set_active_id(DEFAULT_PASTE_SHORTCUT)
         self.sound_effects_switch.set_active(self.config_manager.is_sound_effects_enabled())
+        duck_enabled = self.config_manager.is_playback_duck_enabled()
+        self.duck_level_scale.set_value(self.config_manager.get_playback_duck_percent())
+        self.duck_playback_switch.set_active(duck_enabled)
+        self.duck_level_scale.set_sensitive(duck_enabled)
         tone_id = self.config_manager.get_sound_effects_tone()
         if not self.sound_tone_combo.set_active_id(tone_id):
             self.sound_tone_combo.set_active_id(DEFAULT_SOUND_EFFECT_TONE)
