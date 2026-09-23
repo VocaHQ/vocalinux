@@ -1700,6 +1700,11 @@ class SpeechRecognitionManager:
                     logger.info(f"Downloading whisper.cpp '{self.model_size}' model...")
                     self._download_whispercpp_model()
 
+            # Backend detection plus the load itself run after the download
+            # reports "Complete!", so a UI watching the download needs to hear
+            # that this is still going. No callback is set outside that flow.
+            if self._download_progress_callback:
+                self._download_progress_callback(1.0, 0, "Loading model...")
             self._load_whispercpp_model(model_path)
 
         except ImportError as e:
@@ -2745,6 +2750,11 @@ class SpeechRecognitionManager:
 
         try:
             self._stream_model_download(url, temp_file)
+            # Say so before hashing: on a multi-hundred-MB model this is
+            # seconds with nothing else to show, and the UI would otherwise
+            # sit on the last chunk's update. Same step the Vosk path reports.
+            if self._download_progress_callback:
+                self._download_progress_callback(1.0, 0, "Verifying model...")
             # Verify before the rename: whisper.cpp loads ggml files through
             # ctypes, so an unverified file must never reach its final path
             # where is_model_downloaded() would treat it as good.
