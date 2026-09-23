@@ -143,3 +143,60 @@ vocalinux --debug
 ```
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for tray, audio, injection, and model issues. Distro notes: [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md). Updates: [UPDATE.md](UPDATE.md). Help channels: [SUPPORT.md](../SUPPORT.md).
+
+### Text injection backend
+
+Vocalinux types your dictated text using one of several backends. It picks one
+automatically, and on most desktops the automatic choice is correct.
+
+Autodetection can be wrong, though, and it fails in a way that is easy to
+misread: on a compositor that does not relay IBus commits to native Wayland
+applications, IBus reports the text as delivered while nothing appears. If
+dictation works in some windows (typically XWayland ones, like a browser) but
+silently does nothing in others, that is the symptom.
+
+Pin the backend explicitly in `~/.config/vocalinux/config.json`:
+
+```json
+{
+  "text_injection": {
+    "backend": "wtype"
+  }
+}
+```
+
+| Value | Backend |
+|---|---|
+| `auto` | Autodetect (default; autodetection may select IBus) |
+| `ibus` | IBus input method; on Wayland, bypasses compositor checks and may silently do nothing in native Wayland apps |
+| `wtype` | wtype virtual keyboard (Wayland) |
+| `ydotool` | ydotool uinput (Wayland; needs `ydotoold`) |
+| `xdotool` | xdotool (X11). On Wayland it only turns IBus off -- the Wayland tool is still picked automatically |
+
+The setting takes effect on the next start. `auto` leaves normal autodetection
+in place and may select IBus. An explicit non-IBus pin (`wtype`, `ydotool`, or
+`xdotool`) skips IBus selection.
+
+On X11 the injection tool is `xdotool` regardless of which non-`ibus` value you
+pin, so `xdotool` is the name to use there when IBus is unreliable in a
+particular application. Pinning `ibus` keeps the IBus path; pinning anything
+else turns it off.
+
+To try a backend for a single run without changing the saved setting, set
+`VOCALINUX_FORCE_BACKEND`, which overrides the config value. Set it to `auto`
+to ignore a saved pin for that run:
+
+```bash
+VOCALINUX_FORCE_BACKEND=wtype vocalinux --debug
+```
+
+The setting and environment override are read at startup, so restart Vocalinux
+after editing `config.json`. The startup log first records a backend pin request;
+it does not prove the backend was available or that text reached the focused
+application. Later logs identify a fallback when a pin was not applied.
+
+If a pinned tool is unavailable, Vocalinux warns and continues with its normal
+fallback selection. `ydotool` also needs a usable `/dev/uinput` and a working
+`ydotoold` setup. `xdotool` types into X11/XWayland windows, not native Wayland
+windows. A live test in the target application is still the final confirmation
+that text is delivered.

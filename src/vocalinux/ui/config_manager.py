@@ -49,6 +49,8 @@ PASTE_SHORTCUTS: tuple[tuple[str, str], ...] = (
 )
 PASTE_SHORTCUT_IDS = frozenset(shortcut_id for shortcut_id, _label in PASTE_SHORTCUTS)
 DEFAULT_PASTE_SHORTCUT = "auto"
+DEFAULT_TEXT_INJECTION_BACKEND = "auto"
+_NO_PRESERVED_TEXT_INJECTION_SECTION = object()
 
 
 def normalize_paste_shortcut(shortcut: Any) -> str:
@@ -63,6 +65,24 @@ def normalize_sound_effect_tone(tone: Any) -> str:
     if isinstance(tone, str) and tone in SOUND_EFFECT_TONE_IDS:
         return tone
     return DEFAULT_SOUND_EFFECT_TONE
+
+
+def _backend_from_config(config: Any) -> tuple[bool, Any]:
+    """Return whether ``config`` has a usable text-injection section and its backend.
+
+    A missing section/key means the documented default, ``"auto"``. A
+    non-object section is not loaded into the in-memory defaults; an unrelated
+    save preserves that value verbatim instead of discarding a hand edit.
+    """
+    if not isinstance(config, dict):
+        return False, DEFAULT_TEXT_INJECTION_BACKEND
+
+    if "text_injection" not in config:
+        return True, DEFAULT_TEXT_INJECTION_BACKEND
+    text_injection = config["text_injection"]
+    if not isinstance(text_injection, dict):
+        return False, DEFAULT_TEXT_INJECTION_BACKEND
+    return True, text_injection.get("backend", DEFAULT_TEXT_INJECTION_BACKEND)
 
 
 # Default configuration
@@ -142,6 +162,10 @@ DEFAULT_CONFIG = {
         # Clipboard-paste chord: auto-detect terminals, or force Ctrl+V /
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
+        # Text-injection backend: "auto" autodetects, or pin "ibus"/"wtype"/
+        # "ydotool"/"xdotool" when autodetection is wrong (#476).
+        # VOCALINUX_FORCE_BACKEND overrides this for a single run.
+        "backend": "auto",
     },
     "advanced": {
         "power_user_mode": False,
@@ -233,6 +257,10 @@ class ConfigManager:
     def __init__(self):
         """Initialize the configuration manager."""
         self.config = copy.deepcopy(DEFAULT_CONFIG)
+        # The effective backend at load/save time.  It lets save_config tell an
+        # intentional in-process change from a hand edit made on disk later.
+        self._backend_snapshot: Any = DEFAULT_TEXT_INJECTION_BACKEND
+        self._text_injection_snapshot = copy.deepcopy(DEFAULT_CONFIG["text_injection"])
         self._ensure_config_dir()
         self.load_config()
 
@@ -281,11 +309,24 @@ class ConfigManager:
             with open(CONFIG_FILE, "r") as f:
                 user_config = json.load(f)
 
+            valid_backend_shape, backend = _backend_from_config(user_config)
+            if not isinstance(user_config, dict):
+                logger.error("Failed to load config: expected a JSON object")
+                return
+            if not valid_backend_shape:
+                # Keep unrelated valid settings, but do not replace the default
+                # text-injection mapping with a hand-edited scalar or list.
+                logger.error("Failed to load text_injection: expected a JSON object")
+                user_config = copy.deepcopy(user_config)
+                user_config.pop("text_injection", None)
+            self._backend_snapshot = backend
+
             # Check if migration is needed BEFORE merging with defaults
             needs_migration = self._check_needs_migration(user_config)
 
             # Update the default config with user settings
             self._update_dict_recursive(self.config, user_config)
+            self._text_injection_snapshot = copy.deepcopy(self.config["text_injection"])
             logger.info(f"Loaded configuration from {CONFIG_FILE}")
 
             # Migrate old config format if needed
@@ -294,8 +335,32 @@ class ConfigManager:
 
             self._migrate_shortcuts_config(user_config)
 
-        except (json.JSONDecodeError, OSError) as e:
+        except (OSError, ValueError) as e:
             logger.error(f"Failed to load config: {e}")
+
+    def _backend_on_disk(self) -> tuple[bool, Any, Any]:
+        """Read only backend state needed to protect a hand edit during save."""
+        if not os.path.exists(CONFIG_FILE):
+            return True, DEFAULT_TEXT_INJECTION_BACKEND, _NO_PRESERVED_TEXT_INJECTION_SECTION
+
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                disk_config = json.load(f)
+        except (OSError, ValueError) as e:
+            logger.error(f"Failed to save config: could not read existing config: {e}")
+            return False, DEFAULT_TEXT_INJECTION_BACKEND, _NO_PRESERVED_TEXT_INJECTION_SECTION
+
+        if not isinstance(disk_config, dict):
+            logger.error("Failed to save config: existing config is not a JSON object")
+            return False, DEFAULT_TEXT_INJECTION_BACKEND, _NO_PRESERVED_TEXT_INJECTION_SECTION
+
+        valid_backend_shape, backend = _backend_from_config(disk_config)
+        if not valid_backend_shape:
+            # A valid top-level config can still save unrelated settings. Keep
+            # the malformed section verbatim unless this process intentionally
+            # changed its backend, in which case it is explicitly repairing it.
+            return True, DEFAULT_TEXT_INJECTION_BACKEND, disk_config["text_injection"]
+        return True, backend, _NO_PRESERVED_TEXT_INJECTION_SECTION
 
     def _check_needs_migration(self, user_config: dict) -> bool:
         """Check if the user config needs migration to add per-engine model sizes."""
@@ -379,12 +444,43 @@ class ConfigManager:
             self.save_config()
 
     def save_config(self):
-        """Save the current configuration to the config file."""
+        """Save the current configuration, preserving an unchanged hand-edited backend."""
         try:
             # Ensure directory exists before writing
             self._ensure_config_dir()
+            config_to_save = copy.deepcopy(self.config)
+            text_injection = self.config.get("text_injection")
+            backend_written = False
+            if isinstance(text_injection, dict):
+                disk_ok, disk_backend, preserved_section = self._backend_on_disk()
+                if not disk_ok:
+                    return False
+                in_memory_backend = text_injection.get("backend", DEFAULT_TEXT_INJECTION_BACKEND)
+                backend_snapshot = getattr(
+                    self, "_backend_snapshot", DEFAULT_TEXT_INJECTION_BACKEND
+                )
+                backend_changed = in_memory_backend != backend_snapshot
+                text_injection_changed = text_injection != self._text_injection_snapshot
+
+                if (
+                    preserved_section is not _NO_PRESERVED_TEXT_INJECTION_SECTION
+                    and not text_injection_changed
+                ):
+                    config_to_save["text_injection"] = copy.deepcopy(preserved_section)
+                else:
+                    backend_to_save = in_memory_backend if backend_changed else disk_backend
+                    # Do not mutate live state before json.dump succeeds. A failed
+                    # write must not make an external edit look like our saved state.
+                    config_to_save["text_injection"]["backend"] = backend_to_save
+                    backend_written = True
             with open(CONFIG_FILE, "w") as f:
-                json.dump(self.config, f, indent=4)
+                json.dump(config_to_save, f, indent=4)
+
+            if isinstance(text_injection, dict) and backend_written:
+                text_injection["backend"] = backend_to_save
+                self._backend_snapshot = backend_to_save
+            if isinstance(text_injection, dict):
+                self._text_injection_snapshot = copy.deepcopy(text_injection)
 
             logger.info(f"Saved configuration to {CONFIG_FILE}")
             return True
