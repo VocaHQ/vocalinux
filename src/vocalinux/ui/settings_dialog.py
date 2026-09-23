@@ -1880,6 +1880,11 @@ class SettingsPage:
                 self.extras.append(child)
 
 
+# What the downloaders report when the transfer itself ends. It is not the
+# end of the dialog's work, so it must not be shown as one.
+_DOWNLOAD_DONE_STATUSES = frozenset({"complete", "completed", "done"})
+
+
 class ModelDownloadDialog(Gtk.Dialog):
     """Dialog showing model download progress with cancel support."""
 
@@ -1944,15 +1949,26 @@ class ModelDownloadDialog(Gtk.Dialog):
 
         self.show_all()
 
+        self._pulse_timeout = None
         # For Whisper, we can't track progress, so pulse
         if engine == "whisper":
+            self._start_pulsing()
+
+    def _start_pulsing(self) -> None:
+        """Bounce the bar, for work that reports no measurable progress."""
+        if self._pulse_timeout is None:
             self._pulse_timeout = GLib.timeout_add(100, self._pulse_progress)
-        else:
+
+    def _stop_pulsing(self) -> None:
+        """Stop the bounce if it is running."""
+        if self._pulse_timeout is not None:
+            GLib.source_remove(self._pulse_timeout)
             self._pulse_timeout = None
 
     def _pulse_progress(self):
         """Pulse the progress bar while downloading (for Whisper)."""
         if self.cancelled:
+            self._pulse_timeout = None
             return False
         self.progress_bar.pulse()
         return True  # Continue pulsing
@@ -1969,20 +1985,47 @@ class ModelDownloadDialog(Gtk.Dialog):
         if self.cancelled:
             return
 
-        # Stop pulsing if we were pulsing
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
+        if fraction >= 1.0:
+            self._show_finishing(status_text)
+            return
+
+        self._stop_pulsing()
 
         self.progress_bar.set_fraction(fraction)
         self.progress_bar.set_text(f"{fraction * 100:.0f}%")
         self.status_label.set_markup(f"<i>{status_text}</i>")
 
+    def _show_finishing(self, status_text: str) -> None:
+        """Show the work that follows the last byte as work, not as an end.
+
+        The bytes being in is not the dialog being done: the checksum still
+        has to run and the engine still has to load the file, seconds of it
+        on a large model, and neither reports progress or can be interrupted.
+        A bar parked at 100% — or worse, at the downloader's "Complete!" —
+        under a lone Cancel button reads as "finished, waiting for me to
+        confirm", or as a hang. So bounce the bar, name the step, and stop
+        offering a cancel that no longer cancels anything.
+        """
+        self._start_pulsing()
+
+        step = status_text.strip()
+        if not step or step.strip("!.").casefold() in _DOWNLOAD_DONE_STATUSES:
+            step = "Finishing..."
+        self.progress_bar.set_text(step)
+        self.status_label.set_markup(
+            "<i>Download finished, still working - this can take a moment...</i>"
+        )
+
+        if self.cancel_button.get_sensitive():
+            self.cancel_button.set_sensitive(False)
+            self.cancel_button.set_tooltip_text(
+                "The download is finished. Verifying and loading the model "
+                "cannot be interrupted."
+            )
+
     def set_complete(self, success: bool, message: str = ""):
         """Mark download as complete."""
-        if self._pulse_timeout:
-            GLib.source_remove(self._pulse_timeout)
-            self._pulse_timeout = None
+        self._stop_pulsing()
 
         # Hide cancel button
         self.cancel_button.hide()
