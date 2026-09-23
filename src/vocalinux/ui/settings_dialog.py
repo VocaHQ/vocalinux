@@ -6888,10 +6888,10 @@ Installation Options:
 
 2. Manual installation in virtual environment:
    source venv/bin/activate
-   pip install openai-whisper torch torchaudio
+   pip install openai-whisper 'torch>=2.13.0'
 
 3. If you have SSL issues, try:
-   pip install openai-whisper torch torchaudio --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org
+   pip install openai-whisper 'torch>=2.13.0' --trusted-host pypi.org --trusted-host pypi.python.org --trusted-host files.pythonhosted.org
 
 Note: Whisper requires significant disk space (~1-3GB) and may take time to download.
 

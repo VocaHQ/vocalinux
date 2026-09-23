@@ -54,8 +54,7 @@ vosk = [
 ]
 whisper = [
     "openai-whisper>=20231117",
-    "torch>=2.0.0",
-    "torchaudio>=2.0.0",
+    "torch>=2.13.0",
 ]
 parakeet = [
     "sherpa-onnx>=1.12.0,<2",
@@ -87,9 +86,9 @@ docs = [
 # disables build isolation so pip cannot resolve another unpinned environment.
 installer-build = [
     "pip>=25.3,<27",
-    # CPU torch still requires pkg_resources; this cap applies only to the
-    # installer venv, not build-system.requires used by Arch's toolchain.
-    "setuptools>=77,<82",
+    # Torch 2.13 supports setuptools 82+, so keep this at the patched version
+    # for setuptools' 2026 sdist normalization advisory.
+    "setuptools>=83",
     "wheel",
     "meson-python>=0.16",
     "cmake==3.31.10",
