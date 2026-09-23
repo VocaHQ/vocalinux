@@ -938,7 +938,7 @@ export default function HomePage() {
                   />
                   macOS
                 </span>
-                <span className="chip">Beta</span>
+                <span className="chip">Available now</span>
               </div>
               <h3>VocaMac</h3>
               <p>
