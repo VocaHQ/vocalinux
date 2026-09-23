@@ -7,7 +7,7 @@ fake command runner, and the recognition hook with a fake clock.
 import json
 import sys
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Any, Callable, Iterator, Optional, Union
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -28,7 +28,7 @@ from vocalinux.ui.config_manager import (
 
 
 @pytest.fixture(autouse=True)
-def _numpy_is_real_while_comparing():
+def _numpy_is_real_while_comparing() -> Iterator[None]:
     """Keep pytest.approx working in the full suite.
 
     Older tests assign ``sys.modules["numpy"] = MagicMock()`` at import and
@@ -115,7 +115,7 @@ def _record(tmp_path: Path) -> dict:
     return json.loads((tmp_path / duck.PENDING_RECORD_NAME).read_text(encoding="utf-8"))
 
 
-def _real_audio_feedback(monkeypatch: pytest.MonkeyPatch):
+def _real_audio_feedback(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Module object the recognition manager's ``import audio_feedback`` returns.
 
     ``test_audio_feedback`` leaves a MagicMock in ``sys.modules``. The package
@@ -126,24 +126,35 @@ def _real_audio_feedback(monkeypatch: pytest.MonkeyPatch):
 
     import vocalinux.ui as ui_pkg
 
+    key = "vocalinux.ui.audio_feedback"
     bound = getattr(ui_pkg, "audio_feedback", None)
-    leaked = sys.modules.get("vocalinux.ui.audio_feedback")
+    leaked = sys.modules.get(key)
     if isinstance(bound, MagicMock) or isinstance(leaked, MagicMock):
-        sys.modules.pop("vocalinux.ui.audio_feedback", None)
+        # Import the real module, then put the leak back so monkeypatch
+        # restores it. Leaving the real module in place breaks later tests
+        # that expect the mock (test_text_injector).
+        if key in sys.modules:
+            del sys.modules[key]
         if isinstance(bound, MagicMock):
             delattr(ui_pkg, "audio_feedback")
-        real = importlib.import_module("vocalinux.ui.audio_feedback")
+        real = importlib.import_module(key)
+        if leaked is None:
+            sys.modules.pop(key, None)
+        else:
+            sys.modules[key] = leaked
+        if isinstance(bound, MagicMock):
+            setattr(ui_pkg, "audio_feedback", bound)
     elif bound is not None:
         real = bound
     else:
-        real = importlib.import_module("vocalinux.ui.audio_feedback")
+        real = importlib.import_module(key)
     monkeypatch.setattr(ui_pkg, "audio_feedback", real, raising=False)
-    monkeypatch.setitem(sys.modules, "vocalinux.ui.audio_feedback", real)
+    monkeypatch.setitem(sys.modules, key, real)
     return real
 
 
 class _Timer:
-    def __init__(self, delay: float, callback) -> None:
+    def __init__(self, delay: float, callback: Callable[[], None]) -> None:
         self.delay = delay
         self.callback = callback
         self.cancelled = False
@@ -161,7 +172,7 @@ class _Clock:
     def __init__(self) -> None:
         self.timers: list[_Timer] = []
 
-    def __call__(self, delay: float, callback) -> _Timer:
+    def __call__(self, delay: float, callback: Callable[[], None]) -> "_Timer":
         timer = _Timer(delay, callback)
         self.timers.append(timer)
         return timer
@@ -398,15 +409,15 @@ def test_daemon_timer_is_a_daemon_and_can_be_cancelled(monkeypatch):
     created = {}
 
     class FakeTimer:
-        def __init__(self, delay, callback):
+        def __init__(self, delay: float, callback: Callable[[], None]) -> None:
             created["delay"] = delay
             created["callback"] = callback
             self.daemon = False
 
-        def start(self):
+        def start(self) -> None:
             created["started"] = True
 
-        def cancel(self):
+        def cancel(self) -> None:
             created["cancelled"] = True
 
     monkeypatch.setattr(duck.threading, "Timer", FakeTimer)
@@ -437,7 +448,7 @@ def test_wpctl_parse_and_commands_do_not_set_on_parse_failure():
 def test_wpctl_is_preferred_and_parse_failure_does_not_set(tmp_path):
     calls = []
 
-    def runner(args):
+    def runner(args: list[str]) -> tuple[int, str, str]:
         calls.append(list(args))
         if args[:3] == ["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"]:
             return 0, "id 7, type PipeWire:Interface:Node\n", ""
@@ -461,7 +472,7 @@ def test_wpctl_is_preferred_and_parse_failure_does_not_set(tmp_path):
 def test_wpctl_sets_the_resolved_sink_and_a_missing_sink_is_not_replaced(tmp_path):
     calls = []
 
-    def runner(args):
+    def runner(args: list[str]) -> tuple[int, str, str]:
         calls.append(list(args))
         if args[:3] == ["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"]:
             return 0, "id 7, type PipeWire:Interface:Node\n", ""
@@ -475,7 +486,7 @@ def test_wpctl_sets_the_resolved_sink_and_a_missing_sink_is_not_replaced(tmp_pat
     PlaybackDucker(control, str(tmp_path), enabled=lambda: True, percent=lambda: 20).duck()
     assert ["wpctl", "set-volume", "7", "0.100000"] in calls
 
-    def missing(args):
+    def missing(args: list[str]) -> tuple[int, str, str]:
         if args[:3] == ["wpctl", "inspect", "7"]:
             return 3, "", "Object '7' not found\n"
         if args[1] == "set-volume":
@@ -492,7 +503,7 @@ def test_pactl_is_used_when_wpctl_is_absent(tmp_path):
     state = {"volume": 0.50}
     sink_name = "alsa_output.pci-0000_00_1f.3.analog-stereo"
 
-    def runner(args):
+    def runner(args: list[str]) -> tuple[int, str, str]:
         calls.append(list(args))
         if args[:2] == ["pactl", "get-default-sink"]:
             return 0, sink_name + "\n", ""
@@ -529,7 +540,7 @@ def test_pactl_restores_each_channel(tmp_path):
     calls = []
     channels = [0.50, 0.40]
 
-    def runner(args):
+    def runner(args: list[str]) -> tuple[int, str, str]:
         calls.append(list(args))
         if args[:2] == ["pactl", "get-default-sink"]:
             return 0, "analog-stereo\n", ""
