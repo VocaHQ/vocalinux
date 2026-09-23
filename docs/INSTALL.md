@@ -32,6 +32,16 @@ The installer:
 - Downloads the default whisper.cpp tiny model (~74MB), verified against pinned checksums
 - Sets up desktop integration and launch wrappers
 
+The source installer uses committed, hash-verified Python dependency exports,
+including its pip and source-build tools. GTK/PyGObject still comes from your
+distribution, and the venv retains access to system packages. A missing export
+or unavailable pinned package causes that installation step to fail; the
+existing optional-engine and VAD fallbacks still apply.
+
+Remote installs run the installer from the selected release tag. Older tags
+therefore retain their original dependency-install behavior; downloading a new
+bootstrap script does not change an older release's pins.
+
 ### Installer modes
 
 ```bash

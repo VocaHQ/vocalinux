@@ -151,6 +151,7 @@ verify-release tag="":
 # when you want newer CPU builds (torchaudio on the CPU index lags torch).
 lock:
     uv lock
+    uv export --only-group installer-build --no-emit-project -o requirements/installer-build.txt
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt
     # One export per selectable engine. install.sh installs each of these as an
@@ -168,7 +169,8 @@ lock:
     uv pip compile requirements/whisper.in --generate-hashes --emit-index-url \
         --index-url https://pypi.org/simple \
         --extra-index-url https://download.pytorch.org/whl/cpu \
-        --python-platform x86_64-unknown-linux-gnu -o requirements/whisper.txt
+        --index-strategy unsafe-best-match --universal --python-version 3.11 \
+        -c requirements/runtime.txt -c requirements/installer-build.txt -o requirements/whisper.txt
     # Compiled rather than exported: what the AppImage bundles on top of the
     # lock, and what builds it, are pinned away from uv.lock on purpose --
     # see requirements/appimage.in. --universal so one file covers both arches.

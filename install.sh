@@ -6,6 +6,7 @@
 # -e: exit on unhandled command failure   -u: error on unset variables
 # -o pipefail: a pipeline fails if any stage fails
 set -Eeuo pipefail
+INSTALLER_ARGS=("$@")
 
 # Exit codes (see --help). 1 remains the generic/unclassified failure.
 EXIT_OK=0
@@ -487,7 +488,27 @@ resolve_install_tag
 # Check if running from within the vocalinux repo or remotely (via curl)
 REPO_URL="https://github.com/VocaHQ/vocalinux.git"
 INSTALL_DIR=""
-CLEANUP_ON_EXIT="no"
+CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"
+
+handoff_to_tagged_installer() {
+    local tagged_installer="$INSTALL_DIR/install.sh"
+    local remote_venv="$HOME/.local/share/vocalinux/venv"
+
+    if grep -q 'CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"' "$tagged_installer"; then
+        export VOCALINUX_REMOTE_INSTALL=yes
+        export TMPDIR="$(dirname "$VOCALINUX_TMP_DIR")"
+        rmdir "$VOCALINUX_TMP_DIR"
+        exec bash "$tagged_installer" "${INSTALLER_ARGS[@]}" "--venv-dir=$remote_venv"
+    fi
+
+    bash "$tagged_installer" "${INSTALLER_ARGS[@]}" "--venv-dir=$remote_venv" || return $?
+    if [ ! -f "$INSTALL_DIR/activate-vocalinux.sh" ]; then
+        print_error "The tagged installer did not create activate-vocalinux.sh."
+        return 1
+    fi
+    mkdir -p "$HOME/.local/bin"
+    mv "$INSTALL_DIR/activate-vocalinux.sh" "$HOME/.local/bin/activate-vocalinux.sh"
+}
 
 # Function to check and install git if needed
 ensure_git_installed() {
@@ -661,8 +682,10 @@ else
     CLEANUP_ON_EXIT="yes"
     print_info "Repository cloned to: $INSTALL_DIR"
 
-    # When running remotely, install venv to user's home directory
-    VENV_DIR="$HOME/.local/share/vocalinux/venv"
+    # Keep the installer and exports on the selected tag. Legacy tags do not
+    # understand the remote marker, so the handoff relocates their helper.
+    handoff_to_tagged_installer
+    exit "$EXIT_OK"
 fi
 
 # Change to install directory
@@ -1767,7 +1790,8 @@ install_system_dependencies() {
     local APT_PACKAGES_DEBIAN_BASE="python3-pip python3-gi python3-gi-cairo gir1.2-gtk-3.0 gir1.2-ibus-1.0 libcairo2-dev cmake python3-dev build-essential portaudio19-dev python3-venv pkg-config wget curl unzip vulkan-tools libvulkan-dev $VULKAN_SHADER_PKG xclip xsel wl-clipboard $PYWHISPERCPP_BUILD_DEPS"
     local APT_PACKAGES_DEBIAN_11_12="$APT_PACKAGES_DEBIAN_BASE libgirepository1.0-dev gir1.2-ayatanaappindicator3-0.1"
     local APT_PACKAGES_DEBIAN_13_PLUS="$APT_PACKAGES_DEBIAN_BASE libgirepository-2.0-dev gir1.2-ayatanaappindicator3-0.1"
-    local DNF_PACKAGES="python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard"
+    # cairo-devel: the pinned pycairo builds from source; Fedora splits its headers/.pc out.
+    local DNF_PACKAGES="python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard"
     local PACMAN_PACKAGES="python-pip python-gobject gtk3 ibus gobject-introspection python-cairo portaudio python-virtualenv pkg-config cmake wget curl unzip base-devel vulkan-tools vulkan-headers shaderc patchelf xclip xsel wl-clipboard"
     # ibus + typelib-1_0-IBus-1_0, not ibus-devel: the headers are not needed
     # (IBus is reached through GI at runtime), and requiring them pulls gtk-doc,
@@ -2625,10 +2649,6 @@ setup_virtual_environment() {
     # Activate virtual environment
     source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
 
-    # Update pip and setuptools
-    print_info "Updating pip, setuptools, and wheel..."
-    pip install --upgrade pip setuptools wheel || { print_error "Failed to update pip, setuptools, and wheel"; exit "$EXIT_NETWORK"; }
-
     print_info "Virtual environment activated successfully."
 }
 
@@ -2643,6 +2663,24 @@ fi
 
 # Set up virtual environment
 setup_virtual_environment
+
+# Also run for reused venvs: setup_virtual_environment returns early for those.
+# Wheels only here so bootstrapping cannot itself resolve unpinned build deps.
+install_pinned_build_tools() {
+    local reqs_file="$INSTALL_DIR/requirements/installer-build.txt"
+    if [ ! -s "$reqs_file" ]; then
+        print_error "Missing or empty pinned requirements: $reqs_file"
+        return 1
+    fi
+    print_info "Installing pinned pip and source-build tools..."
+    "$VENV_DIR/bin/python" -m pip install --require-hashes --no-deps \
+        --only-binary=:all: --ignore-installed \
+        -r "$reqs_file" --log "$VOCALINUX_TMP_DIR/bootstrap.log"
+}
+install_pinned_build_tools || {
+    print_error "Failed to install the pinned build tools. Check requirements/installer-build.txt."
+    exit "$EXIT_NETWORK"
+}
 
 # Create activation script for users
 # Put it in ~/.local/bin when running remotely, or current dir when running locally
@@ -2872,7 +2910,19 @@ install_cpu_pywhispercpp() {
     PYWHISPERCPP_CMAKE_ARGS=$(get_pywhispercpp_cmake_args)
 
     CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
-        pip install --verbose --force-reinstall --no-cache-dir "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE"
+        pip_reinstall_pywhispercpp "$PIP_LOG_FILE"
+}
+
+pip_reinstall_pywhispercpp() {
+    local pip_log="$1"
+    shift
+    local reqs_file="$VOCALINUX_TMP_DIR/pywhispercpp.txt"
+    "$VENV_DIR/bin/python" "$INSTALL_DIR/scripts/installer_requirements.py" \
+        "$INSTALL_DIR/requirements/runtime.txt" "$reqs_file" --package pywhispercpp || return 1
+    # --no-deps preserves the locked runtime and avoids reinstalling numpy
+    # while replacing only the backend. Build tools were bootstrapped above.
+    "$VENV_DIR/bin/python" -m pip install --require-hashes --no-deps --no-build-isolation \
+        --verbose --force-reinstall --no-cache-dir -r "$reqs_file" --log "$pip_log" "$@"
 }
 
 is_pywhispercpp_installed() {
@@ -3028,7 +3078,7 @@ install_whispercpp_with_gpu_support() {
             print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
             if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
                 GGML_VULKAN=1 \
-                pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
+                pip_reinstall_pywhispercpp "$PIP_LOG_FILE" --no-binary pywhispercpp 2>&1; then
                 if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                     GPU_INSTALL_SUCCESS=true
                 else
@@ -3054,7 +3104,7 @@ install_whispercpp_with_gpu_support() {
                     print_info "Installing pywhispercpp ($GPU_BACKEND backend)..."
                     if CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS $CUDA_CMAKE_ARGS" \
                         GGML_CUDA=1 \
-                        pip install --verbose --force-reinstall --no-cache-dir --no-binary pywhispercpp "pywhispercpp==${PYWHISPERCPP_VERSION}" --log "$PIP_LOG_FILE" 2>&1; then
+                        pip_reinstall_pywhispercpp "$PIP_LOG_FILE" --no-binary pywhispercpp 2>&1; then
                         if verify_pywhispercpp_backend_install "$GPU_BACKEND"; then
                             GPU_INSTALL_SUCCESS=true
                         else
@@ -3191,49 +3241,9 @@ FALLBACK_VOSK_CONFIG
     echo ""
 }
 
-# Distro python3-gi provides `gi`, but apt does not drop pip-visible
-# PyGObject dist-info. `pip install .` then tries to build pygobject from
-# sdist and dies (needs girepository-2.0). Same skip as uv export's
-# --no-emit-package pygobject: install the other deps, then the project
-# with --no-deps. Do not use requirements/*.txt hashes here (Phase 2).
-write_pip_reqs_skip_pygobject() {
-    local dest="$1"
-    shift
-    "$VENV_DIR/bin/python" - "$dest" "$@" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-dest = Path(sys.argv[1])
-extras = sys.argv[2:]
-text = Path("pyproject.toml").read_text()
-
-
-def quoted_strings(block: str):
-    return re.findall(r'"([^"]+)"', block)
-
-
-reqs = []
-if not extras:
-    match = re.search(r"^dependencies = \[(.*?)\]", text, re.M | re.S)
-    for req in quoted_strings(match.group(1) if match else ""):
-        pkg = re.split(r"[<>=!~;\[]", req, 1)[0].strip()
-        if pkg.lower() == "pygobject":
-            continue
-        reqs.append(req)
-else:
-    opt = re.search(
-        r"^\[project\.optional-dependencies\](.*?)(\n\[|\Z)", text, re.M | re.S
-    )
-    opt_text = opt.group(1) if opt else ""
-    for extra in extras:
-        match = re.search(rf"^{re.escape(extra)} = \[(.*?)\]", opt_text, re.M | re.S)
-        if match:
-            reqs.extend(quoted_strings(match.group(1)))
-
-dest.write_text("\n".join(reqs) + ("\n" if reqs else ""))
-PY
-}
+# Exports use --no-emit-package pygobject: distro GI remains visible through
+# --system-site-packages. Install the locked dependencies first, then the local
+# project with --no-deps and --no-build-isolation so neither step re-resolves.
 
 require_distro_gi() {
     if ! "$VENV_DIR/bin/python" -c "import gi" 2>/dev/null; then
@@ -3248,25 +3258,33 @@ pip_install_reqs_file() {
     local pip_log="$1"
     local reqs_file="$2"
     if [ ! -s "$reqs_file" ]; then
-        return 0
+        print_error "Missing or empty pinned requirements: $reqs_file"
+        return 1
     fi
-    pip install -r "$reqs_file" --log "$pip_log"
+    "$VENV_DIR/bin/python" -m pip install --require-hashes --no-deps --no-build-isolation \
+        -r "$reqs_file" --log "$pip_log"
 }
 
 pip_install_project_skip_pygobject() {
     local pip_log="$1"
     shift
-    require_distro_gi
-    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/runtime-deps.txt"
-    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/runtime-deps.txt" || return 1
-    pip install --no-deps --log "$pip_log" "$@"
+    require_distro_gi || return 1
+    pip_install_reqs_file "$pip_log" "$INSTALL_DIR/requirements/runtime.txt" || return 1
+    "$VENV_DIR/bin/python" -m pip install --no-deps --no-build-isolation --log "$pip_log" "$@"
 }
 
 pip_install_extras_skip_pygobject() {
     local pip_log="$1"
     shift
-    write_pip_reqs_skip_pygobject "$VOCALINUX_TMP_DIR/extra-deps.txt" "$@"
-    pip_install_reqs_file "$pip_log" "$VOCALINUX_TMP_DIR/extra-deps.txt"
+    local extra
+    for extra in "$@"; do
+        # uv normalizes underscores to dashes in export filenames.
+        case "$extra" in
+            vad|vosk|parakeet|faster_whisper|whisper|dev) ;;
+            *) print_error "Unknown dependency extra: $extra"; return 1 ;;
+        esac
+        pip_install_reqs_file "$pip_log" "$INSTALL_DIR/requirements/${extra//_/-}.txt" || return 1
+    done
 }
 
 # Function to install Python package with error handling and verification
@@ -3340,13 +3358,13 @@ PY
 
         # Install test dependencies
         print_info "Installing test dependencies..."
-        pip install pytest pytest-mock pytest-cov --log "$PIP_LOG_FILE" || {
+        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" dev || {
             print_warning "Failed to install some test dependencies. Tests may not run correctly."
         }
 
         # Install all optional dependencies for development
         print_info "Installing all optional dependencies for development..."
-        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" whisper dev || {
+        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" whisper || {
             print_warning "Failed to install some optional dependencies."
             print_warning "Some features may not work correctly."
         }
@@ -3384,25 +3402,16 @@ PY
 
                 local WHISPER_INSTALL_SUCCESS=false
 
-                # Install PyTorch and whisper
-                print_info "Installing PyTorch..."
-                if pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu --log "$PIP_LOG_FILE" 2>&1; then
-                    print_success "PyTorch installed successfully"
-
-                    print_info "Installing openai-whisper..."
-                    if pip install openai-whisper --log "$PIP_LOG_FILE" 2>&1; then
-                        # Verify the installation by importing the module
-                        if "$VENV_DIR/bin/python" -c "import whisper" 2>/dev/null; then
-                            WHISPER_INSTALL_SUCCESS=true
-                            print_success "Whisper installed and verified successfully"
-                        else
-                            print_error "Whisper package installed but import failed"
-                        fi
+                print_info "Installing pinned Whisper and CPU PyTorch..."
+                if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" whisper; then
+                    if "$VENV_DIR/bin/python" -c "import whisper" 2>/dev/null; then
+                        WHISPER_INSTALL_SUCCESS=true
+                        print_success "Whisper installed and verified successfully"
                     else
-                        print_error "Failed to install openai-whisper package"
+                        print_error "Whisper package installed but import failed"
                     fi
                 else
-                    print_error "Failed to install PyTorch"
+                    print_error "Failed to install pinned Whisper dependencies"
                 fi
 
                 if [[ "$WHISPER_INSTALL_SUCCESS" == "true" ]]; then
@@ -3586,10 +3595,9 @@ PARAKEET_CONFIG
                 print_info "╚════════════════════════════════════════════════════════╝"
                 print_info ""
 
-                # Ensure requests library is installed
-                print_info "Installing requests library..."
-                pip install requests --log "$PIP_LOG_FILE" || {
-                    print_error "Failed to install requests library"
+                # requests is already installed from the runtime export.
+                "$VENV_DIR/bin/python" -c "import requests" || {
+                    print_error "The pinned requests library is not importable"
                     return 1
                 }
                 print_success "requests library installed"
@@ -4530,7 +4538,8 @@ run_tests() {
     # Check if pytest is installed in the virtual environment
     if ! "$VENV_DIR/bin/python" -c "import pytest" &>/dev/null; then
         print_info "Installing pytest and related packages..."
-        pip install pytest pytest-mock pytest-cov || {
+        local PIP_LOG_FILE="$VOCALINUX_TMP_DIR/test-deps.log"
+        pip_install_extras_skip_pygobject "$PIP_LOG_FILE" dev || {
             print_error "Failed to install pytest. Cannot run tests."
             return 1
         }

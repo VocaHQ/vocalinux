@@ -83,6 +83,20 @@ docs = [
 # --only-group lint` installs them without the project, so the lint job needs
 # no portaudio/girepository headers to build pyaudio and PyGObject.
 [dependency-groups]
+# install.sh installs this wheel-only toolchain before any source builds, then
+# disables build isolation so pip cannot resolve another unpinned environment.
+installer-build = [
+    "pip>=25.3,<27",
+    # CPU torch still requires pkg_resources; this cap applies only to the
+    # installer venv, not build-system.requires used by Arch's toolchain.
+    "setuptools>=77,<82",
+    "wheel",
+    "meson-python>=0.16",
+    "cmake==3.31.10",
+    "ninja==1.13.0",
+    "repairwheel",
+    "setuptools-scm>=8",
+]
 lint = [
     "black>=23.0.0",
     "isort>=5.12.0",
