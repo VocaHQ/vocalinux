@@ -89,9 +89,9 @@ pyproject-metadata==0.12.1 \
 repairwheel==0.7.0 \
     --hash=sha256:46083dad76e35595712ae593c1c9f112fb3f37a0e63268906e6de8182de55122 \
     --hash=sha256:7fff43ed5abbf9710ef5ea6478c10cfd551aae043f445fd46307d4b602674ce0
-setuptools==81.0.0 \
-    --hash=sha256:487b53915f52501f0a79ccfd0c02c165ffe06631443a886740b91af4b7a5845a \
-    --hash=sha256:fdd925d5c5d9f62e4b74b30d6dd7828ce236fd6ed998a08d81de62ce5a6310d6
+setuptools==83.0.0 \
+    --hash=sha256:025bccbbf0fa05b6192bc64ae1e7b16e001fd6d6d4d5de03c97b1c1ade523bef \
+    --hash=sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3
     # via setuptools-scm
 setuptools-scm==10.2.3 \
     --hash=sha256:7fcf8ff55c95eb8b572a23c81495e5559b9b90f3e82fcf0952bb76c37de27a81 \
