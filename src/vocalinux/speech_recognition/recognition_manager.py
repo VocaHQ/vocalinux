@@ -45,6 +45,9 @@ from ..version import __version__
 from .command_processor import CommandProcessor
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
+if TYPE_CHECKING:
+    from ..dictionary_manager import DictionaryManager
+
 
 def _pywhispercpp_distribution_version() -> Optional[tuple[int, ...]]:
     """Installed pywhispercpp version, or None if it cannot be read.
@@ -1082,6 +1085,8 @@ class SpeechRecognitionManager:
         self.model_size = model_size
         self.language = normalize_language_for_engine(engine, language)
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
+        self.dictionary_manager: Optional["DictionaryManager"] = kwargs.get("dictionary_manager")
+        self._vosk_dictionary_warned = False
         self.state = RecognitionState.IDLE
         self.audio_thread = None
         self.recognition_thread = None
@@ -1259,6 +1264,27 @@ class SpeechRecognitionManager:
         for name, value in previous.items():
             setattr(self, name, value)
 
+    def _get_dictionary_prompt(self) -> Optional[str]:
+        """Return the current dictionary prompt without interrupting dictation on errors."""
+        if self.dictionary_manager is None:
+            return None
+        try:
+            return self.dictionary_manager.build_initial_prompt()
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not build custom dictionary prompt: %s", error)
+            return None
+
+    def _get_whispercpp_prompt(self) -> Optional[str]:
+        """Compose the explicit advanced prompt before live dictionary terms.
+
+        The Advanced setting remains the user-controlled prefix. Dictionary terms
+        follow it and are refreshed for every transcription, so neither setting
+        silently replaces the other.
+        """
+        parts = [self.whispercpp_initial_prompt.strip(), self._get_dictionary_prompt() or ""]
+        prompt = " ".join(part for part in parts if part)
+        return prompt or None
+
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
         # VOSK doesn't support auto-detect, so fall back to en-us for "auto"
@@ -1304,6 +1330,16 @@ class SpeechRecognitionManager:
             self.recognizer = KaldiRecognizer(self.model, 16000)
             self._model_initialized = True
             logger.info("VOSK engine initialized successfully.")
+            if (
+                self.dictionary_manager is not None
+                and self.dictionary_manager.is_enabled()
+                and not self._vosk_dictionary_warned
+            ):
+                self._vosk_dictionary_warned = True
+                logger.warning(
+                    "Custom dictionary is enabled, but VOSK does not support custom dictionaries; "
+                    "it is ignored."
+                )
 
         except ImportError:
             logger.error("Failed to import VOSK. Please install it with 'pip install vosk'")
@@ -1433,6 +1469,7 @@ class SpeechRecognitionManager:
                     temperature=0.0,  # Greedy decoding for consistency
                     no_speech_threshold=0.6,
                     fp16=use_fp16,  # Explicitly set to avoid warning on CPU
+                    initial_prompt=self._get_dictionary_prompt(),
                 )
 
             text = result.get("text", "").strip()
@@ -1649,7 +1686,8 @@ class SpeechRecognitionManager:
                 logger.warning("faster-whisper engine not ready during transcription")
                 return ""
 
-            return self._faster_whisper_engine.transcribe(audio_buffer)
+            prompt = self._get_dictionary_prompt()
+            return self._faster_whisper_engine.transcribe(audio_buffer, initial_prompt=prompt or "")
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
             return ""
@@ -2093,7 +2131,14 @@ class SpeechRecognitionManager:
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
                 transcribe_start = time.time()
-                segments = self.model.transcribe(audio_float, language=lang)
+                transcribe_kwargs = {"language": lang}
+                initial_prompt = self._get_whispercpp_prompt()
+                # pywhispercpp's Model.transcribe() mutates its reusable native
+                # parameter object (the pinned 1.5.0 API delegates kwargs to
+                # _set_params). Always send an explicit empty value to clear a
+                # dictionary prompt from a previous transcription.
+                transcribe_kwargs["initial_prompt"] = initial_prompt or ""
+                segments = self.model.transcribe(audio_float, **transcribe_kwargs)
                 transcribe_duration = time.time() - transcribe_start
 
             # Extract text from segments, filtering non-speech tokens

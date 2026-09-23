@@ -143,3 +143,36 @@ vocalinux --debug
 ```
 
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for tray, audio, injection, and model issues. Distro notes: [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md). Updates: [UPDATE.md](UPDATE.md). Help channels: [SUPPORT.md](../SUPPORT.md).
+
+## Custom dictionary
+
+VocaLinux can bias OpenAI Whisper, Faster Whisper, and whisper.cpp toward terms in a UTF-8 file.
+Create `$XDG_CONFIG_HOME/vocalinux/dictionary.txt` (typically
+`~/.config/vocalinux/dictionary.txt` when `XDG_CONFIG_HOME` is unset) with one
+term or phrase per line; blank lines and lines beginning with `#` are ignored.
+In **Settings → Dictionary**, enable the feature and choose a different file if
+needed. The file is re-read before every transcription, so edits take effect
+without restarting the app.
+
+For a one-session override, start VocaLinux with:
+
+```bash
+vocalinux --dictionary-file /path/to/dictionary.txt
+```
+
+The CLI override does not change `config.json`. VOSK does not support custom dictionaries
+and will warn that the enabled dictionary is ignored. For whisper.cpp, the
+Advanced initial prompt remains first and dictionary terms are appended after it.
+
+To roll back a saved dictionary, turn off **Enable custom dictionary** in
+**Settings → Dictionary**. To roll back a `--dictionary-file` override, restart without
+that option; Settings controls are disabled while the override is active. A missing,
+unreadable, invalid, or unresolvable `~user` path is shown as unavailable and contributes
+no prompt terms. Dictation continues normally; correct the path or file permissions and
+the next transcription reloads it.
+
+Human test: add an uncommon proper noun to the file, enable Dictionary, select
+whisper.cpp, Whisper, or Faster Whisper, dictate the term, then edit the file and
+dictate again without restarting. Try a nonexistent or unreadable file and verify the
+Settings status reports it without disrupting dictation. Repeat with VOSK to confirm
+the warning and no prompt effect.
