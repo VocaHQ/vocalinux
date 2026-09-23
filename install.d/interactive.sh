@@ -30,8 +30,8 @@ EOF
     echo "Welcome! This guided installation will help you set up Vocalinux"
     echo "with the best options for your system."
     echo ""
-    echo "All speech engines are 100% offline, local, and private."
-    echo "Your voice data never leaves your computer."
+    echo "Local engines (whisper.cpp, Whisper, Faster Whisper, VOSK) process audio on-device after you download a model."
+    echo "Optional Remote API is off unless you choose it; then audio goes only to the server you configure."
     echo ""
 
     # Step 1: Detect and display system info
@@ -52,11 +52,11 @@ EOF
     echo ""
     echo "  ┌─────────────────────────────────────────────────────────────┐"
     echo "  │  1. WHISPER.CPP  * RECOMMENDED                              │"
-    echo "  │     • Fastest, most accurate, works with any GPU            │"
+    echo "  │     • Local default engine; CUDA, Vulkan, or CPU            │"
     echo "  │     • Supports NVIDIA (CUDA), AMD, Intel (Vulkan)           │"
     echo "  │     • CPU-only mode available for older systems             │"
     echo "  │     • Models: tiny (39MB) to large (1.5GB)                  │"
-    echo "  │     • 99+ languages with auto-detection                     │"
+    echo "  │     • ~33 languages plus Auto-detect                        │"
     echo "  └─────────────────────────────────────────────────────────────┘"
     echo ""
     echo "  ┌─────────────────────────────────────────────────────────────┐"
@@ -95,7 +95,7 @@ EOF
     # Show recommendation
     case "$RECOMMENDED_ENGINE" in
         whisper_cpp)
-            echo "  → Recommendation: whisper.cpp (best performance for your hardware)"
+            echo "  → Recommendation: whisper.cpp (recommended for your hardware)"
             DEFAULT_CHOICE="1"
             ;;
         vosk)
@@ -103,7 +103,7 @@ EOF
             DEFAULT_CHOICE="3"
             ;;
         *)
-            echo "  → Recommendation: whisper.cpp (best overall experience)"
+            echo "  → Recommendation: whisper.cpp (recommended default)"
             DEFAULT_CHOICE="1"
             ;;
     esac

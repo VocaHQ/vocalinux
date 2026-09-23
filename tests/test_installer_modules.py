@@ -61,3 +61,11 @@ def test_module_changes_receive_the_installer_label() -> None:
     labeler = LABELER.read_text(encoding="utf-8")
     installer_rules = labeler[labeler.index("installer:") : labeler.index("\n# Icons")]
     assert '"install.d/**/*"' in installer_rules
+
+
+def test_interactive_guide_does_not_invent_privacy_or_ranking_claims() -> None:
+    source = (MODULE_DIR / "interactive.sh").read_text(encoding="utf-8")
+    assert "100% offline" not in source
+    assert "never leaves your computer" not in source
+    assert "99+" not in source
+    assert "Fastest, most accurate" not in source
