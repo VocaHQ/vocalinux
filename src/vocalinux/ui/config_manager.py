@@ -41,6 +41,7 @@ SOUND_EFFECT_TONES: tuple[tuple[str, str], ...] = (
 )
 SOUND_EFFECT_TONE_IDS = frozenset(tone_id for tone_id, _label in SOUND_EFFECT_TONES)
 DEFAULT_SOUND_EFFECT_TONE = "voca"
+DEFAULT_PLAYBACK_DUCK_PERCENT = 20
 
 PASTE_SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("auto", "Auto-detect"),
@@ -63,6 +64,21 @@ def normalize_sound_effect_tone(tone: Any) -> str:
     if isinstance(tone, str) and tone in SOUND_EFFECT_TONE_IDS:
         return tone
     return DEFAULT_SOUND_EFFECT_TONE
+
+
+def clamp_playback_duck_percent(value: Any) -> int:
+    """Return ``value`` as an integer percent in 0..100.
+
+    Missing or unusable values become the default (20). Booleans are rejected
+    because ``bool`` is an ``int`` subclass and must not become 0 or 1.
+    """
+    if isinstance(value, bool) or value is None:
+        return DEFAULT_PLAYBACK_DUCK_PERCENT
+    try:
+        percent = int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_PLAYBACK_DUCK_PERCENT
+    return max(0, min(100, percent))
 
 
 # Default configuration
@@ -101,6 +117,11 @@ DEFAULT_CONFIG = {
     "sound_effects": {
         "enabled": True,  # Master mute for start/stop/error cues
         "tone": "voca",  # Family catalog id; missing/unknown also resolve to voca
+    },
+    # Off by default so an upgrade does not change the user's speaker volume.
+    "playback_duck": {
+        "enabled": False,  # Lower the default sink while the microphone is open
+        "percent": 20,  # Percent of the current volume; 0 is silent
     },
     "shortcuts": {
         "toggle_recognition": "right_alt+right_alt",
@@ -630,6 +651,29 @@ class ConfigManager:
             self.config["sound_effects"] = {}
         self.config["sound_effects"]["tone"] = normalize_sound_effect_tone(tone)
 
+    def is_playback_duck_enabled(self) -> bool:
+        """Whether other audio is lowered while dictating. Off when unset."""
+        enabled = self.config.get("playback_duck", {}).get("enabled", False)
+        return enabled if isinstance(enabled, bool) else False
+
+    def set_playback_duck_enabled(self, enabled: bool) -> None:
+        """Enable or disable lowering other audio while dictating."""
+        if "playback_duck" not in self.config:
+            self.config["playback_duck"] = {}
+        self.config["playback_duck"]["enabled"] = bool(enabled)
+
+    def get_playback_duck_percent(self) -> int:
+        """Percent of the current volume to use while dictating, clamped 0–100."""
+        return clamp_playback_duck_percent(
+            self.config.get("playback_duck", {}).get("percent", DEFAULT_PLAYBACK_DUCK_PERCENT)
+        )
+
+    def set_playback_duck_percent(self, percent: int) -> None:
+        """Save the duck level. Values outside 0–100, and non-numbers, are clamped."""
+        if "playback_duck" not in self.config:
+            self.config["playback_duck"] = {}
+        self.config["playback_duck"]["percent"] = clamp_playback_duck_percent(percent)
+
     def get_paste_shortcut(self) -> str:
         """Return the clipboard-paste shortcut id (auto when unset or unknown)."""
         return normalize_paste_shortcut(self.config.get("text_injection", {}).get("paste_shortcut"))
@@ -662,6 +706,16 @@ class ConfigManager:
 # directly; application code goes through this accessor.
 _shared_instance: Optional[ConfigManager] = None
 _shared_instance_lock = threading.Lock()
+
+
+def peek_shared_config_manager() -> Optional[ConfigManager]:
+    """Return the process-wide ConfigManager, or None if nothing has created it.
+
+    Callers that only need a setting during dictation use this so a missing
+    config file does not construct a manager (that seeds language and can
+    shell out) just to discover the packaged default.
+    """
+    return _shared_instance
 
 
 def get_shared_config_manager() -> ConfigManager:
