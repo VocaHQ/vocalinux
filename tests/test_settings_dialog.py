@@ -1009,6 +1009,7 @@ class TestSettingsNavigation(unittest.TestCase):
     def test_topic_pages_exist(self):
         for name, title in [
             ("dictation", "Dictation"),
+            ("dictionary", "Custom Dictionary"),
             ("model", "Speech Model"),
             ("audio", "Audio"),
             ("performance", "Performance"),
@@ -1016,6 +1017,68 @@ class TestSettingsNavigation(unittest.TestCase):
             ("advanced", "Advanced"),
         ]:
             self.assertIn(f'SettingsPage("{name}", "{title}"', self.source_code)
+
+    def test_custom_dictionary_page_has_both_accessible_subsections(self):
+        """The dictionary page keeps terms and corrections distinct and accessible."""
+        body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
+        self.assertIn('title="Custom terms"', body)
+        self.assertIn('title="Transcript corrections"', body)
+        self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper", body)
+        self.assertIn("self.dictionary_management_switcher = Gtk.StackSwitcher()", body)
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)",
+            body,
+        )
+        self.assertIn('terms_scroller, "terms", "Custom terms"', body)
+        self.assertIn('corrections_scroller, "corrections", "Corrections"', body)
+        for accessible_name in [
+            "Custom terms file",
+            "Custom term",
+            "Heard phrase",
+            "Replacement text",
+            "Custom dictionary status",
+        ]:
+            self.assertIn(accessible_name, body)
+        # Shared status lives on the page, not only in the Corrections stack child.
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_feedback_label, False, False, 0)",
+            body,
+        )
+        switcher_pack = body.find(
+            "self.dictionary_tab.pack_start(self.dictionary_management_switcher"
+        )
+        feedback_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_feedback_label")
+        stack_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_management_stack")
+        self.assertLess(switcher_pack, feedback_pack)
+        self.assertLess(feedback_pack, stack_pack)
+        corrections_child = body[
+            body.find("corrections_group = PreferencesGroup") : body.find(
+                'corrections_scroller, "corrections"'
+            )
+        ]
+        self.assertNotIn("dictionary_feedback_label", corrections_child)
+
+    def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self):
+        """Transparent list backgrounds do not cover the card's lower radius."""
+        self.assertIn(".preferences-group-list", self.source_code)
+        self.assertIn('add_class("preferences-group-list")', self.source_code)
+        self.assertIn("border-radius: 0 0 11px 11px", self.source_code)
+
+    def test_custom_dictionary_path_and_persistence_handlers_are_present(self):
+        """Path chooser and failure feedback keep existing settings safe."""
+        self.assertIn('Gtk.FileChooserButton(title="Choose Terms File")', self.source_code)
+        self.assertIn("def _on_dictionary_terms_path_changed", self.source_code)
+        self.assertIn("set_terms_path", self.source_code)
+        self.assertIn("Could not save that custom terms path", self.source_code)
+        self.assertIn("add_term(term)", self.source_code)
+        self.assertIn("remove_term(term)", self.source_code)
+
+    def test_correction_add_validates_candidate_before_save(self):
+        """Invalid replacements must be rejected before the list is rewritten."""
+        body = self.source_code.split("def _on_dictionary_add_correction")[1].split("\n    def ")[0]
+        self.assertIn("normalize_corrections", body)
+        self.assertLess(body.find("normalize_corrections"), body.find("save_corrections"))
+        self.assertLess(body.find("normalize_corrections"), body.find("entries.append"))
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)
