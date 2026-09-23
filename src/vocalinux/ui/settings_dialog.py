@@ -3479,7 +3479,7 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Sound effects {'enabled' if enabled else 'disabled'}")
         return False
 
-    def _on_duck_playback_toggled(self, _widget, state):
+    def _on_duck_playback_toggled(self, _widget: Gtk.Widget, state: bool) -> bool:
         enabled = bool(state)
         self.duck_level_scale.set_sensitive(enabled)
         if self._initializing or self._applying_settings:
@@ -3489,7 +3489,7 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
         return False
 
-    def _on_duck_level_changed(self, scale):
+    def _on_duck_level_changed(self, scale: Gtk.Scale) -> None:
         if self._initializing or self._applying_settings:
             return
         percent = int(round(scale.get_value()))

@@ -18,8 +18,9 @@ import shutil
 import subprocess
 import threading
 from dataclasses import dataclass
-from typing import Callable, Optional, Protocol
+from typing import Callable, Optional
 
+from ..common_types import CancelableTimer, SinkVolumeControl
 from ..utils.host_process import host_env
 from ..utils.paths import config_dir
 
@@ -47,31 +48,26 @@ _PACTL_PERCENT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 CommandResult = tuple[int, str, str]
 CommandRunner = Callable[[list[str]], CommandResult]
 Which = Callable[[str], Optional[str]]
-
-
-class SinkVolumeControl(Protocol):
-    """The default playback sink. Tests supply a fake; production uses the system."""
-
-    def default_sink(self) -> Optional[tuple[str, float]]:
-        """Return ``(sink_id, linear_volume)`` for the default sink, or None."""
-
-    def volume_of(self, sink_id: str) -> Optional[float]:
-        """Linear volume of ``sink_id``, or None if it cannot be read."""
-
-    def sink_exists(self, sink_id: str) -> Optional[bool]:
-        """True if present, False if gone, None if presence could not be checked."""
-
-    def set_volume(self, sink_id: str, linear: float) -> bool:
-        """Set ``sink_id`` only. False on failure. Never substitute another sink."""
+Channels = tuple[float, ...]
 
 
 @dataclass(frozen=True)
 class PendingDuck:
-    """Volume to put back, and the level we left the sink at so we can tell."""
+    """Per-channel volume to put back, and the level we left the sink at."""
 
     sink_id: str
-    original_volume: float
-    ducked_volume: float
+    original_channels: Channels
+    ducked_channels: Channels
+
+    @property
+    def original_volume(self) -> float:
+        """First channel, kept so a one-channel record stays easy to log."""
+        return self.original_channels[0]
+
+    @property
+    def ducked_volume(self) -> float:
+        """First channel of the level we applied."""
+        return self.ducked_channels[0]
 
 
 def duck_delay_seconds(
@@ -101,6 +97,13 @@ def volumes_match(left: float, right: float) -> bool:
     return math.isclose(left, right, rel_tol=0.0, abs_tol=VOLUME_MATCH_TOLERANCE)
 
 
+def channels_match(left: Channels, right: Channels) -> bool:
+    """Whether every channel matches, so a stereo balance change is visible."""
+    if len(left) != len(right):
+        return False
+    return all(volumes_match(a, b) for a, b in zip(left, right))
+
+
 def parse_wpctl_volume(text: str) -> Optional[float]:
     """Parse ``wpctl get-volume`` stdout. None when it is not a volume line."""
     match = _WPCTL_VOLUME_RE.search(text or "")
@@ -120,17 +123,35 @@ def parse_wpctl_sink_id(text: str) -> Optional[str]:
     return sink_id
 
 
-def parse_pactl_volume(text: str) -> Optional[float]:
-    """Parse the first channel percent on a ``Volume:`` line. Ignores Base Volume."""
+def parse_pactl_channels(text: str) -> Optional[Channels]:
+    """Every channel percent on the ``Volume:`` line. Ignores Base Volume.
+
+    Left and right are often different. Saving only the first one and writing
+    it back to the whole sink would flatten that balance.
+    """
     for line in (text or "").splitlines():
         stripped = line.strip()
         if not stripped.lower().startswith("volume:"):
             continue
-        match = _PACTL_PERCENT_RE.search(stripped)
-        if match is None:
+        matches = _PACTL_PERCENT_RE.findall(stripped)
+        if not matches:
             return None
-        return _finite_volume(float(match.group(1)) / 100.0)
+        channels: list[float] = []
+        for raw in matches:
+            value = _finite_volume(float(raw) / 100.0)
+            if value is None:
+                return None
+            channels.append(value)
+        return tuple(channels)
     return None
+
+
+def parse_pactl_volume(text: str) -> Optional[float]:
+    """First channel of :func:`parse_pactl_channels`, or None."""
+    channels = parse_pactl_channels(text)
+    if not channels:
+        return None
+    return channels[0]
 
 
 def parse_pactl_short_sink_ids(text: str) -> set[str]:
@@ -160,6 +181,19 @@ def _valid_sink_id(sink_id: str) -> bool:
 
 def _valid_volume(value: float) -> bool:
     return _finite_volume(value) is not None
+
+
+def _finite_channels(channels: Channels) -> Optional[Channels]:
+    """A non-empty tuple of finite volumes, or None."""
+    if not channels:
+        return None
+    checked: list[float] = []
+    for channel in channels:
+        value = _finite_volume(channel)
+        if value is None:
+            return None
+        checked.append(value)
+    return tuple(checked)
 
 
 def _output_says_missing(stdout: str, stderr: str) -> bool:
@@ -237,8 +271,8 @@ class SystemSinkVolume:
         else:
             self._backend = None
 
-    def default_sink(self) -> Optional[tuple[str, float]]:
-        """Identify the default sink and read its linear volume."""
+    def default_sink(self) -> Optional[tuple[str, Channels]]:
+        """Identify the default sink and read each channel's linear volume."""
         if self._backend == "wpctl":
             return self._wpctl_default()
         if self._backend == "pactl":
@@ -246,7 +280,7 @@ class SystemSinkVolume:
         logger.warning("Neither wpctl nor pactl is available; not changing playback volume")
         return None
 
-    def volume_of(self, sink_id: str) -> Optional[float]:
+    def volume_of(self, sink_id: str) -> Optional[Channels]:
         """Read ``sink_id``. None on a bad id, a missing sink, or a parse failure."""
         if not _valid_sink_id(sink_id):
             logger.warning("Refusing to read sink id %r", sink_id)
@@ -281,19 +315,21 @@ class SystemSinkVolume:
             return None
         return sink_id in parse_pactl_short_sink_ids(stdout)
 
-    def set_volume(self, sink_id: str, linear: float) -> bool:
-        """Set one sink. A failure leaves whatever the server kept."""
+    def set_volume(self, sink_id: str, channels: Channels) -> bool:
+        """Set one sink, one argument per channel. A failure leaves the server as it was."""
         if not _valid_sink_id(sink_id):
             logger.warning("Refusing to set volume on sink id %r", sink_id)
             return False
-        checked = _finite_volume(linear)
+        checked = _finite_channels(channels)
         if checked is None:
-            logger.warning("Refusing to set sink %s to an invalid volume %r", sink_id, linear)
+            logger.warning("Refusing to set sink %s to an invalid volume %r", sink_id, channels)
             return False
         if self._backend == "wpctl":
-            result = self._run(["wpctl", "set-volume", sink_id, f"{checked:.6f}"])
+            # wpctl reports one sink volume. Per-channel balance is not in that reading.
+            result = self._run(["wpctl", "set-volume", sink_id, f"{checked[0]:.6f}"])
         elif self._backend == "pactl":
-            result = self._run(["pactl", "set-sink-volume", sink_id, f"{checked * 100.0:.4f}%"])
+            percents = [f"{channel * 100.0:.4f}%" for channel in checked]
+            result = self._run(["pactl", "set-sink-volume", sink_id, *percents])
         else:
             logger.warning("Neither wpctl nor pactl is available; not changing playback volume")
             return False
@@ -307,7 +343,7 @@ class SystemSinkVolume:
             return False
         return True
 
-    def _wpctl_default(self) -> Optional[tuple[str, float]]:
+    def _wpctl_default(self) -> Optional[tuple[str, Channels]]:
         inspected = self._run(["wpctl", "inspect", "@DEFAULT_AUDIO_SINK@"])
         if inspected is None or inspected[0] != 0:
             logger.warning("Could not identify the default audio sink")
@@ -321,7 +357,7 @@ class SystemSinkVolume:
             return None
         return sink_id, volume
 
-    def _wpctl_volume(self, sink_id: str) -> Optional[float]:
+    def _wpctl_volume(self, sink_id: str) -> Optional[Channels]:
         result = self._run(["wpctl", "get-volume", sink_id])
         if result is None or result[0] != 0:
             logger.warning("wpctl get-volume failed for sink %s", sink_id)
@@ -330,9 +366,9 @@ class SystemSinkVolume:
         if volume is None:
             logger.warning("Could not parse wpctl volume %r", result[1].strip()[:200])
             return None
-        return volume
+        return (volume,)
 
-    def _pactl_default(self) -> Optional[tuple[str, float]]:
+    def _pactl_default(self) -> Optional[tuple[str, Channels]]:
         named = self._run(["pactl", "get-default-sink"])
         if named is None or named[0] != 0:
             logger.warning("Could not identify the default PulseAudio sink")
@@ -347,16 +383,16 @@ class SystemSinkVolume:
             return None
         return sink_id, volume
 
-    def _pactl_volume(self, sink_id: str) -> Optional[float]:
+    def _pactl_volume(self, sink_id: str) -> Optional[Channels]:
         result = self._run(["pactl", "get-sink-volume", sink_id])
         if result is None or result[0] != 0:
             logger.warning("pactl get-sink-volume failed for sink %s", sink_id)
             return None
-        volume = parse_pactl_volume(result[1])
-        if volume is None:
+        channels = parse_pactl_channels(result[1])
+        if channels is None:
             logger.warning("Could not parse pactl volume %r", result[1].strip()[:200])
             return None
-        return volume
+        return channels
 
     def _run(self, args: list[str]) -> Optional[CommandResult]:
         try:
@@ -425,31 +461,37 @@ class PlaybackDucker:
                 logger.warning("Not lowering playback: the default sink volume could not be read")
                 return
             sink_id, original = snapshot
-            if not _valid_sink_id(sink_id) or not _valid_volume(original):
+            original_channels = _finite_channels(original)
+            if not _valid_sink_id(sink_id) or original_channels is None:
                 logger.warning("Not lowering playback: the default sink reading was unusable")
                 return
             percent = self._current_percent()
-            target = max(0.0, original * (percent / 100.0))
-            if not _valid_volume(target):
+            target = _finite_channels(
+                tuple(max(0.0, channel * (percent / 100.0)) for channel in original_channels)
+            )
+            if target is None:
                 logger.warning("Not lowering playback: computed volume %r is unusable", target)
                 return
-            # Save the restore point before changing the sink. A crash in between
-            # leaves the volume untouched, and the next launch sees it is not the
-            # ducked level and drops the record. A crash after the change can
-            # still put the saved volume back.
-            record = PendingDuck(sink_id, original, target)
-            self._pending = record
+            # Persist the restore point before changing the sink. If that write
+            # fails, do not lower anything: a crash would otherwise forget the
+            # original level. A crash after a successful write can still put it back.
+            record = PendingDuck(sink_id, original_channels, target)
             try:
                 self._write_pending(record)
             except OSError:
-                logger.warning("Could not save the volume to restore for sink %s", sink_id)
+                logger.warning(
+                    "Could not save the volume to restore for sink %s; not lowering it",
+                    sink_id,
+                )
+                return
+            self._pending = record
             # Percent 100 (or an already-matching level) must not touch the sink.
-            if volumes_match(original, target):
+            if channels_match(original_channels, target):
                 logger.info(
                     "Playback duck level is %d%%; leaving sink %s at %.3f",
                     percent,
                     sink_id,
-                    original,
+                    original_channels[0],
                 )
                 return
             try:
@@ -463,9 +505,9 @@ class PlaybackDucker:
                 self._forget()
                 return
             logger.info(
-                "Lowered sink %s from %.3f to %.3f (%d%%) while dictating",
+                "Lowered sink %s from %s to %s (%d%%) while dictating",
                 sink_id,
-                original,
+                original_channels,
                 target,
                 percent,
             )
@@ -503,24 +545,24 @@ class PlaybackDucker:
                     "Could not read sink %s; leaving the saved volume in place", record.sink_id
                 )
                 return
-            if not volumes_match(current, record.ducked_volume):
+            if not channels_match(current, record.ducked_channels):
                 logger.info(
-                    "Playback volume changed during dictation (now %.3f, ducked %.3f); "
+                    "Playback volume changed during dictation (now %s, ducked %s); "
                     "not overwriting it",
                     current,
-                    record.ducked_volume,
+                    record.ducked_channels,
                 )
                 self._forget()
                 return
-            if not volumes_match(current, record.original_volume):
+            if not channels_match(current, record.original_channels):
                 try:
-                    restored = self._control.set_volume(record.sink_id, record.original_volume)
+                    restored = self._control.set_volume(record.sink_id, record.original_channels)
                 except Exception:
                     logger.warning("Could not restore sink %s", record.sink_id, exc_info=True)
                     return
                 if not restored:
                     return
-                logger.info("Restored sink %s to %.3f", record.sink_id, record.original_volume)
+                logger.info("Restored sink %s to %s", record.sink_id, record.original_channels)
             else:
                 logger.info("Sink %s is already at the saved volume", record.sink_id)
             self._forget()
@@ -572,6 +614,8 @@ class PlaybackDucker:
             "sink_id": record.sink_id,
             "original_volume": record.original_volume,
             "ducked_volume": record.ducked_volume,
+            "original_channels": list(record.original_channels),
+            "ducked_channels": list(record.ducked_channels),
         }
         try:
             with open(temporary, "w", encoding="utf-8") as handle:
@@ -619,15 +663,29 @@ def _record_from_payload(payload: object) -> Optional[PendingDuck]:
     ducked = float(ducked_raw)
     if not _valid_volume(original) or not _valid_volume(ducked):
         return None
-    return PendingDuck(sink_id, original, ducked)
+    original_channels = _channels_from_payload(payload.get("original_channels"), original)
+    ducked_channels = _channels_from_payload(payload.get("ducked_channels"), ducked)
+    if original_channels is None or ducked_channels is None:
+        return None
+    return PendingDuck(sink_id, original_channels, ducked_channels)
 
 
-class _Cancelable(Protocol):
-    def cancel(self) -> None:
-        """Drop the scheduled call if it has not started."""
+def _channels_from_payload(raw: object, fallback: float) -> Optional[Channels]:
+    """Use a saved channel list, or the single legacy volume when it is absent."""
+    if raw is None:
+        checked = _finite_channels((fallback,))
+        return checked
+    if not isinstance(raw, list) or isinstance(raw, bool):
+        return None
+    numbers: list[float] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, (int, float)):
+            return None
+        numbers.append(float(item))
+    return _finite_channels(tuple(numbers))
 
 
-Scheduler = Callable[[float, Callable[[], None]], _Cancelable]
+Scheduler = Callable[[float, Callable[[], None]], CancelableTimer]
 
 
 def _daemon_timer(delay: float, callback: Callable[[], None]) -> threading.Timer:
@@ -660,7 +718,7 @@ class DictationDuckSession:
         self._lock = threading.Lock()
         self._generation = 0
         self._armed = False
-        self._timer: Optional[_Cancelable] = None
+        self._timer: Optional[CancelableTimer] = None
 
     def enabled(self) -> bool:
         """Whether this dictation should duck. A settings failure means no."""
@@ -731,7 +789,7 @@ class DictationDuckSession:
                 logger.error("Could not lower playback volume", exc_info=True)
 
     @staticmethod
-    def _cancel_timer(timer: Optional[_Cancelable]) -> None:
+    def _cancel_timer(timer: Optional[CancelableTimer]) -> None:
         if timer is None:
             return
         try:
