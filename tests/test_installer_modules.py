@@ -7,6 +7,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPO_ROOT / "install.sh"
 MODULE_DIR = REPO_ROOT / "install.d"
 PIPELINE = REPO_ROOT / ".github" / "workflows" / "unified-pipeline.yml"
+LABELER = REPO_ROOT / ".github" / "labeler.yml"
 EXPECTED_MODULES = {
     "desktop.sh",
     "interactive.sh",
@@ -39,7 +40,7 @@ def test_modules_are_shell_syntax_valid_and_safe_to_source() -> None:
         assert syntax.returncode == 0, syntax.stderr
 
         sourced = subprocess.run(
-            ["bash", "-c", f'set -Eeuo pipefail; source "{module}"'],
+            ["bash", "-c", 'set -Eeuo pipefail; source "$1"', "bash", str(module)],
             capture_output=True,
             text=True,
         )
@@ -54,3 +55,9 @@ def test_entry_point_is_an_orchestrator_not_a_four_thousand_line_monolith() -> N
 def test_module_changes_reach_the_python_ci_jobs() -> None:
     workflow = PIPELINE.read_text(encoding="utf-8")
     assert "- 'install.d/**'" in workflow
+
+
+def test_module_changes_receive_the_installer_label() -> None:
+    labeler = LABELER.read_text(encoding="utf-8")
+    installer_rules = labeler[labeler.index("installer:") : labeler.index("\n# Icons")]
+    assert '"install.d/**/*"' in installer_rules
