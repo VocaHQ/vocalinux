@@ -130,6 +130,7 @@ Store install, once Canonical lists the revision:
 sudo snap install vocalinux --edge
 sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
 sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
+sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/devices)
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
@@ -141,6 +142,7 @@ Sideload the GitHub `.snap` (amd64) while the Store is waiting:
 sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap
 sudo snap connect vocalinux:audio-record
 sudo snap connect vocalinux:raw-input
+sudo snap connect vocalinux:hardware-observe
 sudo snap connect vocalinux:uinput
 ```
 
