@@ -60,7 +60,7 @@ OpenAI-compatible transcription service, which keeps audio on your own machine
 or LAN while letting Vocalinux use SenseVoice or Paraformer-family models:
 
 ```bash
-pip install torch torchaudio
+pip install 'torch>=2.13.0' torchaudio
 pip install funasr vllm fastapi uvicorn python-multipart
 funasr-server --device cuda
 ```
