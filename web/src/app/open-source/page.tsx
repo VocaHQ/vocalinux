@@ -42,7 +42,7 @@ const benefits = [
     iconBg: "bg-primary/10",
   },
   {
-    title: "Free Forever",
+    title: "Free and open source",
     description:
       "AGPL-3.0 licensed. Free to use, modify, and share. No freemium, no premium tier, no hidden costs.",
     icon: Heart,
@@ -52,7 +52,7 @@ const benefits = [
 ];
 
 const vsProprietary = [
-  { feature: "Cost", vocalinux: "Free forever", proprietary: "$10-500/month or $500+ license" },
+  { feature: "Cost", vocalinux: "Free and open source", proprietary: "$10-500/month or $500+ license" },
   { feature: "Source Code", vocalinux: "Fully open", proprietary: "Closed, proprietary" },
   { feature: "Data Privacy", vocalinux: "Local engines by default", proprietary: "Often cloud-based" },
   { feature: "Linux Support", vocalinux: "Native", proprietary: "Limited or none" },
