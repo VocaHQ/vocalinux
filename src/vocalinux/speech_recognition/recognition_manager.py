@@ -3460,6 +3460,7 @@ class SpeechRecognitionManager:
             self._recording_segment_has_speech = False
             log_level_interval = 0  # Counter for periodic level logging
             max_level_seen = 0.0
+            capture_failed = False
             # Accumulator for 512-sample Silero chunks.  When the capture rate
             # is higher than 16 kHz (e.g. 48 kHz), resampling produces fewer
             # than 1024 samples per read (~341 at 48 kHz), so the buffer may
@@ -3626,15 +3627,26 @@ class SpeechRecognitionManager:
                             continue  # Continue recording with new stream
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
+                            capture_failed = True
                             break
                     else:
                         logger.warning(
                             "Audio error occurred too soon after last error, stopping recording"
                         )
+                        capture_failed = True
                         break
                 except Exception as e:
                     logger.error(f"Unexpected error reading audio data: {e}")
+                    capture_failed = True
                     break
+
+            # A dead microphone must not leave other audio lowered, or the
+            # session stuck in LISTENING, until the user happens to stop.
+            if capture_failed:
+                self.should_record = False
+                self.release_playback_duck()
+                play_error_sound()
+                self._update_state(RecognitionState.ERROR)
 
             # Clean up
             _safe_close_stream(stream)

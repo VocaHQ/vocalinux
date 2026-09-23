@@ -6,6 +6,8 @@ fake command runner, and the recognition hook with a fake clock.
 
 import json
 import sys
+from pathlib import Path
+from typing import Callable, Optional, Union
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -48,35 +50,58 @@ def _numpy_is_real_while_comparing():
 class FakeSink:
     """In-memory default sink. ``present`` False means that sink is gone."""
 
-    def __init__(self, sink_id: str = "sink-a", volume: float = 0.5) -> None:
+    def __init__(
+        self,
+        sink_id: str = "sink-a",
+        volume: float = 0.5,
+        channels: Optional[tuple[float, ...]] = None,
+    ) -> None:
         self.sink_id = sink_id
-        self.volume = volume
+        self._channels = channels if channels is not None else (float(volume),)
         self.present = True
         self.fail_read = False
-        self.sets: list[tuple[str, float]] = []
+        self.sets: list[tuple[str, Union[float, tuple[float, ...]]]] = []
 
-    def default_sink(self):
+    @property
+    def volume(self) -> float:
+        return self._channels[0]
+
+    @volume.setter
+    def volume(self, value: float) -> None:
+        # A single knob moves every channel together. Tests that assign
+        # ``sink.volume`` are describing that.
+        self._channels = tuple(float(value) for _ in self._channels)
+
+    def default_sink(self) -> Optional[tuple[str, tuple[float, ...]]]:
         if not self.present or self.fail_read:
             return None
-        return self.sink_id, self.volume
+        return self.sink_id, self._channels
 
-    def volume_of(self, sink_id: str):
+    def volume_of(self, sink_id: str) -> Optional[tuple[float, ...]]:
         if sink_id != self.sink_id or not self.present or self.fail_read:
             return None
-        return self.volume
+        return self._channels
 
-    def sink_exists(self, sink_id: str):
+    def sink_exists(self, sink_id: str) -> bool:
         return sink_id == self.sink_id and self.present
 
-    def set_volume(self, sink_id: str, linear: float) -> bool:
-        self.sets.append((sink_id, linear))
+    def set_volume(self, sink_id: str, linear: tuple[float, ...]) -> bool:
+        recorded: Union[float, tuple[float, ...]] = linear[0] if len(linear) == 1 else linear
+        self.sets.append((sink_id, recorded))
         if sink_id != self.sink_id or not self.present:
             return False
-        self.volume = linear
+        self._channels = tuple(linear)
         return True
 
 
-def _ducker(tmp_path, sink, *, enabled=True, percent=20, recover=True):
+def _ducker(
+    tmp_path: Path,
+    sink: FakeSink,
+    *,
+    enabled: bool = True,
+    percent: int = 20,
+    recover: bool = True,
+) -> PlaybackDucker:
     return PlaybackDucker(
         sink,
         str(tmp_path),
@@ -86,8 +111,35 @@ def _ducker(tmp_path, sink, *, enabled=True, percent=20, recover=True):
     )
 
 
-def _record(tmp_path) -> dict:
+def _record(tmp_path: Path) -> dict:
     return json.loads((tmp_path / duck.PENDING_RECORD_NAME).read_text(encoding="utf-8"))
+
+
+def _real_audio_feedback(monkeypatch: pytest.MonkeyPatch):
+    """Module object the recognition manager's ``import audio_feedback`` returns.
+
+    ``test_audio_feedback`` leaves a MagicMock in ``sys.modules``. The package
+    attribute can still be the real module, and that is the one a later import
+    uses. Patching the mock measures the real cue file instead of the stub.
+    """
+    import importlib
+
+    import vocalinux.ui as ui_pkg
+
+    bound = getattr(ui_pkg, "audio_feedback", None)
+    leaked = sys.modules.get("vocalinux.ui.audio_feedback")
+    if isinstance(bound, MagicMock) or isinstance(leaked, MagicMock):
+        sys.modules.pop("vocalinux.ui.audio_feedback", None)
+        if isinstance(bound, MagicMock):
+            delattr(ui_pkg, "audio_feedback")
+        real = importlib.import_module("vocalinux.ui.audio_feedback")
+    elif bound is not None:
+        real = bound
+    else:
+        real = importlib.import_module("vocalinux.ui.audio_feedback")
+    monkeypatch.setattr(ui_pkg, "audio_feedback", real, raising=False)
+    monkeypatch.setitem(sys.modules, "vocalinux.ui.audio_feedback", real)
+    return real
 
 
 class _Timer:
@@ -154,11 +206,11 @@ def test_duck_scales_saved_volume_and_does_not_stack(tmp_path):
     assert sink.volume == pytest.approx(0.1)
     assert sink.sets == [("sink-a", pytest.approx(0.1))]
     saved = _record(tmp_path)
-    assert saved == {
-        "sink_id": "sink-a",
-        "original_volume": pytest.approx(0.5),
-        "ducked_volume": pytest.approx(0.1),
-    }
+    assert saved["sink_id"] == "sink-a"
+    assert saved["original_volume"] == pytest.approx(0.5)
+    assert saved["ducked_volume"] == pytest.approx(0.1)
+    assert saved["original_channels"] == pytest.approx((0.5,))
+    assert saved["ducked_channels"] == pytest.approx((0.1,))
 
     sink.volume = 0.9
     ducker.duck()
@@ -181,6 +233,22 @@ def test_zero_percent_silences_and_disabled_does_nothing(tmp_path):
     assert untouched.volume == 0.8
     assert untouched.sets == []
     assert not (tmp_path / "off" / duck.PENDING_RECORD_NAME).exists()
+
+
+def test_unwritable_restore_point_does_not_lower_the_sink(tmp_path, monkeypatch):
+    sink = FakeSink(volume=0.5)
+    ducker = _ducker(tmp_path, sink, percent=20)
+
+    def refuse(_record: duck.PendingDuck) -> None:
+        raise OSError("read-only config")
+
+    monkeypatch.setattr(ducker, "_write_pending", refuse)
+    ducker.duck()
+
+    assert sink.volume == pytest.approx(0.5)
+    assert sink.sets == []
+    assert ducker._pending is None
+    assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
 def test_percent_100_does_not_change_the_sink(tmp_path):
@@ -451,10 +519,48 @@ def test_pactl_is_used_when_wpctl_is_absent(tmp_path):
         control, str(tmp_path), enabled=lambda: True, percent=lambda: 20, recover=False
     )
     ducker.duck()
-    assert ["pactl", "set-sink-volume", sink_name, "10.0000%"] in calls
+    assert ["pactl", "set-sink-volume", sink_name, "10.0000%", "10.0000%"] in calls
     ducker.restore()
-    assert ["pactl", "set-sink-volume", sink_name, "50.0000%"] in calls
+    assert ["pactl", "set-sink-volume", sink_name, "50.0000%", "50.0000%"] in calls
     assert state["volume"] == pytest.approx(0.50)
+
+
+def test_pactl_restores_each_channel(tmp_path):
+    calls = []
+    channels = [0.50, 0.40]
+
+    def runner(args):
+        calls.append(list(args))
+        if args[:2] == ["pactl", "get-default-sink"]:
+            return 0, "analog-stereo\n", ""
+        if args[:2] == ["pactl", "get-sink-volume"]:
+            text = (
+                "Volume: front-left: 1 / "
+                f"{channels[0] * 100:.0f}% / 0 dB,   front-right: 1 / "
+                f"{channels[1] * 100:.0f}% / 0 dB\n"
+                "Base Volume: 65536 / 100% / 0.00 dB\n"
+            )
+            return 0, text, ""
+        if args[:2] == ["pactl", "set-sink-volume"]:
+            channels[0] = float(args[3].rstrip("%")) / 100.0
+            channels[1] = float(args[4].rstrip("%")) / 100.0
+            return 0, "", ""
+        if args[:3] == ["pactl", "list", "short"]:
+            return 0, "7\tanalog-stereo\tPipeWire\n", ""
+        return 1, "", "unexpected"
+
+    control = SystemSinkVolume(
+        runner=runner,
+        which=lambda name: None if name == "wpctl" else "/usr/bin/pactl",
+    )
+    ducker = PlaybackDucker(
+        control, str(tmp_path), enabled=lambda: True, percent=lambda: 20, recover=False
+    )
+    ducker.duck()
+    assert ["pactl", "set-sink-volume", "analog-stereo", "10.0000%", "8.0000%"] in calls
+    ducker.restore()
+    assert ["pactl", "set-sink-volume", "analog-stereo", "50.0000%", "40.0000%"] in calls
+    assert channels == pytest.approx([0.50, 0.40])
 
 
 def test_playback_duck_percent_clamps_and_round_trips(tmp_path, monkeypatch):
@@ -512,7 +618,7 @@ def test_recognition_hook_schedules_after_start_and_restores_before_stop_cue(mon
     session.cancel = lambda: timeline.append("cancel")
     session.restore = lambda: timeline.append("restore")
 
-    feedback = sys.modules["vocalinux.ui.audio_feedback"]
+    feedback = _real_audio_feedback(monkeypatch)
     monkeypatch.setattr(feedback, "_is_sound_effects_enabled", lambda: True)
     monkeypatch.setattr(feedback, "_resolved_tone", lambda: "voca")
     monkeypatch.setattr(feedback, "tone_sound_path", lambda _tone, _kind: "/cue.wav")
