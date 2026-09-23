@@ -85,6 +85,55 @@ Open **Settings → Speech Model**. The page starts with a simple setup (languag
 
 Parakeet runs NVIDIA NeMo ASR models through sherpa-onnx. The default bundle is **v3-european** (25 European languages). **v2-english** is English-only. Parakeet ignores the catalog language picker (language is treated as auto).
 
+### Activation via a KDE Plasma global shortcut
+
+Instead of the built-in hotkey listener, you can let your desktop's global
+shortcut system trigger Vocalinux. On Wayland the built-in listener reads
+`/dev/input` (requiring membership in the `input` group and effectively acting
+as a system-wide key reader). Delegating activation to the compositor avoids
+this entirely: no `/dev/input` access and no `input` group needed just to
+start/stop dictation. Text injection is unaffected.
+
+Enable it in Vocalinux:
+
+1. Open **Settings → Shortcuts**
+2. Turn on **External Activation (Desktop Shortcut)**
+
+The change applies immediately; you do not need to restart. The built-in key
+listener stops, and a running instance exposes a D-Bus service on the session
+bus (`com.vocalinux.Vocalinux`). The CLI can forward commands to it:
+
+```bash
+vocalinux --toggle   # start if idle, stop if active
+vocalinux --start    # start voice typing
+vocalinux --stop     # stop voice typing
+```
+
+Then bind a compositor shortcut to `vocalinux --toggle`. On KDE Plasma:
+
+1. Open **System Settings -> Keyboard -> Shortcuts -> Add New -> Command or Script**
+   (older Plasma: **System Settings -> Shortcuts -> Custom Shortcuts -> Edit ->
+   New -> Global Shortcut -> Command/URL**).
+
+2. Bind a key combination of your choice to the command `vocalinux --toggle`.
+
+Now your chosen key combination toggles dictation, handled by the compositor
+rather than by Vocalinux reading the keyboard directly. This works the same way
+on other compositors that support binding a key to a command (e.g. GNOME custom
+shortcuts, Sway/Hyprland `bindsym`/`bind`).
+
+As an advanced alternative, you can set the same option in
+`~/.config/vocalinux/config.json` under `shortcuts`:
+
+```json
+"shortcuts": {
+    "disable_internal_hotkey": true
+}
+```
+
+Restart Vocalinux only if you edit that file by hand while the app is not
+using Settings.
+
 ### Model size (whisper.cpp / Whisper)
 
 | Size | Approx. size | Tradeoff |

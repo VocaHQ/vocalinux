@@ -8,7 +8,7 @@ import os
 import unittest
 
 
-def _get_source_code():
+def _get_source_code() -> str:
     """Read the settings dialog source file."""
     source_path = os.path.join(
         os.path.dirname(__file__),
@@ -251,6 +251,65 @@ class TestConfigManagerShortcuts(unittest.TestCase):
             shortcut = config.get("shortcuts", "toggle_recognition", "right_alt+right_alt")
             self.assertEqual(shortcut, "right_alt+right_alt")
             self.assertEqual(config.get("shortcuts", "mode"), "push_to_talk")
+
+
+class TestExternalActivationToggle(unittest.TestCase):
+    """Source-inspection tests for the external-activation switch.
+
+    The dialog subclasses a mocked Gtk.Dialog, so its methods can't be called
+    directly; we assert the wiring is present in source (same approach as
+    TestSettingsDialogShortcutsSection above).
+    """
+
+    def setUp(self):
+        self.source_code = _get_source_code()
+
+    def test_switch_widget_created(self):
+        """The external-activation switch is created in the shortcuts section."""
+        self.assertIn("self.disable_internal_hotkey_switch = Gtk.Switch()", self.source_code)
+
+    def test_switch_signal_connected(self):
+        """The switch is wired to its state-set handler."""
+        self.assertIn("self.disable_internal_hotkey_switch.connect(", self.source_code)
+        self.assertIn("self._on_disable_internal_hotkey_toggled", self.source_code)
+
+    def test_handler_persists_config_key(self):
+        """The handler saves the disable_internal_hotkey flag."""
+        self.assertIn(
+            'self.config_manager.set("shortcuts", "disable_internal_hotkey", disabled)',
+            self.source_code,
+        )
+        self.assertIn("self.config_manager.save_settings()", self.source_code)
+
+    def test_handler_live_applies_via_callback(self):
+        """Toggling live-applies by invoking the listener update callback."""
+        self.assertIn("self.hotkey_listener_update_callback()", self.source_code)
+
+    def test_handler_guards_during_initialization(self):
+        """The handler is inert while the dialog is initializing/applying."""
+        self.assertIn(
+            "def _on_disable_internal_hotkey_toggled(self, widget: Gtk.Switch, state: bool)"
+            " -> bool:",
+            self.source_code,
+        )
+        self.assertIn("if self._initializing or self._applying_settings:", self.source_code)
+
+    def test_sensitivity_helper_greys_internal_rows(self):
+        """External activation greys out the built-in shortcut rows."""
+        self.assertIn(
+            "def _update_internal_hotkey_sensitivity(self, disabled: bool) -> None:",
+            self.source_code,
+        )
+        self.assertIn(
+            "for row in (self.mode_row, self.shortcut_row, self.custom_shortcut_row):",
+            self.source_code,
+        )
+        self.assertIn("row.set_sensitive(not disabled)", self.source_code)
+
+    def test_initial_state_loaded(self):
+        """The switch's initial state is loaded from config during populate."""
+        self.assertIn("self.disable_internal_hotkey_switch.set_active(", self.source_code)
+        self.assertIn('"shortcuts", "disable_internal_hotkey", False', self.source_code)
 
 
 if __name__ == "__main__":

@@ -513,5 +513,207 @@ class TestTrayIndicatorSignalHandling(unittest.TestCase):
             assert isinstance(result, bool)
 
 
+class TestExternalActivationGate(unittest.TestCase):
+    """Tests for the D-Bus external-activation config gate.
+
+    These live here (and not in test_dbus_activation.py) so that the real
+    tray_indicator module is imported late in the session -- after the tests
+    that swap sys.modules["gi.repository"] at runtime. Importing it earlier
+    would freeze tray_indicator.GLib against a stale mock and break unrelated
+    GLib-identity assertions (e.g. in test_suspend_handler.py).
+    """
+
+    @staticmethod
+    def _fake_indicator(active: bool) -> MagicMock:
+        """Minimal stand-in for calling _setup_keyboard_shortcuts in isolation.
+
+        ``active`` stubs _external_activation_active() directly rather than
+        the config it normally derives from -- that derivation (including the
+        once-failed-stays-off persistence) has its own tests below.
+        """
+        fake = MagicMock()
+        fake.shortcut_manager.active = False
+        fake.config_manager.get_str.return_value = "toggle"
+        fake._external_activation_active.return_value = active
+        return fake
+
+    def test_external_mode_skips_listener_start(self):
+        """With the option enabled, the evdev/pynput listener is not started."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(active=True)
+        TrayIndicator._setup_keyboard_shortcuts(fake)
+        fake.shortcut_manager.start.assert_not_called()
+        fake.shortcut_manager.register_toggle_callback.assert_called_once_with(None)
+
+    def test_default_mode_starts_listener(self):
+        """With the option disabled (default), the listener starts as before."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(active=False)
+        TrayIndicator._setup_keyboard_shortcuts(fake)
+        fake.shortcut_manager.start.assert_called_once()
+
+    def test_reconfigure_stops_active_recognition_first(self):
+        """An active push-to-talk session is stopped before the listener that
+        would have delivered its release callback is torn down, so it cannot
+        be left running with no way back to idle."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(active=True)
+        fake.speech_engine.state = RecognitionState.LISTENING
+        TrayIndicator._setup_keyboard_shortcuts(fake)
+        fake._stop_recognition.assert_called_once_with()
+
+    def test_reconfigure_leaves_idle_recognition_alone(self):
+        """No spurious stop is issued when nothing is active."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(active=False)
+        fake.speech_engine.state = RecognitionState.IDLE
+        TrayIndicator._setup_keyboard_shortcuts(fake)
+        fake._stop_recognition.assert_not_called()
+
+
+class TestExternalActivationActiveGate(unittest.TestCase):
+    """Tests for _external_activation_active(): the saved setting, unless the
+    D-Bus service has already failed to register this run."""
+
+    @staticmethod
+    def _fake_indicator(disable_internal_hotkey: bool, unavailable: bool) -> MagicMock:
+        fake = MagicMock()
+        fake.config_manager.get_bool.return_value = disable_internal_hotkey
+        fake._external_activation_unavailable = unavailable
+        return fake
+
+    def test_true_when_configured_and_available(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=True, unavailable=False)
+        assert TrayIndicator._external_activation_active(fake) is True
+
+    def test_false_when_not_configured(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=False, unavailable=False)
+        assert TrayIndicator._external_activation_active(fake) is False
+
+    def test_false_once_unavailable_even_if_still_configured(self):
+        """Once the service has failed, the saved setting is overridden for
+        the rest of the process -- it does not retry."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=True, unavailable=True)
+        assert TrayIndicator._external_activation_active(fake) is False
+
+
+class TestDBusRegistrationFailedFallback(unittest.TestCase):
+    """Tests for falling back to the internal listener when the D-Bus service
+    could not register, so the user is never left with no activation path."""
+
+    @staticmethod
+    def _fake_indicator(disable_internal_hotkey: bool) -> MagicMock:
+        fake = MagicMock()
+        fake.config_manager.get_bool.return_value = disable_internal_hotkey
+        return fake
+
+    @patch("vocalinux.ui.tray_indicator.notifications")
+    def test_falls_back_when_external_activation_configured(self, mock_notifications):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=True)
+        TrayIndicator._on_dbus_registration_failed(fake)
+        assert fake._external_activation_unavailable is True
+        fake._setup_keyboard_shortcuts.assert_called_once_with()
+        mock_notifications.notify.assert_called_once()
+
+    @patch("vocalinux.ui.tray_indicator.notifications")
+    def test_fallback_persists_across_a_later_reconfigure(self, mock_notifications):
+        """The exact regression this fixes: a reconfigure after the fallback
+        (mode change, settings toggle, resume) must not re-disable the only
+        working activation path just because the saved setting still asks
+        for external activation."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        with patch.object(TrayIndicator, "__init__", lambda self: None):
+            indicator = TrayIndicator.__new__(TrayIndicator)
+        indicator._external_activation_unavailable = False
+        indicator.config_manager = MagicMock()
+        indicator.config_manager.get_bool.return_value = True
+        indicator.config_manager.get_str.return_value = "toggle"
+        indicator.speech_engine = MagicMock()
+        indicator.shortcut_manager = MagicMock()
+        indicator.shortcut_manager.active = False
+
+        indicator._on_dbus_registration_failed()
+        indicator.shortcut_manager.start.assert_called_once()
+
+        # A later reconfigure -- e.g. the mode combo changing in Settings --
+        # calls this with no knowledge of the earlier failure.
+        indicator.shortcut_manager.reset_mock()
+        indicator._setup_keyboard_shortcuts()
+        indicator.shortcut_manager.start.assert_called_once()
+
+    def test_noop_when_internal_listener_already_active(self):
+        """Nothing to fall back to/from if the internal listener was already
+        the active mode."""
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = self._fake_indicator(disable_internal_hotkey=False)
+        TrayIndicator._on_dbus_registration_failed(fake)
+        fake._setup_keyboard_shortcuts.assert_not_called()
+
+
+class TestExternalTriggerHandlers(unittest.TestCase):
+    """Tests for the D-Bus external Start/Stop handlers on TrayIndicator.
+
+    These use normal (non push-to-talk) start semantics and guard on the
+    current recognition state, so repeated `vocalinux --start`/`--stop` calls
+    are idempotent.
+    """
+
+    def test_external_start_starts_when_idle(self):
+        """_external_start starts recognition only when currently idle."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = MagicMock()
+        fake.speech_engine.state = RecognitionState.IDLE
+        TrayIndicator._external_start(fake)
+        fake.speech_engine.start_recognition.assert_called_once_with()
+
+    def test_external_start_noop_when_already_running(self):
+        """_external_start does nothing if recognition is already active."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = MagicMock()
+        fake.speech_engine.state = RecognitionState.LISTENING
+        TrayIndicator._external_start(fake)
+        fake.speech_engine.start_recognition.assert_not_called()
+
+    def test_external_stop_stops_when_active(self):
+        """_external_stop stops recognition when it is not idle."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = MagicMock()
+        fake.speech_engine.state = RecognitionState.LISTENING
+        TrayIndicator._external_stop(fake)
+        fake.speech_engine.stop_recognition.assert_called_once_with()
+
+    def test_external_stop_noop_when_idle(self):
+        """_external_stop does nothing if recognition is already idle."""
+        from vocalinux.common_types import RecognitionState
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        fake = MagicMock()
+        fake.speech_engine.state = RecognitionState.IDLE
+        TrayIndicator._external_stop(fake)
+        fake.speech_engine.stop_recognition.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
