@@ -25,6 +25,26 @@ from vocalinux.ui.config_manager import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _numpy_is_real_while_comparing():
+    """Keep pytest.approx working in the full suite.
+
+    Older tests assign ``sys.modules["numpy"] = MagicMock()`` at import and
+    never put the real module back. ``pytest.approx`` then does
+    ``isinstance(value, numpy.bool_)`` and raises TypeError.
+    """
+    current = sys.modules.get("numpy")
+    real = getattr(sys, "_vocalinux_real_numpy", None)
+    if isinstance(current, MagicMock) and real is not None:
+        sys.modules["numpy"] = real
+        try:
+            yield
+        finally:
+            sys.modules["numpy"] = current
+    else:
+        yield
+
+
 class FakeSink:
     """In-memory default sink. ``present`` False means that sink is gone."""
 
