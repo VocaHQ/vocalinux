@@ -24,7 +24,7 @@ export default function PrivacyPage() {
     headline: "Vocalinux Privacy Policy",
     description:
       "How Vocalinux handles voice data: local engines on your machine, optional Remote API to a server you configure.",
-    dateModified: "2026-02-19",
+    dateModified: "2026-09-23",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
@@ -92,8 +92,8 @@ export default function PrivacyPage() {
           </div>
           <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
           <p className="text-sm text-muted-foreground">
-            Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. No hidden
-            telemetry or data collection.
+            Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. The installed
+            app has no hidden telemetry.
           </p>
         </article>
       </section>
@@ -107,8 +107,10 @@ export default function PrivacyPage() {
           </h2>
           <div className="space-y-4 text-muted-foreground">
             <p>
-              <strong className="text-foreground">We do not collect any personal data.</strong> This
-              includes:
+              <strong className="text-foreground">
+                The installed Vocalinux app does not collect personal data.
+              </strong>{" "}
+              This includes:
             </p>
             <ul className="space-y-2">
               <li className="flex items-start gap-2">
@@ -132,6 +134,27 @@ export default function PrivacyPage() {
                 No IP addresses or location data
               </li>
             </ul>
+            <p>
+              Those limits apply to the installed app. They do not describe this
+              website.
+            </p>
+          </div>
+        </article>
+
+        <article className="rounded-[12px] border border-border bg-background p-6">
+          <h2 className="mb-4 flex items-center gap-2 font-display text-2xl font-semibold">
+            <Eye className="h-5 w-5 text-primary" />
+            This website (vocalinux.com)
+          </h2>
+          <div className="space-y-4 text-muted-foreground">
+            <p>
+              vocalinux.com uses Google Analytics (measurement ID{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5">G-7NBBNJNNQ7</code>)
+              to measure aggregate site traffic. Google Analytics may process IP
+              addresses and device-related data according to Google&apos;s
+              practices. That is separate from the installed Vocalinux app, which
+              does not send usage telemetry.
+            </p>
           </div>
         </article>
 
@@ -237,7 +260,7 @@ export default function PrivacyPage() {
               </tr>
               <tr>
                 <td className="py-3 font-medium text-foreground">Cost</td>
-                <td className="py-3 text-primary">Free forever</td>
+                <td className="py-3 text-primary">Free and open source</td>
                 <td className="py-3">Subscription</td>
               </tr>
             </tbody>
