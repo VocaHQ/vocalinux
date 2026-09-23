@@ -1136,6 +1136,17 @@ class TrayIndicator:
         """Quit the application."""
         logger.info("Quitting application")
 
+        # stop_recognition is not called here (it would play the stop cue and
+        # join the capture thread). Put the speakers back before the process
+        # exits; a crash that skips this still restores on the next launch.
+        engine = getattr(self, "speech_engine", None)
+        release = getattr(engine, "release_playback_duck", None)
+        if callable(release):
+            try:
+                release()
+            except Exception:
+                logger.error("Could not restore playback volume while quitting", exc_info=True)
+
         if self._suspend_handler is not None:
             self._suspend_handler.shutdown()
 

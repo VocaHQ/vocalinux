@@ -135,6 +135,8 @@ Optional extras: `vosk`, `whisper`, `vad`, `dev`.
 ```
 src/vocalinux/
 ├── main.py, version.py, common_types.py
+├── audio/
+│   └── playback_ducker.py      # lower default sink while dictating
 ├── single_instance.py          # $XDG_DATA_HOME/vocalinux/instance.lock
 ├── auto_pause_monitor.py       # unload model while configured apps run
 ├── model_keepalive.py          # idle unload
