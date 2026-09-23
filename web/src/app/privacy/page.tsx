@@ -93,7 +93,7 @@ export default function PrivacyPage() {
           <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
           <p className="text-sm text-muted-foreground">
             Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. The installed
-            app has no hidden telemetry.
+            app does not send usage telemetry.
           </p>
         </article>
       </section>
@@ -108,32 +108,37 @@ export default function PrivacyPage() {
           <div className="space-y-4 text-muted-foreground">
             <p>
               <strong className="text-foreground">
-                The installed Vocalinux app does not collect personal data.
+                The installed Vocalinux app does not send usage telemetry.
               </strong>{" "}
-              This includes:
+              It does not phone home. The installed app does not do the following
+              for us:
             </p>
             <ul className="space-y-2">
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No voice recordings or audio data
+                Does not send voice recordings or audio data to us
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No transcribed text
+                Does not send transcribed text to us
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No usage analytics or telemetry
+                Does not send usage analytics or telemetry
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No device fingerprints
+                Does not send device fingerprints to us
               </li>
               <li className="flex items-start gap-2">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-primary" />
-                No IP addresses or location data
+                Does not collect IP addresses or location data for us
               </li>
             </ul>
+            <p>
+              Local engines keep audio on your device. Remote API sends audio only
+              to the server you configure.
+            </p>
             <p>
               Those limits apply to the installed app. They do not describe this
               website.
@@ -148,12 +153,14 @@ export default function PrivacyPage() {
           </h2>
           <div className="space-y-4 text-muted-foreground">
             <p>
-              vocalinux.com uses Google Analytics (measurement ID{" "}
-              <code className="rounded bg-muted px-1.5 py-0.5">G-7NBBNJNNQ7</code>)
-              to measure aggregate site traffic. Google Analytics may process IP
-              addresses and device-related data according to Google&apos;s
-              practices. That is separate from the installed Vocalinux app, which
-              does not send usage telemetry.
+              vocalinux.com loads Google Analytics via the googletagmanager gtag
+              script for measurement ID{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5">G-7NBBNJNNQ7</code>{" "}
+              and runs gtag config with no IP anonymization and no cookie flags.
+              That sends page views and a Google Analytics client identifier (a
+              cookie) to Google. Google processes IP addresses and device and
+              browser data. The installed Vocalinux app does not send usage
+              telemetry.
             </p>
           </div>
         </article>
@@ -197,7 +204,7 @@ export default function PrivacyPage() {
           </h2>
           <div className="space-y-4 text-muted-foreground">
             <p>
-              Vocalinux stores configuration locally at <code className="rounded bg-muted px-1.5 py-0.5 bg-muted">~/.config/vocalinux/</code>:
+              Vocalinux stores configuration locally at <code className="rounded bg-muted px-1.5 py-0.5">~/.config/vocalinux/config.json</code>:
             </p>
             <ul className="space-y-2">
               <li className="flex items-start gap-2">
@@ -214,7 +221,7 @@ export default function PrivacyPage() {
               </li>
             </ul>
             <p>
-              This data is stored in plain text YAML format. You can view, edit, or delete it at
+              This data is stored in JSON. You can view, edit, or delete it at
               any time.
             </p>
           </div>
@@ -255,7 +262,7 @@ export default function PrivacyPage() {
               </tr>
               <tr className="border-b border-border">
                 <td className="py-3 font-medium text-foreground">Voice recordings stored</td>
-                <td className="py-3 text-primary">No</td>
+                <td className="py-3 text-primary">Not by us; Remote API only if you enable it</td>
                 <td className="py-3">Varies by service</td>
               </tr>
               <tr>
