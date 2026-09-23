@@ -13,6 +13,7 @@ import logging
 import os
 import queue
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
+from ..ui.config_manager import _multilingual_sibling
 from ..utils import faster_whisper_model_info as faster_whisper
 from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
@@ -34,13 +36,19 @@ from ..utils.model_checksums import (
     write_verification_stamp,
 )
 from ..utils.paths import models_dir
+from ..utils.system_language import LANGUAGE_FOLLOWS_LAYOUT, language_for_active_layout
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
 from ..utils.whisper_model_info import (
     migrate_legacy_checkpoint_names,
     whisper_model_file,
     whisper_model_url,
 )
-from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, get_model_path, is_model_downloaded
+from ..utils.whispercpp_model_info import (
+    WHISPERCPP_MODEL_INFO,
+    get_model_path,
+    is_english_only_model,
+    is_model_downloaded,
+)
 from ..version import __version__
 from .command_processor import CommandProcessor
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
@@ -99,6 +107,35 @@ def normalize_language_for_engine(engine: str, language: str) -> str:
     if engine == "parakeet":
         return "auto"
     return language
+
+
+def resolve_language_preference(language: str) -> str:
+    """Turn a stored language preference into one an engine can consume (#821).
+
+    ``layout`` is not a language: it asks for whatever the active keyboard
+    layout points at, which is why this resolves fresh on every call rather
+    than once at startup. A layout that cannot be read, or that maps to nothing
+    in the catalogue, degrades to ``auto`` -- the same answer the engine would
+    have reached on its own, and better than refusing to dictate.
+    """
+    if language != LANGUAGE_FOLLOWS_LAYOUT:
+        return language
+
+    try:
+        resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
+    except (
+        OSError,
+        FileNotFoundError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ) as exc:
+        logger.debug(f"Keyboard layout lookup failed: {exc}")
+        return "auto"
+
+    return resolved or "auto"
 
 
 # ALSA error handler to suppress warnings during PyAudio initialization
@@ -1080,7 +1117,11 @@ class SpeechRecognitionManager:
         """
         self.engine = engine
         self.model_size = model_size
-        self.language = normalize_language_for_engine(engine, language)
+        # The stored preference, which may be the "layout" sentinel. self.language
+        # is always something an engine can consume, re-resolved from this at the
+        # start of every dictation while the sentinel is in force (#821).
+        self.language_preference = language
+        self.language = normalize_language_for_engine(engine, resolve_language_preference(language))
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
         self.state = RecognitionState.IDLE
         self.audio_thread = None
@@ -1220,6 +1261,14 @@ class SpeechRecognitionManager:
         else:
             raise ValueError(f"Unsupported speech recognition engine: {self.engine}")
 
+    #: Class-level default so a manager built without ``__init__`` still answers
+    #: "not following the layout" instead of raising on the dictation path.
+    language_preference: str = "auto"
+
+    #: Logged once rather than per dictation, so an unsupported pairing does not
+    #: spam the log on every hotkey press.
+    _warned_follow_layout_unsupported: bool = False
+
     # Every live field ``reconfigure()`` can write. A failed engine switch
     # restores this set so dictation matches the persisted config, not the
     # attempted-but-unsaved Settings values.
@@ -1227,6 +1276,7 @@ class SpeechRecognitionManager:
         "engine",
         "model_size",
         "language",
+        "language_preference",
         "vad_sensitivity",
         "silence_timeout",
         "audio_device_index",
@@ -1258,6 +1308,91 @@ class SpeechRecognitionManager:
         """Write a ``_snapshot_reconfigure_state`` result back onto the manager."""
         for name, value in previous.items():
             setattr(self, name, value)
+
+    #: Engines that read the language per utterance instead of baking it into the
+    #: loaded model, so changing it costs nothing.
+    _PER_UTTERANCE_LANGUAGE_ENGINES = ("whisper", "whisper_cpp", "faster_whisper", "remote_api")
+
+    def _can_relanguage_without_reload(self) -> bool:
+        """Whether a language change can skip re-initialising the engine (#821).
+
+        The whisper family passes the language to each transcribe call, so the
+        loaded model does not care. VOSK loads a different model per language and
+        Parakeet never consumes a catalog language at all, so both keep the
+        restart. An English-only whisper model is excluded as well: it cannot
+        honour a non-English layout, and only a reload can fetch one that can.
+        """
+        if self.engine not in self._PER_UTTERANCE_LANGUAGE_ENGINES:
+            return False
+        if self.engine == "remote_api":
+            # The language rides along in the request body; nothing is loaded here.
+            return True
+        return not is_english_only_model(self.model_size)
+
+    def _refresh_language_from_layout(self) -> None:
+        """Re-point the engine at the active keyboard layout before dictating.
+
+        A no-op unless the user asked for the follow mode. Failures are logged
+        and swallowed: dictating in the previous language beats not dictating.
+        """
+        if self.language_preference != LANGUAGE_FOLLOWS_LAYOUT:
+            return
+
+        target = normalize_language_for_engine(
+            self.engine, resolve_language_preference(LANGUAGE_FOLLOWS_LAYOUT)
+        )
+        if target == self.language:
+            return
+
+        if self._can_relanguage_without_reload():
+            logger.info(f"Keyboard layout changed: dictating in {target}")
+            self.language = target
+            self.command_processor.set_language(target)
+            if self._faster_whisper_engine is not None:
+                # Read per utterance by the engine's own _normalize_language.
+                self._faster_whisper_engine.language = target
+            return
+
+        # English-only whisper.cpp weights cannot honour a non-English layout.
+        # Swap to the multilingual sibling and keep the follow-mode sentinel;
+        # handing ``target`` to reconfigure() would store it as the new
+        # preference and disarm the mode after a single switch.
+        # is_model_downloaded / _multilingual_sibling are the whisper.cpp
+        # catalog: do not consult them for whisper / faster_whisper .en ids.
+        if self.engine == "whisper_cpp":
+            sibling = _multilingual_sibling(self.model_size)
+            # No surprise fetch on the hotkey: only swap if the sibling is already downloaded.
+            if sibling != self.model_size and is_model_downloaded(sibling):
+                try:
+                    self.reconfigure(model_size=sibling, language=LANGUAGE_FOLLOWS_LAYOUT)
+                    return
+                except (
+                    RuntimeError,
+                    ValueError,
+                    FileNotFoundError,
+                    OSError,
+                    ImportError,
+                    TypeError,
+                    AttributeError,
+                    ChecksumError,
+                ):
+                    logger.error(
+                        "Failed to swap to multilingual sibling %r for layout "
+                        "language %s (engine=%s, model=%s)",
+                        sibling,
+                        target,
+                        self.engine,
+                        self.model_size,
+                        exc_info=True,
+                    )
+
+        if not self._warned_follow_layout_unsupported:
+            self._warned_follow_layout_unsupported = True
+            logger.warning(
+                f"Cannot follow the keyboard layout to {target}: the loaded "
+                f"{self.model_size!r} model cannot transcribe it. Pick a "
+                "multilingual model in Settings to use this mode."
+            )
 
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
@@ -3159,6 +3294,10 @@ class SpeechRecognitionManager:
                     )
                 return False
 
+        # Last thing before listening, so the language matches the layout the
+        # user is typing in right now rather than the one they had at startup.
+        self._refresh_language_from_layout()
+
         logger.info("Starting speech recognition")
         self._update_state(RecognitionState.LISTENING)
 
@@ -3805,10 +3944,18 @@ class SpeechRecognitionManager:
         # Whisper needs to know the language for transcription
         # VOSK needs to load a different model for the new language
         language_changed = False
-        if language is not None and language != self.language:
-            self.language = language
-            language_changed = True
-            restart_needed = True
+        if language is not None:
+            # Settings hands over the preference, which may be the sentinel. Keep
+            # it so the follow mode survives, and resolve what the engine gets.
+            self.language_preference = language
+            resolved = resolve_language_preference(language)
+            if resolved != self.language:
+                self.language = resolved
+                language_changed = True
+                # Only the engines that bake the language into the loaded model
+                # need the restart; see _can_relanguage_without_reload.
+                if not self._can_relanguage_without_reload():
+                    restart_needed = True
 
         # Parakeet never consumes catalog language. Apply after engine/language
         # updates so switching TO parakeet also clears a leftover code.
@@ -3821,6 +3968,9 @@ class SpeechRecognitionManager:
         # Command aliases follow the stored language (auto after Parakeet).
         if language_changed:
             self.command_processor.set_language(self.language)
+            if not restart_needed and self._faster_whisper_engine is not None:
+                # No re-init will rebuild it, so update the live engine in place.
+                self._faster_whisper_engine.language = self.language
 
         # Update VOSK specific params if provided
         if vad_sensitivity is not None:

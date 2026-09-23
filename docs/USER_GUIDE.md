@@ -85,6 +85,23 @@ Open **Settings → Speech Model**. The page starts with a simple setup (languag
 
 Parakeet runs NVIDIA NeMo ASR models through sherpa-onnx. The default bundle is **v3-european** (25 European languages). **v2-english** is English-only. Parakeet ignores the catalog language picker (language is treated as auto).
 
+### Language
+
+Pick the language you dictate in from **Language**, or leave it on auto-detect.
+
+If you work in more than one language and switch keyboard layouts to do it, turn
+on **Follow keyboard layout** instead. Vocalinux then reads your active layout at
+the start of every dictation and uses the matching language, so switching layout
+switches dictation language with it. The Language picker greys out while this is
+on and shows what your current layout resolves to; turning it off pins that
+language.
+
+Available for whisper.cpp, Whisper, Faster Whisper, and Remote API. VOSK loads a
+separate model per language, so following a layout would mean a model reload on
+the hotkey; Parakeet does not use the language picker at all. Active-layout
+detection uses GNOME's input-source settings; on other desktops it falls back to
+the configured primary layout.
+
 ### Model size (whisper.cpp / Whisper)
 
 | Size | Approx. size | Tradeoff |

@@ -69,7 +69,9 @@ def normalize_sound_effect_tone(tone: Any) -> str:
 DEFAULT_CONFIG = {
     "speech_recognition": {  # Changed section name
         "engine": "whisper_cpp",  # whisper_cpp is default; vosk/whisper/parakeet/faster_whisper/remote_api are optional
-        "language": "auto",  # Auto-detect language (Whisper/whisper.cpp only)
+        # "auto" detects per utterance, "layout" follows the active keyboard
+        # layout (#821), anything else pins one catalog language.
+        "language": "auto",
         "model_size": "tiny",  # Current model size (for backward compatibility)
         "vosk_model_size": "small",  # Default model for VOSK engine
         "whisper_model_size": "tiny",  # Default model for Whisper engine
@@ -189,6 +191,9 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
     specialization. True leftover specializations (turbo, versioned large,
     quantized multilingual) are still honoured.
     """
+    # The "layout" sentinel is deliberately not in the catalog, so it reads as
+    # non-English here and derives the multilingual variant -- which is what a
+    # mode that can land on any language needs (#821).
     language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
 
     pinned = pinned_variant.lower() if isinstance(pinned_variant, str) else ""

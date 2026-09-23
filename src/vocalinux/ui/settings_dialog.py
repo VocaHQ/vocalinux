@@ -55,6 +55,10 @@ from ..utils.model_choice import (
     size_for_priority,
 )
 from ..utils.paths import models_dir  # noqa: E402
+from ..utils.system_language import (  # noqa: E402
+    LANGUAGE_FOLLOWS_LAYOUT,
+    language_for_active_layout,
+)
 from ..utils.update_checker import (  # noqa: E402
     DEFAULT_UPDATE_CHANNEL,
     ReleaseInfo,
@@ -269,6 +273,45 @@ def _model_specialization_display_name(model_name: str) -> str:
         return f"Quantized {quantization}"
 
     return "Standard multilingual"
+
+
+#: Engines that can honour the follow-layout mode. VOSK loads a different model
+#: per language, so following a layout would stall the hotkey on a model reload;
+#: Parakeet never consumes a catalog language at all. Module level, not a class
+#: attribute, so tests driving the methods against a Mock still reach it.
+FOLLOW_LAYOUT_ENGINES = ("whisper", "whisper_cpp", "faster_whisper", "remote_api")
+
+
+def _is_following_layout(dialog: Any) -> bool:
+    """Whether the follow-keyboard-layout mode is on for this dialog (#821).
+
+    A module function reading a cached bool, deliberately not a method. Several
+    tests drive the dialog methods unbound against a ``Mock``, where a method
+    call on self resolves to a truthy Mock attribute and would invert every
+    guard below. The ``is True`` keeps a Mock attribute from passing either.
+    """
+    return getattr(dialog, "_follow_layout_active", False) is True
+
+
+def _language_for_whispercpp_variant(dialog: Any) -> Optional[str]:
+    """Language that drives .en vs multilingual whisper.cpp derivation.
+
+    Follow-the-layout can land on any language, so it must keep multilingual
+    weights even when the picker is showing the current English layout. Using
+    that display as the derivation language selects ``.en``, Settings then
+    refuses the mode as English-only, and the next auto-apply persists a
+    concrete language and disarms follow (#821).
+    """
+    if _is_following_layout(dialog):
+        return LANGUAGE_FOLLOWS_LAYOUT
+    # Load path: the saved mode is follow, but the switch has not been synced
+    # into ``_follow_layout_active`` yet. ``is True`` so a Mock stays out.
+    if (
+        getattr(dialog, "_follow_layout_saved", False) is True
+        and getattr(dialog, "_initializing", False) is True
+    ):
+        return LANGUAGE_FOLLOWS_LAYOUT
+    return dialog.language_combo.get_active_id() or dialog.language
 
 
 def _language_is_english(language_id: str) -> bool:
@@ -620,6 +663,13 @@ MODEL_SPECIALIZATION_TOOLTIP = (
     "Choose Standard multilingual unless you specifically need English-only accuracy, "
     "lower-memory quantized models, Turbo speed, or a legacy large model."
 )
+FOLLOW_LAYOUT_TOOLTIP = (
+    "Re-reads your active keyboard layout at the start of every dictation and "
+    "picks the matching language. Useful if you switch layouts to work in more "
+    "than one language. Needs a multilingual model; not available for VOSK, "
+    "which loads a separate model per language."
+)
+
 LANGUAGE_TOOLTIP = (
     "Choose the language you dictate in. Search the list. Picking a language "
     "other than English switches off an English-only model."
@@ -2059,6 +2109,11 @@ class SettingsDialog(Gtk.Dialog):
         # user returns to Whisper/cpp. Do not store engine-coerced fallbacks here.
         self._last_non_parakeet_language = None
         self._engine_for_language_memory = None
+        # Set from the saved config in _load_and_apply_settings; the switch itself
+        # is the source of truth once the dialog is built (#821).
+        self._follow_layout_saved = False
+        # Cached so Mock-driven tests and early calls read a real bool.
+        self._follow_layout_active = False
         self._applying_settings = False  # Flag to prevent recursive settings application
         self._advanced_prompt_dirty = False
         self._about_release_url = ""
@@ -3232,6 +3287,22 @@ class SettingsDialog(Gtk.Dialog):
         self.language_row.set_tooltip_text(LANGUAGE_TOOLTIP)
         group.add_row(self.language_row)
 
+        # Follow-the-layout is a mode, not a language, so it is a switch over the
+        # picker rather than another entry inside it (#821). On, the picker is
+        # disabled and shows what the layout currently resolves to; off, whatever
+        # it shows becomes the pinned language again.
+        self.follow_layout_switch = Gtk.Switch()
+        self.follow_layout_switch.set_valign(Gtk.Align.CENTER)
+        self.follow_layout_switch.set_tooltip_text(FOLLOW_LAYOUT_TOOLTIP)
+        self.follow_layout_row = PreferenceRow(
+            title="Follow keyboard layout",
+            subtitle="Dictate in the language of whichever layout you are typing in",
+            widget=self.follow_layout_switch,
+            keywords=("keyboard", "layout", "follow", "bilingual", "language", "switch"),
+        )
+        self.follow_layout_row.set_tooltip_text(FOLLOW_LAYOUT_TOOLTIP)
+        group.add_row(self.follow_layout_row)
+
         # Lives inside the revealer built above, so the Advanced switch slides it out.
         self.advanced_box.pack_start(group, False, False, 0)
 
@@ -3323,6 +3394,7 @@ class SettingsDialog(Gtk.Dialog):
         self.model_combo.connect("changed", self._on_model_changed)
         self.model_variant_combo.connect("changed", self._on_model_variant_changed)
         self.language_combo.connect("changed", self._on_language_changed)
+        self.follow_layout_switch.connect("notify::active", self._on_follow_layout_toggled)
 
     def _on_remote_api_settings_changed(self, widget):
         """Handle remote API URL/Key/endpoint changes."""
@@ -4999,6 +5071,12 @@ class SettingsDialog(Gtk.Dialog):
         settings = self._get_current_settings()
         self.current_engine = settings["engine"]
         self.language = settings["language"]
+        # The picker holds languages, not modes. Remember the mode separately and
+        # seed the picker with whatever the layout resolves to right now, so the
+        # disabled row reads as a live answer instead of going blank (#821).
+        self._follow_layout_saved = self.language == LANGUAGE_FOLLOWS_LAYOUT
+        if self._follow_layout_saved:
+            self.language = language_for_active_layout(SUPPORTED_LANGUAGES) or "auto"
         if self.current_engine == "parakeet":
             # Config may already be auto; keep any non-auto leftover as restore seed.
             self._last_non_parakeet_language = (
@@ -5102,6 +5180,10 @@ class SettingsDialog(Gtk.Dialog):
         # Populate model and language options for the selected engine
         self._populate_model_options()
         self._sync_language_options_for_selected_model(self.language)
+        self.follow_layout_switch.set_active(
+            self._follow_layout_saved and self._follow_layout_supported()
+        )
+        self._sync_follow_layout_controls()
 
         # Set spin button values
         self.vad_spin.set_value(self.current_vad)
@@ -5184,7 +5266,7 @@ class SettingsDialog(Gtk.Dialog):
     def _get_recommended_whispercpp_model_for_language(self) -> tuple[str, str]:
         """Return the recommended whisper.cpp variant for the selected language."""
         recommended_model, reason = get_recommended_whispercpp_model()
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return _recommended_whispercpp_variant_for_language(
             recommended_model,
             reason,
@@ -5203,7 +5285,7 @@ class SettingsDialog(Gtk.Dialog):
         if recommended in WHISPERCPP_MODEL_INFO and is_whispercpp_model_downloaded(recommended):
             return None
 
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         wants_english = _language_is_english(language_id)
         recommended_mb = WHISPERCPP_MODEL_INFO.get(recommended, {}).get("size_mb", 0)
 
@@ -5231,7 +5313,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _get_default_whispercpp_variant_for_size(self, model_size: str) -> Optional[str]:
         """Return the default specialization for a user-selected size."""
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return _default_whispercpp_variant_for_size(model_size, language_id)
 
     def _on_apply_recommendation(self, _button: Any) -> None:
@@ -5339,6 +5421,7 @@ class SettingsDialog(Gtk.Dialog):
         finally:
             self._processing_language_change = False
 
+        self._sync_follow_layout_controls()
         self._update_language_warning()
         self._update_model_picker_tooltips()
 
@@ -5456,7 +5539,7 @@ class SettingsDialog(Gtk.Dialog):
         specialization: it is re-derived from the language currently in the combo.
         """
         pinned = self.config_manager.get_model_variant_for_engine("whisper_cpp")
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         return resolve_whispercpp_variant(saved_model_for_engine, pinned, language_id)
 
     def _populate_whispercpp_model_options(self, saved_model_for_engine: str):
@@ -5511,11 +5594,13 @@ class SettingsDialog(Gtk.Dialog):
             )
             self.model_variant_combo.append(model_name, display_text)
 
-        language_id = self.language_combo.get_active_id() or self.language
+        language_id = _language_for_whispercpp_variant(self)
         model_to_set = selected_model if selected_model in variants else None
         if model_to_set:
             # Bare size ids double as multilingual variants; retarget for language
             # so English picks .en instead of leaving Standard multilingual stuck.
+            # Follow mode uses the layout sentinel here so an English *display*
+            # does not retarget onto .en and then refuse the mode.
             model_to_set = _whispercpp_variant_for_language(model_to_set, language_id)
             if model_to_set not in variants:
                 model_to_set = None
@@ -5957,6 +6042,14 @@ class SettingsDialog(Gtk.Dialog):
                 "<span foreground='#e5a50a'>⚠ This model only understands English.</span>"
             )
             self.language_warning.show()
+        elif _is_following_layout(self):
+            resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
+            resolved_name = SUPPORTED_LANGUAGES.get(resolved, {}).get("name") if resolved else None
+            self.language_warning.set_markup(
+                "<span foreground='#3584e4'>Follows your active keyboard layout. "
+                f"Right now that is {resolved_name or 'auto-detect'}.</span>"
+            )
+            self.language_warning.show()
         elif lang_info.get("warning"):
             lang_name = lang_info.get("name", "This language")
             self.language_warning.set_markup(
@@ -5966,6 +6059,55 @@ class SettingsDialog(Gtk.Dialog):
         else:
             self.language_warning.set_markup("")
             self.language_warning.hide()
+
+    def _follow_layout_supported(self, engine: Optional[str] = None) -> bool:
+        """Whether the selected engine can follow the keyboard layout."""
+        return (engine or self._get_selected_engine()) in FOLLOW_LAYOUT_ENGINES
+
+    def _sync_follow_layout_controls(self) -> None:
+        """Enable/disable the switch for the engine, and the picker for the mode."""
+        # An English-only model has no non-English weights, so it cannot honour
+        # a layout that points anywhere else. Refusing the mode here is honest;
+        # the alternative is a switch that silently does nothing.
+        supported = self._follow_layout_supported() and not (
+            self._is_selected_whispercpp_model_english_only()
+        )
+        self.follow_layout_row.set_sensitive(supported)
+
+        if not supported and self.follow_layout_switch.get_active():
+            # An engine or model that cannot run the mode must not keep it on.
+            self._processing_language_change = True
+            try:
+                self.follow_layout_switch.set_active(False)
+            finally:
+                self._processing_language_change = False
+
+        self._follow_layout_active = bool(self.follow_layout_switch.get_active()) and supported
+        active = self._follow_layout_active
+        # The picker still shows a language while the mode drives it -- the one
+        # the layout resolves to right now -- so it reads as a live readout
+        # rather than going blank, and turning the mode off pins what is shown.
+        self.language_row.set_sensitive(not active)
+
+    def _on_follow_layout_toggled(self, *_args: Any) -> None:
+        """Apply the follow mode, or pin whatever the picker shows when it goes off."""
+        if self._initializing or self._applying_settings or self._processing_language_change:
+            return
+
+        if self.follow_layout_switch.get_active():
+            # Show what it resolves to, so the greyed-out picker stays meaningful.
+            resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
+            if resolved:
+                self._processing_language_change = True
+                try:
+                    self._set_combo_active_id_or_first(self.language_combo, resolved)
+                finally:
+                    self._processing_language_change = False
+
+        self._sync_follow_layout_controls()
+        self._update_language_warning()
+        self._refresh_simple_readout()
+        self._auto_apply_settings()
 
     def _on_language_changed(self, widget: Any) -> None:
         """Handle language selection change.
@@ -6046,6 +6188,27 @@ class SettingsDialog(Gtk.Dialog):
         pin and dropped when Advanced is auto.
         """
         language = self.language_combo.get_active_id() or self.language or "auto"
+
+        if _is_following_layout(self):
+            # Neither simple question can say "follow the layout", and writing an
+            # answer here would let the next simple edit silently replace the mode
+            # with whatever those two controls happen to read. Refresh only the
+            # part that does not depend on the language and leave them alone.
+            self._simple_syncing = True
+            try:
+                recommended, _ = self._get_recommended_whispercpp_model_for_language()
+                current = self._get_selected_whispercpp_model()
+                self.simple_priority_combo.set_active_id(
+                    priority_for_size(
+                        get_whispercpp_model_size(recommended),
+                        get_whispercpp_model_size(current),
+                    )
+                )
+            finally:
+                self._simple_syncing = False
+            self._update_simple_visibility()
+            return
+
         is_auto = language == "auto"
 
         stored_second = self.config_manager.get("speech_recognition", "simple_second_language", "")
@@ -6688,6 +6851,8 @@ class SettingsDialog(Gtk.Dialog):
             model_size = model_id.lower() if model_id else "small"
         if engine == "parakeet":
             language = "auto"
+        elif _is_following_layout(self):
+            language = LANGUAGE_FOLLOWS_LAYOUT
         else:
             language = language_id if language_id else self._default_language_for_engine(engine)
 
