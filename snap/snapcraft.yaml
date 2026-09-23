@@ -30,6 +30,7 @@ description: |
 
   Sandbox notes:
     - Global hotkeys need: sudo snap connect vocalinux:raw-input
+      and sudo snap connect vocalinux:hardware-observe
     - Native Wayland typing needs: sudo snap connect vocalinux:uinput
       (v0.17.0 ships the plug; v0.16.2 edge (rev 7) has no uinput plug; refresh first)
     - Microphone may need: sudo snap connect vocalinux:audio-record
@@ -57,10 +58,13 @@ apps:
       - home # optional access outside snap HOME (shared files)
       - network # download speech models on first run
       - network-bind # optional remote_api engine
-      # Global hotkeys via python-evdev (/proc/bus/input + /dev/input/event*).
+      # Global hotkeys via python-evdev (/dev/input/event*).
       # Super-privileged: not auto-connected; user must:
       #   sudo snap connect vocalinux:raw-input
       - raw-input
+      # Needed for /proc/bus/input/devices; not auto-connected:
+      #   sudo snap connect vocalinux:hardware-observe
+      - hardware-observe
       # ydotool writes to /dev/uinput so dictation reaches native Wayland apps.
       # Super-privileged: not auto-connected; user must:
       #   sudo snap connect vocalinux:uinput

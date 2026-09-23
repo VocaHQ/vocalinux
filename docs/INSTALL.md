@@ -32,6 +32,16 @@ The installer:
 - Downloads the default whisper.cpp tiny model (~74MB), verified against pinned checksums
 - Sets up desktop integration and launch wrappers
 
+The source installer uses committed, hash-verified Python dependency exports,
+including its pip and source-build tools. GTK/PyGObject still comes from your
+distribution, and the venv retains access to system packages. A missing export
+or unavailable pinned package causes that installation step to fail; the
+existing optional-engine and VAD fallbacks still apply.
+
+Remote installs run the installer from the selected release tag. Older tags
+therefore retain their original dependency-install behavior; downloading a new
+bootstrap script does not change an older release's pins.
+
 ### Installer modes
 
 ```bash
@@ -120,6 +130,7 @@ Store install, once Canonical lists the revision:
 sudo snap install vocalinux --edge
 sudo snap connect vocalinux:audio-record   # if mic is not auto-connected
 sudo snap connect vocalinux:raw-input      # global keyboard shortcuts (evdev)
+sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/devices)
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
@@ -131,6 +142,7 @@ Sideload the GitHub `.snap` (amd64) while the Store is waiting:
 sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap
 sudo snap connect vocalinux:audio-record
 sudo snap connect vocalinux:raw-input
+sudo snap connect vocalinux:hardware-observe
 sudo snap connect vocalinux:uinput
 ```
 

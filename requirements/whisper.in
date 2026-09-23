@@ -4,6 +4,9 @@
 # CUDA-bundled PyPI wheels can never match, regardless of index order.
 # Bump these pins together in step with each other when regenerating
 # (`just lock`).
+# Resolve across supported Python versions and constrain shared packages to
+# runtime.txt / installer-build.txt; otherwise this export can downgrade the
+# runtime (or select a numpy requiring a newer Python than the installer).
 #
 # The extra-index line below propagates into whisper.txt so plain
 # `pip install -r requirements/whisper.txt` resolves against the CPU index.

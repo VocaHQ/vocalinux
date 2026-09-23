@@ -354,6 +354,17 @@ class TestKeyboardShortcuts(unittest.TestCase):
             warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
             self.assertTrue(any("Permission issue" in str(call) for call in warning_calls))
 
+    def test_unavailable_hints_snap_lists_both_connects(self):
+        """Snap log banner should list both raw-input and hardware-observe."""
+        self.mock_create_backend.return_value = None
+        with patch.dict("os.environ", {"SNAP": "/snap/vocalinux/x1"}, clear=False):
+            with patch("vocalinux.ui.keyboard_shortcuts.logger") as mock_logger:
+                KeyboardShortcutManager()
+
+        messages = " ".join(str(call) for call in mock_logger.warning.call_args_list)
+        self.assertIn("raw-input", messages)
+        self.assertIn("hardware-observe", messages)
+
 
 class TestPynputBackend(unittest.TestCase):
     """Test cases for the pynput backend specifically."""

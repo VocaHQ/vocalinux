@@ -565,7 +565,7 @@ _VOCAHQ_FAMILY_LINKS = (
     (
         VOCAMAC_SITE_URL,
         "VocaMac",
-        "macOS, Beta",
+        "macOS, available now",
         ("platform-apple",),
         "Open vocamac.com",
     ),
@@ -4110,6 +4110,8 @@ class SettingsDialog(Gtk.Dialog):
         scrolled_window.set_min_content_height(60)
         scrolled_window.set_max_content_height(100)
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        # GTK3 default IN shadow draws a left etched stripe on GNOME/Wayland (#847).
+        scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)
         scrolled_window.get_style_context().add_class("test-area")
 
         self.test_textview = Gtk.TextView()

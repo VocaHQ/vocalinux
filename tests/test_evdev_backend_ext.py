@@ -394,6 +394,32 @@ class TestEvdevKeyboardBackendPermissionHint:
         result = backend.get_permission_hint()
         assert result is None
 
+    @patch.dict("os.environ", {"SNAP": "/snap/vocalinux/x1"}, clear=False)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE", True)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    def test_permission_hint_snap_no_devices(self, mock_find_devices):
+        """Snap with no listed devices should ask for both input plugs."""
+        mock_find_devices.return_value = []
+        backend = EvdevKeyboardBackend()
+        result = backend.get_permission_hint()
+        assert result is not None
+        assert "raw-input" in result
+        assert "hardware-observe" in result
+
+    @patch.dict("os.environ", {"SNAP": "/snap/vocalinux/x1"}, clear=False)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.EVDEV_AVAILABLE", True)
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_permission_hint_snap_permission_denied(self, mock_input_device, mock_find_devices):
+        """Snap that cannot open /dev/input should ask for both input plugs."""
+        mock_find_devices.return_value = ["/dev/input/event0"]
+        mock_input_device.side_effect = OSError(errno.EACCES, "Permission denied")
+        backend = EvdevKeyboardBackend()
+        result = backend.get_permission_hint()
+        assert result is not None
+        assert "raw-input" in result
+        assert "hardware-observe" in result
+
 
 class TestEvdevKeyboardBackendStart:
     """Test start() method."""

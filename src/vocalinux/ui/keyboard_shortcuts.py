@@ -102,6 +102,7 @@ class KeyboardShortcutManager:
             logger.warning("=" * 60)
             logger.warning("Global hotkeys read /dev/input (evdev). Connect once:")
             logger.warning("  sudo snap connect vocalinux:raw-input")
+            logger.warning("  sudo snap connect vocalinux:hardware-observe")
             logger.warning("Then restart Vocalinux. Until then, use the system tray.")
             logger.warning("=" * 60)
             return

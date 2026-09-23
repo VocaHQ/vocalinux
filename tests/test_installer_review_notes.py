@@ -2,8 +2,6 @@
 
 import os
 import subprocess
-import sys
-import tomllib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -64,9 +62,8 @@ def test_system_dep_and_venv_failures_use_structured_exit_codes() -> None:
         in source
     )
     assert 'exit "$EXIT_MISSING_DEPS"' in source
-    assert (
-        'print_error "Failed to update pip, setuptools, and wheel"; exit "$EXIT_NETWORK"' in source
-    )
+    bootstrap_failure = source.split("install_pinned_build_tools || {", 1)[1].split("}", 1)[0]
+    assert 'exit "$EXIT_NETWORK"' in bootstrap_failure
     assert (
         'print_error "Failed to install Vocalinux package. Installation cannot continue."' in source
     )
@@ -90,7 +87,7 @@ def test_whispercpp_fallback_installs_vosk_extra() -> None:
 
 def test_project_pip_install_skips_pygobject() -> None:
     source = _installer_source()
-    assert "write_pip_reqs_skip_pygobject()" in source
+    assert "write_pip_reqs_skip_pygobject()" not in source
     assert "pip_install_project_skip_pygobject()" in source
     assert "pip install --no-deps" in source
     assert "--no-emit-package pygobject" in source
@@ -99,46 +96,6 @@ def test_project_pip_install_skips_pygobject() -> None:
     assert 'pip install ".[vad]"' not in source
     assert 'pip install -e ".[vad]"' not in source
     assert 'pip install -e ".[whisper,dev]"' not in source
-
-
-def _run_reqs_writer(dest: Path, *extras: str) -> None:
-    source = _installer_source()
-    start = source.index("from pathlib import Path\nimport re\nimport sys\n")
-    end = source.index("\nPY\n}", start)
-    result = subprocess.run(
-        [sys.executable, "-", str(dest), *extras],
-        check=False,
-        cwd=INSTALLER.parent,
-        input=source[start:end],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def test_write_pip_reqs_skip_pygobject_runtime(tmp_path) -> None:
-    dest = tmp_path / "runtime.txt"
-    _run_reqs_writer(dest)
-    reqs = dest.read_text().splitlines()
-    assert reqs
-    assert all("pygobject" not in req.lower() for req in reqs)
-    assert any(req.startswith("pyaudio") for req in reqs)
-    assert any(req.startswith("pywhispercpp") for req in reqs)
-
-
-def test_write_pip_reqs_skip_pygobject_vosk_extra(tmp_path) -> None:
-    """The writer copies an extra's specifiers through, bounds and all.
-
-    Read out of pyproject.toml rather than written here as a literal. This
-    assertion was `["vosk>=0.3.45"]` and failed the day the extra gained an
-    upper bound, reporting an intentional pyproject edit as an installer defect.
-    """
-    with PYPROJECT.open("rb") as handle:
-        expected = tomllib.load(handle)["project"]["optional-dependencies"]["vosk"]
-    assert expected, "the vosk extra declares nothing; this would compare [] to []"
-    dest = tmp_path / "vosk.txt"
-    _run_reqs_writer(dest, "vosk")
-    assert dest.read_text().splitlines() == expected
 
 
 def test_settings_uses_engine_flag_not_removed_with_whisper() -> None:

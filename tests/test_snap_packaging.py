@@ -24,10 +24,15 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
 
     plugs = set((doc.get("apps") or {}).get("vocalinux", {}).get("plugs") or [])
     assert "raw-input" in plugs
+    assert "hardware-observe" in plugs
     assert "audio-record" in plugs
     assert "uinput" in plugs
     stage = doc["parts"]["vocalinux"].get("stage-packages") or []
     assert "ydotool" in stage
+
+    recipe_text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    assert "sudo snap connect vocalinux:raw-input" in recipe_text
+    assert "sudo snap connect vocalinux:hardware-observe" in recipe_text
 
     assert DESKTOP_FILE.is_file()
     assert SNAP_PNG.is_file()
@@ -48,6 +53,16 @@ def test_snap_puts_gnome_platform_first_on_ld_library_path() -> None:
     assert isinstance(ld_path, str)
     assert ld_path.startswith("$SNAP/gnome-platform/usr/lib/$CRAFT_ARCH_TRIPLET:")
     assert ld_path.endswith(":$LD_LIBRARY_PATH")
+
+
+def test_snap_docs_tell_users_to_connect_hardware_observe() -> None:
+    """Hotkeys need hardware-observe for /proc/bus/input/devices (#857)."""
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    install = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    snapcraft = SNAPCRAFT_YAML.read_text(encoding="utf-8")
+    for text in (readme, install, snapcraft):
+        assert "sudo snap connect vocalinux:raw-input" in text
+        assert "sudo snap connect vocalinux:hardware-observe" in text
 
 
 def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
