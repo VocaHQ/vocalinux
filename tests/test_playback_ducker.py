@@ -208,7 +208,7 @@ class _RecordingSession:
         self.events.append("restore")
 
 
-def test_duck_scales_saved_volume_and_does_not_stack(tmp_path):
+def test_duck_scales_saved_volume_and_does_not_stack(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=20)
 
@@ -230,7 +230,7 @@ def test_duck_scales_saved_volume_and_does_not_stack(tmp_path):
     assert len(sink.sets) == 1
 
 
-def test_zero_percent_silences_and_disabled_does_nothing(tmp_path):
+def test_zero_percent_silences_and_disabled_does_nothing(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.8)
     silent = _ducker(tmp_path, sink, percent=0)
     silent.duck()
@@ -246,7 +246,9 @@ def test_zero_percent_silences_and_disabled_does_nothing(tmp_path):
     assert not (tmp_path / "off" / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_unwritable_restore_point_does_not_lower_the_sink(tmp_path, monkeypatch):
+def test_unwritable_restore_point_does_not_lower_the_sink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=20)
 
@@ -262,7 +264,7 @@ def test_unwritable_restore_point_does_not_lower_the_sink(tmp_path, monkeypatch)
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_percent_100_does_not_change_the_sink(tmp_path):
+def test_percent_100_does_not_change_the_sink(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=100)
 
@@ -275,7 +277,7 @@ def test_percent_100_does_not_change_the_sink(tmp_path):
     assert sink.sets == []
 
 
-def test_restore_writes_saved_volume_unless_the_user_moved_it(tmp_path):
+def test_restore_writes_saved_volume_unless_the_user_moved_it(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=20)
     ducker.duck()
@@ -294,7 +296,7 @@ def test_restore_writes_saved_volume_unless_the_user_moved_it(tmp_path):
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_unreadable_volume_keeps_the_record_and_a_missing_sink_drops_it(tmp_path):
+def test_unreadable_volume_keeps_the_record_and_a_missing_sink_drops_it(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=20)
     ducker.duck()
@@ -315,7 +317,7 @@ def test_unreadable_volume_keeps_the_record_and_a_missing_sink_drops_it(tmp_path
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_new_instance_restores_pending_record_once(tmp_path):
+def test_new_instance_restores_pending_record_once(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.8)
     first = _ducker(tmp_path, sink, percent=25)
     first.duck()
@@ -334,7 +336,7 @@ def test_new_instance_restores_pending_record_once(tmp_path):
     assert third is not None
 
 
-def test_corrupt_record_is_dropped_without_touching_volume(tmp_path):
+def test_corrupt_record_is_dropped_without_touching_volume(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     path = tmp_path / duck.PENDING_RECORD_NAME
     path.write_text(
@@ -349,7 +351,7 @@ def test_corrupt_record_is_dropped_without_touching_volume(tmp_path):
     assert not path.exists()
 
 
-def test_duck_delay_waits_for_the_cue_and_caps():
+def test_duck_delay_waits_for_the_cue_and_caps() -> None:
     assert (
         duck_delay_seconds(sound_effects_enabled=False, tone="voca", cue_duration_seconds=0.4)
         == 0.0
@@ -368,7 +370,7 @@ def test_duck_delay_waits_for_the_cue_and_caps():
     ) == pytest.approx(0.05)
 
 
-def test_stop_before_the_timer_does_not_duck_and_stop_after_restores():
+def test_stop_before_the_timer_does_not_duck_and_stop_after_restores() -> None:
     clock = _Clock()
     backend = _FakeDucker()
     session = DictationDuckSession(backend, enabled=lambda: True, schedule=clock)
@@ -398,14 +400,14 @@ def test_stop_before_the_timer_does_not_duck_and_stop_after_restores():
     assert backend.restores == 1
 
 
-def test_disabled_session_does_not_schedule():
+def test_disabled_session_does_not_schedule() -> None:
     clock = _Clock()
     session = DictationDuckSession(_FakeDucker(), enabled=lambda: False, schedule=clock)
     session.start(0.4)
     assert clock.timers == []
 
 
-def test_daemon_timer_is_a_daemon_and_can_be_cancelled(monkeypatch):
+def test_daemon_timer_is_a_daemon_and_can_be_cancelled(monkeypatch: pytest.MonkeyPatch) -> None:
     created = {}
 
     class FakeTimer:
@@ -429,7 +431,7 @@ def test_daemon_timer_is_a_daemon_and_can_be_cancelled(monkeypatch):
     assert created["cancelled"] is True
 
 
-def test_wpctl_parse_and_commands_do_not_set_on_parse_failure():
+def test_wpctl_parse_and_commands_do_not_set_on_parse_failure() -> None:
     assert duck.parse_wpctl_volume("Volume: 0.40\n") == pytest.approx(0.40)
     assert duck.parse_wpctl_volume("Volume: 0.40 [MUTED]\n") == pytest.approx(0.40)
     assert duck.parse_wpctl_volume("Volume: 1.25\n") == pytest.approx(1.25)
@@ -445,7 +447,7 @@ def test_wpctl_parse_and_commands_do_not_set_on_parse_failure():
     assert duck.parse_pactl_volume(pactl) == pytest.approx(0.50)
 
 
-def test_wpctl_is_preferred_and_parse_failure_does_not_set(tmp_path):
+def test_wpctl_is_preferred_and_parse_failure_does_not_set(tmp_path: Path) -> None:
     calls = []
 
     def runner(args: list[str]) -> tuple[int, str, str]:
@@ -469,7 +471,7 @@ def test_wpctl_is_preferred_and_parse_failure_does_not_set(tmp_path):
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_wpctl_sets_the_resolved_sink_and_a_missing_sink_is_not_replaced(tmp_path):
+def test_wpctl_sets_the_resolved_sink_and_a_missing_sink_is_not_replaced(tmp_path: Path) -> None:
     calls = []
 
     def runner(args: list[str]) -> tuple[int, str, str]:
@@ -498,7 +500,7 @@ def test_wpctl_sets_the_resolved_sink_and_a_missing_sink_is_not_replaced(tmp_pat
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
-def test_pactl_is_used_when_wpctl_is_absent(tmp_path):
+def test_pactl_is_used_when_wpctl_is_absent(tmp_path: Path) -> None:
     calls = []
     state = {"volume": 0.50}
     sink_name = "alsa_output.pci-0000_00_1f.3.analog-stereo"
@@ -536,7 +538,7 @@ def test_pactl_is_used_when_wpctl_is_absent(tmp_path):
     assert state["volume"] == pytest.approx(0.50)
 
 
-def test_pactl_restores_each_channel(tmp_path):
+def test_pactl_restores_each_channel(tmp_path: Path) -> None:
     calls = []
     channels = [0.50, 0.40]
 
@@ -574,7 +576,9 @@ def test_pactl_restores_each_channel(tmp_path):
     assert channels == pytest.approx([0.50, 0.40])
 
 
-def test_playback_duck_percent_clamps_and_round_trips(tmp_path, monkeypatch):
+def test_playback_duck_percent_clamps_and_round_trips(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     config_dir = tmp_path / "vocalinux"
     config_dir.mkdir()
     config_file = config_dir / "config.json"
@@ -618,7 +622,9 @@ def test_playback_duck_percent_clamps_and_round_trips(tmp_path, monkeypatch):
     assert again.config["playback_duck"]["percent"] == 35
 
 
-def test_recognition_hook_schedules_after_start_and_restores_before_stop_cue(monkeypatch, tmp_path):
+def test_recognition_hook_schedules_after_start_and_restores_before_stop_cue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Dictation that never starts does not duck; stop restores before the cue."""
     from vocalinux.common_types import RecognitionState
     from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
