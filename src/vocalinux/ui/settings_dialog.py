@@ -2886,6 +2886,16 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(timeout_row)
 
+        self.model_reload_buffer_switch = Gtk.Switch()
+        group.add_row(
+            PreferenceRow(
+                title="Record while model reloads",
+                subtitle="Start speaking immediately. Audio is kept in memory until the model is ready.",
+                widget=self.model_reload_buffer_switch,
+            )
+        )
+        self.model_reload_buffer_switch.connect("state-set", self._on_model_reload_buffer_toggled)
+
         self.power_tab.pack_start(group, False, False, 0)
 
         self.model_keepalive_switch.connect("state-set", self._on_model_keepalive_enabled_toggled)
@@ -2896,6 +2906,17 @@ class SettingsDialog(Gtk.Dialog):
     def _update_model_keepalive_sensitivity(self, enabled: bool) -> None:
         """Gray out the idle timeout selector while idle unload is disabled."""
         self.model_keepalive_timeout_combo.set_sensitive(enabled)
+        self.model_reload_buffer_switch.set_sensitive(enabled)
+
+    def _on_model_reload_buffer_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Apply and save recording during idle model reloads."""
+        if self._initializing or self._applying_settings:
+            return False
+        enabled = bool(state)
+        self.speech_engine.buffer_during_reload = enabled
+        self.config_manager.set("model_keepalive", "buffer_during_reload", enabled)
+        self.config_manager.save_settings()
+        return False
 
     def _on_model_keepalive_enabled_toggled(self, widget, state):
         enabled = bool(state)
@@ -5051,6 +5072,9 @@ class SettingsDialog(Gtk.Dialog):
         keepalive_settings = self.config_manager.get_settings().get("model_keepalive", {})
         keepalive_enabled = bool(keepalive_settings.get("enabled", False))
         self.model_keepalive_switch.set_active(keepalive_enabled)
+        self.model_reload_buffer_switch.set_active(
+            bool(keepalive_settings.get("buffer_during_reload", False))
+        )
         self._update_model_keepalive_sensitivity(keepalive_enabled)
         timeout_seconds = int(keepalive_settings.get("idle_timeout_seconds", 300) or 300)
         if not self.model_keepalive_timeout_combo.set_active_id(str(timeout_seconds)):
@@ -6800,6 +6824,7 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         self._test_active = True
+        self._test_timeout_cancel_attempted = False
         self.test_button.set_sensitive(False)
         self.test_button.set_label("Testing… Speak Now!")
         self.test_output_revealer.set_reveal_child(True)
@@ -6837,8 +6862,24 @@ class SettingsDialog(Gtk.Dialog):
 
         self.speech_engine.stop_recognition()
 
-        # Wait a bit for any pending transcription to complete before restoring callbacks
-        # This ensures the test callback receives the transcription result
+        # Buffered reload's stop_recognition() returns while PROCESSING; the
+        # worker may still deliver the test utterance via current text_callbacks.
+        # Keep the test callbacks installed (and block auto-apply / re-test)
+        # until recognition reaches IDLE so we never restore the live injector
+        # early. Use GLib polling — never join the worker on the GTK thread.
+        state = getattr(self.speech_engine, "state", RecognitionState.IDLE)
+        buffered = getattr(self.speech_engine, "_buffered_reload_session", False)
+        if state in (RecognitionState.LISTENING, RecognitionState.PROCESSING) or buffered:
+            self.test_button.set_sensitive(False)
+            self.test_button.set_label("Processing…")
+            self.update_recognition_progress("Processing")
+            self._test_idle_wait_ticks = 0
+            self._test_timeout_cancel_attempted = False
+            GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)
+            return False
+
+        # Non-buffered stop already joined to IDLE; brief settle for any
+        # GLib.idle_add text delivery still in flight.
         GLib.timeout_add(500, self._restore_callbacks_and_check_result)
 
         self._test_active = False
@@ -6849,7 +6890,123 @@ class SettingsDialog(Gtk.Dialog):
 
         return False
 
-    def _restore_callbacks_and_check_result(self):
+    def _wait_for_idle_then_restore_callbacks(self) -> bool:
+        """Poll until recognition is idle, then restore callbacks / check result.
+
+        Returns True so GLib.timeout_add keeps scheduling while the buffered
+        reload worker is still PROCESSING.
+
+        On the ~3 minute timeout, never restore live injector callbacks while a
+        buffered reload worker may still deliver text (privacy-adjacent Test
+        Dictation inject-into-app race). Prefer cancelling via
+        ``_cancel_reload_recording`` (off the GTK thread — it joins) and only
+        then restoring. If cancel is unavailable or fails, keep polling with
+        test callbacks and ``_test_active`` so live injectors are not restored
+        early and later dictation cannot be hijacked into the test buffer.
+        """
+        if not hasattr(self, "_saved_text_callbacks"):
+            self._test_active = False
+            self.test_button.set_sensitive(True)
+            self.test_button.set_label("Test Dictation")
+            return False
+
+        state = getattr(self.speech_engine, "state", RecognitionState.IDLE)
+        still_busy = state in (
+            RecognitionState.LISTENING,
+            RecognitionState.PROCESSING,
+        ) or getattr(self.speech_engine, "_buffered_reload_session", False)
+
+        if still_busy:
+            self._test_idle_wait_ticks = getattr(self, "_test_idle_wait_ticks", 0) + 1
+            # ~3 minutes at 100ms — generous for cold large-model reload.
+            if self._test_idle_wait_ticks < 1800:
+                return True
+            if not getattr(self, "_test_timeout_cancel_attempted", False):
+                self._test_timeout_cancel_attempted = True
+                return self._on_test_idle_wait_timeout()
+            # Cancel already tried (or unavailable): keep waiting — never
+            # restore live injectors and never mark the test inactive while busy.
+            return True
+
+        return self._finish_test_restore_ui()
+
+    def _on_test_idle_wait_timeout(self) -> bool:
+        """Handle idle-wait timeout without restoring live injectors early."""
+        cancel = getattr(self.speech_engine, "_cancel_reload_recording", None)
+        if callable(cancel):
+            logger.warning(
+                "Test Dictation: timed out waiting for recognition IDLE; "
+                "cancelling buffered reload before restoring callbacks"
+            )
+            self.test_button.set_sensitive(False)
+            self.test_button.set_label("Cancelling…")
+            self.update_recognition_progress("Cancelling")
+            threading.Thread(
+                target=self._cancel_buffered_reload_then_restore,
+                daemon=True,
+                name="vocalinux-test-dictation-cancel",
+            ).start()
+            return False
+
+        logger.error(
+            "Test Dictation: timed out waiting for recognition IDLE with no "
+            "cancel API; keeping test callbacks until IDLE"
+        )
+        self._keep_waiting_after_timeout(
+            "(Timed out waiting for recognition to finish. "
+            "Still waiting so live injectors are not restored early and later "
+            "dictation cannot be hijacked into the test buffer.)"
+        )
+        return True
+
+    def _cancel_buffered_reload_then_restore(self) -> None:
+        """Cancel buffered reload off the GTK thread, then restore on idle."""
+        cancel = getattr(self.speech_engine, "_cancel_reload_recording", None)
+        try:
+            if callable(cancel):
+                cancel()
+        except (AttributeError, OSError, RuntimeError, TypeError):
+            logger.exception(
+                "Test Dictation: failed to cancel buffered reload after idle-wait timeout"
+            )
+            GLib.idle_add(self._on_buffered_cancel_failed)
+            return
+        GLib.idle_add(self._finish_test_after_buffered_cancel)
+
+    def _on_buffered_cancel_failed(self) -> bool:
+        """Resume idle-wait polling if cancel failed — do not end the test early."""
+        self._keep_waiting_after_timeout(
+            "(Timed out waiting for recognition, and cancelling the buffered "
+            "reload failed. Still waiting for IDLE before restoring live callbacks.)"
+        )
+        # _test_timeout_cancel_attempted is already True, so the resumed poll
+        # will not re-enter cancel — it only waits for IDLE.
+        GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)
+        return False
+
+    def _finish_test_after_buffered_cancel(self) -> bool:
+        """Restore live callbacks only after cancel has discarded the session."""
+        return self._finish_test_restore_ui()
+
+    def _keep_waiting_after_timeout(self, message: str) -> None:
+        """Keep Test Dictation active with test callbacks until recognition IDLE."""
+        self._test_active = True
+        self.test_button.set_sensitive(False)
+        self.test_button.set_label("Still processing…")
+        self.update_recognition_progress("Processing")
+        if hasattr(self, "test_buffer"):
+            self.test_buffer.set_text(message)
+
+    def _finish_test_restore_ui(self) -> bool:
+        """Reset Test Dictation chrome and restore saved live callbacks."""
+        self._test_active = False
+        self._test_timeout_cancel_attempted = False
+        self.test_button.set_sensitive(True)
+        self.test_button.set_label("Test Dictation")
+        self.update_recognition_progress("Idle")
+        return self._restore_callbacks_and_check_result()
+
+    def _restore_callbacks_and_check_result(self) -> bool:
         """Restore callbacks and check test result after delay."""
         # Restore original text callbacks
         if hasattr(self, "_saved_text_callbacks"):

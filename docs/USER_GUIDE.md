@@ -114,6 +114,13 @@ Under Settings:
 - **Auto-pause apps**: unload the model while listed apps run
 - **Model keep-alive**: unload after idle timeout to free GPU/CPU
 
+In **Settings → Performance → Unload When Idle**, enable **Record while model
+reloads** to speak as soon as you press the dictation shortcut. Audio stays in
+memory while the model loads, then joins the rest of the recording for
+transcription. Releasing the shortcut before loading finishes still submits the
+recorded speech. Wait for that transcription to finish before starting another
+recording. This option is off by default.
+
 ## Tips for better recognition
 
 1. Use a decent microphone and reduce background noise when you can
