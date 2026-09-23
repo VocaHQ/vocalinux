@@ -7,6 +7,9 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: codeberg-mirror
   cancel-in-progress: true
