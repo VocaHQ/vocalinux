@@ -27,6 +27,9 @@ on:
       - '.github/workflows/distro-test-matrix.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # Six containers a run, on a filter that any shell script matches: a second
 # push should not leave the first one's matrix running to completion.
 concurrency:
