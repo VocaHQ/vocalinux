@@ -147,8 +147,8 @@ verify-release tag="":
     python3 scripts/verify_release.py {{tag}}
 
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
-# Bump the torch/torchaudio +cpu pins in requirements/whisper.in together
-# when you want newer CPU builds (torchaudio on the CPU index lags torch).
+# Bump the torch +cpu pin in requirements/whisper.in when you want a newer
+# CPU build. OpenAI Whisper does not use torchaudio, whose CPU index can lag.
 lock:
     uv lock
     uv export --only-group installer-build --no-emit-project -o requirements/installer-build.txt
