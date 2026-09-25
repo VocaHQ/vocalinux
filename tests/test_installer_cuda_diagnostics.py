@@ -4,10 +4,12 @@ import unittest
 from pathlib import Path
 
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+INSTALLER_MODULES = Path(__file__).resolve().parents[1] / "install.d"
 
 
 def _installer_source() -> str:
-    return INSTALLER.read_text(encoding="utf-8")
+    parts = [INSTALLER, *sorted(INSTALLER_MODULES.glob("*.sh"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in parts)
 
 
 class InstallerCudaDiagnosticsTests(unittest.TestCase):

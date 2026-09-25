@@ -6,13 +6,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
+INSTALLER_MODULES = REPO_ROOT / "install.d"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 SETTINGS = Path(__file__).resolve().parents[1] / "src" / "vocalinux" / "ui" / "settings_dialog.py"
 AGENTS = Path(__file__).resolve().parents[1] / "AGENTS.md"
 
 
 def _installer_source() -> str:
-    return INSTALLER.read_text(encoding="utf-8")
+    parts = [INSTALLER, *sorted(INSTALLER_MODULES.glob("*.sh"))]
+    return "\n".join(path.read_text(encoding="utf-8") for path in parts)
 
 
 def test_help_places_transcript_under_installation() -> None:

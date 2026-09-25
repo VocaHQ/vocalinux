@@ -36,11 +36,12 @@ class TestCrossDistroCompatibility:
 
     @pytest.fixture
     def install_sh_content(self):
-        """Fixture to load install.sh content."""
+        """Fixture to load the installer entry point and sourced modules."""
         install_sh_path = REPO_ROOT / "install.sh"
         if not install_sh_path.exists():
             pytest.skip(f"install.sh not found at {install_sh_path}")
-        return install_sh_path.read_text()
+        parts = [install_sh_path, *sorted((REPO_ROOT / "install.d").glob("*.sh"))]
+        return "\n".join(path.read_text(encoding="utf-8") for path in parts)
 
     @pytest.fixture
     def workflow_content(self):

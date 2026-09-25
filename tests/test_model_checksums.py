@@ -43,6 +43,11 @@ from vocalinux.utils.whispercpp_model_info import (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALL_SH = REPO_ROOT / "install.sh"
+INSTALLER_MODULES = REPO_ROOT / "install.d"
+INSTALLER_SOURCE = "\n".join(
+    path.read_text(encoding="utf-8")
+    for path in (INSTALL_SH, *sorted(INSTALLER_MODULES.glob("*.sh")))
+)
 
 
 class TestManifestCoverage(unittest.TestCase):
@@ -227,7 +232,7 @@ INSTALL_DIR="%s"
     )
 
     def _source(self) -> str:
-        text = INSTALL_SH.read_text()
+        text = INSTALLER_SOURCE
         chunks = []
         for name in self.FUNCTIONS:
             start = text.index(f"\n{name}() {{")
@@ -353,7 +358,7 @@ class TestExistingModelsAreVerified(unittest.TestCase):
     every install predating checksum verification — kept an unverified model.
     """
 
-    SOURCE = INSTALL_SH.read_text()
+    SOURCE = INSTALLER_SOURCE
 
     def _function_body(self, name: str) -> str:
         start = self.SOURCE.index(f"\n{name}() {{")
@@ -427,7 +432,7 @@ class TestVerificationStamp(unittest.TestCase):
     """
 
     def test_the_installer_uses_the_same_stamp_name(self):
-        self.assertIn(VERIFICATION_STAMP_NAME, INSTALL_SH.read_text())
+        self.assertIn(VERIFICATION_STAMP_NAME, INSTALLER_SOURCE)
 
     def test_it_records_the_pinned_digest_of_the_archive(self):
         with TemporaryDirectory() as tree:
@@ -524,7 +529,7 @@ download_model_file() {
         curl.chmod(0o755)
 
     def _source(self) -> str:
-        text = INSTALL_SH.read_text()
+        text = INSTALLER_SOURCE
         chunks = []
         for name in self.FUNCTIONS:
             start = text.index(f"\n{name}() {{")
@@ -614,7 +619,7 @@ class TestReleaseWithoutAManifest(unittest.TestCase):
     first run. A manifest that omits a model still fails closed.
     """
 
-    SOURCE = INSTALL_SH.read_text()
+    SOURCE = INSTALLER_SOURCE
 
     PRELUDE = """
 set -uo pipefail

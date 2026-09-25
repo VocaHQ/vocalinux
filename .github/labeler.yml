@@ -45,6 +45,7 @@ installer:
   - changed-files:
       - any-glob-to-any-file:
           - "install.sh"
+          - "install.d/**/*"
           - "uninstall.sh"
 
 # Icons, sounds, screenshots, promo assets
