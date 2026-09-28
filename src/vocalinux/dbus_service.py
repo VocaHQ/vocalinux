@@ -87,7 +87,7 @@ class VocalinuxDBusService:
                 self._on_name_lost,
             )
             logger.info("Requested D-Bus name %s on session bus", BUS_NAME)
-        except Exception:
+        except GLib.Error:
             logger.warning("Failed to own D-Bus name %s", BUS_NAME, exc_info=True)
             self._notify_registration_failed()
 
@@ -102,7 +102,7 @@ class VocalinuxDBusService:
                 None,
                 None,
             )
-        except Exception:
+        except GLib.Error:
             logger.warning("Failed to register D-Bus object", exc_info=True)
             self._notify_registration_failed()
 
@@ -160,14 +160,14 @@ class VocalinuxDBusService:
         if self._registration_id and self._connection is not None:
             try:
                 self._connection.unregister_object(self._registration_id)
-            except Exception:
-                pass
+            except GLib.Error:
+                logger.debug("Failed to unregister D-Bus object", exc_info=True)
             self._registration_id = 0
         if self._owner_id:
             try:
                 Gio.bus_unown_name(self._owner_id)
-            except Exception:
-                pass
+            except GLib.Error:
+                logger.debug("Failed to unown D-Bus name", exc_info=True)
             self._owner_id = 0
         logger.info("D-Bus service shut down")
 
