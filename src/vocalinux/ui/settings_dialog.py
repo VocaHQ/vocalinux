@@ -22,7 +22,7 @@ import os
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
 
 import gi
 
@@ -2020,7 +2020,7 @@ class SettingsDialog(Gtk.Dialog):
         initial_page: Optional[str] = None,
         pending_update: Optional[ReleaseInfo] = None,
         update_status_callback: callable = None,
-        hotkey_listener_update_callback: callable = None,
+        hotkey_listener_update_callback: Optional[Callable[[], None]] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
