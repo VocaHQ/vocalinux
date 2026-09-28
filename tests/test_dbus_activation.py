@@ -306,7 +306,9 @@ def test_shutdown_swallows_unregister_and_unown_errors():
     # Patch GLib.Error to a real class so both the raise and the `except` clause
     # reference the same type and the GLib.Error branch is exercised.
     with patch.object(dbus_service.GLib, "Error", RuntimeError):
-        with patch.object(dbus_service.Gio, "bus_unown_name", side_effect=RuntimeError("unown failed")):
+        with patch.object(
+            dbus_service.Gio, "bus_unown_name", side_effect=RuntimeError("unown failed")
+        ):
             # Must not raise despite both cleanup calls failing.
             service.shutdown()
 
