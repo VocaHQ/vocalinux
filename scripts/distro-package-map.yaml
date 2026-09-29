@@ -81,6 +81,9 @@ distributions:
       ydotool: [ydotool]
 
   debian_13_plus:
+    # Used only to distinguish Debian 13-based derivatives whose own
+    # VERSION_ID does not match the Debian base release.
+    selection_probe: libgirepository-2.0-dev
     system:
       - python3-pip
       - python3-gi

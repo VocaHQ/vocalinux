@@ -3,6 +3,8 @@
 # Regenerate with `just distro-packages` after editing
 # scripts/distro-package-map.yaml.
 
+DEBIAN_13_PLUS_PROBE_PACKAGE=libgirepository-2.0-dev
+
 load_distro_package_map() {
     local package_map_key="$1"
 

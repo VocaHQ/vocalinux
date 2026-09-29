@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,8 +41,54 @@ def test_supported_debian_maps_start_at_debian_12() -> None:
     distributions = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))["distributions"]
     debian_maps = {name for name in distributions if name.startswith("debian_")}
     assert debian_maps == {"debian_12", "debian_13_plus"}
-    installer = (ROOT / "install.d" / "system_dependencies.sh").read_text(encoding="utf-8")
-    assert '"$DEBIAN_MAJOR" -lt 12' in installer
+
+
+def _resolve_debian_map(
+    distro_id: str, version: str, *, modern_gi: bool
+) -> subprocess.CompletedProcess:
+    script = f"""
+source {TARGET!s}
+source {ROOT / 'install.d' / 'system_dependencies.sh'!s}
+print_error() {{ echo "$*"; }}
+apt-cache() {{ [ "$HAS_MODERN_GI" = yes ]; }}
+DISTRO_ID="$1"
+DISTRO_VERSION="$2"
+resolve_debian_package_map_key
+"""
+    return subprocess.run(
+        ["bash", "-c", script, "bash", distro_id, version],
+        capture_output=True,
+        text=True,
+        env={"HAS_MODERN_GI": "yes" if modern_gi else "no"},
+    )
+
+
+def test_native_debian_version_selects_supported_map() -> None:
+    """Debian itself uses VERSION_ID and rejects its EOL releases."""
+    assert _resolve_debian_map("debian", "11", modern_gi=False).returncode != 0
+    assert _resolve_debian_map("debian", "12", modern_gi=True).stdout.strip() == "debian_12"
+    assert _resolve_debian_map("debian", "13", modern_gi=False).stdout.strip() == "debian_13_plus"
+
+
+def test_debian_derivative_ignores_unrelated_product_version() -> None:
+    """A derivative's VERSION_ID must not be interpreted as a Debian release."""
+    legacy = _resolve_debian_map("mx", "11", modern_gi=False)
+    modern = _resolve_debian_map("kali", "2026.3", modern_gi=True)
+    assert legacy.returncode == 0
+    assert legacy.stdout.strip() == "debian_12"
+    assert modern.stdout.strip() == "debian_13_plus"
+
+
+def test_suse_appindicator_alternatives_are_required(tmp_path: Path) -> None:
+    """Generation fails before an empty openSUSE fallback loop reaches users."""
+    generator = _load_generator()
+    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    document["distributions"]["suse"]["appindicator"] = []
+    invalid_source = tmp_path / "invalid.yaml"
+    invalid_source.write_text(yaml.safe_dump(document), encoding="utf-8")
+    generator.SOURCE = invalid_source
+    with pytest.raises(ValueError, match="suse.appindicator"):
+        generator.load_map()
 
 
 def test_installer_uses_generated_inventory_instead_of_package_lists() -> None:

@@ -152,20 +152,36 @@ suse_shader_compiler_available() {
     command_exists glslc || command_exists glslangValidator
 }
 
+resolve_debian_package_map_key() {
+    local DEBIAN_MAJOR="${DISTRO_VERSION%%.*}"
+
+    # Only Debian's own VERSION_ID identifies a Debian release. Derivatives
+    # often use an unrelated product version, so select their compatible map
+    # by probing the package inventory instead.
+    if [[ "$DISTRO_ID" == "debian" && "$DEBIAN_MAJOR" =~ ^[0-9]+$ ]]; then
+        if [ "$DEBIAN_MAJOR" -lt 12 ]; then
+            print_error "Debian 12 or newer is required (detected Debian $DEBIAN_MAJOR)." >&2
+            return 1
+        elif [ "$DEBIAN_MAJOR" -ge 13 ]; then
+            echo "debian_13_plus"
+        else
+            echo "debian_12"
+        fi
+    elif apt-cache show "$DEBIAN_13_PLUS_PROBE_PACKAGE" &>/dev/null 2>&1; then
+        echo "debian_13_plus"
+    else
+        echo "debian_12"
+    fi
+}
+
 # Function to install system dependencies based on the detected distribution
 install_system_dependencies() {
     print_info "Installing system dependencies..."
 
     local PACKAGE_MAP_KEY="$DISTRO_FAMILY"
     if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        local DEBIAN_MAJOR="${DISTRO_VERSION%%.*}"
-        if [[ "$DEBIAN_MAJOR" =~ ^[0-9]+$ ]] && [ "$DEBIAN_MAJOR" -lt 12 ]; then
-            print_error "Debian 12 or newer is required (detected Debian $DEBIAN_MAJOR)."
+        if ! PACKAGE_MAP_KEY=$(resolve_debian_package_map_key); then
             exit "$EXIT_MISSING_DEPS"
-        elif [[ "$DEBIAN_MAJOR" =~ ^[0-9]+$ ]] && [ "$DEBIAN_MAJOR" -ge 13 ]; then
-            PACKAGE_MAP_KEY="debian_13_plus"
-        else
-            PACKAGE_MAP_KEY="debian_12"
         fi
     fi
     case "$PACKAGE_MAP_KEY" in
