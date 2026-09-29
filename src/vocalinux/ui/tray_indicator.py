@@ -126,6 +126,10 @@ class TrayIndicator:
     the speech recognition process.
     """
 
+    # Tests build TrayIndicator stubs with __new__ that skip __init__; keep a
+    # class-level default so teardown paths like _quit() still find the list.
+    _language_shortcut_managers: list = []
+
     def __init__(
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
