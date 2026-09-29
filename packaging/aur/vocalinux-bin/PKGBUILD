@@ -1,0 +1,58 @@
+# Maintainer: Jatin K Malik <jatinkrmalik@gmail.com>
+# Updated by .github/workflows/release.yml on v* tags. Setup: docs/AUR.md
+
+pkgname=vocalinux-bin
+# AUR pkgver cannot contain hyphens (v0.14.0-beta -> 0.14.0beta).
+pkgver=0.17.0
+_tag=0.17.0
+pkgrel=1
+pkgdesc="Free, offline voice dictation for Linux (prebuilt AppImage)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/VocaHQ/vocalinux"
+license=('AGPL-3.0-only')
+# fuse2: the type-2 AppImage runtime mounts its squashfs through FUSE.
+# Everything else it needs (CPython, GTK, the whisper.cpp Vulkan build) is
+# inside the bundle — that is the point of shipping the AppImage.
+depends=(
+  'fuse2'
+  'hicolor-icon-theme'
+)
+optdepends=(
+  'vulkan-icd-loader: GPU-accelerated whisper.cpp transcription'
+  'ibus: IBus text injection (preferred on some layouts and compositors)'
+  'xdotool: X11 injection fallback'
+  'xclip: X11 clipboard tools (copy/paste injection fallbacks)'
+  'wl-clipboard: Wayland clipboard (wl-copy/wl-paste) injection fallbacks'
+  'wtype: Wayland keystroke injection fallback'
+  'ydotool: uinput keystroke injection fallback'
+)
+provides=('vocalinux')
+conflicts=('vocalinux' 'vocalinux-git')
+# Stripping would rewrite the runtime header of a self-mounting ELF.
+options=('!strip')
+source=(
+  'vocalinux.desktop'
+  'vocalinux.svg'
+  'LICENSE'
+)
+source_x86_64=("Vocalinux-${_tag}-x86_64.AppImage::https://github.com/VocaHQ/vocalinux/releases/download/v${_tag}/Vocalinux-${_tag}-x86_64.AppImage")
+source_aarch64=("Vocalinux-${_tag}-aarch64.AppImage::https://github.com/VocaHQ/vocalinux/releases/download/v${_tag}/Vocalinux-${_tag}-aarch64.AppImage")
+# SKIP until the v${_tag} assets exist. release.yml sets updpkgsums=true on publish.
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+  install -Dm755 "Vocalinux-${_tag}-${CARCH}.AppImage" \
+    "${pkgdir}/opt/${pkgname}/Vocalinux-${_tag}-${CARCH}.AppImage"
+
+  install -Dm644 vocalinux.desktop \
+    "${pkgdir}/usr/share/applications/vocalinux.desktop"
+  install -Dm644 vocalinux.svg \
+    "${pkgdir}/usr/share/icons/hicolor/scalable/apps/vocalinux.svg"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
+  install -dm755 "${pkgdir}/usr/bin"
+  ln -s "/opt/${pkgname}/Vocalinux-${_tag}-${CARCH}.AppImage" \
+    "${pkgdir}/usr/bin/vocalinux"
+}

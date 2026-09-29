@@ -12,6 +12,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AUR = REPO_ROOT / "packaging" / "aur"
 PKGBUILD = AUR / "vocalinux" / "PKGBUILD"
+BIN_DIR = AUR / "vocalinux-bin"
+BIN_PKGBUILD = BIN_DIR / "PKGBUILD"
 GATE_SH = AUR / "build-test.sh"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 PIPELINE = WORKFLOWS / "unified-pipeline.yml"
@@ -318,4 +320,101 @@ def test_every_selectable_engine_reaches_optdepends() -> None:
     assert not missing, (
         "these optional engines have no optdepends line, so an AUR user who"
         f" selects them gets an ImportError: {', '.join(missing)}"
+    )
+
+
+def _bin_pkgbuild() -> str:
+    return BIN_PKGBUILD.read_text(encoding="utf-8")
+
+
+def test_bin_package_ships_the_release_appimage_per_arch() -> None:
+    """#817: the -bin package is the prebuilt AppImage, fetched per release
+    architecture — x86_64 and aarch64, never 'any', because a binary is not
+    arch-independent the way the build-from-source package is."""
+    text = _bin_pkgbuild()
+    assert "arch=('x86_64' 'aarch64')" in text
+    for arch in ("x86_64", "aarch64"):
+        asset = f"Vocalinux-${{_tag}}-{arch}.AppImage"
+        assert (
+            f'"{asset}::https://github.com/VocaHQ/vocalinux/releases/download/'
+            f"v${{_tag}}/{asset}" in text
+        ), f"source_{arch} does not fetch {asset} from the v${{_tag}} release"
+
+
+def test_bin_package_installs_the_appimage_intact_and_runnable() -> None:
+    """options=('!strip') keeps pacman from rewriting the self-mounting ELF;
+    fuse2 is the one real dependency — the type-2 runtime mounts its squashfs
+    through FUSE. The binary lands under /opt and is symlinked into PATH."""
+    text = _bin_pkgbuild()
+    assert "options=('!strip')" in text
+    assert "'fuse2'" in text
+    assert 'install -Dm755 "Vocalinux-${_tag}-${CARCH}.AppImage"' in text
+    assert '"/opt/${pkgname}/' in text
+    assert "ln -s" in text and '"${pkgdir}/usr/bin/vocalinux"' in text
+
+
+def test_bin_package_conflicts_with_the_source_and_git_packages() -> None:
+    """All three packages ship /usr/bin/vocalinux; provides= lets a depends on
+    'vocalinux' resolve to the -bin install."""
+    text = _bin_pkgbuild()
+    assert "provides=('vocalinux')" in text
+    conflicts = re.search(r"conflicts=\(([^)]*)\)", text)
+    assert conflicts, "vocalinux-bin has no conflicts=()"
+    for name in ("'vocalinux'", "'vocalinux-git'"):
+        assert name in conflicts.group(1)
+
+
+def test_bin_pkgbuild_bundled_files_match_the_repo_copies() -> None:
+    """The launcher entry, icon and license ship next to the PKGBUILD —
+    copies, not the AppImage's own .desktop (its Exec= is AppRun, meaningless
+    outside the bundle). Guarded byte-for-byte so a fix to a canonical file
+    cannot leave the -bin package shipping the stale one."""
+    for name, canonical in (
+        ("vocalinux.desktop", REPO_ROOT / "vocalinux.desktop"),
+        ("vocalinux.svg", REPO_ROOT / "resources" / "icons" / "scalable" / "vocalinux.svg"),
+        ("LICENSE", REPO_ROOT / "LICENSE"),
+    ):
+        bundled = BIN_DIR / name
+        assert bundled.is_file(), f"{bundled} missing"
+        assert bundled.read_bytes() == canonical.read_bytes(), (
+            f"{name} drifted from {canonical.relative_to(REPO_ROOT)};" " sync the bundled copy"
+        )
+        assert f"'{name}'" in _bin_pkgbuild(), f"{name} not in source=()"
+    desktop = (BIN_DIR / "vocalinux.desktop").read_text(encoding="utf-8")
+    # The names package() links into /usr/bin and installs under hicolor.
+    assert re.search(r"^Exec=vocalinux$", desktop, re.M)
+    assert re.search(r"^Icon=vocalinux$", desktop, re.M)
+
+
+def test_bin_package_asks_the_host_only_for_what_the_bundle_lacks() -> None:
+    """The AppImage bundles CPython, GTK and the speech engines; what it
+    cannot ship is the host's text-injection tools and Vulkan loader
+    (docs/INSTALL.md), so those make up the optdepends — and none of the
+    source package's python-* depends belong here, or pacman would install a
+    second Python stack next to the bundled one."""
+    text = _bin_pkgbuild()
+    depends = re.search(r"depends=\(\n([^)]*)\)", text)
+    assert depends and "python-" not in depends.group(1)
+    lines = text.splitlines()
+    start = next((i for i, line in enumerate(lines) if line.startswith("optdepends=(")), None)
+    assert start is not None, "vocalinux-bin has no optdepends=()"
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == ")")
+    optdepends = "\n".join(lines[start + 1 : end])
+    for tool in ("xdotool", "xclip", "wl-clipboard", "wtype", "ydotool"):
+        assert f"'{tool}" in optdepends
+    assert "vulkan-icd-loader" in optdepends
+
+
+def test_bin_pkgbuild_tracks_the_release_tag_like_the_source_one() -> None:
+    """Same pkgver/_tag split and SKIP digests as packaging/aur/vocalinux,
+    and the release workflow's bump step must rewrite both — a -bin left on
+    the last tag would serve the previous release's AppImage."""
+    text = _bin_pkgbuild()
+    assert re.search(r"^pkgver=\d", text, re.M)
+    assert re.search(r"^_tag=\d", text, re.M)
+    assert "'SKIP'" in text
+    release = RELEASE.read_text(encoding="utf-8")
+    assert "packaging/aur/vocalinux-bin/PKGBUILD" in release, (
+        "release.yml bumps the source PKGBUILD only; the -bin package would"
+        " keep installing the previous release's AppImage"
     )

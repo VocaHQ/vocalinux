@@ -473,9 +473,10 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/v}"
-          PKGBUILD=packaging/aur/vocalinux/PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${TAG//-/}/; s/^_tag=.*/_tag=${TAG}/; s/^pkgrel=.*/pkgrel=1/" "$PKGBUILD"
-          grep -E '^(pkgver|_tag|pkgrel)=' "$PKGBUILD"
+          for PKGBUILD in packaging/aur/vocalinux/PKGBUILD packaging/aur/vocalinux-bin/PKGBUILD; do
+            sed -i "s/^pkgver=.*/pkgver=${TAG//-/}/; s/^_tag=.*/_tag=${TAG}/; s/^pkgrel=.*/pkgrel=1/" "$PKGBUILD"
+            grep -E '^(pkgver|_tag|pkgrel)=' "$PKGBUILD"
+          done
 
       - name: Publish AUR package
         if: steps.aur.outputs.configured == 'true'
