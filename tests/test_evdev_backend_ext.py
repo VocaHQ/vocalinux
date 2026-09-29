@@ -1051,3 +1051,260 @@ class TestEvdevKeyboardBackendGetTargetKeyCodes:
 
         assert 42 in result  # KEY_LEFTSHIFT
         assert 54 in result  # KEY_RIGHTSHIFT
+
+
+class TestEvdevGrabAndForwarding:
+    """Test EVIOCGRAB + uinput pass-through that consumes shortcut keys (#871)."""
+
+    def _key_event(self, code, value=1):
+        return MagicMock(type=1, code=code, value=value)  # EV_KEY
+
+    def _syn_event(self):
+        return MagicMock(type=0, code=0)  # EV_SYN / SYN_REPORT
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_grabs_device_and_registers_forwarder(self, mock_input_device, mock_uinput):
+        """A keyboard that can be cloned is grabbed and paired with a forwarder."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03  # BUS_USB
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        mock_uinput.return_value = forwarder
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        mock_uinput.assert_called_once()
+        device.grab.assert_called_once()
+        assert backend._forwarders[10] is forwarder
+        assert device in backend.devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_skips_virtual_devices(self, mock_input_device, mock_uinput):
+        """Userspace devices (uinput clones, ydotool) are never monitored."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x06  # BUS_VIRTUAL
+        mock_input_device.return_value = device
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event5")
+
+        assert opened is False
+        device.close.assert_called_once()
+        mock_uinput.assert_not_called()
+        device.grab.assert_not_called()
+        assert backend.devices == []
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_falls_back_when_uinput_unavailable(self, mock_input_device, mock_uinput):
+        """Without /dev/uinput the device still works ungrabbed (keys leak)."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        mock_uinput.side_effect = OSError("uinput denied")
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        device.grab.assert_not_called()
+        assert backend._forwarders == {}
+        assert device in backend.devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_falls_back_when_grab_fails(self, mock_input_device, mock_uinput):
+        """A failed grab drops the forwarder but keeps the listener running."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        device.grab.side_effect = OSError(errno.EBUSY, "device grabbed")
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        mock_uinput.return_value = forwarder
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        forwarder.close.assert_called_once()
+        assert backend._forwarders == {}
+        assert device in backend.devices
+
+    def test_event_is_shortcut_pure_modifier(self):
+        """The configured modifier is consumed entirely; other keys are not."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")  # KEY_RIGHTALT=100
+
+        assert backend._event_is_shortcut(self._key_event(100, 1)) is True
+        assert backend._event_is_shortcut(self._key_event(100, 2)) is True
+        assert backend._event_is_shortcut(self._key_event(100, 0)) is True
+        assert backend._event_is_shortcut(self._key_event(56, 1)) is False  # left alt
+        assert backend._event_is_shortcut(self._key_event(30, 1)) is False  # KEY_A
+        assert backend._event_is_shortcut(self._syn_event()) is False
+
+    def test_event_is_shortcut_bare_function_key(self):
+        """A bare function-key shortcut consumes only that key."""
+        backend = EvdevKeyboardBackend(shortcut="f11")  # KEY_F11=87
+
+        assert backend._event_is_shortcut(self._key_event(87, 1)) is True
+        assert backend._event_is_shortcut(self._key_event(87, 0)) is True
+        assert backend._event_is_shortcut(self._key_event(88, 1)) is False  # KEY_F12
+        assert backend._event_is_shortcut(self._key_event(30, 1)) is False
+
+    def test_event_is_shortcut_combo_only_while_engaged(self):
+        """alt+r: the main key is consumed only while the modifier is held."""
+        backend = EvdevKeyboardBackend(shortcut="alt+r")
+        key_r = backend._combo_main_code
+        assert key_r == 19  # KEY_R
+
+        backend._combo_pressed = {56}  # KEY_LEFTALT held
+        assert backend._event_is_shortcut(self._key_event(key_r, 1)) is True
+        # Matching repeat and release stay consumed while the combo owns the
+        # key — even if the modifier was already released first.
+        backend._combo_pressed = set()
+        assert backend._event_is_shortcut(self._key_event(key_r, 2)) is True
+        assert backend._event_is_shortcut(self._key_event(key_r, 0)) is True
+        assert backend._combo_main_swallowed is False
+
+        # 'r' typed without alt still reaches apps; the modifier always passes
+        assert backend._event_is_shortcut(self._key_event(key_r, 1)) is False
+        assert backend._event_is_shortcut(self._key_event(key_r, 0)) is False
+        assert backend._event_is_shortcut(self._key_event(56, 1)) is False
+        assert backend._event_is_shortcut(self._key_event(100, 1)) is False
+
+    def test_forward_event_filters_feedback_types(self):
+        """Only real input events and SYN are re-emitted — never EV_LED."""
+        backend = EvdevKeyboardBackend()
+        forwarder = MagicMock()
+        backend._forwarders = {10: forwarder}
+
+        backend._forward_event(10, self._key_event(30, 1))
+        backend._forward_event(10, self._syn_event())
+        backend._forward_event(10, MagicMock(type=0x11, code=0, value=1))  # EV_LED
+
+        assert forwarder.write_event.call_count == 2
+
+    def test_forward_event_noop_without_forwarder(self):
+        """Ungrabbed devices have no forwarder; nothing is written."""
+        backend = EvdevKeyboardBackend()
+        backend._forward_event(10, self._key_event(30, 1))  # no crash, no write
+
+    def test_monitor_consumes_shortcut_key_but_forwards_syn(self):
+        """Grabbed device: the shortcut press is handled locally, not re-emitted."""
+        backend = EvdevKeyboardBackend()  # default right_alt push-to-talk
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend._forwarders = {10: forwarder}
+        key_event = self._key_event(100, 1)  # KEY_RIGHTALT press
+        syn_event = self._syn_event()
+        device.read.side_effect = lambda: setattr(backend, "running", False) or [
+            key_event,
+            syn_event,
+        ]
+        backend.running = True
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend._handle_key_event = MagicMock()
+
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                side_effect=[0.0, 0.0],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                return_value=([10], [], []),
+            ),
+            patch("vocalinux.ui.keyboard_backends.evdev_backend.ecodes") as mock_ecodes,
+        ):
+            mock_ecodes.EV_SYN = 0
+            mock_ecodes.SYN_DROPPED = 3
+            mock_ecodes.SYN_REPORT = 0
+            mock_ecodes.EV_KEY = 1
+            backend._monitor_devices()
+
+        backend._handle_key_event.assert_called_once_with(key_event, device)
+        forwarder.write_event.assert_called_once_with(syn_event)
+
+    def test_monitor_forwards_non_shortcut_key(self):
+        """Grabbed device: an unrelated key is re-emitted, not consumed."""
+        backend = EvdevKeyboardBackend()
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend._forwarders = {10: forwarder}
+        key_event = self._key_event(30, 1)  # KEY_A
+        syn_event = self._syn_event()
+        device.read.side_effect = lambda: setattr(backend, "running", False) or [
+            key_event,
+            syn_event,
+        ]
+        backend.running = True
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend._handle_key_event = MagicMock()
+
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                side_effect=[0.0, 0.0],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                return_value=([10], [], []),
+            ),
+            patch("vocalinux.ui.keyboard_backends.evdev_backend.ecodes") as mock_ecodes,
+        ):
+            mock_ecodes.EV_SYN = 0
+            mock_ecodes.SYN_DROPPED = 3
+            mock_ecodes.SYN_REPORT = 0
+            mock_ecodes.EV_KEY = 1
+            backend._monitor_devices()
+
+        backend._handle_key_event.assert_called_once_with(key_event, device)
+        assert forwarder.write_event.call_count == 2
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_stop_closes_forwarders(self, mock_input_device, mock_find_devices, mock_uinput):
+        """stop() releases grabs (via close) and closes every uinput clone."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        mock_uinput.return_value = forwarder
+        mock_find_devices.return_value = ["/dev/input/event0"]
+
+        backend = EvdevKeyboardBackend()
+        backend.start()
+        backend.stop()
+
+        forwarder.close.assert_called_once()
+        assert backend._forwarders == {}
+
+    def test_remove_device_closes_paired_forwarder(self):
+        """Disconnecting a keyboard closes its uinput clone too."""
+        backend = EvdevKeyboardBackend()
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend.device_paths = {"/dev/input/event0"}
+        backend._device_paths_by_fd = {10: "/dev/input/event0"}
+        backend._forwarders = {10: forwarder}
+
+        backend._remove_keyboard_device(10, device)
+
+        forwarder.close.assert_called_once()
+        assert backend._forwarders == {}
