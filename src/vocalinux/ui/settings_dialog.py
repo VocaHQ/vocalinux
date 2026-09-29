@@ -33,10 +33,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState, _EvdevCaptureDevice  # noqa: E402
-from ..gateway_embed import (  # noqa: E402
-    GatewayStatus,
-    get_gateway_embed_manager,
-)
+from ..gateway_embed import GatewayStatus, get_gateway_embed_manager  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
 from ..utils.faster_whisper_model_info import delete_model as delete_faster_whisper_model
@@ -5597,7 +5594,8 @@ class SettingsDialog(Gtk.Dialog):
         pairing_row.add(pairing_box)
         self.gateway_embed_group.add_row(pairing_row)
 
-        self.advanced_box.pack_start(self.gateway_embed_group, False, False, 0)
+        if self.advanced_box is not None:
+            self.advanced_box.pack_start(self.gateway_embed_group, False, False, 0)
 
         self._gateway_manager.add_listener(self._on_gateway_status_from_worker)
         self.connect("destroy", self._on_gateway_embed_dialog_destroy)

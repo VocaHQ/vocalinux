@@ -38,10 +38,10 @@ _IMAGE_RE = re.compile(
 )
 
 
-def _default_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess:
+def _default_run(args: Sequence[str], **kwargs: Any) -> subprocess.CompletedProcess:
     """Run a host binary with AppImage library paths stripped."""
     env = kwargs.pop("env", None)
-    return subprocess.run(*args, env=host_env(env), **kwargs)
+    return subprocess.run(args, env=host_env(env), **kwargs)
 
 
 logger = logging.getLogger(__name__)
