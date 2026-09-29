@@ -1308,3 +1308,102 @@ class TestEvdevGrabAndForwarding:
 
         forwarder.close.assert_called_once()
         assert backend._forwarders == {}
+
+    def test_event_is_shortcut_without_spec(self):
+        """No parsed spec means nothing is consumed."""
+        backend = EvdevKeyboardBackend()
+        backend._spec = None
+
+        assert backend._event_is_shortcut(self._key_event(100, 1)) is False
+
+    def test_event_is_shortcut_combo_edges(self):
+        """Combo consumption only ever applies to the main key."""
+        backend = EvdevKeyboardBackend(shortcut="alt+r")
+        key_r = backend._combo_main_code
+
+        # Modifier and unrelated keys are never consumed, held or not.
+        backend._combo_pressed = {56}
+        assert backend._event_is_shortcut(self._key_event(56, 1)) is False
+        assert backend._event_is_shortcut(self._key_event(30, 1)) is False
+        # An unowned repeat is forwarded like any other event.
+        assert backend._event_is_shortcut(self._key_event(key_r, 2)) is False
+        # A release without a swallowed press is forwarded too.
+        assert backend._event_is_shortcut(self._key_event(key_r, 0)) is False
+
+        # No resolvable main key -> nothing consumed.
+        backend._combo_main_code = None
+        backend._combo_pressed = {56}
+        assert backend._event_is_shortcut(self._key_event(19, 1)) is False
+
+    def test_forward_event_logs_write_failure(self):
+        """A dead uinput clone logs the failure instead of crashing the loop."""
+        backend = EvdevKeyboardBackend()
+        forwarder = MagicMock()
+        forwarder.write_event.side_effect = OSError("gone")
+        backend._forwarders = {10: forwarder}
+
+        with patch("vocalinux.ui.keyboard_backends.evdev_backend.logger") as mock_logger:
+            backend._forward_event(10, self._key_event(30, 1))
+
+        mock_logger.error.assert_called_once()
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_device_race_closes_device_and_forwarder(self, mock_input_device, mock_uinput):
+        """A device that loses the registration race is cleaned up fully."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        mock_uinput.return_value = forwarder
+
+        backend = EvdevKeyboardBackend()
+        backend.device_fds = [10]  # same fd won by another open
+
+        opened = backend._open_keyboard_device("/dev/input/event7")
+
+        assert opened is False
+        device.close.assert_called_once()
+        forwarder.close.assert_called_once()
+        assert backend.devices == []
+        assert backend._forwarders == {}
+
+    def test_monitor_forwards_survivors_during_syn_dropped(self):
+        """Mid-drop: shortcut keys are eaten, surviving other keys forwarded."""
+        backend = EvdevKeyboardBackend()
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend._forwarders = {10: forwarder}
+        backend._dropped_devices = {10}
+        shortcut_event = self._key_event(100, 1)  # KEY_RIGHTALT press
+        other_event = self._key_event(30, 1)  # KEY_A
+        device.read.side_effect = lambda: setattr(backend, "running", False) or [
+            shortcut_event,
+            other_event,
+        ]
+        backend.running = True
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend._handle_key_event = MagicMock()
+
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                side_effect=[0.0, 0.0],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                return_value=([10], [], []),
+            ),
+            patch("vocalinux.ui.keyboard_backends.evdev_backend.ecodes") as mock_ecodes,
+        ):
+            mock_ecodes.EV_SYN = 0
+            mock_ecodes.SYN_DROPPED = 3
+            mock_ecodes.SYN_REPORT = 0
+            mock_ecodes.EV_KEY = 1
+            backend._monitor_devices()
+
+        backend._handle_key_event.assert_not_called()
+        forwarder.write_event.assert_called_once_with(other_event)
