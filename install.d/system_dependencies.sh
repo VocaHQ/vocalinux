@@ -370,12 +370,12 @@ install_system_dependencies() {
             local PY_VIRTUALENV_CANDIDATES=()
             local PY_VENV_CANDIDATES=()
 
-            read -r -a PY_PIP_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[0]}")"
-            read -r -a PY_GOBJECT_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[1]}")"
-            read -r -a PY_GOBJECT_CAIRO_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[2]}")"
-            read -r -a PY_DEVEL_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[3]}")"
-            read -r -a PY_VIRTUALENV_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[4]}")"
-            read -r -a PY_VENV_CANDIDATES <<< "$(suse_python_package_candidates "${PYTHON_PACKAGE_SUFFIXES[5]}")"
+            read -r -a PY_PIP_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_PIP_SUFFIX")"
+            read -r -a PY_GOBJECT_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_GOBJECT_SUFFIX")"
+            read -r -a PY_GOBJECT_CAIRO_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_GOBJECT_CAIRO_SUFFIX")"
+            read -r -a PY_DEVEL_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_DEVEL_SUFFIX")"
+            read -r -a PY_VIRTUALENV_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_VIRTUALENV_SUFFIX")"
+            read -r -a PY_VENV_CANDIDATES <<< "$(suse_python_package_candidates "$PYTHON_VENV_SUFFIX")"
 
             print_info "Resolving openSUSE Python packages for $(suse_python_package_prefix)..."
 

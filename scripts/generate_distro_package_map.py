@@ -31,13 +31,13 @@ LIST_FIELDS = {
     "appindicator",
     "gi_development",
     "optional_system",
-    "python_suffixes",
     "shader_compiler",
     "system",
     "vulkan",
 }
 SCALAR_FIELDS = {"selection_probe"}
 TEXT_TOOLS = {"wtype", "xdotool", "ydotool"}
+SUSE_PYTHON_ROLES = {"pip", "gobject", "gobject_cairo", "devel", "virtualenv", "venv"}
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -86,7 +86,7 @@ def load_map() -> dict[str, dict[str, Any]]:
     for distro, config in distributions.items():
         if not isinstance(config, dict):
             raise ValueError(f"distributions.{distro} must be a mapping")
-        unknown = set(config) - LIST_FIELDS - SCALAR_FIELDS - {"text_input"}
+        unknown = set(config) - LIST_FIELDS - SCALAR_FIELDS - {"python_packages", "text_input"}
         if unknown:
             raise ValueError(f"distributions.{distro} has unknown fields: {sorted(unknown)}")
         _package_list(config.get("system"), f"distributions.{distro}.system", required=True)
@@ -99,6 +99,16 @@ def load_map() -> dict[str, dict[str, Any]]:
             or not selection_probe
         ):
             raise ValueError("selection_probe must be a non-empty string on debian_13_plus only")
+        python_packages = config.get("python_packages")
+        if python_packages is not None:
+            if distro != "suse" or not isinstance(python_packages, dict):
+                raise ValueError("python_packages must be a mapping on suse only")
+            if set(python_packages) != SUSE_PYTHON_ROLES:
+                raise ValueError(
+                    f"distributions.suse.python_packages must define {sorted(SUSE_PYTHON_ROLES)}"
+                )
+            if any(not isinstance(value, str) or not value for value in python_packages.values()):
+                raise ValueError("distributions.suse.python_packages values must be strings")
         text_input = config.get("text_input")
         if not isinstance(text_input, dict) or set(text_input) != TEXT_TOOLS:
             raise ValueError(f"distributions.{distro}.text_input must define {sorted(TEXT_TOOLS)}")
@@ -125,10 +135,8 @@ def load_map() -> dict[str, dict[str, Any]]:
     for distro in ("ubuntu", "debian_12", "debian_13_plus"):
         if len(distributions[distro].get("shader_compiler") or []) < 2:
             raise ValueError(f"distributions.{distro}.shader_compiler needs a fallback")
-    # The installer consumes six roles in the order documented in the YAML;
-    # package suffix spellings themselves belong exclusively to that file.
-    if len(distributions["suse"].get("python_suffixes") or []) != 6:
-        raise ValueError("distributions.suse.python_suffixes must define six package roles")
+    if "python_packages" not in distributions["suse"]:
+        raise ValueError("distributions.suse.python_packages is required")
     for field in ("vulkan", "shader_compiler"):
         _package_list(distributions["suse"].get(field), f"suse.{field}", required=True)
     return distributions
@@ -157,7 +165,12 @@ def render(distributions: dict[str, dict[str, Any]]) -> str:
         "    APPINDICATOR_PACKAGES=()",
         "    GI_DEVELOPMENT_PACKAGES=()",
         "    OPTIONAL_SYSTEM_PACKAGES=()",
-        "    PYTHON_PACKAGE_SUFFIXES=()",
+        '    PYTHON_PIP_SUFFIX=""',
+        '    PYTHON_GOBJECT_SUFFIX=""',
+        '    PYTHON_GOBJECT_CAIRO_SUFFIX=""',
+        '    PYTHON_DEVEL_SUFFIX=""',
+        '    PYTHON_VIRTUALENV_SUFFIX=""',
+        '    PYTHON_VENV_SUFFIX=""',
         "    SHADER_COMPILER_PACKAGES=()",
         "    VULKAN_PACKAGES=()",
         "    XDOTOOL_PACKAGES=()",
@@ -171,7 +184,6 @@ def render(distributions: dict[str, dict[str, Any]]) -> str:
         "appindicator": "APPINDICATOR_PACKAGES",
         "gi_development": "GI_DEVELOPMENT_PACKAGES",
         "optional_system": "OPTIONAL_SYSTEM_PACKAGES",
-        "python_suffixes": "PYTHON_PACKAGE_SUFFIXES",
         "shader_compiler": "SHADER_COMPILER_PACKAGES",
         "vulkan": "VULKAN_PACKAGES",
     }
@@ -181,6 +193,11 @@ def render(distributions: dict[str, dict[str, Any]]) -> str:
             values = _package_list(config.get(field), f"{distro}.{field}")
             if values:
                 lines.append(_array_assignment(variable, values))
+        python_packages = config.get("python_packages")
+        if python_packages:
+            for role in sorted(SUSE_PYTHON_ROLES):
+                variable = f"PYTHON_{role.upper()}_SUFFIX"
+                lines.append(f"            {variable}={shlex.quote(python_packages[role])}")
         text_input = config["text_input"]
         lines.append(_array_assignment("XDOTOOL_PACKAGES", text_input["xdotool"]))
         lines.append(_array_assignment("WTYPE_PACKAGES", text_input["wtype"]))

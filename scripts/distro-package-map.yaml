@@ -141,9 +141,13 @@ distributions:
     # chain on Tumbleweed. The compilers build evdev and PyAudio from sdists.
     system: [gtk3, ibus, typelib-1_0-IBus-1_0, gobject-introspection-devel, portaudio-devel, pkg-config, cmake, gcc, gcc-c++, make, wget, curl, unzip, xclip, xsel, wl-clipboard, typelib-1_0-Notify-0_7, libnotify4, patchelf]
     appindicator: [typelib-1_0-AyatanaAppIndicator3-0_1, typelib-1_0-AppIndicator3-0_1, typelib-1_0-AyatanaAppIndicator-0_1, libayatana-appindicator3-1, libappindicator3-1, libappindicator-gtk3]
-    # Ordered roles: pip, GI bindings, GI Cairo bindings, Python headers,
-    # preferred virtualenv provider, fallback venv provider.
-    python_suffixes: [pip, gobject, gobject-cairo, devel, virtualenv, venv]
+    python_packages:
+      pip: pip
+      gobject: gobject
+      gobject_cairo: gobject-cairo
+      devel: devel
+      virtualenv: virtualenv
+      venv: venv
     vulkan: [vulkan-tools, vulkan-devel]
     shader_compiler: [shaderc, glslang-devel, glslang]
     text_input:

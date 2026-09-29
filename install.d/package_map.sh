@@ -12,7 +12,12 @@ load_distro_package_map() {
     APPINDICATOR_PACKAGES=()
     GI_DEVELOPMENT_PACKAGES=()
     OPTIONAL_SYSTEM_PACKAGES=()
-    PYTHON_PACKAGE_SUFFIXES=()
+    PYTHON_PIP_SUFFIX=""
+    PYTHON_GOBJECT_SUFFIX=""
+    PYTHON_GOBJECT_CAIRO_SUFFIX=""
+    PYTHON_DEVEL_SUFFIX=""
+    PYTHON_VIRTUALENV_SUFFIX=""
+    PYTHON_VENV_SUFFIX=""
     SHADER_COMPILER_PACKAGES=()
     VULKAN_PACKAGES=()
     XDOTOOL_PACKAGES=()
@@ -68,9 +73,14 @@ load_distro_package_map() {
         suse)
             SYSTEM_PACKAGES=(gtk3 ibus typelib-1_0-IBus-1_0 gobject-introspection-devel portaudio-devel pkg-config cmake gcc gcc-c++ make wget curl unzip xclip xsel wl-clipboard typelib-1_0-Notify-0_7 libnotify4 patchelf)
             APPINDICATOR_PACKAGES=(typelib-1_0-AyatanaAppIndicator3-0_1 typelib-1_0-AppIndicator3-0_1 typelib-1_0-AyatanaAppIndicator-0_1 libayatana-appindicator3-1 libappindicator3-1 libappindicator-gtk3)
-            PYTHON_PACKAGE_SUFFIXES=(pip gobject gobject-cairo devel virtualenv venv)
             SHADER_COMPILER_PACKAGES=(shaderc glslang-devel glslang)
             VULKAN_PACKAGES=(vulkan-tools vulkan-devel)
+            PYTHON_DEVEL_SUFFIX=devel
+            PYTHON_GOBJECT_SUFFIX=gobject
+            PYTHON_GOBJECT_CAIRO_SUFFIX=gobject-cairo
+            PYTHON_PIP_SUFFIX=pip
+            PYTHON_VENV_SUFFIX=venv
+            PYTHON_VIRTUALENV_SUFFIX=virtualenv
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
             YDOTOOL_PACKAGES=(ydotool)

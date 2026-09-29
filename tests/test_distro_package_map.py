@@ -133,11 +133,22 @@ def test_text_tool_cannot_silently_drop_second_package(tmp_path: Path) -> None:
 def test_suse_suffix_spelling_is_owned_by_yaml(tmp_path: Path) -> None:
     generator = _load_generator()
     document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
-    document["distributions"]["suse"]["python_suffixes"][0] = "renamed-pip"
+    document["distributions"]["suse"]["python_packages"]["pip"] = "renamed-pip"
     generator.SOURCE = tmp_path / "map.yaml"
     generator.SOURCE.write_text(yaml.safe_dump(document), encoding="utf-8")
     rendered = generator.render(generator.load_map())
-    assert "PYTHON_PACKAGE_SUFFIXES=(renamed-pip " in rendered
+    assert "PYTHON_PIP_SUFFIX=renamed-pip" in rendered
+
+
+def test_suse_python_roles_are_named_not_positional(tmp_path: Path) -> None:
+    generator = _load_generator()
+    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    del document["distributions"]["suse"]["python_packages"]["pip"]
+    document["distributions"]["suse"]["python_packages"]["unexpected"] = "pip"
+    generator.SOURCE = tmp_path / "invalid.yaml"
+    generator.SOURCE.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="python_packages must define"):
+        generator.load_map()
 
 
 @pytest.mark.parametrize(
