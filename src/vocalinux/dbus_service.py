@@ -153,7 +153,7 @@ class VocalinuxDBusService:
             callback()
         except Exception:
             logger.error("Error in D-Bus method handler", exc_info=True)
-        return GLib.SOURCE_REMOVE
+        return GLib.SOURCE_REMOVE  # type: ignore[no-any-return]
 
     def shutdown(self) -> None:
         """Unregister the object and release the bus name."""
