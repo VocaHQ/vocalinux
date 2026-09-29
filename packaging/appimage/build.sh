@@ -126,6 +126,13 @@ INDICATOR_TYPELIBS=(
   AyatanaAppIndicator3-0.1 AyatanaAppindicator3-0.1 AppIndicator3-0.1
 )
 
+# Soft dependencies the app itself falls back from: dictation_overlay.py uses a
+# plain GTK window when layer shell is absent, so these are copied when found
+# but must never block a direct build on a host without them.
+OPTIONAL_TYPELIBS=(
+  GtkLayerShell-0.1
+)
+
 # Shared libs loaded via GI at runtime (not linked into python3), so
 # linuxdeploy will not discover them from -e python3 alone.
 # verify_typelib_libraries below fails the build when one is missing.
@@ -148,6 +155,10 @@ GI_RUNTIME_LIBS=(
 HOST_PROVIDED_LIBS=(
   libharfbuzz.so.0
   libharfbuzz-gobject.so.0
+  # Layer shell is optional end to end (see OPTIONAL_TYPELIBS): when its
+  # library cannot be bundled, the host's copy is the right one — the app
+  # falls back to a plain GTK window when no host copy exists either.
+  libgtk-layer-shell.so.0
 )
 
 # On the excludelist, but something we bundle links them, so the host cannot be
@@ -265,7 +276,7 @@ copy_typelibs() {
   done
 
   # Tray indicator typelibs are alternates; drop them from the hard-fail list
-  # when at least one copied successfully.
+  # when at least one copied successfully. Optional typelibs never hard-fail.
   local hard_missing=()
   for typelib in "${missing[@]}"; do
     case " ${INDICATOR_TYPELIBS[*]} " in
@@ -275,7 +286,10 @@ copy_typelibs() {
         fi
         ;;
       *)
-        hard_missing+=("$typelib")
+        case " ${OPTIONAL_TYPELIBS[*]} " in
+          *" ${typelib} "*) ;;
+          *) hard_missing+=("$typelib") ;;
+        esac
         ;;
     esac
   done
