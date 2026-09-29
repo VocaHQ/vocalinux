@@ -264,6 +264,47 @@ def test_unwritable_restore_point_does_not_lower_the_sink(
     assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
 
 
+def test_failed_set_that_applied_keeps_the_restore_point(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A set that reports failure can still have applied; keep the way back."""
+    sink = FakeSink(volume=0.5)
+    ducker = _ducker(tmp_path, sink, percent=20)
+
+    def apply_but_report_false(sink_id: str, linear: tuple[float, ...]) -> bool:
+        recorded: Union[float, tuple[float, ...]] = linear[0] if len(linear) == 1 else linear
+        sink.sets.append((sink_id, recorded))
+        sink._channels = tuple(linear)
+        return False
+
+    monkeypatch.setattr(sink, "set_volume", apply_but_report_false)
+    ducker.duck()
+
+    assert sink.volume == pytest.approx(0.1)
+    assert (tmp_path / duck.PENDING_RECORD_NAME).exists()
+
+    ducker.restore()
+    assert sink.volume == pytest.approx(0.5)
+
+
+def test_failed_set_confirmed_unchanged_drops_the_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sink = FakeSink(volume=0.5)
+    ducker = _ducker(tmp_path, sink, percent=20)
+
+    def reject(sink_id: str, linear: tuple[float, ...]) -> bool:
+        recorded: Union[float, tuple[float, ...]] = linear[0] if len(linear) == 1 else linear
+        sink.sets.append((sink_id, recorded))
+        return False
+
+    monkeypatch.setattr(sink, "set_volume", reject)
+    ducker.duck()
+
+    assert sink.volume == pytest.approx(0.5)
+    assert not (tmp_path / duck.PENDING_RECORD_NAME).exists()
+
+
 def test_percent_100_does_not_change_the_sink(tmp_path: Path) -> None:
     sink = FakeSink(volume=0.5)
     ducker = _ducker(tmp_path, sink, percent=100)
