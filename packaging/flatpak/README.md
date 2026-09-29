@@ -2,10 +2,26 @@
 
 Manifest and AppStream metadata for building Vocalinux as a Flatpak.
 
+## VocaHQ remote (auto-update)
+
+The recommended install is the self-hosted VocaHQ OSTree remote — the
+Homebrew-tap analogue — which `release.yml` signs and publishes to
+`VocaHQ/vocalinux-flatpak` (GitHub Pages) on every `v*` tag:
+
+```bash
+flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
+flatpak install vocahq com.vocalinux.Vocalinux
+flatpak update   # each new release arrives here
+```
+
+Only the app is ours; `org.gnome.Platform//50` still comes from Flathub (the
+`.flatpakrepo` declares `RuntimeRepo=`, so flatpak offers to add it). One-time
+repo/key setup: [docs/FLATPAK_REMOTE.md](../../docs/FLATPAK_REMOTE.md).
+
 ## GitHub Release bundles
 
 Each `v*` GitHub Release attaches `Vocalinux-<version>-x86_64.flatpak` and
-`Vocalinux-<version>-aarch64.flatpak`. That is the easy install path:
+`Vocalinux-<version>-aarch64.flatpak` as a no-remote fallback:
 
 ```bash
 # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
@@ -16,11 +32,11 @@ flatpak install --user ./Vocalinux-<version>-x86_64.flatpak
 flatpak run com.vocalinux.Vocalinux
 ```
 
-Bundles do **not** auto-update. Vocalinux is **not on Flathub** (submission
+Bundles do **not** auto-update — the VocaHQ remote above is the path for
+that. Vocalinux is **not on Flathub** (submission
 [flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368) closed on
-policy grounds; we are not re-submitting). A self-hosted VocaHQ remote is the
-long-term auto-update path. Until then, download a new bundle from the next
-release. Local `flatpak-builder` remains for contributors (below).
+policy grounds; we are not re-submitting). Local `flatpak-builder` remains for
+contributors (below).
 
 ## Current Scope
 
@@ -109,15 +125,16 @@ symlinking of whisper.cpp's shared libraries onto the loader path.
 `python3-build-dependencies.yaml` is a small hand-maintained helper so
 `--no-build-isolation` builds can import `mesonpy` before NumPy is built.
 
-## Channel: GitHub Releases, not Flathub
+## Channel: VocaHQ remote + GitHub Releases, not Flathub
 
 Flathub is **not pursued**. The submission,
 [flathub/flathub#9368](https://github.com/flathub/flathub/pull/9368), was closed
 on 2026-07-23 on policy grounds. See
-[#167](https://github.com/VocaHQ/vocalinux/issues/167) for the channel decision
-and [#784](https://github.com/VocaHQ/vocalinux/issues/784) for release bundles.
-Do not re-submit. Local builds and GitHub Release `.flatpak` assets are the
-supported paths.
+[#167](https://github.com/VocaHQ/vocalinux/issues/167) for the channel decision,
+[#784](https://github.com/VocaHQ/vocalinux/issues/784) for release bundles, and
+[#785](https://github.com/VocaHQ/vocalinux/issues/785) for the self-hosted
+remote. Do not re-submit. The `vocahq` remote, local builds, and GitHub
+Release `.flatpak` assets are the supported paths.
 
 ## Manifest Details
 

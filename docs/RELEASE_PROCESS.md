@@ -389,11 +389,14 @@ After pushing the tag, the GitHub Actions workflow will automatically:
    so a partial manifest never gets published)
 5. Publish to PyPI via trusted publishing
 6. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
-7. Deploy the website to vocalinux.com
-8. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
+7. Publish the signed self-hosted Flatpak remote to `VocaHQ/vocalinux-flatpak`
+   (when `FLATPAK_GPG_PRIVATE_KEY` + `FLATPAK_REPO_TOKEN` are configured — see
+   docs/FLATPAK_REMOTE.md)
+8. Deploy the website to vocalinux.com
+9. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
    `edge`/`candidate`. Store human review (for example `uinput` allow-installation)
    must not block the GitHub `.snap`. `stable` is still a manual promote
-9. Mark as pre-release if version contains alpha/beta/rc
+10. Mark as pre-release if version contains alpha/beta/rc
 
 Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
@@ -409,6 +412,8 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
 - [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
       matches the line for that wheel in `SHA256SUMS`
 - [ ] Verify website was deployed (check vocalinux.com)
+- [ ] If the Flatpak remote is configured, verify it picked up the tag:
+      `flatpak remote-info vocahq com.vocalinux.Vocalinux` (docs/FLATPAK_REMOTE.md)
 - [ ] Announce on social media/communities
 - [ ] Update any pinned issues or discussions
 

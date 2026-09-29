@@ -162,9 +162,17 @@ jobs:
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
             ### Flatpak
-            Download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached shortly
-            after this release is published). The app is **not on Flathub**; these are GitHub
-            Release bundles with **no auto-update**.
+            Install and auto-update via the self-hosted VocaHQ remote (`flatpak update`
+            picks up each release):
+            ```bash
+            flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
+            flatpak install vocahq com.vocalinux.Vocalinux
+            ```
+            The app is **not on Flathub**; `org.gnome.Platform//50` still comes from
+            Flathub and the `.flatpakrepo` points flatpak at it.
+
+            Or download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached
+            shortly after this release is published) — a bundle with **no auto-update**:
             ```bash
             # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
             flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -336,6 +344,161 @@ jobs:
           path: Vocalinux-${{ steps.get_version.outputs.VERSION }}-aarch64.flatpak
           if-no-files-found: error
           retention-days: 7
+
+  # Self-hosted OSTree remote (#785), the Homebrew-tap analogue: the release
+  # bundles are imported into a signed repo and pushed to
+  # VocaHQ/vocalinux-flatpak, which GitHub Pages serves at FLATPAK_REMOTE_URL.
+  # Installs then auto-update via `flatpak update`. One-time setup — repo,
+  # Pages, signing key, PAT — is documented in docs/FLATPAK_REMOTE.md.
+  publish-flatpak-remote:
+    name: Publish Flatpak remote
+    needs: [build-flatpak-amd64, build-flatpak-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    concurrency:
+      # Two tags publishing at once would race each other's gh-pages push.
+      group: flatpak-remote
+    env:
+      # The dedicated "tap" repo and the URL Pages serves it at. A custom
+      # domain (e.g. flatpak.vocalinux.com) overrides both via the vars.
+      FLATPAK_REMOTE_REPO: ${{ vars.FLATPAK_REMOTE_REPO || 'VocaHQ/vocalinux-flatpak' }}
+      FLATPAK_REMOTE_URL: ${{ vars.FLATPAK_REMOTE_URL || 'https://vocahq.github.io/vocalinux-flatpak/repo' }}
+      FLATPAKREPO_URL: ${{ vars.FLATPAKREPO_URL || 'https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo' }}
+    steps:
+      # Same pattern as publish-aur: an unconfigured remote skips the publish
+      # instead of failing the release.
+      - name: Check remote credentials
+        id: creds
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
+        run: |
+          if [ -z "$FLATPAK_GPG_PRIVATE_KEY" ] || [ -z "$FLATPAK_REPO_TOKEN" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "FLATPAK_GPG_PRIVATE_KEY and/or FLATPAK_REPO_TOKEN not set; skipping remote publish (docs/FLATPAK_REMOTE.md)"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install repo tooling
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends flatpak ostree
+
+      - name: Download the Flatpak bundles
+        if: steps.creds.outputs.configured == 'true'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: flatpak-*
+          merge-multiple: true
+          path: dist
+
+      # On the first publish gh-pages does not exist yet; continue-on-error
+      # turns that into a fresh repo instead of a failed job.
+      - name: Fetch the previously published repo
+        if: steps.creds.outputs.configured == 'true'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.FLATPAK_REMOTE_REPO }}
+          ref: gh-pages
+          token: ${{ secrets.FLATPAK_REPO_TOKEN }}
+          path: site
+
+      - name: Import the signing key
+        if: steps.creds.outputs.configured == 'true'
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_GPG_PASSPHRASE: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --import <<<"$FLATPAK_GPG_PRIVATE_KEY"
+          KEYID=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "sec" {print $5; exit}')
+          KEYGRIP=$(gpg --batch --with-colons --with-keygrip --list-secret-keys | awk -F: '$1 == "grp" {print $10; exit}')
+          if [ -n "${FLATPAK_GPG_PASSPHRASE:-}" ]; then
+            # libostree signs through gpg-agent, so the passphrase has to be
+            # preset on the keygrip — there is no --passphrase-fd to reach for.
+            PRESET=$(command -v gpg-preset-passphrase || find /usr/lib* /usr/libexec -name gpg-preset-passphrase 2>/dev/null | head -1 || true)
+            if [ -z "$PRESET" ]; then
+              echo "::error::FLATPAK_GPG_PASSPHRASE is set but gpg-preset-passphrase is unavailable; import a passphrase-less key instead"
+              exit 1
+            fi
+            echo "allow-preset-passphrase" >> "$GNUPGHOME/gpg-agent.conf"
+            gpgconf --kill gpg-agent || true
+            gpg-agent --daemon
+            printf '%s' "$FLATPAK_GPG_PASSPHRASE" | "$PRESET" --preset "$KEYGRIP"
+          fi
+          gpg --batch --export "$KEYID" > "$RUNNER_TEMP/pubkey.gpg"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          echo "KEYID=$KEYID" >> "$GITHUB_ENV"
+
+      # site/repo carries the prior objects back in, so clients pull deltas
+      # per release rather than re-downloading the app.
+      - name: Import bundles and sign the repo
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          repo="$PWD/publish/repo"
+          if [ -d site/repo/objects ]; then
+            mkdir -p publish
+            cp -a site/repo "$repo"
+          else
+            mkdir -p "$repo"
+            ostree --repo="$repo" init --mode=archive-z2
+          fi
+          ls -la dist/*.flatpak
+          for bundle in dist/*.flatpak; do
+            flatpak build-import-bundle \
+              --gpg-sign="$KEYID" --gpg-homedir="$GNUPGHOME" \
+              --update-appstream --no-update-summary \
+              "$repo" "$bundle"
+          done
+          flatpak build-update-repo \
+            --gpg-sign="$KEYID" --gpg-homedir="$GNUPGHOME" \
+            --gpg-import="$RUNNER_TEMP/pubkey.gpg" \
+            --default-branch=stable \
+            --generate-static-deltas \
+            "$repo"
+
+      - name: Write the .flatpakrepo and index page
+        if: steps.creds.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          touch publish/.nojekyll
+          {
+            echo '[Flatpak Repo]'
+            echo 'Title=VocaHQ'
+            echo "Url=${FLATPAK_REMOTE_URL}"
+            echo 'Homepage=https://vocalinux.com'
+            echo 'Comment=Official Vocalinux Flatpak remote'
+            echo 'Description=Self-hosted Vocalinux Flatpak repository'
+            echo 'Icon=https://vocalinux.com/icon-512x512.png'
+            echo 'RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo'
+            echo 'DefaultBranch=stable'
+            echo "GPGKey=$(base64 -w0 "$RUNNER_TEMP/pubkey.gpg")"
+          } > publish/vocahq.flatpakrepo
+          grep -v GPGKey publish/vocahq.flatpakrepo
+          sed -e "s|__FLATPAKREPO_URL__|${FLATPAKREPO_URL}|g" \
+              -e "s|__REMOTE_URL__|${FLATPAK_REMOTE_URL}|g" \
+              packaging/flatpak/index.html > publish/index.html
+
+      - name: Publish the remote
+        if: steps.creds.outputs.configured == 'true'
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4
+        with:
+          personal_token: ${{ secrets.FLATPAK_REPO_TOKEN }}
+          external_repository: ${{ env.FLATPAK_REMOTE_REPO }}
+          publish_dir: ./publish
+          publish_branch: gh-pages
+          commit_message: 'Vocalinux ${{ github.ref_name }}'
 
   attach-flatpak:
     name: Attach Flatpak bundles

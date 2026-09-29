@@ -235,3 +235,23 @@ def test_the_release_notes_document_flatpak_bundles():
     assert "no auto-update" in body
     assert "not on Flathub" in body
     assert "Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak" in body
+
+
+def test_the_flatpak_remote_publishes_signed_and_secret_gated():
+    """#785's self-hosted OSTree remote signs with a provisioned GPG key and
+    pushes to VocaHQ/vocalinux-flatpak, never to the release — and it skips
+    itself instead of failing the release while secrets are unconfigured.
+    """
+    block = _jobs()["publish-flatpak-remote"]
+    assert _needs(block) >= {
+        "build-flatpak-amd64",
+        "build-flatpak-arm64",
+    }, "the remote publishes bundles that are still building"
+    for secret in ("FLATPAK_GPG_PRIVATE_KEY", "FLATPAK_REPO_TOKEN"):
+        assert f"secrets.{secret}" in block, f"{secret} is not wired into the job"
+    assert "build-import-bundle" in block
+    assert "--gpg-sign" in block, "the remote must sign what it publishes"
+    assert "--generate-static-deltas" in block, "updates would re-download whole apps"
+    assert "external_repository" in block, "the tap repo gets no push without it"
+    assert "gh release upload" not in block, "the remote is not a release asset"
+    assert _permissions(block).get("id-token") != "write"
