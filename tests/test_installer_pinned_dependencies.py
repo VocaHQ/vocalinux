@@ -15,6 +15,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 from packaging.requirements import Requirement
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -340,10 +341,9 @@ def test_source_built_runtime_packages_have_build_deps_on_split_devel_distros() 
     """The pinned runtime builds these from source; distro lists that split
     -devel packages must carry their build deps."""
     runtime = (ROOT / "requirements/runtime.txt").read_text(encoding="utf-8")
-    installer = installer_source()
-
-    def package_line(prefix: str) -> str:
-        return next(line for line in installer.splitlines() if f"local {prefix}=" in line)
+    package_map = yaml.safe_load(
+        (ROOT / "scripts" / "distro-package-map.yaml").read_text(encoding="utf-8")
+    )["distributions"]
 
     build_deps = {
         "pycairo": ("cairo-devel", "libcairo2-dev"),
@@ -353,6 +353,7 @@ def test_source_built_runtime_packages_have_build_deps_on_split_devel_distros() 
     for name, (dnf_pkg, apt_pkg) in build_deps.items():
         if not re.search(rf"^{name}==", runtime, re.MULTILINE):
             continue  # wheels-only or dropped: nothing to build
-        assert dnf_pkg in package_line("DNF_PACKAGES"), name
-        assert apt_pkg in package_line("APT_PACKAGES_UBUNTU"), name
-        assert apt_pkg in package_line("APT_PACKAGES_DEBIAN_BASE"), name
+        assert dnf_pkg in package_map["fedora"]["system"], name
+        assert apt_pkg in package_map["ubuntu"]["system"], name
+        assert apt_pkg in package_map["debian_12"]["system"], name
+        assert apt_pkg in package_map["debian_13_plus"]["system"], name
