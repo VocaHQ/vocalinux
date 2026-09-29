@@ -1228,6 +1228,9 @@ class SpeechRecognitionManager:
         self._playback_duck = (
             default_dictation_duck_session() if injected_duck is None else injected_duck
         )
+        # Serializes arm vs release: a failure path that already released the
+        # duck must not be followed by an arm that re-lowers the sink.
+        self._playback_duck_lock = threading.Lock()
 
         # Create models directory if it doesn't exist
         os.makedirs(MODELS_DIR, exist_ok=True)
@@ -3386,7 +3389,13 @@ class SpeechRecognitionManager:
         try:
             if not self._playback_duck.enabled():
                 return
-            self._playback_duck.start(self._playback_duck_delay_seconds())
+            # The capture thread may already have failed and released the duck;
+            # arming now would lower playback in the error state with nothing
+            # left to put it back.
+            with self._playback_duck_lock:
+                if not self.should_record or self.state != RecognitionState.LISTENING:
+                    return
+                self._playback_duck.start(self._playback_duck_delay_seconds())
         except Exception:
             logger.error("Could not schedule playback duck", exc_info=True)
 
@@ -3403,11 +3412,12 @@ class SpeechRecognitionManager:
         Used when dictation ends, including error exits and quitting while the
         microphone is still open. Failures are logged and never raised.
         """
-        self._cancel_pending_playback_duck()
-        try:
-            self._playback_duck.restore()
-        except Exception:
-            logger.error("Could not restore playback volume", exc_info=True)
+        with self._playback_duck_lock:
+            self._cancel_pending_playback_duck()
+            try:
+                self._playback_duck.restore()
+            except Exception:
+                logger.error("Could not restore playback volume", exc_info=True)
 
     def start_recognition(self, mode: str = "toggle") -> bool:
         """Start the speech recognition process.
@@ -3497,13 +3507,11 @@ class SpeechRecognitionManager:
 
         logger.info("Stopping speech recognition")
 
-        # Cancel before the microphone thread winds down so a timer cannot
-        # duck after we've decided to stop. The volume goes back only once
-        # that thread has left the device, and before the stop cue.
-        self._cancel_pending_playback_duck()
-
-        # Stop recording FIRST to prevent capturing the stop sound
+        # Mark recording over before touching the duck so a concurrent arm
+        # sees the dictation as ended. The volume goes back only once the
+        # microphone thread has left the device, and before the stop cue.
         self.should_record = False
+        self._cancel_pending_playback_duck()
 
         # Wait for audio thread to finish recording and enqueue any pending audio
         # This is critical to prevent race condition where recognition thread exits
@@ -3565,6 +3573,7 @@ class SpeechRecognitionManager:
         except ImportError as e:
             logger.error(f"Failed to import required audio libraries: {e}")
             logger.error("Please install required dependencies: pip install pyaudio numpy")
+            self.should_record = False
             self.release_playback_duck()
             play_error_sound()
             self._update_state(RecognitionState.ERROR)
@@ -3672,6 +3681,7 @@ class SpeechRecognitionManager:
                         stream = self._audio_stream
                         CHANNELS = self._capture_channels
                     else:
+                        self.should_record = False
                         self.release_playback_duck()
                         play_error_sound()
                         audio.terminate()
@@ -3902,6 +3912,7 @@ class SpeechRecognitionManager:
 
         except Exception as e:
             logger.error(f"Error in audio recording: {e}")
+            self.should_record = False
             self.release_playback_duck()
             play_error_sound()
             self._update_state(RecognitionState.ERROR)

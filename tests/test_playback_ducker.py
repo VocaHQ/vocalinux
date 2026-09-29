@@ -704,3 +704,44 @@ def test_recognition_hook_schedules_after_start_and_restores_before_stop_cue(
         thread_cls.return_value = MagicMock()
         assert manager.start_recognition() is True
     assert not any(isinstance(item, tuple) for item in timeline)
+
+
+def test_arm_after_capture_failure_does_not_schedule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A capture thread that already failed must not be followed by a duck."""
+    from vocalinux.common_types import RecognitionState
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    session = _RecordingSession(enabled=True)
+    feedback = _real_audio_feedback(monkeypatch)
+    monkeypatch.setattr(feedback, "_is_sound_effects_enabled", lambda: False)
+    monkeypatch.setattr(feedback, "_resolved_tone", lambda: "voca")
+    monkeypatch.setattr(feedback, "tone_sound_path", lambda _tone, _kind: "/cue.wav")
+    monkeypatch.setattr(feedback, "_wav_duration_seconds", lambda _path: 0.4)
+
+    model_dir = tmp_path / "vosk-model"
+    model_dir.mkdir()
+    with patch.dict(sys.modules, {"vosk": MagicMock()}):
+        with patch.object(
+            SpeechRecognitionManager, "_get_vosk_model_path", return_value=str(model_dir)
+        ):
+            manager = SpeechRecognitionManager(engine="vosk", playback_duck=session)
+
+    # The capture thread failed before start_recognition reached the arm: it
+    # released the session and ended the dictation. The late arm must not
+    # schedule a duck that nothing will restore.
+    manager.should_record = False
+    manager.release_playback_duck()
+    manager._arm_playback_duck()
+    assert session.events == ["cancel", "restore"]
+
+    manager.state = RecognitionState.ERROR
+    manager.should_record = True
+    session.events.clear()
+    manager._arm_playback_duck()
+    assert session.events == []
+
+    manager.state = RecognitionState.LISTENING
+    manager._arm_playback_duck()
+    assert session.events == [("start", 0.0)]
