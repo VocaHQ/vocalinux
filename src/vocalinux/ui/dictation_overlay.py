@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+from types import ModuleType
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ class DictationOverlayController:
     Separated from GTK so unit tests can drive show/hide without a display.
     """
 
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = True) -> None:
         self._enabled = bool(enabled)
         self._state = RecognitionState.IDLE
 
@@ -90,7 +91,7 @@ class DictationOverlayController:
         return MODE_PROCESSING
 
 
-def _try_import_layer_shell():
+def _try_import_layer_shell() -> Optional[ModuleType]:
     """
     Soft-import GtkLayerShell when available (Wayland, wlroots-based).
 
@@ -103,7 +104,8 @@ def _try_import_layer_shell():
         gi.require_version("GtkLayerShell", "0.1")
         from gi.repository import GtkLayerShell  # type: ignore
 
-        return GtkLayerShell
+        module: ModuleType = GtkLayerShell
+        return module
     except Exception:
         return None
 
@@ -117,7 +119,7 @@ class DictationOverlay:
     window is passive: no keyboard focus, click-through input region.
     """
 
-    def __init__(self, enabled: bool = True):
+    def __init__(self, enabled: bool = True) -> None:
         self.controller = DictationOverlayController(enabled=enabled)
         self._window: Optional[Gtk.Window] = None
         self._drawing_area: Optional[Gtk.DrawingArea] = None
@@ -144,6 +146,7 @@ class DictationOverlay:
 
         self._GLib = GLib
         self._Gdk = Gdk
+        self._Gtk = Gtk
 
         # TOPLEVEL is required by gtk-layer-shell; passive flags below avoid
         # keyboard focus so the active editor keeps receiving injected text.
@@ -202,6 +205,11 @@ class DictationOverlay:
         window.connect("size-allocate", self._on_size_allocate)
         window.connect("realize", self._on_realize)
         window.connect("map-event", self._on_map_event)
+        # Fallback placement is stale the moment monitor geometry or the
+        # compositor changes; layer shell re-anchors itself on these signals.
+        screen.connect("size-changed", self._on_screen_geometry_changed)
+        screen.connect("monitors-changed", self._on_screen_geometry_changed)
+        screen.connect("composited-changed", self._on_composited_changed)
 
         self._window = window
         self._drawing_area = drawing
@@ -247,6 +255,25 @@ class DictationOverlay:
         if widget.get_realized():
             self._on_realize(widget)
 
+    def _on_screen_geometry_changed(self, *_args: object) -> None:
+        """Re-run fallback placement when monitors or resolution change."""
+        if not self._use_layer_shell and self._window is not None and self._window.get_visible():
+            self._layout_bottom_strip()
+
+    def _on_composited_changed(self, *_args: object) -> None:
+        """Re-evaluate the hide strategy when a compositor appears or leaves."""
+        self._sync_window()
+
+    def _is_wayland(self) -> bool:
+        """True when the default display is a Wayland one."""
+        try:
+            wayland_cls = getattr(self._Gdk, "WaylandDisplay", None)
+            if wayland_cls is None:
+                return False
+            return isinstance(self._Gdk.Display.get_default(), wayland_cls)
+        except Exception:
+            return False
+
     def set_enabled(self, enabled: bool) -> None:
         """Enable/disable the feature and sync the window."""
         self.controller.set_enabled(enabled)
@@ -278,11 +305,19 @@ class DictationOverlay:
             # Opacity 0 instead of hide() — hide/show cycles re-activate the
             # window on many Wayland compositors and steal editor focus (which
             # breaks IBus/wtype injection into the previously focused app).
+            # On a non-composited display opacity is a no-op, so hide the
+            # window outright rather than leave a stale orb claiming the mic
+            # is live.
+            try:
+                composited = self._window.is_composited()
+            except Exception:
+                composited = False
             try:
                 self._window.set_opacity(0.0)
             except Exception:
-                if self._window.get_visible():
-                    self._window.hide()
+                composited = False
+            if not composited and self._window.get_visible():
+                self._window.hide()
             return
 
         # Layout before first map so the first frame is already bottom-center.
@@ -317,6 +352,9 @@ class DictationOverlay:
 
         Drawing the orb at the strip's horizontal center always yields bottom-center
         of the screen, even when the compositor only roughly honors move().
+        On Wayland without layer shell, move() is a hint the compositor can
+        ignore entirely, so ask for a centered compact window instead of
+        promising a bottom position it cannot place.
         """
         if self._window is None:
             return
@@ -330,14 +368,20 @@ class DictationOverlay:
             if monitor is None:
                 return
             geom = monitor.get_geometry()
-            width = max(geom.width, _ORB_SIZE)
             height = _STRIP_HEIGHT
-            x = geom.x
-            y = geom.y + geom.height - height - _BOTTOM_MARGIN
+            wayland = self._is_wayland()
+            if wayland:
+                self._window.set_position(self._Gtk.WindowPosition.CENTER_ALWAYS)
+                width = _ORB_SIZE
+            else:
+                width = max(geom.width, _ORB_SIZE)
             self._window.resize(width, height)
-            self._window.move(x, y)
             if self._drawing_area is not None:
                 self._drawing_area.set_size_request(width, height)
+            if not wayland:
+                x = geom.x
+                y = geom.y + geom.height - height - _BOTTOM_MARGIN
+                self._window.move(x, y)
         except Exception as e:
             logger.debug("Could not layout overlay strip: %s", e)
 

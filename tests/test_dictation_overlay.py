@@ -8,8 +8,10 @@ Important: these tests must not import real GTK / tray_indicator into
 sys.modules — that breaks later tests that mock gi (see CI isolation).
 """
 
+import importlib
 import logging
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -754,28 +756,28 @@ class TestInitGtkWindowWithMocks(unittest.TestCase):
 
 def _load_settings_method(method_name: str):
     """
-    Load a SettingsDialog method from the shipped source via AST.
+    Load a SettingsDialog method with the module's real globals.
 
-    conftest mocks GI so SettingsDialog is not a usable class under pytest;
-    this still executes the real method body from settings_dialog.py.
+    conftest replaces gi.repository with a MagicMock, so Gtk's widget classes
+    are not subclassable and the module cannot be imported as-is. Swapping in
+    real (empty) classes for just the bases it subclasses lets the import run
+    the same way CI executes the method — with every module-level name in
+    scope — then the imported module is dropped again so later tests still see
+    only the conftest mocks.
     """
-    import ast
-
-    settings_path = _REPO_ROOT / "src" / "vocalinux" / "ui" / "settings_dialog.py"
-    tree = ast.parse(settings_path.read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "SettingsDialog":
-            for item in node.body:
-                if isinstance(item, ast.FunctionDef) and item.name == method_name:
-                    mod = ast.Module(body=[item], type_ignores=[])
-                    ast.fix_missing_locations(mod)
-                    ns: dict = {"logging": __import__("logging")}
-                    # Provide logger used by the method body
-                    ns["logger"] = logging.getLogger("vocalinux.ui.settings_dialog")
-                    # Use the real source path so coverage attributes hits correctly.
-                    exec(compile(mod, str(settings_path), "exec"), ns)
-                    return ns[method_name]
-    raise AssertionError(f"SettingsDialog.{method_name} not found in source")
+    repository = sys.modules["gi.repository"]
+    previous_gtk = repository.Gtk
+    gtk_stub = MagicMock()
+    gtk_stub.Box = type("Box", (), {})
+    gtk_stub.ListBoxRow = type("ListBoxRow", (), {})
+    gtk_stub.Dialog = type("Dialog", (), {})
+    repository.Gtk = gtk_stub
+    try:
+        module = importlib.import_module("vocalinux.ui.settings_dialog")
+    finally:
+        repository.Gtk = previous_gtk
+        sys.modules.pop("vocalinux.ui.settings_dialog", None)
+    return getattr(module.SettingsDialog, method_name)
 
 
 # Loaded once at import time so it is not turned into a bound method on the

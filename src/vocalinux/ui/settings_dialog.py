@@ -35,9 +35,6 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 from ..common_types import RecognitionState, _EvdevCaptureDevice  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
-from ..utils.faster_whisper_model_info import (
-    FASTER_WHISPER_MODEL_INFO,
-)
 from ..utils.faster_whisper_model_info import delete_model as delete_faster_whisper_model
 from ..utils.faster_whisper_model_info import (  # noqa: E402
     get_recommended_model as get_recommended_faster_whisper_model,
@@ -81,10 +78,6 @@ from ..utils.whisper_model_info import (  # noqa: E402
     whisper_model_file,
 )
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
-from ..utils.whispercpp_model_info import (
-    WHISPERCPP_MODEL_INFO,
-    default_variant_for_size,
-)
 from ..utils.whispercpp_model_info import delete_model as delete_whispercpp_model
 from ..utils.whispercpp_model_info import (
     detect_compute_backend,
@@ -120,6 +113,14 @@ from .keyboard_backends import (  # noqa: E402
     parse_shortcut_spec,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
+
+from ..utils.faster_whisper_model_info import (  # isort:skip
+    FASTER_WHISPER_MODEL_INFO,
+)
+from ..utils.whispercpp_model_info import (  # isort:skip
+    WHISPERCPP_MODEL_INFO,
+    default_variant_for_size,
+)
 
 # Avoid circular imports for type checking
 if TYPE_CHECKING:
@@ -2378,7 +2379,7 @@ class SettingsDialog(Gtk.Dialog):
         initial_page: Optional[str] = None,
         pending_update: Optional[ReleaseInfo] = None,
         update_status_callback: callable = None,
-        overlay_enabled_callback: callable = None,
+        overlay_enabled_callback: Optional[Callable[[bool], None]] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -3349,7 +3350,7 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
         return False
 
-    def _on_show_overlay_toggled(self, widget, state):
+    def _on_show_overlay_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
         """Handle toggle of the floating dictation overlay switch."""
         if self._initializing or self._applying_settings:
             return False

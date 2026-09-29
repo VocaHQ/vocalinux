@@ -650,7 +650,7 @@ class ConfigManager:
         """Check if the floating dictation overlay is enabled (default True)."""
         return self.get_bool("ui", "show_overlay", True)
 
-    def set_overlay_enabled(self, enabled: bool):
+    def set_overlay_enabled(self, enabled: bool) -> None:
         """Enable or disable the floating dictation overlay."""
         self.set("ui", "show_overlay", bool(enabled))
 
