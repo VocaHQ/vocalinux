@@ -2,6 +2,12 @@
 
 import logging
 import subprocess
+from typing import TYPE_CHECKING, Optional
+
+from .utils.host_process import host_env
+
+if TYPE_CHECKING:
+    from .ui.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +28,7 @@ class PostProcessor:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                env=host_env(),
             )
             if result.returncode != 0:
                 logger.warning(
@@ -35,7 +42,7 @@ class PostProcessor:
             return text
 
 
-def apply_post_processing(text: str, config_manager) -> "str | None":
+def apply_post_processing(text: str, config_manager: "ConfigManager") -> Optional[str]:
     """Apply post-processing script to text if configured.
 
     Returns processed text, or None to signal the caller should skip injection.

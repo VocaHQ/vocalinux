@@ -518,9 +518,10 @@ def main():
 
                 text_to_inject = capitalize_sentences(text_to_inject)
 
-            text_to_inject = apply_post_processing(text_to_inject, config_manager)
-            if text_to_inject is None:
+            processed_text = apply_post_processing(text_to_inject, config_manager)
+            if processed_text is None:
                 return
+            text_to_inject = processed_text
 
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
