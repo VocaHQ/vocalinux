@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from vocalinux.post_processor import PostProcessor, apply_post_processing
+from vocalinux.utils.host_process import host_env
 
 
 def _make_run_result(returncode=0, stdout="", stderr=""):
@@ -62,6 +63,7 @@ class TestPostProcessor(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=10,
+            env=host_env(),
         )
 
 

@@ -2664,9 +2664,7 @@ class SettingsDialog(Gtk.Dialog):
             SettingsPage("performance", "Performance", "power-profile-performance-symbolic"),
             SettingsPage("application", "Application", "preferences-system-symbolic"),
             SettingsPage("advanced", "Advanced", "applications-engineering-symbolic"),
-            SettingsPage(
-                "post-processing", "Post-Processing", "utilities-terminal-symbolic"
-            ),
+            SettingsPage("post-processing", "Post-Processing", "utilities-terminal-symbolic"),
             SettingsPage("about", "About", "help-about-symbolic"),
         ]
         pages_by_name = {page.name: page for page in self._pages}
