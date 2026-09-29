@@ -25,6 +25,7 @@ apt-get install -y -qq --no-install-recommends \
     gir1.2-notify-0.7 libnotify4 \
     gir1.2-dbusmenu-glib-0.4 libdbusmenu-gtk3-4 \
     gir1.2-ibus-1.0 gir1.2-rsvg-2.0 librsvg2-common \
+    gir1.2-gtklayershell-0.1 libgtk-layer-shell0 \
     libvulkan-dev
 
 bash "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/build.sh" "$@"

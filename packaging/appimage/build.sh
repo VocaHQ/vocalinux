@@ -117,7 +117,7 @@ TYPELIBS=(
   GModule-2.0 Pango-1.0 PangoCairo-1.0 cairo-1.0 HarfBuzz-0.0 Atk-1.0
   freetype2-2.0 fontconfig-2.0 xlib-2.0
   AyatanaAppIndicator3-0.1 AyatanaAppindicator3-0.1 AppIndicator3-0.1
-  Dbusmenu-0.4 Notify-0.7 IBus-1.0 Rsvg-2.0
+  Dbusmenu-0.4 Notify-0.7 IBus-1.0 Rsvg-2.0 GtkLayerShell-0.1
 )
 
 # Runtime only needs one tray stack (same order as tray_indicator.py). Prefer
@@ -136,6 +136,7 @@ GI_RUNTIME_LIBS=(
   libdbusmenu-gtk3.so.4
   libnotify.so.4
   libibus-1.0.so.5
+  libgtk-layer-shell.so.0
   # Nothing imports PangoXft, but linuxdeploy keeps its typelib, and a typelib
   # without its library is the trap that cost us IBus. 30 KB is cheaper than an
   # exception to the rule.
