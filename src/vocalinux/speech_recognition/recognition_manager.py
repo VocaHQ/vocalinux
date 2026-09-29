@@ -380,6 +380,10 @@ class SpeechRecognitionManager:
         # start of every dictation while the sentinel is in force (#821).
         self.language_preference = language
         self.language = normalize_language_for_engine(engine, resolve_language_preference(language))
+        # One-shot language override set by a per-language shortcut (#805):
+        # consumed by the next start attempt, restored when dictation ends.
+        self._pending_language_override: Optional[str] = None
+        self._oneshot_language_restore: Optional[str] = None
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
         self.state = RecognitionState.IDLE
         self.audio_thread = None
@@ -574,9 +578,15 @@ class SpeechRecognitionManager:
     #: "not following the layout" instead of raising on the dictation path.
     language_preference: str = "auto"
 
+    #: Same for the one-shot override state (#805): __new__-built stubs in tests
+    #: must not raise on the dictation path either.
+    _pending_language_override: Optional[str] = None
+    _oneshot_language_restore: Optional[str] = None
+
     #: Logged once rather than per dictation, so an unsupported pairing does not
     #: spam the log on every hotkey press.
     _warned_follow_layout_unsupported: bool = False
+    _warned_language_override_unsupported: bool = False
 
     # Every live field ``reconfigure()`` can write. A failed engine switch
     # restores this set so dictation matches the persisted config, not the
@@ -703,6 +713,43 @@ class SpeechRecognitionManager:
                 f"{self.model_size!r} model cannot transcribe it. Pick a "
                 "multilingual model in Settings to use this mode."
             )
+
+    def _apply_pending_language_override(self) -> None:
+        """Point this utterance at a per-language shortcut's language (#805).
+
+        Consumed once, right after the layout refresh, so the explicit shortcut
+        wins over the follow-mode resolution. The previous effective language
+        is kept in ``_oneshot_language_restore`` and put back by
+        ``_restore_language_after_oneshot`` once dictation ends.
+        """
+        target = self._pending_language_override
+        if target is None:
+            return
+        target = normalize_language_for_engine(self.engine, target)
+        if target == self.language:
+            return
+        self._oneshot_language_restore = self.language
+        self.language = target
+        self.command_processor.set_language(target)
+        if self._faster_whisper_engine is not None:
+            self._faster_whisper_engine.language = target
+        logger.debug(f"Dictating in {target} via per-language shortcut")
+
+    def _restore_language_after_oneshot(self) -> None:
+        """Undo a per-language shortcut's one-shot override (#805).
+
+        Runs when dictation drops to IDLE or ERROR, so the next plain hotkey
+        dictation resolves the configured language again.
+        """
+        previous = self._oneshot_language_restore
+        if previous is None:
+            return
+        self._oneshot_language_restore = None
+        self.language = previous
+        self.command_processor.set_language(previous)
+        if self._faster_whisper_engine is not None:
+            self._faster_whisper_engine.language = previous
+        logger.debug(f"Restored dictation language {previous} after one-shot")
 
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
@@ -2749,6 +2796,11 @@ class SpeechRecognitionManager:
             new_state: The new recognition state
         """
         self.state = new_state
+        if new_state in (RecognitionState.IDLE, RecognitionState.ERROR):
+            # A per-language shortcut's override lasts for exactly one
+            # dictation (#805); restore the configured language here so every
+            # exit path — normal stop, error, quit — unwinds it.
+            self._restore_language_after_oneshot()
         for callback in self.state_callbacks:
             callback(new_state)
 
@@ -2919,6 +2971,10 @@ class SpeechRecognitionManager:
         # user is typing in right now rather than the one they had at startup.
         self._refresh_language_from_layout()
 
+        # A per-language shortcut's override runs after the layout refresh so
+        # the explicit key press still wins over follow-mode resolution (#805).
+        self._apply_pending_language_override()
+
         logger.info("Starting speech recognition")
         self._update_state(RecognitionState.LISTENING)
 
@@ -3077,6 +3133,51 @@ class SpeechRecognitionManager:
         """
         if getattr(self, "_buffered_reload_session", False) and self._buffered_capture_failed:
             self._capture_finished.set()
+
+    def start_recognition_with_language(self, language: str, mode: str = "toggle") -> bool:
+        """Start dictation in ``language`` for this utterance only (#805).
+
+        The configured preference is untouched: when this dictation ends the
+        engine's language is restored, so the next plain hotkey behaves as
+        before. When the loaded engine/model cannot transcribe ``language``
+        without a reload (VOSK, Parakeet, an English-only whisper.cpp model),
+        starting is refused with the usual error cue rather than dictating in
+        the wrong language.
+
+        Args:
+            language: A catalog id (e.g. "de", "auto") as stored by
+                ``shortcuts.language_shortcuts``.
+            mode: "toggle" or "push_to_talk", same as start_recognition.
+
+        Returns:
+            True if recognition actually started, False otherwise.
+        """
+        target = normalize_language_for_engine(self.engine, language)
+        if target != self.language and not self._can_relanguage_without_reload():
+            if not self._warned_language_override_unsupported:
+                self._warned_language_override_unsupported = True
+                logger.warning(
+                    f"Cannot dictate in {language!r}: the loaded "
+                    f"{self.engine}/{self.model_size!r} model cannot transcribe "
+                    "it without a reload. Pick a multilingual model in Settings "
+                    "or switch the dictation language instead."
+                )
+            play_error_sound()
+            _show_notification(
+                "Language Shortcut Unavailable",
+                f"Vocalinux cannot dictate in {language} with the loaded model. "
+                "Choose a multilingual model in Settings to use this shortcut.",
+                "dialog-warning",
+            )
+            return False
+
+        self._pending_language_override = language
+        try:
+            return self.start_recognition(mode=mode)
+        finally:
+            # The override only ever feeds the next start attempt, whether it
+            # ran or was refused by the guards inside start_recognition.
+            self._pending_language_override = None
 
     def _record_audio(self):
         """Record audio from the microphone with reconnection logic."""
@@ -3596,6 +3697,10 @@ class SpeechRecognitionManager:
         # VOSK needs to load a different model for the new language
         language_changed = False
         if language is not None:
+            # A new configured language replaces any pending one-shot restore:
+            # if this reconfigure stops an in-flight per-language dictation,
+            # the restore must not undo what was just set here (#805).
+            self._oneshot_language_restore = None
             # Settings hands over the preference, which may be the sentinel. Keep
             # it so the follow mode survives, and resolve what the engine gets.
             self.language_preference = language

@@ -10,6 +10,7 @@ import os
 import signal
 import threading
 import time
+from functools import partial
 from typing import Any, Callable, Optional, Sequence, cast
 
 import gi
@@ -53,7 +54,7 @@ from ..utils.update_monitor import UpdateMonitor
 from ..utils.whispercpp_model_info import TDRZ_MODEL, WHISPERCPP_MODEL_INFO, is_model_downloaded
 from . import notifications
 from .config_manager import get_shared_config_manager
-from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
+from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE, SHORTCUT_MODES
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import ModelDownloadDialog, SettingsDialog, recommended_model_for_engine
 from .transcription_history import TranscriptionHistory
@@ -168,6 +169,9 @@ class TrayIndicator:
 
         # Initialize keyboard shortcut manager with configured shortcut and mode
         self.shortcut_manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+        # One listener per bound language shortcut (#805); rebuilt by
+        # _setup_language_shortcuts alongside the main one.
+        self._language_shortcut_managers: list[KeyboardShortcutManager] = []
 
         # Ensure icon directory exists
         os.makedirs(ICON_DIR, exist_ok=True)
@@ -344,6 +348,74 @@ class TrayIndicator:
 
         # Start the keyboard shortcut manager
         self.shortcut_manager.start()
+
+        self._setup_language_shortcuts()
+
+    def _setup_language_shortcuts(self):
+        """(Re)build a listener per configured language shortcut (#805).
+
+        Each entry gets its own KeyboardShortcutManager because the backends
+        open the input devices read-only and never grab them, so parallel
+        listeners do not interfere. A binding that collides with the main
+        shortcut or an earlier language binding is skipped: the same gesture
+        cannot fire both.
+        """
+        self._stop_language_shortcut_managers()
+
+        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
+        if mode not in SHORTCUT_MODES:
+            # A hand-edited mode must not take down the whole shortcut setup
+            # via a backend constructor's ValueError.
+            logger.warning(f"Unknown shortcut mode {mode!r} for language shortcuts")
+            mode = DEFAULT_SHORTCUT_MODE
+        main_shortcut = (
+            self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
+            .strip()
+            .lower()
+        )
+
+        bound = {main_shortcut}
+        for entry in self.config_manager.get_language_shortcuts():
+            shortcut = entry["shortcut"]
+            language = entry["language"]
+            if shortcut in bound:
+                logger.warning(
+                    f"Skipping language shortcut {shortcut!r} for {language}: "
+                    "it collides with another binding"
+                )
+                continue
+            bound.add(shortcut)
+
+            try:
+                manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+            except ValueError as exc:
+                logger.warning(f"Skipping language shortcut {shortcut!r} for {language}: {exc}")
+                continue
+            if mode == "toggle":
+                manager.register_toggle_callback(
+                    partial(self._toggle_recognition_in_language, language)
+                )
+            else:
+                manager.register_press_callback(
+                    partial(self._start_recognition_in_language, language)
+                )
+                manager.register_release_callback(self._stop_recognition)
+            manager.start()
+            self._language_shortcut_managers.append(manager)
+            logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
+
+    def _stop_language_shortcut_managers(self):
+        """Stop every per-language listener and drop the managers."""
+        for manager in self._language_shortcut_managers:
+            try:
+                manager.stop()
+            except Exception:
+                logger.exception("Failed to stop a language shortcut manager")
+        self._language_shortcut_managers = []
+
+    def refresh_language_shortcuts(self):
+        """Rebuild the per-language listeners after a settings change (#805)."""
+        self._setup_language_shortcuts()
 
     def _init_icons(self):
         """Initialize the icon files for the tray indicator."""
@@ -584,6 +656,23 @@ class TrayIndicator:
         """Stop recognition for an external (D-Bus) trigger."""
         if self.speech_engine.state != RecognitionState.IDLE:
             self.speech_engine.stop_recognition()
+
+    def _toggle_recognition_in_language(self, language: str):
+        """Toggle-style trigger for a per-language shortcut (#805).
+
+        While idle it starts a one-shot dictation in ``language``; while
+        dictating it stops, matching the main toggle's behaviour regardless
+        of which language the current utterance is in.
+        """
+        if self.speech_engine.state == RecognitionState.IDLE:
+            self.speech_engine.start_recognition_with_language(language)
+        else:
+            self.speech_engine.stop_recognition()
+
+    def _start_recognition_in_language(self, language: str):
+        """Push-to-talk start for a per-language shortcut (#805)."""
+        if self.speech_engine.state == RecognitionState.IDLE:
+            self.speech_engine.start_recognition_with_language(language, mode="push_to_talk")
 
     def _stop_recognition(self):
         """Stop voice recognition (for push-to-talk mode)."""
@@ -1159,6 +1248,7 @@ class TrayIndicator:
             ),
             overlay_enabled_callback=self.set_overlay_enabled,
             hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
+            language_shortcuts_update_callback=self.refresh_language_shortcuts,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)
@@ -1552,8 +1642,9 @@ class TrayIndicator:
 
         self._cleanup_input_monitor()
 
-        # Stop the keyboard shortcut manager
+        # Stop the keyboard shortcut managers
         self.shortcut_manager.stop()
+        self._stop_language_shortcut_managers()
 
         if getattr(self, "overlay", None) is not None:
             self.overlay.destroy()

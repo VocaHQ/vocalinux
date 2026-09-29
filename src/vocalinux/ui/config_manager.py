@@ -157,6 +157,9 @@ DEFAULT_CONFIG = {
         # left_/right_ variants) — double-tap (toggle) or hold (push_to_talk).
         # Modifier+key combos are also supported, e.g. "alt+r", "ctrl+alt+r",
         # "super+space" — press (toggle) or hold (push_to_talk).
+        # Per-language shortcuts (#805): each {"shortcut", "language"} entry
+        # starts dictation in that catalog language for one utterance.
+        "language_shortcuts": [],
     },
     "ui": {
         "start_minimized": False,
@@ -228,6 +231,52 @@ DEFAULT_CONFIG = {
         "lan_publish": False,  # VOCAGATEWAY_PUBLISH_HOST=0.0.0.0 when True (Phone on LAN)
     },
 }
+
+
+def _is_valid_language_shortcut(shortcut: Any) -> bool:
+    """Return whether ``shortcut`` parses as a bindable shortcut string.
+
+    Imported lazily: config_manager loads before the GTK stack in several
+    entry points, and the keyboard package must not become a hard dependency
+    of configuration access.
+    """
+    from .keyboard_backends import is_valid_shortcut
+
+    return isinstance(shortcut, str) and is_valid_shortcut(shortcut)
+
+
+def normalize_language_shortcuts(raw: Any) -> list[dict[str, str]]:
+    """Normalize a ``shortcuts.language_shortcuts`` value (#805).
+
+    Returns ``[{"shortcut": ..., "language": ...}]`` in stored order. Entries
+    that are not objects, lack a valid shortcut, or name a language outside the
+    catalog are dropped; the first binding wins for a duplicated shortcut.
+    ``"auto"`` stays valid (dictate with per-utterance detection); ``"layout"``
+    is not a catalog id and cannot be bound.
+    """
+    if not isinstance(raw, list):
+        return []
+
+    entries: list[dict[str, str]] = []
+    seen_shortcuts: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        shortcut = item.get("shortcut")
+        language = item.get("language")
+        if not isinstance(shortcut, str) or not isinstance(language, str):
+            continue
+        shortcut = shortcut.strip().lower()
+        language = language.strip()
+        if language not in SUPPORTED_LANGUAGES:
+            continue
+        if not _is_valid_language_shortcut(shortcut):
+            continue
+        if shortcut in seen_shortcuts:
+            continue
+        seen_shortcuts.add(shortcut)
+        entries.append({"shortcut": shortcut, "language": language})
+    return entries
 
 
 def _multilingual_sibling(model_name: str) -> str:
@@ -454,7 +503,12 @@ class ConfigManager:
 
     def _migrate_shortcuts_config(self, user_config: Optional[dict] = None):
         """Migrate deprecated shortcuts and preserve legacy defaults when omitted."""
-        shortcuts_config = self.config.get("shortcuts", {})
+        shortcuts_config = self.config.get("shortcuts")
+        if not isinstance(shortcuts_config, dict):
+            # A hand-edited config can hold a scalar here; rebuild the section
+            # so the migrations below and later readers find a dict.
+            shortcuts_config = {}
+            self.config["shortcuts"] = shortcuts_config
         shortcut = shortcuts_config.get("toggle_recognition")
         changed = False
 
@@ -801,6 +855,23 @@ class ConfigManager:
         if "text_injection" not in self.config:
             self.config["text_injection"] = {}
         self.config["text_injection"]["paste_shortcut"] = normalize_paste_shortcut(shortcut)
+
+    def get_language_shortcuts(self) -> list[dict[str, str]]:
+        """Return validated ``[{"shortcut", "language"}]`` bindings (#805).
+
+        Malformed or stale entries (unknown language, unparsable shortcut)
+        never reach the listeners: they are filtered out here.
+        """
+        shortcuts = self.config.get("shortcuts")
+        if not isinstance(shortcuts, dict):
+            return []
+        return normalize_language_shortcuts(shortcuts.get("language_shortcuts"))
+
+    def set_language_shortcuts(self, entries: Any) -> None:
+        """Store per-language shortcut bindings after normalization (#805)."""
+        if not isinstance(self.config.get("shortcuts"), dict):
+            self.config["shortcuts"] = {}
+        self.config["shortcuts"]["language_shortcuts"] = normalize_language_shortcuts(entries)
 
     def is_overlay_enabled(self) -> bool:
         """Check if the floating dictation overlay is enabled (default True)."""

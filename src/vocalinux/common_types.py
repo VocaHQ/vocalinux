@@ -60,6 +60,10 @@ class SpeechRecognitionManagerProtocol(Protocol):
         """Start the speech recognition process. Returns True if listening began."""
         ...
 
+    def start_recognition_with_language(self, language: str, mode: str = "toggle") -> bool:
+        """Start recognition in ``language`` for this utterance only (#805)."""
+        ...
+
     def stop_recognition(self) -> None:
         """Stop the speech recognition process."""
         ...
