@@ -36,9 +36,10 @@ The `.desktop` entry is automatically configured with the detected `GI_TYPELIB_P
 ## Officially Supported Distributions
 
 These distributions are tested and known to work well with Vocalinux. A
-derivative is judged by the Python it ships rather than by its own version
-number, which rarely tracks the base release, and `install.sh` checks the
-interpreter rather than the release label.
+derivative is judged by the Python and package repositories it ships rather
+than by its own version number, which rarely tracks the base release. In
+particular, `install.sh` does not interpret a Debian-based derivative's product
+version as a Debian release number.
 
 | Distribution | Version | Status | Notes |
 |--------------|---------|--------|-------|
@@ -72,9 +73,14 @@ These distributions are known to be incompatible:
 
 | Distribution | Status | Reason |
 |--------------|--------|--------|
+| Debian 11 and earlier | ❌ Not Supported | EOL and below the Python 3.11 floor; the installer requires Debian 12+ |
 | NixOS | ❌ Not Supported | Completely different filesystem layout (/nix/store), incompatible with standard installer |
 
 ## Requirements by Distribution
+
+These are baseline commands for manual installations. The exact inventory used
+by `install.sh`, including package alternatives and conditional dependencies,
+lives in [`scripts/distro-package-map.yaml`](../scripts/distro-package-map.yaml).
 
 ### Ubuntu/Debian-based
 ```bash

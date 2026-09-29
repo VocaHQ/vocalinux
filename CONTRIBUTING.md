@@ -138,7 +138,9 @@ vocalinux/
 ├── tests/
 ├── resources/                # Icons and sounds
 ├── docs/
+├── install.d/                # Installer modules, including generated package data
 ├── packaging/                # AppImage, AUR, Flatpak
+├── scripts/                  # Maintenance tools and distro package-map source
 ├── snap/                     # Snap recipe
 └── web/                      # Marketing site (Next.js)
 ```
@@ -150,6 +152,24 @@ vocalinux/
 | Recognition engines | `src/vocalinux/speech_recognition/recognition_manager.py` |
 | Text injection | `src/vocalinux/text_injection/text_injector.py` |
 | Settings / config | `src/vocalinux/ui/config_manager.py`, `settings_dialog.py` |
+| Installer package names | `scripts/distro-package-map.yaml` |
+
+### Installer package map
+
+`scripts/distro-package-map.yaml` is the source of truth for package names,
+alternatives, and conditional package probes used by `install.sh`. Do not edit
+the generated `install.d/package_map.sh` directly. After changing the YAML, run:
+
+```bash
+just distro-packages
+just distro-packages-check
+```
+
+Commit both the YAML and generated shell module. Package-manager control flow
+and installation policy remain handwritten in
+`install.d/system_dependencies.sh`; user systems never parse the YAML. The
+remote bootstrap's pre-checkout `git` installation is the deliberate exception
+because the generated module is not available yet.
 
 ## Testing
 

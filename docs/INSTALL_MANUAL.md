@@ -2,11 +2,20 @@
 
 Use this when the [recommended installer](INSTALL.md) is not a fit, or you want an explicit package list. Prefer `./install.sh` for a normal desktop install.
 
+The commands below are human-readable baselines for manual installs. The
+installer's authoritative package inventory, including build helpers and
+fallbacks, is [`scripts/distro-package-map.yaml`](../scripts/distro-package-map.yaml).
+Its generated shell module is committed so installations do not need a YAML
+parser.
+
 Related: [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## System packages by distribution
 
 Install desktop/system dependencies **before** creating a venv or running `pip install vocalinux`. Pip cannot install GTK typelibs, AppIndicator, PortAudio, or text-injection tools.
+
+Debian 11 and earlier are unsupported; the Debian instructions start at Debian
+12, which is the oldest release with the required Python 3.11.
 
 ### Ubuntu
 
