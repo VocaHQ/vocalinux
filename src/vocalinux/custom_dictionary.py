@@ -438,36 +438,36 @@ class CustomDictionaryManager:
             logger.warning("Ignoring custom corrections file with an unsupported schema")
             return None if for_edit else []
 
-        if for_edit and set(payload) - CORRECTIONS_TOP_LEVEL_KEYS:
-            logger.warning(
-                "Refusing to edit custom corrections because the source has extra top-level fields"
-            )
-            return None
-
         raw_entries = payload.get("corrections")
         entries = normalize_corrections(raw_entries)
-        if for_edit and (not isinstance(raw_entries, list) or len(entries) != len(raw_entries)):
-            logger.warning(
-                "Refusing to edit custom corrections because some source entries are invalid"
-            )
-            return None
-        if for_edit and any(
-            not isinstance(entry, dict) or set(entry) - CORRECTIONS_ENTRY_KEYS
-            for entry in raw_entries
-        ):
-            logger.warning(
-                "Refusing to edit custom corrections because some source entries have extra fields"
-            )
-            return None
-        if for_edit and any(
-            entry.get("heard") != normalized["heard"]
-            or entry.get("replacement") != normalized["replacement"]
-            for entry, normalized in zip(raw_entries, entries)
-        ):
-            logger.warning(
-                "Refusing to edit custom corrections because normalization would change values"
-            )
-            return None
+        if for_edit:
+            if set(payload) - CORRECTIONS_TOP_LEVEL_KEYS:
+                logger.warning(
+                    "Refusing to edit custom corrections because the source has extra top-level fields"
+                )
+                return None
+            if not isinstance(raw_entries, list) or len(entries) != len(raw_entries):
+                logger.warning(
+                    "Refusing to edit custom corrections because some source entries are invalid"
+                )
+                return None
+            if any(
+                not isinstance(entry, dict) or set(entry) - CORRECTIONS_ENTRY_KEYS
+                for entry in raw_entries
+            ):
+                logger.warning(
+                    "Refusing to edit custom corrections because some source entries have extra fields"
+                )
+                return None
+            if any(
+                entry.get("heard") != normalized["heard"]
+                or entry.get("replacement") != normalized["replacement"]
+                for entry, normalized in zip(raw_entries, entries)
+            ):
+                logger.warning(
+                    "Refusing to edit custom corrections because normalization would change values"
+                )
+                return None
         return entries
 
     def save_corrections(self, entries: list[dict[str, str]]) -> bool:

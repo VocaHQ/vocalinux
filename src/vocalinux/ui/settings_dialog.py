@@ -3266,13 +3266,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.dictionary_terms_file_button.connect("file-set", self._on_dictionary_terms_file_chosen)
 
-    def _dictionary_available(self) -> bool:
-        """Return whether the runtime has a file-backed dictionary manager."""
-        return self.dictionary_manager is not None
-
     def _on_dictionary_terms_enabled(self, widget: Any, state: bool) -> bool:
         """Persist terms enablement and restore the control when persistence fails."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return False
         if not self.dictionary_manager.set_terms_enabled(bool(state)):
             self.dictionary_feedback_label.set_text("Could not save custom terms setting.")
@@ -3281,7 +3277,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_dictionary_terms_path_changed(self, widget: Any, *args: Any) -> bool:
         """Persist a validated custom terms path and restore it on failure."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return False
         if self.dictionary_manager.set_terms_path(self.dictionary_terms_path_entry.get_text()):
             self.dictionary_feedback_label.set_text("Custom terms path saved.")
@@ -3301,7 +3297,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_dictionary_add_term(self, widget: Any) -> None:
         """Add a term to the fixed line file, reporting an observable result."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return
         term = self.dictionary_term_entry.get_text().strip()
         if not term:
@@ -3328,7 +3324,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_dictionary_remove_term(self, widget: Any, term: str) -> None:
         """Remove one term from the fixed line file."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return
         if self.dictionary_manager.remove_term(term):
             self.dictionary_feedback_label.set_text("Term removed from the live terms file.")
@@ -3340,7 +3336,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_dictionary_add_correction(self, widget: Any) -> None:
         """Add or update a phrase correction in the structured corrections file."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return
         heard = self.dictionary_heard_entry.get_text().strip()
         replacement = self.dictionary_replacement_entry.get_text().strip()
@@ -3387,7 +3383,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_dictionary_remove_correction(self, widget: Any, heard: str) -> None:
         """Remove one correction from the structured corrections file."""
-        if self._initializing or self._applying_settings or not self._dictionary_available():
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
             return
         editable_entries = self.dictionary_manager.get_corrections_for_edit()
         if editable_entries is None:
@@ -3410,7 +3406,7 @@ class SettingsDialog(Gtk.Dialog):
         """Rebuild custom dictionary controls from the live, file-backed state."""
         if not hasattr(self, "dictionary_terms_enabled_switch"):
             return
-        if not self._dictionary_available():
+        if self.dictionary_manager is None:
             self.dictionary_terms_enabled_switch.set_sensitive(False)
             self.dictionary_terms_status_label.set_text("Custom dictionary support is unavailable.")
             return
