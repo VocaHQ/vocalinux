@@ -161,16 +161,24 @@ resolve_debian_package_map_key() {
     if [[ "$DISTRO_ID" == "debian" && "$DEBIAN_MAJOR" =~ ^[0-9]+$ ]]; then
         if [ "$DEBIAN_MAJOR" -lt 12 ]; then
             print_error "Debian 12 or newer is required (detected Debian $DEBIAN_MAJOR)." >&2
-            return 1
+            return "$EXIT_MISSING_DEPS"
         elif [ "$DEBIAN_MAJOR" -ge 13 ]; then
             echo "debian_13_plus"
         else
             echo "debian_12"
         fi
-    elif apt-cache show "$DEBIAN_13_PLUS_PROBE_PACKAGE" &>/dev/null 2>&1; then
-        echo "debian_13_plus"
     else
-        echo "debian_12"
+        # A missing cache is not evidence of an older Debian base. Refresh
+        # before probing; keep command substitution's stdout for the key only.
+        sudo apt update >&2 || {
+            print_error "Failed to refresh package indexes for Debian base detection." >&2
+            return "$EXIT_NETWORK"
+        }
+        if apt-cache show "$DEBIAN_13_PLUS_PROBE_PACKAGE" &>/dev/null 2>&1; then
+            echo "debian_13_plus"
+        else
+            echo "debian_12"
+        fi
     fi
 }
 
@@ -180,9 +188,7 @@ install_system_dependencies() {
 
     local PACKAGE_MAP_KEY="$DISTRO_FAMILY"
     if [[ "$DISTRO_FAMILY" == "debian" ]]; then
-        if ! PACKAGE_MAP_KEY=$(resolve_debian_package_map_key); then
-            exit "$EXIT_MISSING_DEPS"
-        fi
+        PACKAGE_MAP_KEY=$(resolve_debian_package_map_key) || exit "$?"
     fi
     case "$PACKAGE_MAP_KEY" in
         ubuntu|debian_12|debian_13_plus|fedora|arch|suse|gentoo|alpine|void|solus|mageia)

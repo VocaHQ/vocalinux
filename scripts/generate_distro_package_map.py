@@ -40,6 +40,22 @@ SCALAR_FIELDS = {"selection_probe"}
 TEXT_TOOLS = {"wtype", "xdotool", "ydotool"}
 
 
+class UniqueKeyLoader(yaml.SafeLoader):
+    """Reject duplicate mapping keys instead of silently dropping inventory."""
+
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+        self.flatten_mapping(node)
+        result = {}
+        for key_node, value_node in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, str):
+                raise ValueError("package map keys must be strings")
+            if key in result:
+                raise ValueError(f"duplicate YAML key: {key}")
+            result[key] = self.construct_object(value_node, deep=deep)
+        return result
+
+
 def _package_list(value: Any, location: str, *, required: bool = False) -> list[str]:
     """Validate and return one package list."""
     if value is None and not required:
@@ -55,7 +71,7 @@ def _package_list(value: Any, location: str, *, required: bool = False) -> list[
 
 def load_map() -> dict[str, dict[str, Any]]:
     """Load and validate the authoritative YAML package map."""
-    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    document = yaml.load(SOURCE.read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
     if not isinstance(document, dict) or document.get("schema_version") != 1:
         raise ValueError("distro package map must use schema_version: 1")
     distributions = document.get("distributions")
@@ -92,29 +108,29 @@ def load_map() -> dict[str, dict[str, Any]]:
                 f"distributions.{distro}.text_input.{tool}",
                 required=True,
             )
+            if len(text_input[tool]) != 1:
+                raise ValueError(
+                    f"distributions.{distro}.text_input.{tool} needs exactly one package"
+                )
 
     for distro in ("ubuntu", "fedora", "arch"):
-        if len(distributions[distro].get("appindicator", [])) != 2:
+        if len(distributions[distro].get("appindicator") or []) != 2:
             raise ValueError(f"distributions.{distro}.appindicator must define two fallbacks")
-    if len(distributions["suse"].get("appindicator", [])) < 4:
+    if len(distributions["suse"].get("appindicator") or []) < 4:
         raise ValueError("distributions.suse.appindicator must define at least four alternatives")
     if not distributions["debian_13_plus"].get("selection_probe"):
         raise ValueError("distributions.debian_13_plus.selection_probe is required")
-    if len(distributions["ubuntu"].get("gi_development", [])) != 2:
+    if len(distributions["ubuntu"].get("gi_development") or []) != 2:
         raise ValueError("distributions.ubuntu.gi_development must define modern and legacy")
     for distro in ("ubuntu", "debian_12", "debian_13_plus"):
-        if len(distributions[distro].get("shader_compiler", [])) < 2:
+        if len(distributions[distro].get("shader_compiler") or []) < 2:
             raise ValueError(f"distributions.{distro}.shader_compiler needs a fallback")
-    expected_suse_suffixes = [
-        "pip",
-        "gobject",
-        "gobject-cairo",
-        "devel",
-        "virtualenv",
-        "venv",
-    ]
-    if distributions["suse"].get("python_suffixes") != expected_suse_suffixes:
-        raise ValueError("distributions.suse.python_suffixes has an unsupported order")
+    # The installer consumes six roles in the order documented in the YAML;
+    # package suffix spellings themselves belong exclusively to that file.
+    if len(distributions["suse"].get("python_suffixes") or []) != 6:
+        raise ValueError("distributions.suse.python_suffixes must define six package roles")
+    for field in ("vulkan", "shader_compiler"):
+        _package_list(distributions["suse"].get(field), f"suse.{field}", required=True)
     return distributions
 
 

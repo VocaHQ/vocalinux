@@ -1,6 +1,8 @@
 """Guards for the YAML-owned installer package inventory."""
 
 import importlib.util
+import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -44,13 +46,26 @@ def test_supported_debian_maps_start_at_debian_12() -> None:
 
 
 def _resolve_debian_map(
-    distro_id: str, version: str, *, modern_gi: bool
+    distro_id: str, version: str, *, modern_gi: bool, refresh_fails: bool = False
 ) -> subprocess.CompletedProcess:
     script = f"""
-source {TARGET!s}
-source {ROOT / 'install.d' / 'system_dependencies.sh'!s}
+set -eu
+source {shlex.quote(str(TARGET))}
+source {shlex.quote(str(ROOT / 'install.d' / 'system_dependencies.sh'))}
 print_error() {{ echo "$*"; }}
-apt-cache() {{ [ "$HAS_MODERN_GI" = yes ]; }}
+EXIT_NETWORK=3
+EXIT_MISSING_DEPS=2
+CACHE_READY=no
+sudo() {{
+    [ "$*" = "apt update" ] || exit 99
+    echo "refreshing indexes"
+    [ "$REFRESH_FAILS" = no ] || return 1
+    CACHE_READY=yes
+}}
+apt-cache() {{
+    [ "$*" = "show $DEBIAN_13_PLUS_PROBE_PACKAGE" ] || exit 99
+    [ "$CACHE_READY" = yes ] && [ "$HAS_MODERN_GI" = yes ]
+}}
 DISTRO_ID="$1"
 DISTRO_VERSION="$2"
 resolve_debian_package_map_key
@@ -59,7 +74,11 @@ resolve_debian_package_map_key
         ["bash", "-c", script, "bash", distro_id, version],
         capture_output=True,
         text=True,
-        env={"HAS_MODERN_GI": "yes" if modern_gi else "no"},
+        env={
+            **os.environ,
+            "HAS_MODERN_GI": "yes" if modern_gi else "no",
+            "REFRESH_FAILS": "yes" if refresh_fails else "no",
+        },
     )
 
 
@@ -77,6 +96,63 @@ def test_debian_derivative_ignores_unrelated_product_version() -> None:
     assert legacy.returncode == 0
     assert legacy.stdout.strip() == "debian_12"
     assert modern.stdout.strip() == "debian_13_plus"
+    assert "refreshing indexes" in modern.stderr
+
+
+def test_debian_probe_does_not_fall_back_on_network_failure() -> None:
+    result = _resolve_debian_map("derivative", "7", modern_gi=True, refresh_fails=True)
+    assert result.returncode == 3
+    assert "debian_12" not in result.stdout
+
+
+@pytest.mark.parametrize("field", ["vulkan", "shader_compiler"])
+@pytest.mark.parametrize("value", [None, []])
+def test_required_suse_build_inventory(tmp_path: Path, field: str, value: Any) -> None:
+    generator = _load_generator()
+    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    if value is None:
+        del document["distributions"]["suse"][field]
+    else:
+        document["distributions"]["suse"][field] = value
+    generator.SOURCE = tmp_path / "invalid.yaml"
+    generator.SOURCE.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError, match=f"suse.{field}"):
+        generator.load_map()
+
+
+def test_text_tool_cannot_silently_drop_second_package(tmp_path: Path) -> None:
+    generator = _load_generator()
+    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    document["distributions"]["ubuntu"]["text_input"]["wtype"].append("extra-package")
+    generator.SOURCE = tmp_path / "invalid.yaml"
+    generator.SOURCE.write_text(yaml.safe_dump(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="exactly one package"):
+        generator.load_map()
+
+
+def test_suse_suffix_spelling_is_owned_by_yaml(tmp_path: Path) -> None:
+    generator = _load_generator()
+    document = yaml.safe_load(SOURCE.read_text(encoding="utf-8"))
+    document["distributions"]["suse"]["python_suffixes"][0] = "renamed-pip"
+    generator.SOURCE = tmp_path / "map.yaml"
+    generator.SOURCE.write_text(yaml.safe_dump(document), encoding="utf-8")
+    rendered = generator.render(generator.load_map())
+    assert "PYTHON_PACKAGE_SUFFIXES=(renamed-pip " in rendered
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("schema_version: 1", "schema_version: 99\nschema_version: 1"),
+        ("wtype: [wtype]", "wtype: [discarded]\n      wtype: [wtype]"),
+    ],
+)
+def test_duplicate_keys_are_rejected(tmp_path: Path, old: str, new: str) -> None:
+    generator = _load_generator()
+    generator.SOURCE = tmp_path / "invalid.yaml"
+    generator.SOURCE.write_text(SOURCE.read_text().replace(old, new, 1), encoding="utf-8")
+    with pytest.raises(ValueError, match="duplicate YAML key"):
+        generator.load_map()
 
 
 def test_suse_appindicator_alternatives_are_required(tmp_path: Path) -> None:

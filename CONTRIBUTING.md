@@ -37,21 +37,24 @@ This installs system dependencies, creates a venv from the system Python, instal
    ```bash
    sudo apt update
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository-2.0-dev libgirepository1.0-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libgirepository1.0-dev \
+        build-essential pkg-config libcairo2-dev \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
    **Debian 12** cannot pip-build PyGObject 3.56 (glib 2.74). Use `./install.sh --dev` for tests and running from source, then `venv/bin/pytest` / `venv/bin/python -m vocalinux.main --debug`.
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository1.0-dev libcairo2-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository1.0-dev libcairo2-dev \
+        build-essential pkg-config \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
    **Debian 13+:**
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository-2.0-dev libcairo2-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libcairo2-dev \
+        build-essential pkg-config \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
