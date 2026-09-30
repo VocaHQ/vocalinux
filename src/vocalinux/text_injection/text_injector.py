@@ -91,6 +91,10 @@ class DesktopEnvironment(Enum):
     UNKNOWN = "unknown"
 
 
+class _InjectionAborted(Exception):
+    """Raised inside injection helpers when shutdown cuts an injection short."""
+
+
 class TextInjector:
     """
     Class for injecting text into the active application.
@@ -115,6 +119,7 @@ class TextInjector:
         self._ibus_init_failed = False
         self._ibus_init_thread: Optional[threading.Thread] = None
         self._state_lock = threading.Lock()
+        self._abort_injections = threading.Event()
         self._clipboard_tool_health = {}
         self._clipboard_timeout = 0.35
         # Overlapping ydotool pastes: bump generation to cancel stale restores;
@@ -1515,6 +1520,17 @@ class TextInjector:
         except Exception as e:
             logger.debug(f"Could not show clipboard notification: {e}")
 
+    def abort_injections(self) -> None:
+        """Ask in-flight injections to stop at their next safe boundary.
+
+        Called on application quit so a worker holding the injection lock
+        finishes promptly: chunk loops and the Wayland typing call poll the
+        flag and raise ``_InjectionAborted`` instead of running to
+        completion, while every subprocess that is already in flight still
+        returns on its own timeout.
+        """
+        self._abort_injections.set()
+
     def inject_text(self, text: str) -> bool:
         """
         Inject text into the currently focused application.
@@ -1528,6 +1544,9 @@ class TextInjector:
         if not text or not text.strip():
             logger.debug("Empty text provided, skipping injection")
             return True
+
+        if self._abort_injections.is_set():
+            return False
 
         logger.info(f"Starting text injection: '{text}' (length: {len(text)})")
         logger.debug(f"Environment: {self.environment}")
@@ -1627,6 +1646,9 @@ class TextInjector:
                 ).start()
 
             return True
+        except _InjectionAborted:
+            logger.info("Injection aborted by shutdown")
+            return False
         except subprocess.TimeoutExpired as e:
             # A type call that ran past its bound may have delivered only part
             # of the text; putting the full text on the clipboard would let a
@@ -1727,6 +1749,8 @@ class TextInjector:
                     )
 
                     for i in range(0, len(text), chunk_size):
+                        if self._abort_injections.is_set():
+                            raise _InjectionAborted
                         chunk = text[i : i + chunk_size]
                         chunk_num = (i // chunk_size) + 1
 
@@ -1970,6 +1994,8 @@ class TextInjector:
                 "terminal" if use_terminal_paste else "standard",
                 paste_cmd,
             )
+            if self._abort_injections.is_set():
+                raise _InjectionAborted
             subprocess.run(
                 paste_cmd,
                 check=True,
@@ -2512,23 +2538,32 @@ class TextInjector:
             # only a stall far beyond the expected duration is.
             type_timeout = max(5, len(text) * self._key_delay_seconds(key_delay) * 4)
 
-        try:
-            subprocess.run(
-                cmd,
-                check=True,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=type_timeout,
-                env=host_env(),
-            )
-        except subprocess.TimeoutExpired:
-            logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
-            raise
-        except subprocess.CalledProcessError as e:
+        # Polling Popen instead of run(): the loop can abort a call that is
+        # still typing when shutdown asks for it, and otherwise applies the
+        # same deadline a run(timeout=...) would.
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=host_env(),
+        )
+        deadline = time.monotonic() + type_timeout
+        while proc.poll() is None:
+            if self._abort_injections.is_set():
+                proc.kill()
+                proc.wait()
+                raise _InjectionAborted
+            if time.monotonic() > deadline:
+                proc.kill()
+                proc.wait()
+                logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
+                raise subprocess.TimeoutExpired(cmd, type_timeout)
+            time.sleep(0.05)
+        _, stderr_text = proc.communicate()
+        if proc.returncode != 0:
             # Re-raise with stderr preserved for better diagnostics
-            raise subprocess.CalledProcessError(
-                e.returncode, e.cmd, output=e.output, stderr=e.stderr
-            ) from e
+            raise subprocess.CalledProcessError(proc.returncode, cmd, stderr=stderr_text)
 
         logger.info(
             f"Text injected using {self.wayland_tool}: '{text[:20]}...' ({len(text)} chars)"
@@ -2545,6 +2580,9 @@ class TextInjector:
             True if injection was successful, False otherwise
         """
         logger.debug(f"Injecting keyboard shortcut: {shortcut}")
+
+        if self._abort_injections.is_set():
+            return False
 
         try:
             if (
@@ -2856,6 +2894,9 @@ class TextInjector:
         """
         if count <= 0:
             return True
+
+        if self._abort_injections.is_set():
+            return False
 
         logger.debug(f"Sending {count} backspace key event(s)")
 

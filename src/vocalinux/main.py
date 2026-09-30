@@ -809,24 +809,15 @@ def main():
 
         def _probe_result(
             probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
-            wait_seconds: Optional[float] = None,
         ) -> Optional[focused_window.FocusedWindow]:
             """Return the focus identity a submit-time probe captured.
 
             The probe thread starts the moment the segment is submitted, so
             joining it here adds no wait beyond the probe's own runtime.
-            wait_seconds bounds that join for jobs that must stay immediate;
-            a timed-out probe yields None, which the focus check treats
-            permissively like any other failed probe.
             """
             if probe is None:
                 return None
-            if wait_seconds is None:
-                return probe.get()
-            try:
-                return probe.get(timeout=wait_seconds)
-            except queue.Empty:
-                return None
+            return probe.get()
 
         def post_process_and_inject(
             text_to_inject: str,
@@ -876,18 +867,24 @@ def main():
             text, so they queue on the same worker in spoken order and are
             bound to the app focused when the command was issued: even a
             submission that looks immediate can run after a context switch,
-            so the binding applies to every action.  Waiting on the probe is
+            so the binding applies to every action.  The wait on the probe is
             bounded — a compositor call answers in milliseconds on a healthy
             desktop — so an immediate "undo" or "select all" is never made
-            slow; only a genuinely stalled probe falls back to the injector's
-            own targeting.
+            slow; a probe that cannot answer inside the bound leaves the
+            action unverified, and an unverified action is dropped rather
+            than fired into whatever happens to be focused.
             """
             nonlocal pending_jobs
             try:
                 if not accepting_injections.is_set():
                     return False
-                if not _focused_app_unchanged(_probe_result(target_probe, wait_seconds=1.0)):
-                    logger.info("Dropping queued action: focus moved to another application")
+                try:
+                    captured = target_probe.get(timeout=1.0) if target_probe is not None else None
+                except queue.Empty:
+                    logger.info("Dropping action: focus probe did not answer in time")
+                    return False
+                if not _focused_app_unchanged(captured):
+                    logger.info("Dropping action: focus moved to another application")
                     return False
                 with injection_lock:
                     if not accepting_injections.is_set():

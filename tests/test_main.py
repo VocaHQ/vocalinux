@@ -1443,7 +1443,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd, **kwargs):
+        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
             started.set()
             gate.wait(timeout=10)
             return MagicMock(returncode=0, stdout="PROCESSED FIRST", stderr="")
@@ -1577,8 +1577,8 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             gate.set()
             boot.stack.close()
 
-    def test_immediate_action_does_not_wait_on_slow_probe(self) -> None:
-        """A stalled focus probe must not make an immediate action slow."""
+    def test_action_dropped_when_probe_times_out(self) -> None:
+        """A stalled focus probe drops the action instead of misdirecting it."""
         boot = self._boot_under_patches(post_script="/fake/script.sh")
         stall = threading.Event()
         try:
@@ -1588,10 +1588,11 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             ):
                 action_future = boot.action_cb("select_all")
                 self.assertIsNotNone(action_future)
-                # The probe never answers, so the job gives up the binding
-                # after its one-second bound and injects anyway.
+                # The probe never answers, so the job drops the unverified
+                # action after its one-second bound rather than firing into
+                # whatever happens to be focused.
                 action_future.result(timeout=10)
-            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
+            boot.mock_text._inject_keyboard_shortcut.assert_not_called()
         finally:
             stall.set()
             boot.stack.close()
@@ -1662,7 +1663,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd, **kwargs):
+        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
             started.set()
             gate.wait(timeout=10)
             return MagicMock(returncode=0, stdout="TOO LATE", stderr="")
