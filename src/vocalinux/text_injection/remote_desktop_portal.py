@@ -46,9 +46,18 @@ except (ImportError, ValueError) as e:  # pragma: no cover - needs host PyGObjec
 
 
 class RemoteDesktopPortalError(RuntimeError):
-    """Raised when the portal cannot deliver an injection request."""
+    """Raised when the portal cannot deliver an injection request.
 
-    pass
+    ``delivered`` counts the units that reached the compositor before the
+    failure -- characters for ``inject_text``, taps for ``tap_keysym`` and
+    steps for ``send_shortcut`` -- so the caller can retry only the
+    remainder through a fallback backend instead of replaying the whole
+    request.
+    """
+
+    def __init__(self, message: str = "", delivered: int = 0) -> None:
+        super().__init__(message)
+        self.delivered = delivered
 
 
 _DESKTOP_BUS_NAME = "org.freedesktop.portal.Desktop"
@@ -79,6 +88,9 @@ _REQUEST_TIMEOUT_S = 15.0
 # dialog, so its budget is measured in minutes rather than seconds.
 _START_TIMEOUT_S = 180.0
 _SUBMIT_TIMEOUT_S = _START_TIMEOUT_S + _REQUEST_TIMEOUT_S
+# A job's internal deadline lands a beat before the caller's wait expires,
+# leaving room for the worker to report what it already delivered.
+_JOB_DEADLINE_HEADROOM_S = 1.0
 
 # XKB keysym values (X11/keysymdef.h minus the XK_ prefix). Only names used by
 # ActionHandler._SHORTCUT_ACTIONS or the injector's own key paths are listed.
@@ -198,6 +210,11 @@ class RemoteDesktopPortal:
         self._version = 0
         self._session_path: Optional[str] = None
         self._closed = False
+        # Abort plumbing for the job the worker is currently running; set by
+        # _worker_main from the job's box and cleared when the job ends.
+        self._job_deadline: Optional[float] = None
+        self._job_cancel: Optional[threading.Event] = None
+        self._job_cancellable: Any = None
 
     @staticmethod
     def supported() -> bool:
@@ -226,11 +243,10 @@ class RemoteDesktopPortal:
 
     def inject_text(self, text: str) -> bool:
         """Type ``text`` as keysyms. Raises RemoteDesktopPortalError on failure."""
-        keysyms = [ks for ks in (char_to_keysym(c) for c in text) if ks is not None]
-        if not keysyms:
+        if not any(char_to_keysym(c) is not None for c in text):
             return True
         with self._lock:
-            self._submit(lambda: self._inject_keysyms(keysyms), timeout=_SUBMIT_TIMEOUT_S)
+            self._submit(lambda: self._inject_text(text), timeout=_SUBMIT_TIMEOUT_S)
         return True
 
     def tap_keysym(self, keysym: int, count: int = 1) -> None:
@@ -313,11 +329,17 @@ class RemoteDesktopPortal:
             if job is None:
                 break
             func, done, box = job
+            self._job_deadline = box.get("deadline")
+            self._job_cancel = box.get("cancel")
+            self._job_cancellable = box.get("cancellable")
             try:
                 box["result"] = func()
             except Exception as e:
                 box["error"] = e
             finally:
+                self._job_deadline = None
+                self._job_cancel = None
+                self._job_cancellable = None
                 done.set()
 
         if self._conn is not None:
@@ -338,10 +360,30 @@ class RemoteDesktopPortal:
             raise RemoteDesktopPortalError("RemoteDesktop portal client is closed")
         self._ensure_worker_locked()
         done = threading.Event()
-        box: Dict[str, Any] = {}
+        cancel = threading.Event()
+        cancellable = Gio.Cancellable.new() if Gio is not None else None
+        box: Dict[str, Any] = {
+            # The job's own budget ends slightly before this wait does, so the
+            # worker normally reports before the caller would ever time out.
+            "deadline": time.monotonic() + max(0.0, timeout - _JOB_DEADLINE_HEADROOM_S),
+            "cancel": cancel,
+            "cancellable": cancellable,
+        }
         self._jobs.put((func, done, box))
         if not done.wait(timeout):
-            raise RemoteDesktopPortalError("Timed out waiting for the portal")
+            # The caller gives up: cancel the job so it cannot keep emitting
+            # portal key events after the fallback backend has started typing.
+            cancel.set()
+            if cancellable is not None:
+                cancellable.cancel()
+            # Let the aborted job report what it delivered -- or land a late
+            # success -- before the timeout is declared.
+            done.wait(_JOB_DEADLINE_HEADROOM_S)
+            if "result" in box:
+                return box["result"]
+            error = box.get("error")
+            delivered = getattr(error, "delivered", 0) if error is not None else 0
+            raise RemoteDesktopPortalError("Timed out waiting for the portal", delivered=delivered)
         if "error" in box:
             error = box["error"]
             if isinstance(error, RemoteDesktopPortalError):
@@ -353,6 +395,15 @@ class RemoteDesktopPortal:
         """Stop the worker thread; safe when it never started."""
         if self._worker is None:
             return
+        # Abort a job still in flight so the worker reaches the sentinel
+        # instead of finishing a request nobody is waiting for.
+        if self._job_cancel is not None:
+            self._job_cancel.set()
+        if self._job_cancellable is not None:
+            try:
+                self._job_cancellable.cancel()
+            except Exception:
+                pass
         self._jobs.put(None)
         self._worker.join(10)
         self._worker = None
@@ -360,6 +411,19 @@ class RemoteDesktopPortal:
     # ---------------------------------------------------------------
     # Portal protocol. All of these run on the worker thread via _submit.
     # ---------------------------------------------------------------
+
+    def _check_job_aborted(self) -> None:
+        """Raise when the running job's caller gave up or its deadline passed."""
+        if self._job_cancel is not None and self._job_cancel.is_set():
+            raise RemoteDesktopPortalError("Portal job cancelled after its deadline")
+        if self._job_deadline is not None and time.monotonic() >= self._job_deadline:
+            raise RemoteDesktopPortalError("Portal job exceeded the submit deadline")
+
+    def _job_time_left(self, budget: float) -> float:
+        """Seconds left in the running job's deadline, capped at ``budget``."""
+        if self._job_deadline is None:
+            return budget
+        return min(budget, max(0.0, self._job_deadline - time.monotonic()))
 
     def _call_sync(
         self,
@@ -369,6 +433,7 @@ class RemoteDesktopPortal:
         reply_type: Optional[str],
         timeout_ms: int = 10000,
     ) -> Any:
+        self._check_job_aborted()
         return self._conn.call_sync(
             _DESKTOP_BUS_NAME,
             _DESKTOP_OBJECT_PATH,
@@ -378,7 +443,7 @@ class RemoteDesktopPortal:
             GLib.VariantType(reply_type) if reply_type else None,
             Gio.DBusCallFlags.NONE,
             timeout_ms,
-            None,
+            self._job_cancellable,
         )
 
     def _read_version(self) -> int:
@@ -422,7 +487,10 @@ class RemoteDesktopPortal:
         )
         try:
             deadline = time.monotonic() + timeout_s
+            if self._job_deadline is not None:
+                deadline = min(deadline, self._job_deadline)
             while "response" not in outcome:
+                self._check_job_aborted()
                 if time.monotonic() >= deadline:
                     raise RemoteDesktopPortalError(
                         f"Portal request timed out after {timeout_s:.0f}s ({request_path})"
@@ -445,16 +513,24 @@ class RemoteDesktopPortal:
         params: Any,
         timeout_s: float = _REQUEST_TIMEOUT_S,
     ) -> Any:
-        """Issue a portal request method and return its Response results."""
+        """Issue a portal request method and return its Response results.
+
+        Both the method call and the Response wait draw from the running
+        job's deadline, so ``CreateSession`` + ``SelectDevices`` + ``Start``
+        share one budget instead of each claiming its own.
+        """
+        budget = self._job_time_left(timeout_s)
+        if budget <= 0:
+            raise RemoteDesktopPortalError(f"Portal request {method} exceeded the deadline")
         result = self._call_sync(
             _REMOTE_DESKTOP_IFACE,
             method,
             params,
             "(o)",
-            timeout_ms=int(_REQUEST_TIMEOUT_S * 1000),
+            timeout_ms=int(max(1.0, min(_REQUEST_TIMEOUT_S, budget)) * 1000),
         )
         request_path = result.get_child_value(0).get_string()
-        outcome = self._await_response(request_path, timeout_s)
+        outcome = self._await_response(request_path, budget)
         return outcome["results"]
 
     @staticmethod
@@ -481,28 +557,13 @@ class RemoteDesktopPortal:
 
         persist = self._version >= 2
         session_token = f"vocalinux_{os.getpid()}_{int(time.time())}"
-        options: Dict[str, Any] = {"session_handle_token": session_token}
-        if persist:
-            options["persist_mode"] = _PERSIST_UNTIL_REVOKED
-            restore_token = _load_restore_token()
-            if restore_token:
-                options["restore_token"] = restore_token
-
-        try:
-            results = self._request(
-                "CreateSession", GLib.Variant("(a{sv})", (self._sv_options(options),))
-            )
-        except RemoteDesktopPortalError:
-            if options.get("restore_token"):
-                # A stale token can sink CreateSession on some backends; retry
-                # without it so the user just gets a fresh prompt.
-                logger.info("Portal rejected the restore token; starting fresh session")
-                options.pop("restore_token", None)
-                results = self._request(
-                    "CreateSession", GLib.Variant("(a{sv})", (self._sv_options(options),))
-                )
-            else:
-                raise
+        results = self._request(
+            "CreateSession",
+            GLib.Variant(
+                "(a{sv})",
+                (self._sv_options({"session_handle_token": session_token}),),
+            ),
+        )
 
         session_handle = results.lookup_value(
             "session_handle", GLib.VariantType("s")
@@ -511,31 +572,34 @@ class RemoteDesktopPortal:
             raise RemoteDesktopPortalError("CreateSession returned no session_handle")
         session_path = session_handle.get_string()
 
+        # persist_mode and restore_token are SelectDevices options (interface
+        # v2). The portal consumes the token there; an invalid one is simply
+        # ignored and the user gets the normal prompt.
         select_options: Dict[str, Any] = {"types": _DEVICE_TYPE_KEYBOARD}
         if persist:
             select_options["persist_mode"] = _PERSIST_UNTIL_REVOKED
-        self._request(
-            "SelectDevices",
-            GLib.Variant("(oa{sv})", (session_path, self._sv_options(select_options))),
-        )
+            restore_token = _load_restore_token()
+            if restore_token:
+                select_options["restore_token"] = restore_token
 
         try:
+            self._request(
+                "SelectDevices",
+                GLib.Variant("(oa{sv})", (session_path, self._sv_options(select_options))),
+            )
             start_results = self._request(
                 "Start",
                 GLib.Variant("(osa{sv})", (session_path, "", {})),
                 timeout_s=_START_TIMEOUT_S,
             )
-        except RemoteDesktopPortalError:
-            if options.get("restore_token"):
-                logger.info("Portal did not honour the restore token; retrying fresh")
-                _save_restore_token("")
-                start_results = self._request(
-                    "Start",
-                    GLib.Variant("(osa{sv})", (session_path, "", {})),
-                    timeout_s=_START_TIMEOUT_S,
-                )
-            else:
-                raise
+        except Exception:
+            # A session that never reached a successful Start must not linger:
+            # the compositor keeps it (and any grant) alive until Close.
+            try:
+                self._close_session(session_path)
+            except Exception as close_error:
+                logger.debug(f"Could not close the unfinished portal session: {close_error}")
+            raise
 
         token_variant = start_results.lookup_value("restore_token", GLib.VariantType("s"))
         if persist and token_variant is not None:
@@ -556,9 +620,18 @@ class RemoteDesktopPortal:
 
     def _tap(self, keysym: int, count: int) -> None:
         self._ensure_session()
-        for _ in range(count):
-            self._notify_key_state(keysym, _KEY_PRESSED)
-            self._notify_key_state(keysym, _KEY_RELEASED)
+        delivered = 0
+        try:
+            for _ in range(count):
+                self._check_job_aborted()
+                self._notify_key_state(keysym, _KEY_PRESSED)
+                delivered += 1
+                self._notify_key_state(keysym, _KEY_RELEASED)
+        except RemoteDesktopPortalError as e:
+            e.delivered = max(e.delivered, delivered)
+            raise
+        except Exception as e:
+            raise RemoteDesktopPortalError(str(e), delivered=delivered) from e
 
     def _notify_key_state(self, keysym: int, state: int) -> None:
         self._call_sync(
@@ -568,11 +641,23 @@ class RemoteDesktopPortal:
             None,
         )
 
-    def _inject_keysyms(self, keysyms: List[int]) -> None:
+    def _inject_text(self, text: str) -> None:
         self._ensure_session()
-        for keysym in keysyms:
-            self._notify_key_state(keysym, _KEY_PRESSED)
-            self._notify_key_state(keysym, _KEY_RELEASED)
+        delivered = 0
+        try:
+            for index, char in enumerate(text):
+                keysym = char_to_keysym(char)
+                if keysym is None:
+                    continue
+                self._check_job_aborted()
+                self._notify_key_state(keysym, _KEY_PRESSED)
+                delivered = index + 1
+                self._notify_key_state(keysym, _KEY_RELEASED)
+        except RemoteDesktopPortalError as e:
+            e.delivered = max(e.delivered, delivered)
+            raise
+        except Exception as e:
+            raise RemoteDesktopPortalError(str(e), delivered=delivered) from e
 
     def _shortcut(self, steps: Sequence[Tuple[Sequence[str], str]]) -> None:
         """Worker-side shortcut delivery; names are mapped once up front."""
@@ -590,13 +675,37 @@ class RemoteDesktopPortal:
             resolved.append((modifier_keysyms, keysym))
 
         self._ensure_session()
+        delivered = 0
         for modifier_keysyms, keysym in resolved:
-            for modifier in modifier_keysyms:
-                self._notify_key_state(modifier, _KEY_PRESSED)
-            self._notify_key_state(keysym, _KEY_PRESSED)
-            self._notify_key_state(keysym, _KEY_RELEASED)
-            for modifier in reversed(modifier_keysyms):
+            try:
+                self._check_job_aborted()
+                for modifier in modifier_keysyms:
+                    self._notify_key_state(modifier, _KEY_PRESSED)
+                self._notify_key_state(keysym, _KEY_PRESSED)
+                self._notify_key_state(keysym, _KEY_RELEASED)
+                delivered += 1
+                for modifier in reversed(modifier_keysyms):
+                    self._notify_key_state(modifier, _KEY_RELEASED)
+            except RemoteDesktopPortalError as e:
+                e.delivered = max(e.delivered, delivered)
+                self._release_held_modifiers(modifier_keysyms)
+                raise
+            except Exception as e:
+                self._release_held_modifiers(modifier_keysyms)
+                raise RemoteDesktopPortalError(str(e), delivered=delivered) from e
+
+    def _release_held_modifiers(self, modifier_keysyms: List[int]) -> None:
+        """Best-effort release of a step's modifiers after a mid-step failure.
+
+        A modifier left held on the portal session would corrupt whatever the
+        fallback backend types next. Releases stop at the first error -- the
+        connection is usually already gone by then.
+        """
+        for modifier in reversed(modifier_keysyms):
+            try:
                 self._notify_key_state(modifier, _KEY_RELEASED)
+            except Exception:
+                break
 
     def _close_session(self, session_path: str) -> None:
         self._conn.call_sync(

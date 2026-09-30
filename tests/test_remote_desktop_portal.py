@@ -1,7 +1,7 @@
 """Tests for the RemoteDesktop portal injection backend and its selection."""
 
 import threading
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -95,10 +95,13 @@ class _FakePortalConn:
         version: Optional[int] = 2,
         results: Optional[Dict[str, Any]] = None,
         cancels: Optional[Dict[str, int]] = None,
+        notify_fail_at: Optional[int] = None,
     ) -> None:
         self.version = version
         self.results = dict(results or {})
         self.cancels = dict(cancels or {})  # method -> remaining cancelled replies
+        # Raise inside NotifyKeyboardKeysym once this many notifies landed.
+        self.notify_fail_at = notify_fail_at
         self.calls: List[Tuple[str, str, Any]] = []
         self.notifies: List[Tuple[int, int]] = []
         self.closed_sessions: List[Any] = []
@@ -127,6 +130,8 @@ class _FakePortalConn:
             self.closed_sessions.append(object_path)
             return None
         if method == "NotifyKeyboardKeysym":
+            if self.notify_fail_at is not None and len(self.notifies) >= self.notify_fail_at:
+                raise RuntimeError("session-bus connection lost mid-injection")
             self.notifies.append(
                 (
                     params.get_child_value(2).get_int32(),
@@ -185,10 +190,12 @@ class _FakeContext:
 
 
 @pytest.fixture()
-def portal_client(monkeypatch):
+def portal_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Callable[[_FakePortalConn], RemoteDesktopPortal]:
     """Build a RemoteDesktopPortal wired to a fake bus; returns (portal, conn)."""
 
-    def _run_submit(self, func, timeout):
+    def _run_submit(self: RemoteDesktopPortal, func: Callable[[], Any], timeout: float) -> Any:
         try:
             return func()
         except RemoteDesktopPortalError:
@@ -244,16 +251,19 @@ class TestKeysymMapping:
         assert portal_keysym_for_name("not-a-key") is None
 
 
+PortalFactory = Callable[[_FakePortalConn], RemoteDesktopPortal]
+
+
 class TestPortalClient:
     """The synchronous client against the faked portal protocol."""
 
-    def test_supported_tracks_gi_availability(self, monkeypatch) -> None:
+    def test_supported_tracks_gi_availability(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(rdp, "PORTAL_AVAILABLE", False)
         assert RemoteDesktopPortal.supported() is False
         monkeypatch.setattr(rdp, "PORTAL_AVAILABLE", True)
         assert RemoteDesktopPortal.supported() is True
 
-    def test_probe_reads_interface_version_and_caches(self, portal_client) -> None:
+    def test_probe_reads_interface_version_and_caches(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=2)
         portal = portal_client(conn)
         assert portal.probe() is True
@@ -261,12 +271,14 @@ class TestPortalClient:
         get_calls = [c for c in conn.calls if c[0] == rdp._PROPERTIES_IFACE]
         assert len(get_calls) == 1
 
-    def test_probe_fails_when_interface_missing(self, portal_client) -> None:
+    def test_probe_fails_when_interface_missing(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=None)
         portal = portal_client(conn)
         assert portal.probe() is False
 
-    def test_inject_text_emits_keysyms_after_one_session(self, portal_client) -> None:
+    def test_inject_text_emits_keysyms_after_one_session(
+        self, portal_client: PortalFactory
+    ) -> None:
         conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         assert portal.inject_text("hé") is True
@@ -290,38 +302,89 @@ class TestPortalClient:
         assert portal.inject_text("a") is True
         assert [c[1] for c in conn.calls] == ["NotifyKeyboardKeysym"] * 2
 
-    def test_inject_text_persists_restore_token(self, portal_client) -> None:
+    def test_inject_text_persists_restore_token(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         portal.inject_text("a")
         assert rdp._load_restore_token() == "token-abc"
 
-    def test_version1_session_skips_persistence(self, portal_client, monkeypatch) -> None:
+    def test_version1_session_skips_persistence(
+        self, portal_client: PortalFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
         saved: List[str] = []
         monkeypatch.setattr(rdp, "_save_restore_token", saved.append)
         portal = portal_client(conn)
         portal.inject_text("a")
         create = [c for c in conn.calls if c[1] == "CreateSession"][0]
-        options = create[3].get_child_value(0).value
-        assert "persist_mode" not in options
+        assert "persist_mode" not in create[3].get_child_value(0).value
+        select = [c for c in conn.calls if c[1] == "SelectDevices"][0]
+        select_options = select[3].get_child_value(1).value
+        assert "persist_mode" not in select_options
+        assert "restore_token" not in select_options
         assert saved == []
 
-    def test_stale_restore_token_retries_without_it(self, portal_client, monkeypatch) -> None:
+    def test_restore_token_is_sent_to_select_devices(
+        self, portal_client: PortalFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # restore_token is a SelectDevices option on interface v2; sending it
+        # in CreateSession leaves it unread and the user is prompted again.
+        monkeypatch.setattr(rdp, "_load_restore_token", lambda: "old-token")
+        conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
+        portal = portal_client(conn)
+        portal.inject_text("a")
+        create = [c for c in conn.calls if c[1] == "CreateSession"][0]
+        create_options = create[3].get_child_value(0).value
+        assert "restore_token" not in create_options
+        select = [c for c in conn.calls if c[1] == "SelectDevices"][0]
+        select_options = select[3].get_child_value(1).value
+        assert select_options["restore_token"].value == "old-token"
+        assert select_options["persist_mode"].value == 2
+
+    def test_cancelled_start_is_not_retried(
+        self, portal_client: PortalFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Dismissing the permission dialog must be respected: no second Start
+        # on the same session, and the saved restore token is kept.
+        monkeypatch.setattr(rdp, "_load_restore_token", lambda: "old-token")
+        saved: List[str] = []
+        monkeypatch.setattr(rdp, "_save_restore_token", saved.append)
+        conn = _FakePortalConn(version=2, results=_SESSION_RESULTS, cancels={"Start": 5})
+        portal = portal_client(conn)
+        with pytest.raises(RemoteDesktopPortalError):
+            portal.inject_text("a")
+        starts = [c for c in conn.calls if c[1] == "Start"]
+        assert len(starts) == 1
+        assert saved == []
+
+    def test_failed_session_is_closed(
+        self, portal_client: PortalFactory, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A session whose Start never succeeds is closed so the compositor
+        # does not keep a half-granted session alive.
         monkeypatch.setattr(rdp, "_load_restore_token", lambda: "old-token")
         conn = _FakePortalConn(version=2, results=_SESSION_RESULTS, cancels={"Start": 1})
         portal = portal_client(conn)
-        assert portal.inject_text("a") is True
-        starts = [c for c in conn.calls if c[1] == "Start"]
-        assert len(starts) == 2
+        with pytest.raises(RemoteDesktopPortalError):
+            portal.inject_text("a")
+        assert conn.closed_sessions == ["/org/freedesktop/portal/session/1"]
 
-    def test_user_cancel_raises(self, portal_client) -> None:
+    def test_inject_text_reports_delivered_count(self, portal_client: PortalFactory) -> None:
+        # 'b' press lands but its release fails: the character was typed, so
+        # the error reports it and the caller retries only the tail.
+        conn = _FakePortalConn(version=1, results=_SESSION_RESULTS, notify_fail_at=3)
+        portal = portal_client(conn)
+        with pytest.raises(RemoteDesktopPortalError) as exc_info:
+            portal.inject_text("abc")
+        assert exc_info.value.delivered == 2
+
+    def test_user_cancel_raises(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=2, cancels={"Start": 5})
         portal = portal_client(conn)
         with pytest.raises(RemoteDesktopPortalError):
             portal.inject_text("a")
 
-    def test_session_handle_as_object_path_is_accepted(self, portal_client) -> None:
+    def test_session_handle_as_object_path_is_accepted(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(
             version=1,
             results={"session_handle": _FakeVariant("o", "/session/o")},
@@ -329,7 +392,7 @@ class TestPortalClient:
         portal = portal_client(conn)
         assert portal.inject_text("a") is True
 
-    def test_tap_keysym_press_releases_count_times(self, portal_client) -> None:
+    def test_tap_keysym_press_releases_count_times(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         portal.tap_keysym(KEYSYM_BACKSPACE, 3)
@@ -342,7 +405,15 @@ class TestPortalClient:
             * 3
         )
 
-    def test_send_shortcut_wraps_key_with_modifiers(self, portal_client) -> None:
+    def test_tap_keysym_reports_delivered_count(self, portal_client: PortalFactory) -> None:
+        conn = _FakePortalConn(version=1, results=_SESSION_RESULTS, notify_fail_at=2)
+        portal = portal_client(conn)
+        with pytest.raises(RemoteDesktopPortalError) as exc_info:
+            portal.tap_keysym(KEYSYM_BACKSPACE, 5)
+        # One full tap (press+release) landed; the second press failed.
+        assert exc_info.value.delivered == 1
+
+    def test_send_shortcut_wraps_key_with_modifiers(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         portal.send_shortcut([(["ctrl"], "a"), ([], "b")])
@@ -355,13 +426,13 @@ class TestPortalClient:
             (0x62, 0),  # b up
         ]
 
-    def test_send_shortcut_unknown_key_raises(self, portal_client) -> None:
+    def test_send_shortcut_unknown_key_raises(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         with pytest.raises(RemoteDesktopPortalError):
             portal.send_shortcut([([], "flying-car")])
 
-    def test_close_closes_portal_session(self, portal_client) -> None:
+    def test_close_closes_portal_session(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
         portal = portal_client(conn)
         portal.inject_text("a")
@@ -387,7 +458,7 @@ def _stub_portal(available: bool = True) -> Tuple[MagicMock, MagicMock]:
 
 
 def _wayland_injector(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
     *,
     tools: Dict[str, Optional[str]],
     portal: MagicMock,
@@ -424,7 +495,7 @@ def _wayland_injector(
 class TestPortalBackendSelection:
     """Where the portal lands in Wayland backend selection."""
 
-    def test_auto_prefers_portal_over_ydotool_wtype(self, monkeypatch) -> None:
+    def test_auto_prefers_portal_over_ydotool_wtype(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cls, _ = _stub_portal(available=True)
         injector = _wayland_injector(
             monkeypatch,
@@ -434,7 +505,7 @@ class TestPortalBackendSelection:
         assert injector.wayland_tool == "portal"
         assert injector.environment == DesktopEnvironment.WAYLAND
 
-    def test_pin_portal_selects_it(self, monkeypatch) -> None:
+    def test_pin_portal_selects_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cls, _ = _stub_portal(available=True)
         injector = _wayland_injector(
             monkeypatch,
@@ -444,7 +515,7 @@ class TestPortalBackendSelection:
         )
         assert injector.wayland_tool == "portal"
 
-    def test_pin_wtype_beats_portal(self, monkeypatch) -> None:
+    def test_pin_wtype_beats_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cls, _ = _stub_portal(available=True)
         injector = _wayland_injector(
             monkeypatch,
@@ -454,7 +525,34 @@ class TestPortalBackendSelection:
         )
         assert injector.wayland_tool == "wtype"
 
-    def test_portal_unavailable_falls_back_to_ydotool(self, monkeypatch) -> None:
+    def test_pinned_tool_skips_portal_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # With an installed backend explicitly pinned, the portal must not
+        # even be probed -- no worker thread, no session-bus round trip.
+        cls, _ = _stub_portal(available=True)
+        injector = _wayland_injector(
+            monkeypatch,
+            tools={"wtype": "/usr/bin/wtype"},
+            portal=cls,
+            forced="wtype",
+        )
+        assert injector.wayland_tool == "wtype"
+        cls.assert_not_called()
+
+    def test_uninstalled_pin_still_probes_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A pin the system cannot honour falls back to autodetection, which
+        # still includes the portal.
+        cls, _ = _stub_portal(available=True)
+        injector = _wayland_injector(
+            monkeypatch,
+            tools={"ydotool": "/usr/bin/ydotool"},
+            portal=cls,
+            forced="wtype",
+        )
+        assert injector.wayland_tool == "portal"
+
+    def test_portal_unavailable_falls_back_to_ydotool(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cls, _ = _stub_portal(available=False)
         with (
             patch.object(TextInjector, "_is_ydotoold_running", return_value=True),
@@ -465,7 +563,7 @@ class TestPortalBackendSelection:
             )
         assert injector.wayland_tool == "ydotool"
 
-    def test_pin_portal_unavailable_falls_back(self, monkeypatch) -> None:
+    def test_pin_portal_unavailable_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cls, _ = _stub_portal(available=False)
         injector = _wayland_injector(
             monkeypatch,
@@ -475,7 +573,9 @@ class TestPortalBackendSelection:
         )
         assert injector.wayland_tool == "wtype"
 
-    def test_flatpak_xdotool_session_upgrades_to_portal(self, monkeypatch) -> None:
+    def test_flatpak_xdotool_session_upgrades_to_portal(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Flatpak without a Wayland socket starts WAYLAND_XDOTOOL; the portal
         still reaches native clients, so selection upgrades the environment."""
         cls, _ = _stub_portal(available=True)
@@ -492,7 +592,7 @@ class TestPortalBackendSelection:
         assert injector.wayland_tool == "portal"
         assert injector.environment == DesktopEnvironment.WAYLAND
 
-    def test_x11_never_probes_the_portal(self, monkeypatch) -> None:
+    def test_x11_never_probes_the_portal(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cls, instance = _stub_portal(available=True)
         injector = _wayland_injector(
             monkeypatch,
@@ -538,7 +638,9 @@ class TestPortalInjectionPaths:
         injector._portal.inject_text.assert_called_once_with("hello")
         mock_run.assert_not_called()
 
-    def test_inject_demotes_to_wtype_on_portal_failure(self, monkeypatch) -> None:
+    def test_inject_demotes_to_wtype_on_portal_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
         injector._portal = MagicMock()
         injector._portal.inject_text.side_effect = RemoteDesktopPortalError("boom")
@@ -552,7 +654,7 @@ class TestPortalInjectionPaths:
         mock_run.assert_called_once()
         assert mock_run.call_args[0][0][:1] == ["wtype"]
 
-    def test_inject_without_any_fallback_raises(self, monkeypatch) -> None:
+    def test_inject_without_any_fallback_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
         injector._portal = MagicMock()
         injector._portal.inject_text.side_effect = RemoteDesktopPortalError("boom")
@@ -568,7 +670,7 @@ class TestPortalInjectionPaths:
             assert injector.press_backspace(2) is True
         injector._portal.tap_keysym.assert_called_once_with(KEYSYM_BACKSPACE, 2)
 
-    def test_press_backspace_demotes_and_recurses(self, monkeypatch) -> None:
+    def test_press_backspace_demotes_and_recurses(self, monkeypatch: pytest.MonkeyPatch) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
         injector._portal = MagicMock()
         injector._portal.tap_keysym.side_effect = RemoteDesktopPortalError("boom")
@@ -580,6 +682,45 @@ class TestPortalInjectionPaths:
             assert injector.press_backspace(2) is True
         assert injector.wayland_tool == "wtype"
         assert mock_run.call_args[0][0] == ["wtype", "-k", "BackSpace", "-k", "BackSpace"]
+
+    def test_inject_retries_only_undelivered_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.inject_text.side_effect = RemoteDesktopPortalError("boom", delivered=2)
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            injector._inject_with_wayland_tool("hello")
+        # The portal typed "he" before failing; the fallback gets only "llo".
+        assert mock_run.call_args[0][0] == ["wtype", "llo"]
+
+    def test_backspace_retries_only_remaining_taps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.tap_keysym.side_effect = RemoteDesktopPortalError("boom", delivered=1)
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            assert injector.press_backspace(3) is True
+        # One press was already delivered through the portal.
+        assert mock_run.call_args[0][0] == ["wtype", "-k", "BackSpace", "-k", "BackSpace"]
+
+    def test_shortcut_retries_only_remaining_steps(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.send_shortcut.side_effect = RemoteDesktopPortalError("boom", delivered=1)
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            # Two steps: [([], "Home"), (["shift"], "End")]; the first fired.
+            assert injector._inject_shortcut_with_wayland_tool("Home+shift+End") is True
+        assert mock_run.call_args[0][0] == ["wtype", "-M", "shift", "-k", "End", "-m", "shift"]
 
     def test_shortcut_routes_to_portal(self) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
