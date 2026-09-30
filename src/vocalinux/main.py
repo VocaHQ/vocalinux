@@ -7,7 +7,8 @@ import argparse
 import atexit
 import logging
 import sys
-from concurrent.futures import ThreadPoolExecutor
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -385,7 +386,7 @@ def main():
     # Now it's safe to import GTK-dependent modules
     from .common_types import RecognitionState
     from .speech_recognition import recognition_manager
-    from .text_injection import text_injector
+    from .text_injection import focused_window, text_injector
     from .ui import tray_indicator
     from .ui.action_handler import ActionHandler
     from .ui.config_manager import get_shared_config_manager
@@ -581,45 +582,109 @@ def main():
         # queued dictation is dropped.  A dedicated worker applies the script
         # and injects in order; its unbounded backlog waits instead of losing
         # speech, and a timed-out script falls back to the original text.
+        #
+        # Every segment goes through this one worker — when no script is
+        # configured apply_post_processing is a pass-through — so clearing the
+        # script path mid-queue can never let a later segment overtake an
+        # earlier one still waiting behind a running script.
         post_processing_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="vocalinux-post-processing"
         )
+        # Cleared by the quit hook so a queued or in-flight job drops its
+        # segment instead of injecting while the injector is being stopped.
+        accepting_injections = threading.Event()
+        accepting_injections.set()
+        # Segments that may sit in the backlog (a script is configured, or a
+        # job is still running) are bound to the app focused at submit time;
+        # the worker drops them if focus has moved to another application.
+        pending_jobs = 0
+        pending_jobs_lock = threading.Lock()
 
-        def post_process_and_inject(text_to_inject: str) -> None:
+        def _focused_app_unchanged(
+            target: Optional[focused_window.FocusedWindow],
+        ) -> bool:
+            """Return True unless focus verifiably moved to a different app.
+
+            A missing baseline or a failed re-probe stays permissive: without
+            a reliable identity the segment keeps the injector's own targeting.
+            """
+            if target is None:
+                return True
+            current = focused_window.get_focused_window()
+            if current is None:
+                return True
+            return current.identity_blob() == target.identity_blob()
+
+        def post_process_and_inject(
+            text_to_inject: str,
+            target_window: Optional[focused_window.FocusedWindow],
+        ) -> None:
             """Apply the configured post-processing script, then inject.
 
             Runs on the post-processing worker, never the recognition thread.
             An unexpected failure falls back to the unprocessed segment so
             dictation is never lost inside the worker.
-            """
-            try:
-                processed_text = apply_post_processing(text_to_inject, config_manager)
-            except Exception:
-                logger.exception("Post-processing raised unexpectedly; injecting original text")
-                processed_text = text_to_inject
-            if processed_text is None:
-                return
-            inject_transcription(processed_text)
 
-        def text_callback_wrapper(text: str) -> None:
+            Args:
+                text_to_inject: Finalised transcription segment.
+                target_window: App focused when the segment was dictated; the
+                    segment is dropped if focus has since moved elsewhere.
+            """
+            nonlocal pending_jobs
+            try:
+                if not accepting_injections.is_set():
+                    return
+                try:
+                    processed_text = apply_post_processing(text_to_inject, config_manager)
+                except Exception:
+                    logger.exception("Post-processing raised unexpectedly; injecting original text")
+                    processed_text = text_to_inject
+                if processed_text is None or not accepting_injections.is_set():
+                    return
+                if not _focused_app_unchanged(target_window):
+                    logger.info("Dropping queued segment: focus moved to another application")
+                    return
+                inject_transcription(processed_text)
+            finally:
+                with pending_jobs_lock:
+                    pending_jobs -= 1
+
+        def _shutdown_post_processing() -> None:
+            """Stop the post-processing worker for application quit.
+
+            Clearing the flag makes an in-flight job drop its result; pending
+            submissions are cancelled and the wait for a running script is
+            bounded by its own timeout — nothing can inject once the text
+            injector is stopped.
+            """
+            accepting_injections.clear()
+            post_processing_executor.shutdown(wait=True, cancel_futures=True)
+
+        def text_callback_wrapper(text: str) -> Optional[Future]:
             """Bridge between speech engine text events and the text injector.
 
             Called on the recognition thread with each finalised transcription
             segment.  Strips leading whitespace and trailing spaces/tabs (but
-            preserves trailing newlines from voice commands), optionally pipes
-            the result through the configured post-processing script — on a
-            dedicated worker so a slow script cannot stall transcription —
-            then either appends a trailing space (default) or uses the legacy
-            in-session leading-space separator, and injects via TextInjector.
+            preserves trailing newlines from voice commands), then hands the
+            segment to the single post-processing worker — a pass-through when
+            no script is configured — which applies the separator rules and
+            injects via TextInjector in spoken order.
 
             Args:
                 text: Raw transcription segment from the speech engine.
+
+            Returns:
+                The queued worker future, or None when the segment was dropped
+                before submission (an empty segment, or the application is
+                quitting).  Callers such as tests can wait on it; the speech
+                engine ignores the return value.
             """
+            nonlocal pending_jobs
             # Preserve trailing newlines ("new line" / "new paragraph"); only
             # strip spaces/tabs that whisper sometimes wraps around tokens.
             text_to_inject = text.lstrip().rstrip(" \t")
-            if not text_to_inject:
-                return
+            if not text_to_inject or not accepting_injections.is_set():
+                return None
 
             # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
             auto_capitalize = config_manager.get("text_injection", "auto_capitalize")
@@ -628,10 +693,24 @@ def main():
 
                 text_to_inject = capitalize_sentences(text_to_inject)
 
-            if config_manager.get_str("post_processing", "script_path", ""):
-                post_processing_executor.submit(post_process_and_inject, text_to_inject)
-            else:
-                inject_transcription(text_to_inject)
+            # A backlog or a configured script means this segment can inject
+            # long after it was dictated; bind it to the app it targets now so
+            # it cannot land in whatever the user switched to meanwhile.
+            script_configured = bool(config_manager.get_str("post_processing", "script_path", ""))
+            with pending_jobs_lock:
+                may_queue = pending_jobs > 0 or script_configured
+                pending_jobs += 1
+            target_window = focused_window.get_focused_window() if may_queue else None
+            try:
+                future: Future = post_processing_executor.submit(
+                    post_process_and_inject, text_to_inject, target_window
+                )
+                return future
+            except RuntimeError:
+                # The quit path already shut the worker down.
+                with pending_jobs_lock:
+                    pending_jobs -= 1
+                return None
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends."""
@@ -647,6 +726,7 @@ def main():
         indicator = tray_indicator.TrayIndicator(
             speech_engine=speech_engine,
             text_injector=text_system,
+            on_quit=_shutdown_post_processing,
         )
 
         # Start the GTK main loop

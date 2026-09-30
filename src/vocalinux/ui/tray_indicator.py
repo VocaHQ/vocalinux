@@ -119,6 +119,7 @@ class TrayIndicator:
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
         text_injector: TextInjectorProtocol,
+        on_quit: Optional[Callable[[], None]] = None,
     ):
         """
         Initialize the system tray indicator.
@@ -126,9 +127,13 @@ class TrayIndicator:
         Args:
             speech_engine: The speech recognition manager instance
             text_injector: The text injector instance
+            on_quit: Optional hook run during _quit before the text injector
+                is stopped (drains the post-processing worker so a queued or
+                in-flight segment cannot inject into a torn-down app)
         """
         self.speech_engine = speech_engine
         self.text_injector = text_injector
+        self._on_quit = on_quit
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
@@ -1326,6 +1331,15 @@ class TrayIndicator:
         if getattr(self, "overlay", None) is not None:
             self.overlay.destroy()
             self.overlay = None
+
+        # Drain the post-processing worker before the injector stops: queued
+        # segments are cancelled and a running job drops its result, so no
+        # injection can land once the injector is gone.
+        if getattr(self, "_on_quit", None) is not None:
+            try:
+                self._on_quit()
+            except Exception:
+                logger.error("Error draining post-processing worker while quitting", exc_info=True)
 
         # Stop the text injector (restores previous IBus engine)
         if hasattr(self, "text_injector") and self.text_injector is not None:
