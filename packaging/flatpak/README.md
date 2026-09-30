@@ -6,17 +6,19 @@ Manifest and AppStream metadata for building Vocalinux as a Flatpak.
 
 The recommended install is the self-hosted VocaHQ OSTree remote — the
 Homebrew-tap analogue — which `release.yml` signs and publishes to
-`VocaHQ/vocalinux-flatpak` (GitHub Pages) on every `v*` tag:
+`VocaHQ/vocalinux-flatpak` (GitHub Pages) on every stable `v*` tag:
 
 ```bash
-flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
-flatpak install vocahq com.vocalinux.Vocalinux
+flatpak install https://vocahq.github.io/vocalinux-flatpak/com.vocalinux.Vocalinux.flatpakref
 flatpak update   # each new release arrives here
 ```
 
-Only the app is ours; `org.gnome.Platform//50` still comes from Flathub (the
-`.flatpakrepo` declares `RuntimeRepo=`, so flatpak offers to add it). One-time
-repo/key setup: [docs/FLATPAK_REMOTE.md](../../docs/FLATPAK_REMOTE.md).
+The `.flatpakref` adds the `vocahq` remote and resolves the GNOME runtime
+through Flathub via `RuntimeRepo=` — the manual equivalent is `remote-add`
+for `flathub` then `vocahq`, then `flatpak install vocahq
+com.vocalinux.Vocalinux`. Only the app is ours; `org.gnome.Platform//50`
+still comes from Flathub. One-time repo/key setup:
+[docs/FLATPAK_REMOTE.md](../../docs/FLATPAK_REMOTE.md).
 
 ## GitHub Release bundles
 

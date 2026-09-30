@@ -14,6 +14,12 @@ permissions:
 env:
   # Build against the supported floor (requires-python in pyproject.toml).
   PYTHON_VERSION: '3.11'
+  # The dedicated "tap" repo and the URL Pages serves it at. A custom
+  # domain (e.g. flatpak.vocalinux.com) overrides both via the vars.
+  FLATPAK_REMOTE_REPO: ${{ vars.FLATPAK_REMOTE_REPO || 'VocaHQ/vocalinux-flatpak' }}
+  FLATPAK_REMOTE_URL: ${{ vars.FLATPAK_REMOTE_URL || 'https://vocahq.github.io/vocalinux-flatpak/repo' }}
+  FLATPAKREPO_URL: ${{ vars.FLATPAKREPO_URL || 'https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo' }}
+  FLATPAKREF_URL: ${{ vars.FLATPAKREF_URL || 'https://vocahq.github.io/vocalinux-flatpak/com.vocalinux.Vocalinux.flatpakref' }}
 
 jobs:
   build-and-release:
@@ -107,6 +113,88 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # The remote install commands only belong in the notes when this tag
+      # will actually publish the remote — the same two gates
+      # publish-flatpak-remote applies: a stable tag and both secrets
+      # configured. Otherwise the notes would send users to a remote that
+      # never carries this release, so they get the bundle path alone.
+      - name: Compose the Flatpak install notes
+        id: flatpak_notes
+        env:
+          FLATPAK_GPG_PRIVATE_KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+          FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/flatpak-notes.md"
+          case "$GITHUB_REF_NAME" in
+            *alpha*|*beta*|*rc*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          if [ "$prerelease" = false ] && [ -n "$FLATPAK_GPG_PRIVATE_KEY" ] && [ -n "$FLATPAK_REPO_TOKEN" ]; then
+            cat >"$notes" <<'EOF'
+          ### Flatpak
+          Install and auto-update via the self-hosted VocaHQ remote (`flatpak update`
+          picks up each release):
+          ```bash
+          flatpak install __FLATPAKREF_URL__
+          ```
+          The `.flatpakref` adds the `vocahq` remote and resolves `org.gnome.Platform//50`
+          through Flathub itself — no separate Flathub setup needed. To add the
+          pieces by hand instead:
+          ```bash
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak remote-add --if-not-exists vocahq __FLATPAKREPO_URL__
+          flatpak install vocahq com.vocalinux.Vocalinux
+          ```
+
+          Or download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached
+          shortly after this release is published) — a bundle with **no auto-update**:
+          ```bash
+          # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install flathub org.gnome.Platform//50
+
+          flatpak install --user ./Vocalinux-__VERSION__-x86_64.flatpak
+          flatpak run com.vocalinux.Vocalinux
+          ```
+          EOF
+          else
+            cat >"$notes" <<'EOF'
+          ### Flatpak
+          Download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached
+          shortly after this release is published) — a bundle with **no auto-update**:
+          ```bash
+          # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
+          flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install flathub org.gnome.Platform//50
+
+          flatpak install --user ./Vocalinux-__VERSION__-x86_64.flatpak
+          flatpak run com.vocalinux.Vocalinux
+          ```
+          EOF
+            if [ "$prerelease" = true ]; then
+              cat >>"$notes" <<'EOF'
+          Prereleases are not pushed to the `vocahq` auto-update remote — `flatpak update`
+          there stays on the latest stable release.
+          EOF
+            fi
+          fi
+          cat >>"$notes" <<'EOF'
+          Whisper.cpp engine only. Hotkeys need device access as documented in
+          packaging/flatpak/README.md. Not on Flathub (https://github.com/flathub/flathub/pull/9368).
+          EOF
+          sed -i \
+            -e "s|__VERSION__|$VERSION|g" \
+            -e "s|__FLATPAKREPO_URL__|$FLATPAKREPO_URL|g" \
+            -e "s|__FLATPAKREF_URL__|$FLATPAKREF_URL|g" \
+            "$notes"
+          {
+            echo 'flatpak<<VOCA_NOTES_EOF'
+            cat "$notes"
+            echo 'VOCA_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create Release
         id: create_release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
@@ -161,28 +249,7 @@ jobs:
             ```
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
-            ### Flatpak
-            Install and auto-update via the self-hosted VocaHQ remote (`flatpak update`
-            picks up each release):
-            ```bash
-            flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
-            flatpak install vocahq com.vocalinux.Vocalinux
-            ```
-            The app is **not on Flathub**; `org.gnome.Platform//50` still comes from
-            Flathub and the `.flatpakrepo` points flatpak at it.
-
-            Or download the `.flatpak` matching your CPU (`x86_64` or `aarch64`, attached
-            shortly after this release is published) — a bundle with **no auto-update**:
-            ```bash
-            # once: Flathub remote + GNOME runtime (the app itself is not on Flathub)
-            flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
-            flatpak install flathub org.gnome.Platform//50
-
-            flatpak install --user ./Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak
-            flatpak run com.vocalinux.Vocalinux
-            ```
-            Whisper.cpp engine only. Hotkeys need device access as documented in
-            packaging/flatpak/README.md. Not on Flathub (https://github.com/flathub/flathub/pull/9368).
+            ${{ steps.flatpak_notes.outputs.flatpak }}
 
             ### Snap
             Tagged releases also attach `vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap`
@@ -350,21 +417,20 @@ jobs:
   # VocaHQ/vocalinux-flatpak, which GitHub Pages serves at FLATPAK_REMOTE_URL.
   # Installs then auto-update via `flatpak update`. One-time setup — repo,
   # Pages, signing key, PAT — is documented in docs/FLATPAK_REMOTE.md.
+  # build-and-release is a hard requirement: the remote is the update channel
+  # for the GitHub Release, so it must not publish when release creation
+  # failed. Stable tags only — a prerelease on `stable` would land in every
+  # user's `flatpak update`.
   publish-flatpak-remote:
     name: Publish Flatpak remote
-    needs: [build-flatpak-amd64, build-flatpak-arm64]
+    needs: [build-and-release, build-flatpak-amd64, build-flatpak-arm64]
+    if: ${{ !contains(github.ref, 'alpha') && !contains(github.ref, 'beta') && !contains(github.ref, 'rc') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
     concurrency:
       # Two tags publishing at once would race each other's gh-pages push.
       group: flatpak-remote
-    env:
-      # The dedicated "tap" repo and the URL Pages serves it at. A custom
-      # domain (e.g. flatpak.vocalinux.com) overrides both via the vars.
-      FLATPAK_REMOTE_REPO: ${{ vars.FLATPAK_REMOTE_REPO || 'VocaHQ/vocalinux-flatpak' }}
-      FLATPAK_REMOTE_URL: ${{ vars.FLATPAK_REMOTE_URL || 'https://vocahq.github.io/vocalinux-flatpak/repo' }}
-      FLATPAKREPO_URL: ${{ vars.FLATPAKREPO_URL || 'https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo' }}
     steps:
       # Same pattern as publish-aur: an unconfigured remote skips the publish
       # instead of failing the release.
@@ -399,11 +465,34 @@ jobs:
           merge-multiple: true
           path: dist
 
-      # On the first publish gh-pages does not exist yet; continue-on-error
-      # turns that into a fresh repo instead of a failed job.
-      - name: Fetch the previously published repo
+      # The import below falls back to `ostree init` when site/repo is absent,
+      # which is only safe on a confirmed first publish: a transient checkout
+      # failure taken as "no history" would publish an empty repo over the
+      # remote and drop every object and delta clients still need. Probe
+      # gh-pages directly — exit 2 means confirmed absent; anything else
+      # aborts instead of guessing.
+      - name: Check whether the remote was published before
+        id: published
         if: steps.creds.outputs.configured == 'true'
-        continue-on-error: true
+        env:
+          FLATPAK_REPO_TOKEN: ${{ secrets.FLATPAK_REPO_TOKEN }}
+        run: |
+          set -u
+          rc=0
+          git ls-remote --exit-code --heads \
+            "https://x-access-token:${FLATPAK_REPO_TOKEN}@github.com/${FLATPAK_REMOTE_REPO}.git" \
+            gh-pages >/dev/null 2>&1 || rc=$?
+          case $rc in
+            0) echo "published=true" >> "$GITHUB_OUTPUT" ;;
+            2) echo "published=false" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Could not check ${FLATPAK_REMOTE_REPO} for gh-pages (git ls-remote exited $rc). Does the repo exist (docs/FLATPAK_REMOTE.md)?"
+              exit "$rc"
+              ;;
+          esac
+
+      - name: Fetch the previously published repo
+        if: steps.creds.outputs.configured == 'true' && steps.published.outputs.published == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.FLATPAK_REMOTE_REPO }}
@@ -468,7 +557,12 @@ jobs:
             --generate-static-deltas \
             "$repo"
 
-      - name: Write the .flatpakrepo and index page
+      # RuntimeRepo lives on the .flatpakref — it is a "Flatpak Ref" key, not
+      # a "Flatpak Repo" key, so on the .flatpakrepo it was a silent no-op and
+      # clean installs without Flathub could not resolve the GNOME runtime.
+      # Installing the .flatpakref adds the remote and pulls the runtime in
+      # one command. The bare public key ships for remote-modify key rotation.
+      - name: Write the .flatpakrepo, .flatpakref, and index page
         if: steps.creds.outputs.configured == 'true'
         run: |
           set -euo pipefail
@@ -481,12 +575,27 @@ jobs:
             echo 'Comment=Official Vocalinux Flatpak remote'
             echo 'Description=Self-hosted Vocalinux Flatpak repository'
             echo 'Icon=https://vocalinux.com/icon-512x512.png'
-            echo 'RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo'
             echo 'DefaultBranch=stable'
             echo "GPGKey=$(base64 -w0 "$RUNNER_TEMP/pubkey.gpg")"
           } > publish/vocahq.flatpakrepo
+          {
+            echo '[Flatpak Ref]'
+            echo 'Version=1'
+            echo 'Title=Vocalinux'
+            echo 'Name=com.vocalinux.Vocalinux'
+            echo 'Branch=stable'
+            echo "Url=${FLATPAK_REMOTE_URL}"
+            echo 'SuggestRemoteName=vocahq'
+            echo 'RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo'
+            echo 'IsRuntime=false'
+            echo 'Homepage=https://vocalinux.com'
+            echo 'Icon=https://vocalinux.com/icon-512x512.png'
+            echo "GPGKey=$(base64 -w0 "$RUNNER_TEMP/pubkey.gpg")"
+          } > publish/com.vocalinux.Vocalinux.flatpakref
+          cp "$RUNNER_TEMP/pubkey.gpg" publish/vocahq.gpg
           grep -v GPGKey publish/vocahq.flatpakrepo
           sed -e "s|__FLATPAKREPO_URL__|${FLATPAKREPO_URL}|g" \
+              -e "s|__FLATPAKREF_URL__|${FLATPAKREF_URL}|g" \
               -e "s|__REMOTE_URL__|${FLATPAK_REMOTE_URL}|g" \
               packaging/flatpak/index.html > publish/index.html
 

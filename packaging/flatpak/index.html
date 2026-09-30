@@ -27,15 +27,22 @@
     <h1>VocaHQ Flatpak remote</h1>
     <p>
       Self-hosted, signed OSTree repository for
-      <a href="https://vocalinux.com">Vocalinux</a> — published on every tagged
-      release, so installs auto-update via <code>flatpak update</code>.
+      <a href="https://vocalinux.com">Vocalinux</a> — published on every stable
+      tagged release, so installs auto-update via <code>flatpak update</code>.
     </p>
-    <pre><code>flatpak remote-add --if-not-exists vocahq __FLATPAKREPO_URL__
+    <pre><code>flatpak install __FLATPAKREF_URL__</code></pre>
+    <p>
+      The <code>.flatpakref</code> adds the <code>vocahq</code> remote and
+      resolves the GNOME runtime through Flathub in one step. To wire it up by
+      hand instead:
+    </p>
+    <pre><code>flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remote-add --if-not-exists vocahq __FLATPAKREPO_URL__
 flatpak install vocahq com.vocalinux.Vocalinux</code></pre>
     <p>
-      The GNOME runtime still comes from Flathub; the
-      <code>.flatpakrepo</code> declares <code>RuntimeRepo</code> so flatpak
-      offers to add it during install. Vocalinux itself is not on Flathub.
+      The GNOME runtime still comes from Flathub — the
+      <code>.flatpakref</code> declares <code>RuntimeRepo</code> so flatpak
+      finds it there. Vocalinux itself is not on Flathub.
     </p>
     <p>
       <a href="https://github.com/VocaHQ/vocalinux">Source code</a> ·

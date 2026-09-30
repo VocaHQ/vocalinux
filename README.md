@@ -159,6 +159,13 @@ Download the `x86_64` or `aarch64` AppImage from [Releases](https://github.com/V
 Install and auto-update via the self-hosted VocaHQ remote (`flatpak update` picks up each release):
 
 ```bash
+flatpak install https://vocahq.github.io/vocalinux-flatpak/com.vocalinux.Vocalinux.flatpakref
+```
+
+The `.flatpakref` adds the `vocahq` remote and resolves the GNOME runtime through Flathub. Manually instead:
+
+```bash
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
 flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
 flatpak install vocahq com.vocalinux.Vocalinux
 ```

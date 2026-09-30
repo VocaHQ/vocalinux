@@ -390,7 +390,8 @@ After pushing the tag, the GitHub Actions workflow will automatically:
 5. Publish to PyPI via trusted publishing
 6. Publish the AUR package (when the `AUR_SSH_PRIVATE_KEY` secret is configured)
 7. Publish the signed self-hosted Flatpak remote to `VocaHQ/vocalinux-flatpak`
-   (when `FLATPAK_GPG_PRIVATE_KEY` + `FLATPAK_REPO_TOKEN` are configured — see
+   (stable tags only, once the GitHub Release exists, when
+   `FLATPAK_GPG_PRIVATE_KEY` + `FLATPAK_REPO_TOKEN` are configured — see
    docs/FLATPAK_REMOTE.md)
 8. Deploy the website to vocalinux.com
 9. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
