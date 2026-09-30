@@ -3577,10 +3577,10 @@ class SettingsDialog(Gtk.Dialog):
             self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
         else:
             self.dictionary_feedback_label.set_text("That term is not valid for the terms file.")
-        if len(terms_now) > _MAX_TERMS_DISPLAYED:
-            # Appends land at the end of the file; without expanding the capped
-            # list the just-added term renders with no row and no Remove button.
-            self._show_all_terms = True
+        # Appends past the display cap stay hidden until "Show all" is
+        # clicked — expanding automatically would rebuild thousands of GTK
+        # rows on the UI thread. The overflow button already carries the
+        # full count, so the new term is one click away.
         self._refresh_dictionary_ui()
 
     def _on_terms_show_all(self, widget: Any) -> None:
