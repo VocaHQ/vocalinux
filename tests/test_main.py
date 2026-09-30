@@ -181,6 +181,7 @@ class TestMainModule(unittest.TestCase):
 
         # Mock ConfigManager to return empty settings (use command-line defaults)
         mock_config_instance = MagicMock()
+        mock_config_instance.get_bool.return_value = True
         mock_config_instance.get_settings.return_value = {
             "speech_recognition": {},
             "general": {"first_run": False},
@@ -221,6 +222,7 @@ class TestMainModule(unittest.TestCase):
                 vad_sensitivity=3,
                 silence_timeout=2.0,
                 stop_sound_guard_ms=200,
+                buffer_during_reload=True,
                 voice_commands_enabled=None,
                 audio_device_index=None,
                 audio_device_name=None,
