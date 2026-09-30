@@ -179,6 +179,33 @@ def test_oversized_terms_file_supplies_its_leading_lines(tmp_path: Path, monkeyp
     assert "leading lines only" in manager.terms_status()
 
 
+def test_prompt_on_oversized_file_streams_only_the_needed_prefix(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Prompt assembly stops after max_terms instead of decoding the bound."""
+    config = FakeConfig({"dictionary": {"enabled": True, "max_words": 3}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+
+    assert manager.build_initial_prompt() == "t000000 t000001 t000002"
+
+
+def test_prompt_on_oversized_file_with_corrupt_prefix_still_fails_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Invalid UTF-8 inside the usable prefix supplies no prompt at all."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        b"one\ntwo\n" + b"\xff\n" + b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+
+    assert manager.build_initial_prompt() is None
+
+
 def test_add_term_on_oversized_file_stays_visible(tmp_path: Path, monkeypatch) -> None:
     """Prepending past the read window keeps the new term visible while
     preserving every scanner-owned line, comment, and blank line."""

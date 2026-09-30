@@ -342,6 +342,57 @@ class CustomDictionaryManager:
                 )
                 return
 
+    def _iter_terms_for_prompt(self, path: Path, limit: int) -> Iterator[str]:
+        """Yield up to *limit* terms, streaming oversized files line by line.
+
+        Files inside the read bound keep the same whole-file-validated
+        iteration as ``_iter_terms``. Past it — where the usable-prefix
+        policy already accepts complete leading lines — the prompt only
+        needs the first *limit* terms, so this stops once it has them
+        instead of decoding the whole megabyte before every transcription
+        segment. The same validity contract applies: any invalid UTF-8 or
+        incomplete line inside the usable window yields nothing at all.
+        """
+        if limit <= 0:
+            return
+        try:
+            oversized = path.stat().st_size > MAX_TERMS_FILE_BYTES
+        except OSError:
+            oversized = False
+        if not oversized:
+            yield from itertools.islice(self._iter_terms(path), limit)
+            return
+        terms: list[str] = []
+        seen: set[str] = set()
+        consumed = 0
+        try:
+            with path.open("rb") as terms_file:
+                for index, raw_line in enumerate(terms_file):
+                    consumed += len(raw_line)
+                    if consumed > MAX_TERMS_FILE_BYTES + 1 or not raw_line.endswith(b"\n"):
+                        # Lines complete inside the byte bound are usable; a
+                        # line straddling it is not a complete leading line.
+                        break
+                    try:
+                        line = raw_line.decode("utf-8-sig" if index == 0 else "utf-8")
+                    except UnicodeError as error:
+                        logger.warning("Could not read custom terms file: %s", error)
+                        return
+                    term = unicodedata.normalize("NFC", line.strip())
+                    normalized_term = term.casefold()
+                    if not term or term.startswith("#") or normalized_term in seen:
+                        continue
+                    seen.add(normalized_term)
+                    terms.append(term)
+                    if len(terms) >= limit:
+                        break
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            logger.warning("Could not read custom terms file: %s", error)
+            return
+        yield from terms
+
     def save_terms(self, terms: list[str]) -> bool:
         """Safely replace the standard terms file with normalized line entries."""
         if self.is_transient_terms:
@@ -432,7 +483,7 @@ class CustomDictionaryManager:
             return None
         prompt_terms: list[str] = []
         prompt_characters = 0
-        for term in itertools.islice(self._iter_terms(path), max_terms):
+        for term in self._iter_terms_for_prompt(path, max_terms):
             additional_characters = len(term) + (1 if prompt_terms else 0)
             if prompt_characters + additional_characters > MAX_PROMPT_CHARACTERS:
                 logger.warning("Custom terms prompt reached %d characters", MAX_PROMPT_CHARACTERS)
