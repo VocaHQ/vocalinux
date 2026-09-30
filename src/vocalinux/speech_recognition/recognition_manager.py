@@ -415,8 +415,12 @@ class SpeechRecognitionManager:
         self.segment_callbacks: list[Callable[[str, float], None]] = []
         # While the Settings microphone test runs, segments whose capture
         # began at or after this monotonic time are test speech; consumers
-        # (e.g. history) read the floor to skip them.
+        # (e.g. history) read the floor to skip them. When the test ends the
+        # ceiling closes the window — segments captured during it but still
+        # decoding must keep failing the check, so the floor alone is never
+        # lifted back to None.
         self.test_capture_floor: Optional[float] = None
+        self.test_capture_ceiling: Optional[float] = None
         self.state_callbacks: list[Callable[[RecognitionState], None]] = []
         self.action_callbacks: list[Callable[[str], None]] = []
 

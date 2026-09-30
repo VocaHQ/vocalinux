@@ -149,6 +149,7 @@ class TrayIndicator:
         speech_engine: SpeechRecognitionManagerProtocol,
         text_injector: TextInjectorProtocol,
         transcription_history: Optional[TranscriptionHistory] = None,
+        dictation_pad: Optional[Any] = None,
     ) -> None:
         """
         Initialize the system tray indicator.
@@ -158,10 +159,13 @@ class TrayIndicator:
             text_injector: The text injector instance
             transcription_history: Optional in-memory store of recent dictation
                 snippets. When provided, a "Recent Snippets" submenu is shown.
+            dictation_pad: Optional in-app Dictation Pad window the tray menu
+                can open (the Wayland-safe dictation fallback, #726)
         """
         self.speech_engine = speech_engine
         self.text_injector = text_injector
         self.transcription_history = transcription_history
+        self.dictation_pad = dictation_pad
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
@@ -190,6 +194,9 @@ class TrayIndicator:
         # One listener per bound language shortcut (#805); rebuilt by
         # _setup_language_shortcuts alongside the main one.
         self._language_shortcut_managers: list[KeyboardShortcutManager] = []
+        # A settings edit landed while a dictation session was live; the
+        # listener rebuild is deferred to the next IDLE transition (#805).
+        self._language_shortcuts_refresh_pending = False
         # The binding whose press started the live push-to-talk session, so an
         # unrelated key's release cannot end it (#805).
         self._ptt_owner: Optional[KeyboardShortcutManager] = None
@@ -466,11 +473,19 @@ class TrayIndicator:
         self._language_shortcut_managers = []
 
     def refresh_language_shortcuts(self) -> None:
-        """Rebuild the per-language listeners after a settings change (#805)."""
+        """Rebuild the per-language listeners after a settings change (#805).
+
+        While a dictation session is live the rebuild is deferred to the
+        next IDLE transition instead: rebuilding stops recognition first,
+        and a keystroke-level settings edit must never cut an utterance off.
+        """
         if self._external_activation_active():
             # The internal listener family is off; a binding edit must not
             # arm language listeners behind the external-activation setting.
             self._stop_language_shortcut_managers()
+            return
+        if self.speech_engine.state != RecognitionState.IDLE:
+            self._language_shortcuts_refresh_pending = True
             return
         self._setup_language_shortcuts()
 
@@ -570,6 +585,8 @@ class TrayIndicator:
         self._update_autostart_checkbox()
 
         self._add_menu_separator()
+        if self.dictation_pad is not None:
+            self._add_menu_item("Dictation Pad", self._on_dictation_pad_clicked)
         self._add_menu_item("Settings", self._on_settings_clicked)
         self._add_menu_item("View Logs", self._on_logs_clicked)
         self._gateway_stop_menu_item = self._add_menu_item(
@@ -1198,12 +1215,19 @@ class TrayIndicator:
                 state wins: GLib.idle_add can deliver a captured PROCESSING
                 argument after stop already went IDLE (#739).
         """
-        if not hasattr(self, "indicator"):
-            return False
-
         engine_state = getattr(self.speech_engine, "state", None)
         if isinstance(engine_state, RecognitionState):
             state = engine_state
+
+        if state == RecognitionState.IDLE and getattr(
+            self, "_language_shortcuts_refresh_pending", False
+        ):
+            # The session the listener rebuild was deferred for has ended.
+            self._language_shortcuts_refresh_pending = False
+            self.refresh_language_shortcuts()
+
+        if not hasattr(self, "indicator"):
+            return False
 
         if state == RecognitionState.IDLE:
             self._set_indicator_icon(self._icon_keys["default"], "Microphone off")
@@ -1324,6 +1348,12 @@ class TrayIndicator:
         logger.debug("Clear history clicked")
         if self.transcription_history is not None:
             self.transcription_history.clear()
+
+    def _on_dictation_pad_clicked(self, widget: Gtk.MenuItem) -> None:
+        """Handle click on the Dictation Pad menu item."""
+        logger.debug("Dictation Pad clicked")
+        if self.dictation_pad is not None:
+            self.dictation_pad.show_pad()
 
     def _on_settings_clicked(self, widget):
         """Handle click on the Settings menu item."""

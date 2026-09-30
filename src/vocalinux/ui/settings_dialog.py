@@ -102,6 +102,7 @@ from .config_manager import (  # noqa: E402
     DEFAULT_SOUND_EFFECT_TONE,
     PASTE_SHORTCUTS,
     SOUND_EFFECT_TONES,
+    normalize_language_shortcuts,
     resolve_whispercpp_variant,
 )
 from .keyboard_backends import (  # noqa: E402
@@ -140,6 +141,11 @@ logger = logging.getLogger(__name__)
 # must agree on whose snapshot is newest.
 _apply_settings_lock = threading.Lock()
 _apply_settings_generation = 0
+# Generation of the apply that last wrote each advanced key. A deferred
+# persist uses it to tell "a newer apply rewrote this key" apart from "the
+# config still holds the baseline" — a newer user choice can legally equal
+# that baseline, so comparing values alone is not enough.
+_apply_settings_written: dict[str, int] = {}
 
 
 def _raw_audio_device_name(device_name: Optional[str]) -> Optional[str]:
@@ -3735,6 +3741,18 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Copy to clipboard {'enabled' if enabled else 'disabled'}")
         return False
 
+    def _on_dictation_pad_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Handle toggle of the in-app dictation pad switch."""
+        if _handlers_suppressed(self):
+            return False
+
+        enabled = bool(state)
+        logger.info(f"Dictate to pad toggled: {enabled}")
+        self.config_manager.set("text_injection", "dictate_to_pad", enabled)
+        self.config_manager.save_settings()
+        logger.info(f"Dictate to pad {'enabled' if enabled else 'disabled'}")
+        return False
+
     def _on_auto_capitalize_toggled(self, widget, state):
         """Handle toggle of the auto-capitalize switch."""
         if _handlers_suppressed(self):
@@ -4289,6 +4307,19 @@ class SettingsDialog(Gtk.Dialog):
             ),
         )
 
+        self.dictation_pad_switch = _add_switch_row(
+            output_group,
+            title="Dictation Pad",
+            subtitle="Capture dictation in an in-app text box instead of other apps",
+            keywords=("wayland", "pad", "fallback", "text box"),
+            tooltip=(
+                "Type dictation into Vocalinux's own Dictation Pad window instead "
+                "of injecting it into other apps. The pad opens from the tray menu; "
+                "copy text out of it by hand. Useful on Wayland, where injecting "
+                "keystrokes into other windows is restricted."
+            ),
+        )
+
         self.append_trailing_space_switch = _add_switch_row(
             output_group,
             title="Trailing Space After Dictation",
@@ -4323,6 +4354,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.recognition_settings_tab.pack_start(output_group, False, False, 0)
         self.copy_to_clipboard_switch.connect("state-set", self._on_copy_to_clipboard_toggled)
+        self.dictation_pad_switch.connect("state-set", self._on_dictation_pad_toggled)
         self.auto_capitalize_switch.connect("state-set", self._on_auto_capitalize_toggled)
         self.append_trailing_space_switch.connect(
             "state-set", self._on_append_trailing_space_toggled
@@ -4755,17 +4787,33 @@ class SettingsDialog(Gtk.Dialog):
         """
         if self._initializing:
             return
+        # Each row's remembered binding belongs to that row first, so a
+        # shortcut typed into one row can never displace a binding another
+        # row already holds — the stealing edit is rejected instead.
+        owners: dict[str, int] = {}
+        for index, refs in enumerate(self._language_shortcut_rows):
+            owned = (refs.get("last_valid_shortcut") or "").strip().lower()
+            if owned and owned not in owners:
+                owners[owned] = index
         entries = []
         rejected = []
         claimed = set()
-        for refs in self._language_shortcut_rows:
+        for index, refs in enumerate(self._language_shortcut_rows):
             language = refs["language_picker"].get_active_id() or "auto"
             shortcut = refs["shortcut_entry"].get_text().strip().lower()
             last_valid = refs.get("last_valid_shortcut", "")
-            if shortcut and is_valid_shortcut(shortcut) and shortcut not in claimed:
+            owner = owners.get(shortcut)
+            if (
+                shortcut
+                and is_valid_shortcut(shortcut)
+                and shortcut not in claimed
+                and (owner is None or owner == index)
+            ):
                 refs["last_valid_shortcut"] = shortcut
                 claimed.add(shortcut)
-            elif last_valid and last_valid not in claimed:
+            elif (
+                last_valid and last_valid not in claimed and owners.get(last_valid, index) == index
+            ):
                 if shortcut and is_valid_shortcut(shortcut):
                     rejected.append(shortcut)
                 shortcut = last_valid
@@ -4775,6 +4823,12 @@ class SettingsDialog(Gtk.Dialog):
                     rejected.append(shortcut)
                 continue
             entries.append({"shortcut": shortcut, "language": language})
+        if normalize_language_shortcuts(entries) == self.config_manager.get_language_shortcuts():
+            # Nothing effective changed — a mid-edit keystroke, a rejected
+            # duplicate, or a reverted field — so the live listeners do not
+            # need another rebuild (and dictation never pauses for one).
+            self._report_language_shortcut_rejections(rejected)
+            return
         self.config_manager.set_language_shortcuts(entries)
         self.config_manager.save_settings()
         if self.language_shortcuts_update_callback:
@@ -6475,11 +6529,16 @@ class SettingsDialog(Gtk.Dialog):
                         # A newer apply already reconfigured the shared engine
                         # and saved newer values. Keep only the keys it left
                         # untouched — the rest of the snapshot is stale and
-                        # must not reach the engine or the config again.
+                        # must not reach the engine or the config again. A key
+                        # counts as touched only when the newer apply wrote
+                        # it: its choice can legally equal the baseline, and
+                        # the older edit must not overwrite it.
                         surviving = {
                             key: value
                             for key, value in pending.items()
-                            if self.config_manager.get("advanced", key) == baseline.get(key)
+                            if _apply_settings_written.get(key, self._pending_apply_generation)
+                            <= self._pending_apply_generation
+                            and self.config_manager.get("advanced", key) == baseline.get(key)
                         }
                     else:
                         surviving = dict(pending)
@@ -6494,6 +6553,7 @@ class SettingsDialog(Gtk.Dialog):
                     self.speech_engine.reconfigure(**surviving)
                     for key, value in surviving.items():
                         self.config_manager.set("advanced", key, value)
+                        _apply_settings_written[key] = _apply_settings_generation
                     self.config_manager.save_settings()
             except (OSError, ValueError, TypeError, RuntimeError) as e:
                 logger.warning(
@@ -6573,6 +6633,7 @@ class SettingsDialog(Gtk.Dialog):
         show_missing_tray_warning = ui_settings.get("show_missing_tray_warning", True)
         show_overlay = ui_settings.get("show_overlay", True)
         copy_to_clipboard = text_injection_settings.get("copy_to_clipboard", False)
+        dictate_to_pad = text_injection_settings.get("dictate_to_pad", False)
         auto_capitalize = text_injection_settings.get("auto_capitalize", True)
         append_trailing_space = text_injection_settings.get("append_trailing_space", True)
         paste_shortcut = self.config_manager.get_paste_shortcut()
@@ -6586,6 +6647,7 @@ class SettingsDialog(Gtk.Dialog):
         self.missing_tray_warning_switch.set_active(show_missing_tray_warning)
         self.show_overlay_switch.set_active(show_overlay)
         self.copy_to_clipboard_switch.set_active(copy_to_clipboard)
+        self.dictation_pad_switch.set_active(dictate_to_pad)
         self.auto_capitalize_switch.set_active(auto_capitalize)
         self.append_trailing_space_switch.set_active(append_trailing_space)
         if not self.paste_shortcut_combo.set_active_id(paste_shortcut):
@@ -8101,6 +8163,7 @@ class SettingsDialog(Gtk.Dialog):
         # generation that already includes this in-flight apply.
         global _apply_settings_generation
         _apply_settings_generation += 1
+        apply_generation = _apply_settings_generation
         self._applying_settings = True
         # Already-downloaded apply is handed to a worker that clears this flag
         # via GLib.idle_add. Download still holds it for the modal run() below.
@@ -8203,7 +8266,9 @@ class SettingsDialog(Gtk.Dialog):
 
             def apply_already_downloaded() -> None:
                 try:
-                    self._apply_settings_internal(settings, raise_errors=True)
+                    self._apply_settings_internal(
+                        settings, raise_errors=True, apply_generation=apply_generation
+                    )
                     logger.info("Settings auto-applied successfully")
                 except Exception as e:
                     logger.error(f"Failed to auto-apply settings: {e}")
@@ -8438,13 +8503,15 @@ class SettingsDialog(Gtk.Dialog):
         self._saved_text_callbacks = self.speech_engine.get_text_callbacks()
         self.speech_engine.set_text_callbacks([self._test_text_callback])
         # History recording runs on segment callbacks keyed by capture time:
-        # stamp the floor so test speech stays out of Recent Snippets while
+        # stamp the window so test speech stays out of Recent Snippets while
         # leftover segments from a dictation still file normally.
+        self.speech_engine.test_capture_ceiling = None
         self.speech_engine.test_capture_floor = time.monotonic()
 
         if not self.speech_engine.start_recognition():
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
             self.speech_engine.test_capture_floor = None
+            self.speech_engine.test_capture_ceiling = None
             del self._saved_text_callbacks
             self.test_output_revealer.set_reveal_child(True)
             if getattr(self.speech_engine, "is_auto_paused", False):
@@ -8650,7 +8717,10 @@ class SettingsDialog(Gtk.Dialog):
         if hasattr(self, "_saved_text_callbacks"):
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
             del self._saved_text_callbacks
-        self.speech_engine.test_capture_floor = None
+        # Close the test-capture window rather than reopening history for
+        # everything after the floor: segments captured during the test but
+        # still decoding must keep failing the window check.
+        self.speech_engine.test_capture_ceiling = time.monotonic()
 
         # Check result after giving time for final callbacks to complete
         GLib.timeout_add(300, self._check_test_result)
@@ -8802,7 +8872,11 @@ For now, the engine has been reverted to VOSK."""
         dialog.destroy()
 
     def _apply_settings_internal(
-        self, settings: dict, raise_errors: bool = False, force_reinit: bool = False
+        self,
+        settings: dict,
+        raise_errors: bool = False,
+        force_reinit: bool = False,
+        apply_generation: Optional[int] = None,
     ) -> bool:
         """Internal method to apply settings.
 
@@ -8816,20 +8890,37 @@ For now, the engine has been reverted to VOSK."""
                 matches its live state. The download threads pass True: they
                 only run because the model is missing on disk, and a no-op
                 reconfigure would report success for a download that never ran.
+            apply_generation: The apply generation captured when this snapshot
+                was collected. When a newer apply began since, this snapshot is
+                stale and its write is skipped — otherwise lock order, not
+                collection order, would decide which snapshot wins.
         """
         try:
-            was_running = self.speech_engine.state != RecognitionState.IDLE
-            if was_running:
-                self.speech_engine.stop_recognition()
-                time.sleep(0.5)
-
             # Persist only once the engine really runs these settings: this call
             # downloads missing models, and a config saved up front would keep
             # pointing at a model that never made it to disk. The lock orders
-            # this snapshot against _persist_pending_text_edits' deferred one.
+            # this snapshot against _persist_pending_text_edits' deferred one —
+            # and the staleness check must precede stop_recognition, or a
+            # superseded apply would still interrupt a live dictation session.
             with _apply_settings_lock:
+                if apply_generation is not None and _apply_settings_generation != apply_generation:
+                    logger.info(
+                        "Settings apply superseded by a newer one; " "skipping the stale snapshot"
+                    )
+                    return True
+                was_running = self.speech_engine.state != RecognitionState.IDLE
+                if was_running:
+                    self.speech_engine.stop_recognition()
+                    time.sleep(0.5)
+
                 self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
                 self._save_selected_settings(settings)
+                written_gen = (
+                    apply_generation if apply_generation is not None else _apply_settings_generation
+                )
+                for key in settings:
+                    if key.startswith("whispercpp_"):
+                        _apply_settings_written[key] = written_gen
 
             logger.info("Settings applied successfully.")
             return True

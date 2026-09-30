@@ -111,6 +111,50 @@ class TestTranscriptionHistory(unittest.TestCase):
         history.clear()
         self.assertFalse(history.extend_latest("x"))
 
+    def test_add_returns_snippet_id(self) -> None:
+        history = TranscriptionHistory()
+        first = history.add("one")
+        second = history.add("two")
+        self.assertIsInstance(first, int)
+        self.assertIsInstance(second, int)
+        self.assertNotEqual(first, second)
+
+    def test_add_returns_none_when_refused(self) -> None:
+        history = TranscriptionHistory(enabled=False)
+        self.assertIsNone(history.add("ignored"))
+
+    def test_extend_entry_targets_the_named_snippet(self) -> None:
+        """A straggler extends its own session even after newer commits."""
+        history = TranscriptionHistory()
+        first = history.add("one")
+        assert first is not None
+        history.add("two")
+        self.assertTrue(history.extend_entry(first, "tail"))
+        self.assertEqual(history.get_all(), ["two", "one tail"])
+
+    def test_extend_entry_unknown_id_returns_false(self) -> None:
+        history = TranscriptionHistory()
+        history.add("one")
+        self.assertFalse(history.extend_entry(999, "tail"))
+        self.assertEqual(history.get_all(), ["one"])
+
+    def test_extend_entry_after_clear_returns_false(self) -> None:
+        history = TranscriptionHistory()
+        first = history.add("one")
+        assert first is not None
+        history.clear()
+        self.assertFalse(history.extend_entry(first, "tail"))
+
+    def test_extend_entry_refused_from_stale_epoch(self) -> None:
+        history = TranscriptionHistory()
+        first = history.add("one")
+        assert first is not None
+        epoch = history.epoch
+        history.clear()
+        history.add("two")
+        self.assertFalse(history.extend_entry(first, "tail", expected_epoch=epoch))
+        self.assertEqual(history.get_all(), ["two"])
+
     def test_extend_latest_fires_change_callback(self) -> None:
         history = TranscriptionHistory()
         history.add("a")
