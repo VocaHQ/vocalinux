@@ -728,7 +728,7 @@ class PortAudioCaptureSource:
         self,
         device_index: Optional[int] = None,
         device_name: Optional[str] = None,
-    ):
+    ) -> None:
         self.device_index = device_index
         self.device_name = device_name
         self.audio: Any = None
@@ -737,7 +737,7 @@ class PortAudioCaptureSource:
         self.channels = 1
         self.downmix_channel: Optional[int] = None
 
-    def open(self, audio=None) -> None:
+    def open(self, audio: Any = None) -> None:
         """Resolve the input device and open the negotiated capture stream.
 
         Args:
@@ -868,7 +868,7 @@ class PortAudioCaptureSource:
 
         return data
 
-    def reopen(self, audio_instance) -> bool:
+    def reopen(self, audio_instance: Any) -> bool:
         """Close the current stream and reopen on the resolved device.
 
         Args:

@@ -3236,13 +3236,16 @@ class SpeechRecognitionManager:
             # Clean up
             source.close()
 
-            # Reset audio stream reference and reconnection state
-            self._audio_stream = None
-            self._pyaudio_instance = None
-            self._capture_downmix_channel = None
-            self._reconnection_attempts = 0
-            self._last_audio_error_time = 0
-            self._capture_source = None
+            # Reset audio stream reference and reconnection state. A session
+            # started after a stop-timeout may already own these fields, so
+            # only clear the ones still bound to this capture.
+            if self._capture_source is source:
+                self._audio_stream = None
+                self._pyaudio_instance = None
+                self._capture_downmix_channel = None
+                self._reconnection_attempts = 0
+                self._last_audio_error_time = 0
+                self._capture_source = None
 
             # Log summary
             if not speech_detected_in_session and max_level_seen < 5:
