@@ -3524,11 +3524,16 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Paste shortcut set to {self.config_manager.get_paste_shortcut()}")
         return False
 
+    def _update_sound_effects_sensitivity(self, enabled: bool) -> None:
+        """Gray out the tone picker while sound effects are disabled."""
+        self.tone_row.set_sensitive(enabled)
+
     def _on_sound_effects_toggled(self, widget, state):
+        enabled = bool(state)
+        self._update_sound_effects_sensitivity(enabled)
         if self._initializing or self._applying_settings:
             return False
 
-        enabled = bool(state)
         logger.info(f"Sound effects toggled: {enabled}")
         self.config_manager.set_sound_effects_enabled(enabled)
         self.config_manager.save_settings()
@@ -5994,7 +5999,9 @@ class SettingsDialog(Gtk.Dialog):
         self.append_trailing_space_switch.set_active(append_trailing_space)
         if not self.paste_shortcut_combo.set_active_id(paste_shortcut):
             self.paste_shortcut_combo.set_active_id(DEFAULT_PASTE_SHORTCUT)
-        self.sound_effects_switch.set_active(self.config_manager.is_sound_effects_enabled())
+        sound_effects_enabled = self.config_manager.is_sound_effects_enabled()
+        self.sound_effects_switch.set_active(sound_effects_enabled)
+        self._update_sound_effects_sensitivity(sound_effects_enabled)
         duck_enabled = self.config_manager.is_playback_duck_enabled()
         self.duck_level_scale.set_value(self.config_manager.get_playback_duck_percent())
         self.duck_playback_switch.set_active(duck_enabled)
