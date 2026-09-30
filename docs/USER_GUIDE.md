@@ -227,7 +227,9 @@ Vocalinux can pipe each transcription result through a user-defined script befor
 **Script contract:**
 - The script receives the transcription on **stdin**
 - It must write the replacement text to **stdout**
+- stdout is injected verbatim — trailing newlines are preserved (e.g. paragraph breaks), except a single trailing newline that line-oriented tools like `echo` add when the transcription had none
 - A non-zero exit code or a script that times out (10 s) causes the original text to be used unchanged
+- Scripts run on a dedicated worker so a slow script cannot interrupt dictation
 
 **Example** — a shell script that uppercases everything:
 ```bash

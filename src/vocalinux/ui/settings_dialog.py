@@ -5662,7 +5662,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.gpu_device_combo.connect("changed", self._on_advanced_param_changed)
 
-    def _build_post_processing_section(self):
+    def _build_post_processing_section(self) -> None:
         """Build the Post-Processing section."""
         group = PreferencesGroup(
             title="Post-Processing Script",
@@ -5696,7 +5696,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.post_processor_entry.connect("changed", self._on_post_processor_script_changed)
 
-    def _on_post_processor_browse_clicked(self, widget):
+    def _on_post_processor_browse_clicked(self, widget: Gtk.Button) -> None:
         dialog = Gtk.FileChooserDialog(
             title="Select Post-Processing Script",
             parent=self,
@@ -5712,7 +5712,7 @@ class SettingsDialog(Gtk.Dialog):
             self.post_processor_entry.set_text(dialog.get_filename())
         dialog.destroy()
 
-    def _on_post_processor_script_changed(self, widget):
+    def _on_post_processor_script_changed(self, widget: Gtk.Entry) -> None:
         if self._initializing or self._applying_settings:
             return
         path = widget.get_text().strip()
