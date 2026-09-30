@@ -635,6 +635,11 @@ def main():
         # snippet once the next session has closed, so an older worker
         # finishing two sessions later cannot leak into a newer entry.
         ended_session_worker: Optional[threading.Thread] = None
+        # Every worker that has delivered in-session segments; a delivery on
+        # a thread never associated with a session is treated as the
+        # just-ended session's trailing decode, while a worker seen producing
+        # an earlier session can never merge into a newer entry.
+        session_workers_seen: set[threading.Thread] = set()
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
@@ -720,6 +725,7 @@ def main():
             across a clear is still recoverable.
             """
             nonlocal session_worker, latest_snippet_id, ended_session_worker
+            nonlocal session_workers_seen
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -760,6 +766,7 @@ def main():
                     )
                 ):
                     session_worker = worker
+                    session_workers_seen.add(worker)
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
@@ -777,7 +784,10 @@ def main():
                 # still refuses the text.
                 if (
                     latest_snippet_id is not None
-                    and (worker is ended_session_worker or session_open)
+                    and (
+                        worker is ended_session_worker
+                        or (session_open and worker not in session_workers_seen)
+                    )
                     and transcription_history.extend_entry(
                         latest_snippet_id, segment, expected_epoch=ended_session_epoch
                     )
@@ -789,6 +799,7 @@ def main():
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
                     ended_session_worker = worker
+                    session_workers_seen.add(worker)
 
         def text_callback_wrapper(text: str) -> None:
             """Bridge between speech engine text events and the text injector.
@@ -914,10 +925,18 @@ def main():
                 if not action_handler.last_injected_text:
                     return True
                 if last_injected["to_pad"]:
-                    # The pad's own segment bookkeeping wins over the recorded
-                    # text: a pad "undo" may have popped that segment, leaving
-                    # its length stale.
-                    target = dictation_pad.last_segment or action_handler.last_injected_text
+                    # Only the pad's own segment bookkeeping may size the
+                    # deletion: a manual edit or a pad "undo" blurs the
+                    # boundaries (last_segment is None), and falling back to
+                    # the recorded text's length could erase characters the
+                    # user typed after dictating. Refuse rather than
+                    # misdelete — the tracking is still cleared so a repeated
+                    # command cannot retry the stale length.
+                    target = dictation_pad.last_segment
+                    if target is None:
+                        action_handler.set_last_injected_text("")
+                        last_injected["to_pad"] = False
+                        return True
                     deleted = dictation_pad.delete_last_chars(len(target))
                     if deleted:
                         action_handler.set_last_injected_text("")

@@ -3839,13 +3839,17 @@ class SpeechRecognitionManager:
         """
         while True:
             try:
-                segment = self._segment_queue.get_nowait()
+                queued = self._segment_queue.get_nowait()
             except queue.Empty:
                 return
-            if segment is None:
+            if queued is None:
                 continue
+            # Queue items are (segment, language) tuples stamped at enqueue
+            # time — the language must reach the decoder or the buffer is
+            # transcribed under the wrong language.
+            segment, segment_language = queued
             try:
-                self._process_audio_buffer(segment)
+                self._process_audio_buffer(segment, segment_language)
             except (ChecksumError, ImportError, OSError, RuntimeError, ValueError):
                 logger.exception("Failed to transcribe a leftover buffered segment")
 

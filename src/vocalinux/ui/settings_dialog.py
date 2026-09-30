@@ -3077,7 +3077,7 @@ class SettingsDialog(Gtk.Dialog):
             )
             self._search_previous_dictionary_pane = None
 
-    def _on_dictionary_pane_changed(self, *_args) -> None:
+    def _on_dictionary_pane_changed(self, *_args: Any) -> None:
         """Keep a manual dictionary pane switch made during an active search.
 
         The filter auto-switches panes to reveal a match and restores the
@@ -3829,16 +3829,25 @@ class SettingsDialog(Gtk.Dialog):
             if allocation.height <= 0:
                 # Not laid out yet — retry briefly instead of never scrolling.
                 return retries_left > 0
+            # The row's y is relative to the terms listbox, but the scroller's
+            # adjustment addresses the whole card (header and controls above
+            # the list) — translate into that space or the scroll stops short.
+            viewport = self.dictionary_terms_scroller.get_child()
+            content = viewport.get_child() if isinstance(viewport, Gtk.Viewport) else None
+            position = row.translate_coordinates(content, 0, 0) if content else None
+            if position is None:
+                return False
+            _, row_y = position
             adjustment = self.dictionary_terms_scroller.get_vadjustment()
             page_size = adjustment.get_page_size()
             value = adjustment.get_value()
-            if allocation.y < value:
-                adjustment.set_value(max(adjustment.get_lower(), allocation.y))
-            elif allocation.y + allocation.height > value + page_size:
+            if row_y < value:
+                adjustment.set_value(max(adjustment.get_lower(), row_y))
+            elif row_y + allocation.height > value + page_size:
                 adjustment.set_value(
                     min(
                         adjustment.get_upper() - page_size,
-                        allocation.y + allocation.height - page_size,
+                        row_y + allocation.height - page_size,
                     )
                 )
             return False
