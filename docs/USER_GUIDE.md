@@ -209,7 +209,10 @@ vocalinux --engine parakeet
 vocalinux --model medium.en-q5_0
 vocalinux --wayland
 vocalinux --start-minimized
+vocalinux --transcribe-file meeting.wav   # diarized transcript on stdout, then exits
 ```
+
+`--transcribe-file` uses the TinyDiarize model (`small.en-tdrz`) and needs it downloaded first — the tray "Transcribe Audio File…" entry fetches it on demand.
 
 ## Troubleshooting
 

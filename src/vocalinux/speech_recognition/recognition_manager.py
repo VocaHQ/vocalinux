@@ -55,6 +55,12 @@ from ..utils.model_checksums import (
     write_verification_stamp,
 )
 from ..utils.paths import models_dir
+from ..utils.pywhispercpp_loader import (
+    find_shared_library_dirs as _find_pywhispercpp_shared_library_dirs,
+)
+from ..utils.pywhispercpp_loader import (
+    preload_shared_libraries as _preload_pywhispercpp_shared_libraries,
+)
 from ..utils.system_language import LANGUAGE_FOLLOWS_LAYOUT, language_for_active_layout
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES, VOSK_MODEL_INFO
 from ..utils.whisper_model_info import (
@@ -63,6 +69,7 @@ from ..utils.whisper_model_info import (
     whisper_model_url,
 )
 from ..utils.whispercpp_model_info import (
+    NON_DICTATION_MODELS,
     WHISPERCPP_MODEL_INFO,
     get_model_path,
     is_english_only_model,
@@ -170,122 +177,6 @@ def resolve_language_preference(language: str) -> str:
         return "auto"
 
     return resolved or "auto"
-
-
-_PYWHISPERCPP_PRELOADED_LIBS: list[ctypes.CDLL] = []
-
-
-def _find_pywhispercpp_shared_library_dirs() -> list[str]:
-    """Find bundled pywhispercpp native library directories without importing it."""
-    candidate_dirs: list[Path] = []
-
-    for module_name in ("_pywhispercpp", "pywhispercpp"):
-        try:
-            spec = importlib.util.find_spec(module_name)
-        except (ImportError, AttributeError, ValueError):
-            spec = None
-        if spec is None:
-            continue
-
-        if spec.origin:
-            module_dir = Path(spec.origin).resolve().parent
-            candidate_dirs.extend(
-                [
-                    module_dir,
-                    module_dir / ".libs",
-                    module_dir / "lib",
-                    module_dir / "pywhispercpp.libs",
-                    module_dir.parent / "pywhispercpp.libs",
-                ]
-            )
-
-        if spec.submodule_search_locations:
-            for location in spec.submodule_search_locations:
-                package_dir = Path(location).resolve()
-                candidate_dirs.extend(
-                    [
-                        package_dir,
-                        package_dir / ".libs",
-                        package_dir / "lib",
-                        package_dir.parent / "pywhispercpp.libs",
-                    ]
-                )
-
-    for path_entry in sys.path:
-        if not path_entry:
-            continue
-        path_root = Path(path_entry).resolve()
-        candidate_dirs.append(path_root / "pywhispercpp.libs")
-
-    library_dirs: list[str] = []
-    seen: set[str] = set()
-    for candidate_dir in candidate_dirs:
-        try:
-            resolved_dir = str(candidate_dir.resolve())
-            if resolved_dir in seen or not candidate_dir.is_dir():
-                continue
-
-            has_native_lib = any(candidate_dir.glob("libwhisper*.so*")) or any(
-                candidate_dir.glob("libggml*.so*")
-            )
-        except (OSError, TypeError, ValueError):
-            # TypeError/ValueError can surface when tests monkey-patch os.stat or
-            # when pathlib internals receive unexpected types from mocks.
-            continue
-
-        if has_native_lib:
-            seen.add(resolved_dir)
-            library_dirs.append(resolved_dir)
-
-    return library_dirs
-
-
-def _preload_pywhispercpp_shared_libraries() -> None:
-    """Preload bundled pywhispercpp shared libraries for source-built installs.
-
-    Some source builds place libwhisper/libggml next to the Python extension
-    without an RPATH. Preloading by absolute path lets the dynamic loader satisfy
-    the extension's libwhisper.so.1 dependency before importing pywhispercpp.
-    """
-    if _PYWHISPERCPP_PRELOADED_LIBS:
-        return
-
-    libraries: list[Path] = []
-    for library_dir in _find_pywhispercpp_shared_library_dirs():
-        root = Path(library_dir)
-        libraries.extend(sorted(root.glob("libggml*.so*")))
-        libraries.extend(sorted(root.glob("libwhisper*.so*")))
-
-    if not libraries:
-        return
-
-    pending = list(dict.fromkeys(libraries))
-    loaded: list[ctypes.CDLL] = []
-    last_errors: dict[str, OSError] = {}
-    mode = getattr(ctypes, "RTLD_GLOBAL", 0)
-
-    # Native libs can depend on each other. Retry while progress is made so a
-    # dependency loaded earlier in the same directory can unlock later libraries.
-    while pending:
-        loaded_this_pass = False
-        for library_path in pending[:]:
-            try:
-                loaded.append(ctypes.CDLL(str(library_path), mode=mode))
-                pending.remove(library_path)
-                loaded_this_pass = True
-            except OSError as e:
-                last_errors[str(library_path)] = e
-
-        if not loaded_this_pass:
-            break
-
-    _PYWHISPERCPP_PRELOADED_LIBS.extend(loaded)
-
-    if pending:
-        logger.debug(
-            "Could not preload all pywhispercpp native libraries: %s",
-            {str(path): str(last_errors.get(str(path))) for path in pending},
-        )
 
 
 logger = logging.getLogger(__name__)
@@ -1266,8 +1157,12 @@ class SpeechRecognitionManager:
             _preload_pywhispercpp_shared_libraries()
             from pywhispercpp.model import Model  # noqa: F401 — fail fast if missing
 
-            # Validate model size for whisper.cpp
-            valid_models = list(WHISPERCPP_MODEL_INFO.keys())
+            # Validate model size for whisper.cpp. Non-dictation entries in the
+            # catalog (e.g. TinyDiarize) stay selectable for their own surfaces
+            # but emit markup that would inject noise into the focused window.
+            valid_models = [
+                name for name in WHISPERCPP_MODEL_INFO if name not in NON_DICTATION_MODELS
+            ]
             if self.model_size not in valid_models:
                 logger.warning(
                     f"Model size '{self.model_size}' not valid for whisper.cpp. "
@@ -2451,26 +2346,27 @@ class SpeechRecognitionManager:
                 os.remove(temp_file)
             raise
 
-    def _download_whispercpp_model(self):
+    def _download_whispercpp_model(self, model_name: Optional[str] = None) -> None:
         """Download a whisper.cpp model with progress tracking."""
         import requests
 
         self._download_cancelled = False
 
-        model_info = WHISPERCPP_MODEL_INFO.get(self.model_size)
+        model_name = model_name or self.model_size
+        model_info = WHISPERCPP_MODEL_INFO.get(model_name)
         if not model_info:
-            raise ValueError(f"Unknown whisper.cpp model size: {self.model_size}")
+            raise ValueError(f"Unknown whisper.cpp model size: {model_name}")
 
-        url = model_info["url"]
+        url = str(model_info["url"])
         # Prefer explicit download=true (some HF edges serve HTML without it).
         if "huggingface.co" in url and "download=" not in url:
             url = url + ("&" if "?" in url else "?") + "download=true"
-        model_path = get_model_path(self.model_size)
+        model_path = get_model_path(model_name)
         temp_file = model_path + ".tmp"
 
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-        logger.info(f"Downloading whisper.cpp {self.model_size} model to {model_path}")
+        logger.info(f"Downloading whisper.cpp {model_name} model to {model_path}")
 
         try:
             self._stream_model_download(url, temp_file)
@@ -2508,6 +2404,16 @@ class SpeechRecognitionManager:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise
+
+    def download_whispercpp_model(self, model_name: str) -> None:
+        """Download a catalog whisper.cpp model without changing engine config.
+
+        Used by surfaces that need a model the dictation engine does not load
+        (e.g. the TinyDiarize file-transcription flow). The engine's cancel
+        flag and progress callback apply, so the existing
+        try_begin_download/end_download coordination keeps working.
+        """
+        self._download_whispercpp_model(model_name)
 
     def _get_vosk_model_path(self) -> str:
         """Get the path to the VOSK model based on the selected size and language."""

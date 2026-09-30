@@ -121,6 +121,7 @@ from ..utils.faster_whisper_model_info import (  # isort:skip
     FASTER_WHISPER_MODEL_INFO,
 )
 from ..utils.whispercpp_model_info import (  # isort:skip
+    NON_DICTATION_MODELS,
     WHISPERCPP_MODEL_INFO,
     default_variant_for_size,
 )
@@ -250,6 +251,8 @@ def _model_display_name(model_name: str) -> str:
             display_parts.append(part.upper())
         elif part == "turbo":
             display_parts.append("Turbo")
+        elif part == "tdrz":
+            display_parts.append("TinyDiarize")
         elif part.startswith("v") and part[1:].isdigit():
             display_parts.append(part)
         else:
@@ -6502,6 +6505,8 @@ class SettingsDialog(Gtk.Dialog):
         best = None
         best_mb = None
         for model_name in list_downloaded_whispercpp_models():
+            if model_name in NON_DICTATION_MODELS:
+                continue
             info = WHISPERCPP_MODEL_INFO.get(model_name)
             if not info:
                 continue

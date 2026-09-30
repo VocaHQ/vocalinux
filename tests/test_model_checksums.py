@@ -17,9 +17,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from vocalinux.utils import model_checksums
-from vocalinux.utils.faster_whisper_model_info import (
-    FASTER_WHISPER_MODEL_INFO,
-)
+from vocalinux.utils.faster_whisper_model_info import FASTER_WHISPER_MODEL_INFO
 from vocalinux.utils.faster_whisper_model_info import manifest_key as faster_whisper_manifest_key
 from vocalinux.utils.faster_whisper_model_info import model_files as faster_whisper_model_files
 from vocalinux.utils.model_checksums import (
@@ -39,6 +37,7 @@ from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
 from vocalinux.utils.whispercpp_model_info import (
     WHISPERCPP_MODEL_INFO,
     whispercpp_model_file,
+    whispercpp_model_source,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -130,9 +129,12 @@ class TestManifestCoverage(unittest.TestCase):
         self.assertRegex(revision, r"^[0-9a-f]{40}$")
 
     def test_download_urls_use_the_pinned_revision(self):
+        # Models hosted outside ggerganov/whisper.cpp (e.g. TinyDiarize) pin
+        # their own repo's commit instead of the main-repo revision.
         revision = whispercpp_revision()
         for name, info in WHISPERCPP_MODEL_INFO.items():
-            self.assertIn(f"/resolve/{revision}/", info["url"], name)
+            _, model_revision = whispercpp_model_source(name)
+            self.assertIn(f"/resolve/{model_revision or revision}/", info["url"], name)
 
 
 class TestVerifyFile(unittest.TestCase):

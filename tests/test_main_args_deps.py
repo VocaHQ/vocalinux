@@ -51,6 +51,7 @@ class TestParseArguments(unittest.TestCase):
             assert args.engine is None
             assert args.wayland is False
             assert args.start_minimized is False
+            assert args.transcribe_file is None
 
     def test_parse_args_debug_flag(self):
         """Test parsing with debug flag."""
@@ -113,6 +114,42 @@ class TestParseArguments(unittest.TestCase):
 
             args = parse_arguments()
             assert args.start_minimized is True
+
+    def test_parse_args_transcribe_file(self):
+        """Test parsing with the headless --transcribe-file flag."""
+        with patch.object(sys, "argv", ["vocalinux", "--transcribe-file", "/tmp/a.wav"]):
+            from vocalinux.main import parse_arguments
+
+            args = parse_arguments()
+            assert args.transcribe_file == "/tmp/a.wav"
+
+    def test_run_file_transcription_prints_transcript(self):
+        """The headless path prints formatted blocks and skips GTK entirely."""
+        from vocalinux.main import _run_file_transcription
+        from vocalinux.speech_recognition.diarization import TranscriptBlock
+
+        blocks = [TranscriptBlock(0.0, 1, "Hello there.")]
+        with patch(
+            "vocalinux.speech_recognition.diarization.transcribe_audio_file",
+            return_value=blocks,
+        ):
+            buffer = StringIO()
+            with redirect_stdout(buffer):
+                assert _run_file_transcription("/tmp/a.wav") == 0
+        assert "Speaker 1: Hello there." in buffer.getvalue()
+
+    def test_run_file_transcription_reports_errors_on_stderr(self):
+        """Decode/load failures exit non-zero with the error on stderr."""
+        from vocalinux.main import _run_file_transcription
+
+        stderr_buffer = StringIO()
+        with patch(
+            "vocalinux.speech_recognition.diarization.transcribe_audio_file",
+            side_effect=RuntimeError("ffmpeg missing"),
+        ):
+            with patch.object(sys, "stderr", stderr_buffer):
+                assert _run_file_transcription("/tmp/a.wav") == 1
+        assert "ffmpeg missing" in stderr_buffer.getvalue()
 
     def test_parse_args_multiple_arguments(self):
         """Test parsing with multiple arguments."""

@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence, cast
 
 import gi
 
@@ -40,16 +40,22 @@ from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, T
 from ..dbus_service import VocalinuxDBusService
 from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
+from ..speech_recognition.diarization import (
+    TranscriptBlock,
+    ffmpeg_available,
+    transcribe_audio_file,
+)
 from ..suspend_handler import SuspendHandler
 from ..utils.host_process import host_env
 from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
+from ..utils.whispercpp_model_info import TDRZ_MODEL, WHISPERCPP_MODEL_INFO, is_model_downloaded
 from . import notifications
 from .config_manager import get_shared_config_manager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
-from .settings_dialog import SettingsDialog, recommended_model_for_engine
+from .settings_dialog import ModelDownloadDialog, SettingsDialog, recommended_model_for_engine
 from .transcription_history import TranscriptionHistory
 
 logger = logging.getLogger(__name__)
@@ -419,6 +425,7 @@ class TrayIndicator:
         # Add menu items
         self._add_menu_item("Start Voice Typing", self._on_start_clicked)
         self._add_menu_item("Stop Voice Typing", self._on_stop_clicked)
+        self._add_menu_item("Transcribe Audio File\u2026", self._on_transcribe_file_clicked)
         self._add_menu_separator()
 
         # Recent snippets submenu (only when history is enabled)
@@ -761,7 +768,7 @@ class TrayIndicator:
         """Download the offered model, then report how it went."""
         last_notified = 0.0
 
-        def on_progress(fraction, speed_mbps, status):
+        def on_progress(fraction: float, speed_mbps: float, status: str) -> None:
             nonlocal last_notified
             now = time.monotonic()
             if now - last_notified < _DOWNLOAD_NOTIFY_INTERVAL_SECONDS:
@@ -820,6 +827,152 @@ class TrayIndicator:
             self.speech_engine.set_download_progress_callback(None)
             self.speech_engine.end_download()
             self._model_download_active = False
+
+    def _on_transcribe_file_clicked(self, widget: Gtk.Widget) -> None:
+        """Pick an audio file and transcribe it with speaker attribution."""
+        chooser = Gtk.FileChooserDialog(
+            title="Transcribe Audio File",
+            transient_for=None,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        chooser.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        chooser.add_button("_Open", Gtk.ResponseType.OK)
+
+        # Non-WAV formats are decoded through ffmpeg; without it only the
+        # patterns the built-in WAV loader accepts are offered, so the picker
+        # never advertises a format that cannot be transcribed.
+        audio_filter = Gtk.FileFilter()
+        if ffmpeg_available():
+            audio_filter.set_name("Audio files")
+            for pattern in ("*.wav", "*.mp3", "*.ogg", "*.flac", "*.m4a", "*.opus"):
+                audio_filter.add_pattern(pattern)
+        else:
+            audio_filter.set_name("WAV audio (install ffmpeg for MP3/OGG/FLAC/M4A/Opus)")
+            audio_filter.add_pattern("*.wav")
+        chooser.add_filter(audio_filter)
+
+        try:
+            if chooser.run() == Gtk.ResponseType.OK:
+                path = chooser.get_filename()
+            else:
+                path = None
+        finally:
+            chooser.destroy()
+
+        if path:
+            self._start_file_transcription(path)
+
+    def _start_file_transcription(self, path: str) -> None:
+        """Transcribe ``path`` on a worker, downloading TinyDiarize if needed."""
+        if not is_model_downloaded(TDRZ_MODEL):
+            self._offer_tdrz_download(path)
+            return
+
+        basename = os.path.basename(path)
+        progress = notifications.notify(
+            "Transcribing audio file",
+            f"{basename} — this can take a while on long files...",
+            "audio-x-generic",
+        )
+
+        def run() -> None:
+            try:
+                blocks = transcribe_audio_file(path)
+            except Exception as error:
+                logger.error("File transcription failed for %s: %s", path, error, exc_info=True)
+                _idle_once(notifications.close, progress)
+                _idle_once(
+                    notifications.notify,
+                    "Transcription failed",
+                    f"{basename}: {error}",
+                    "dialog-error",
+                )
+                return
+            _idle_once(notifications.close, progress)
+            _idle_once(self._show_transcript, basename, blocks)
+
+        threading.Thread(target=run, daemon=True, name="file-transcription").start()
+
+    def _show_transcript(self, basename: str, blocks: Sequence[TranscriptBlock]) -> None:
+        """Open the transcript dialog for the finished blocks."""
+        from .transcript_dialog import TranscriptDialog
+
+        dialog = TranscriptDialog(None, basename)
+        dialog.set_transcript(blocks)
+        dialog.show_all()
+
+    def _offer_tdrz_download(self, path: str) -> None:
+        """Ask to fetch TinyDiarize, then continue into transcription."""
+        info = WHISPERCPP_MODEL_INFO[TDRZ_MODEL]
+        prompt = Gtk.MessageDialog(
+            transient_for=None,
+            flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.QUESTION,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Transcribing audio files needs the TinyDiarize model",
+        )
+        prompt.format_secondary_text(
+            f"Download it now? (~{info['size_mb']} MB, one-time). "
+            "It is a whisper.cpp model that marks speaker turns; it never "
+            "becomes your dictation model."
+        )
+        prompt.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        prompt.add_button("_Download", Gtk.ResponseType.OK)
+
+        try:
+            accepted = prompt.run() == Gtk.ResponseType.OK
+        finally:
+            prompt.destroy()
+
+        if not accepted:
+            return
+        if not self.speech_engine.try_begin_download():
+            notifications.notify(
+                "Download already in progress",
+                "Another speech model is being downloaded. Wait for it to finish, "
+                "then try again.",
+                "dialog-information",
+            )
+            return
+
+        dialog = ModelDownloadDialog(
+            None, TDRZ_MODEL, cast(int, info["size_mb"]), engine="whisper_cpp"
+        )
+        # The dialog's post-complete OK button emits a response but destroys
+        # nothing on its own.
+        dialog.connect("response", lambda *_args: dialog.destroy())
+
+        def run() -> None:
+            def on_progress(fraction: float, speed_mbps: float, status: str) -> None:
+                GLib.idle_add(dialog.update_progress, fraction, speed_mbps, status)
+
+            def check_cancelled() -> bool:
+                if dialog.cancelled:
+                    self.speech_engine.cancel_download()
+                return not dialog.cancelled
+
+            cancel_check_id = GLib.timeout_add(100, check_cancelled)
+            try:
+                self.speech_engine.set_download_progress_callback(on_progress)
+                self.speech_engine.download_whispercpp_model(TDRZ_MODEL)
+            except Exception as error:
+                logger.error("TinyDiarize download failed: %s", error, exc_info=True)
+                message = (
+                    "Download cancelled" if "cancelled" in str(error).lower() else str(error)[:100]
+                )
+                GLib.idle_add(dialog.set_complete, False, message)
+                return
+            finally:
+                GLib.source_remove(cancel_check_id)
+                self.speech_engine.set_download_progress_callback(None)
+                self.speech_engine.end_download()
+
+            GLib.idle_add(dialog.set_complete, True, "")
+            # The dialog shows its own completion; starting the transcription
+            # as soon as the model lands keeps the flow to a single click.
+            _idle_once(self._start_file_transcription, path)
+
+        threading.Thread(target=run, daemon=True, name="tdrz-download").start()
 
     def _set_indicator_icon(self, icon_key: str, description: str) -> None:
         """Apply a tray icon, forcing a host redraw when cycling reused paths.

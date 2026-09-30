@@ -635,7 +635,12 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
         )
         self.assertIn("large-v3-turbo", WHISPERCPP_MODEL_INFO)
         self.assertIn("large-v3-turbo-q5_0", WHISPERCPP_MODEL_INFO)
-        self.assertNotIn("small.en-tdrz", WHISPERCPP_MODEL_INFO)
+        # TinyDiarize is catalogued for the file-transcription flow but must
+        # never appear as a dictation size-bucket choice.
+        self.assertIn("small.en-tdrz", WHISPERCPP_MODEL_INFO)
+        from vocalinux.utils.whispercpp_model_info import NON_DICTATION_MODELS
+
+        self.assertIn("small.en-tdrz", NON_DICTATION_MODELS)
 
     def test_faster_whisper_picker_lists_english_only_catalog_ids(self):
         """Settings must list the same .en ids the tray can persist."""
