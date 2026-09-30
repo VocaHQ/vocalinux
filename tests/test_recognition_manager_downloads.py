@@ -1196,19 +1196,19 @@ class TestAudioReconnection:
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio_mod}),
             patch("time.sleep"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_device_by_name",
+                "vocalinux.audio.capture._resolve_device_by_name",
                 return_value=None,
             ) as mock_resolve_name,
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device",
+                "vocalinux.audio.capture._resolve_valid_input_device",
                 return_value=1,
             ) as mock_resolve_default,
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_channels",
+                "vocalinux.audio.capture._get_supported_channels",
                 return_value=1,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_sample_rate",
+                "vocalinux.audio.capture._get_supported_sample_rate",
                 return_value=16000,
             ),
         ):
@@ -1232,15 +1232,15 @@ class TestAudioReconnection:
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio_mod}),
             patch("time.sleep"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_device_by_name",
+                "vocalinux.audio.capture._resolve_device_by_name",
                 return_value=None,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device",
+                "vocalinux.audio.capture._resolve_valid_input_device",
                 return_value=None,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, mock_stream),
             ) as mock_open,
         ):
@@ -1321,7 +1321,7 @@ class TestAudioReconnection:
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio_mod}),
             patch("time.sleep"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, None),
             ),
         ):

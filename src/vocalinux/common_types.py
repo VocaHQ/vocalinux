@@ -81,6 +81,36 @@ class TextInjectorProtocol(Protocol):
         ...
 
 
+class CaptureSource(Protocol):
+    """An audio capture source yielding mono 16 kHz int16 PCM chunks.
+
+    A source owns device lifecycle and stream normalization only: no VAD, no
+    silence segmentation, no utterance buffering. Dictation consumes it inside
+    the silence-segmented loop in ``speech_recognition.recognition_manager``;
+    sources that never segment on silence (e.g. a system-audio monitor) can
+    serve other consumers with the same contract.
+    """
+
+    sample_rate: int
+    channels: int
+
+    def open(self, audio: Any = None) -> None:
+        """Resolve the input device and open the capture stream."""
+        ...
+
+    def read_chunk(self) -> bytes:
+        """Return one chunk of mono 16 kHz int16 PCM audio."""
+        ...
+
+    def reopen(self, audio_instance: Any) -> bool:
+        """Re-open the stream after a device failure. True on success."""
+        ...
+
+    def close(self) -> None:
+        """Release the stream and device."""
+        ...
+
+
 class _EvdevCaptureDevice(Protocol):
     """Minimal evdev InputDevice surface used by the shortcut recorder."""
 

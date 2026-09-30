@@ -721,7 +721,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertIn("USB Headset", device_names)
         self.assertNotIn("speech-dispatcher-dummy", device_names)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_found(self, mock_valid):
         """Test _resolve_device_by_name finds a matching device and delegates validation."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -739,7 +739,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertEqual(result, 1)
         mock_valid.assert_called_once_with(mock_audio, 1)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_not_found_with_fallback(self, mock_valid):
         """Test _resolve_device_by_name falls back to index when name not found."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -756,7 +756,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertEqual(result, 0)
         mock_valid.assert_called_once_with(mock_audio, 0)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_skips_unreadable_device(self, mock_valid):
         """Test _resolve_device_by_name skips devices that cannot be read."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -773,7 +773,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertEqual(result, 1)
         mock_valid.assert_called_once_with(mock_audio, 1)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_ignores_non_dict_device_info(self, mock_valid):
         """Test _resolve_device_by_name ignores malformed device info."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -787,7 +787,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertEqual(result, 0)
         mock_valid.assert_called_once_with(mock_audio, 0)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_not_found_no_fallback(self, mock_valid):
         """Test _resolve_device_by_name returns None when name not found and no fallback."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -803,7 +803,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         result = _resolve_device_by_name(mock_audio, "Missing Device")
         self.assertIsNone(result)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_empty_name_with_fallback(self, mock_valid):
         """Test _resolve_device_by_name with empty name uses fallback index."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -815,7 +815,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         self.assertEqual(result, 0)
         mock_valid.assert_called_once_with(mock_audio, 0)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_empty_name_no_fallback(self, mock_valid):
         """Test _resolve_device_by_name with empty name and no fallback returns None."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name
@@ -825,7 +825,7 @@ class TestModuleLevelFunctions(unittest.TestCase):
         result = _resolve_device_by_name(mock_audio, None)
         self.assertIsNone(result)
 
-    @patch("vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device")
+    @patch("vocalinux.audio.capture._resolve_valid_input_device")
     def test_resolve_device_by_name_get_count_error(self, mock_valid):
         """Test _resolve_device_by_name handles get_device_count errors."""
         from vocalinux.speech_recognition.recognition_manager import _resolve_device_by_name

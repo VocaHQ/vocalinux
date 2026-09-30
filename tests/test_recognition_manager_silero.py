@@ -40,9 +40,7 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.common_types import RecognitionState  # noqa: E402
-from vocalinux.speech_recognition.recognition_manager import (  # noqa: E402
-    SpeechRecognitionManager,
-)
+from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager  # noqa: E402
 
 for _k, _v in _ORIG_MODULES.items():
     if _v is not None:
@@ -202,7 +200,7 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(channels, rate, stream),
             ),
         ):
@@ -369,11 +367,11 @@ class TestRecordAudioAmplitudeFallback(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_channels",
+                "vocalinux.audio.capture._get_supported_channels",
                 return_value=1,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_sample_rate",
+                "vocalinux.audio.capture._get_supported_sample_rate",
                 return_value=16000,
             ),
         ):
@@ -429,11 +427,11 @@ class TestAudioLevelCallback(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_channels",
+                "vocalinux.audio.capture._get_supported_channels",
                 return_value=1,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_sample_rate",
+                "vocalinux.audio.capture._get_supported_sample_rate",
                 return_value=16000,
             ),
         ):
