@@ -201,14 +201,11 @@ class DictationPad:
         return deleted
 
     def show_pad(self) -> None:
-        """Show the pad window, resyncing capture state and buffer contents."""
+        """Show the pad window, resyncing capture state from live config."""
         if not self._gtk_ready or self._window is None:
             return
         self._sync_capture_check()
         if not self._window.get_visible():
-            # Full resync only when (re)showing: a set_text on every incoming
-            # segment would flicker and destroy the user's text selection.
-            self._refresh_view()
             self._window.show_all()
         try:
             self._window.present_with_time(self._Gtk.get_current_event_time())
@@ -262,7 +259,7 @@ class DictationPad:
             logger.debug("Could not append text to dictation pad: %s", e)
         # Reveal the pad on the first incoming segment; once visible, further
         # appends update silently so the window never re-raises mid-selection.
-        if self.controller.enabled and self._window is not None and not self._window.get_visible():
+        if self._capture_enabled() and self._window is not None and not self._window.get_visible():
             self.show_pad()
 
     def _apply_delete(self, deleted: int) -> None:
@@ -277,23 +274,28 @@ class DictationPad:
         except Exception as e:
             logger.debug("Could not delete text in dictation pad: %s", e)
 
-    def _refresh_view(self) -> None:
-        """Replace the widget contents with the controller's buffer."""
-        if self._buffer is None:
-            return
+    def _capture_enabled(self) -> bool:
+        """Return whether dictation is currently routed into the pad.
+
+        Prefers the live config value so a Settings change applies even
+        before the pad is ever shown; falls back to the controller flag
+        when no config manager is attached.
+        """
+        if self._config_manager is None:
+            return self.controller.enabled
         try:
-            self._buffer.set_text(self.controller.text)
-            self._buffer.place_cursor(self._buffer.get_end_iter())
-        except Exception as e:
-            logger.debug("Could not refresh dictation pad view: %s", e)
+            enabled = bool(self._config_manager.get_bool("text_injection", "dictate_to_pad", False))
+        except Exception:
+            return self.controller.enabled
+        self.controller.set_enabled(enabled)
+        return enabled
 
     def _sync_capture_check(self) -> None:
         """Mirror the persisted capture setting onto the checkbox."""
-        if self._capture_check is None or self._config_manager is None:
+        if self._capture_check is None:
             return
         try:
-            enabled = self._config_manager.get_bool("text_injection", "dictate_to_pad")
-            self.controller.set_enabled(enabled)
+            enabled = self._capture_enabled()
             self._syncing_capture_check = True
             self._capture_check.set_active(enabled)
         except Exception as e:
@@ -323,9 +325,19 @@ class DictationPad:
 
     def _on_copy_all_clicked(self, *_args: Any) -> None:
         """Copy the entire buffer to the clipboard and flash a confirmation."""
+        # The widget's text may include the user's own in-pad edits; fall back
+        # to the dictated buffer when there is no widget (headless).
+        text = self.controller.text
+        if self._buffer is not None:
+            try:
+                text = self._buffer.get_text(
+                    self._buffer.get_start_iter(), self._buffer.get_end_iter(), False
+                )
+            except Exception:
+                pass
         try:
             clipboard = self._Gtk.Clipboard.get(self._Gdk.SELECTION_CLIPBOARD)
-            clipboard.set_text(self.controller.text, -1)
+            clipboard.set_text(text, -1)
             clipboard.store()
         except Exception as e:
             logger.warning("Could not copy dictation pad contents: %s", e)

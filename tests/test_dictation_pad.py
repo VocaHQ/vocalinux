@@ -246,6 +246,104 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
+    def test_apply_append_reveals_when_enabled_via_settings(self):
+        """Regression: capture toggled in Settings must reveal the pad too.
+
+        The reveal gate consults live config, not just the controller flag,
+        so a dictate_to_pad=True written by the Settings switch while the
+        pad is closed still surfaces the window on the first segment.
+        """
+        config_manager = MagicMock()
+        config_manager.get_bool.return_value = True
+        with patch.object(
+            DictationPad,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            pad = DictationPad(enabled=False, config_manager=config_manager)
+        try:
+            pad._gtk_ready = True
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = False
+            pad._textview = MagicMock()
+            pad._buffer = MagicMock()
+            pad._Gtk = MagicMock()
+
+            pad.controller.append("segment ")
+            pad._apply_append("segment ")
+
+            config_manager.get_bool.assert_called_with("text_injection", "dictate_to_pad", False)
+            self.assertTrue(pad.controller.enabled)
+            pad._window.show_all.assert_called_once()
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_apply_append_stays_hidden_when_settings_off(self):
+        """A stale controller flag must not override live config."""
+        config_manager = MagicMock()
+        config_manager.get_bool.return_value = False
+        with patch.object(
+            DictationPad,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            pad = DictationPad(enabled=True, config_manager=config_manager)
+        try:
+            pad._gtk_ready = True
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = False
+            pad._textview = MagicMock()
+            pad._buffer = MagicMock()
+
+            pad.controller.append("segment ")
+            pad._apply_append("segment ")
+
+            pad._window.show_all.assert_not_called()
+            self.assertFalse(pad.controller.enabled)
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_copy_all_prefers_widget_text(self):
+        """Copy All copies the widget contents (dictation + in-pad edits)."""
+        pad = _pad_without_gtk()
+        try:
+            pad._gtk_ready = True
+            pad._Gtk = MagicMock()
+            pad._Gdk = MagicMock()
+            pad._GLib = MagicMock()
+            pad._copy_button = MagicMock()
+            pad._buffer = MagicMock()
+            pad._buffer.get_text.return_value = "dictated plus edits"
+            pad.controller.append("dictated")
+
+            pad._on_copy_all_clicked()
+
+            clipboard = pad._Gtk.Clipboard.get.return_value
+            clipboard.set_text.assert_called_once_with("dictated plus edits", -1)
+        finally:
+            pad.destroy()
+
+    def test_show_pad_does_not_clobber_widget_edits(self):
+        """Re-showing the pad must not overwrite in-pad manual edits."""
+        pad = _pad_without_gtk()
+        try:
+            pad._gtk_ready = True
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+            pad._buffer = MagicMock()
+            pad._Gtk = MagicMock()
+
+            pad.show_pad()
+
+            # Never a wholesale set_text on (re)show: widget content is kept
+            # incrementally in sync by _apply_append/_apply_delete.
+            pad._buffer.set_text.assert_not_called()
+        finally:
+            pad._window = None
+            pad.destroy()
+
     def test_apply_delete_removes_tail_from_widget(self):
         pad = _pad_without_gtk()
         try:
