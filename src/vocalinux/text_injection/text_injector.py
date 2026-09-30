@@ -103,6 +103,11 @@ class TextInjector:
     application window, supporting both X11 and Wayland environments.
     """
 
+    # Class-level fallback so objects built without __init__ (test helpers
+    # using __new__) still answer the abort checks; __init__ rebinds a fresh
+    # per-instance event, so the shared default is never the one that is set.
+    _abort_injections: threading.Event = threading.Event()
+
     def __init__(self, wayland_mode: bool = False):
         """
         Initialize the text injector.
@@ -2523,47 +2528,44 @@ class TextInjector:
                 "(character-by-character; text may be scrambled on non-US layouts)"
             )
 
-        if self.wayland_tool == "wtype":
-            cmd = ["wtype", text]
-            # wtype types the whole string in one call; the budget scales with
-            # its length so only a wedged process can ever hit it.
-            type_timeout = max(5, len(text) * 0.05)
-        else:  # ydotool
-            # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
-            # Low delay so fallback typing finishes quickly for long phrases.
-            key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
-            cmd = ["ydotool", "type", "--key-delay", key_delay, text]
-            # The budget is a generous multiple of the configured per-key
-            # delay: a legitimately slow type must never be cut mid-text —
-            # only a stall far beyond the expected duration is.
-            type_timeout = max(5, len(text) * self._key_delay_seconds(key_delay) * 4)
-
-        # Polling Popen instead of run(): the loop can abort a call that is
-        # still typing when shutdown asks for it, and otherwise applies the
-        # same deadline a run(timeout=...) would.
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=host_env(),
-        )
-        deadline = time.monotonic() + type_timeout
-        while proc.poll() is None:
+        # Type in chunks so shutdown can abort between subprocess calls — one
+        # whole-string call could not be interrupted for its full
+        # length-scaled duration.  Each chunk's budget is a generous multiple
+        # of its expected duration: a legitimately slow type must never be cut
+        # mid-text — only a stall far beyond it is.
+        chunk_size = 200
+        for i in range(0, len(text), chunk_size):
             if self._abort_injections.is_set():
-                proc.kill()
-                proc.wait()
                 raise _InjectionAborted
-            if time.monotonic() > deadline:
-                proc.kill()
-                proc.wait()
+            chunk = text[i : i + chunk_size]
+            if self.wayland_tool == "wtype":
+                cmd = ["wtype", chunk]
+                # wtype types at compositor pace; the budget scales with the
+                # chunk length so only a wedged process can ever hit it.
+                type_timeout = max(5, len(chunk) * 0.05)
+            else:  # ydotool
+                # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
+                # Low delay so fallback typing finishes quickly for long phrases.
+                key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
+                cmd = ["ydotool", "type", "--key-delay", key_delay, chunk]
+                type_timeout = max(5, len(chunk) * self._key_delay_seconds(key_delay) * 4)
+            try:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=type_timeout,
+                    env=host_env(),
+                )
+            except subprocess.TimeoutExpired:
                 logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
-                raise subprocess.TimeoutExpired(cmd, type_timeout)
-            time.sleep(0.05)
-        _, stderr_text = proc.communicate()
-        if proc.returncode != 0:
-            # Re-raise with stderr preserved for better diagnostics
-            raise subprocess.CalledProcessError(proc.returncode, cmd, stderr=stderr_text)
+                raise
+            except subprocess.CalledProcessError as e:
+                # Re-raise with stderr preserved for better diagnostics
+                raise subprocess.CalledProcessError(
+                    e.returncode, e.cmd, output=e.output, stderr=e.stderr
+                ) from e
 
         logger.info(
             f"Text injected using {self.wayland_tool}: '{text[:20]}...' ({len(text)} chars)"

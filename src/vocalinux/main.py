@@ -867,23 +867,19 @@ def main():
             text, so they queue on the same worker in spoken order and are
             bound to the app focused when the command was issued: even a
             submission that looks immediate can run after a context switch,
-            so the binding applies to every action.  The wait on the probe is
-            bounded — a compositor call answers in milliseconds on a healthy
-            desktop — so an immediate "undo" or "select all" is never made
-            slow; a probe that cannot answer inside the bound leaves the
-            action unverified, and an unverified action is dropped rather
-            than fired into whatever happens to be focused.
+            so the binding applies to every action.  The job waits on the
+            probe for its full duration rather than racing it — the probe's
+            compositor calls carry their own one-second timeouts and
+            short-circuit on tools that are absent, so it answers in
+            milliseconds on a healthy desktop and always terminates; a valid
+            command is therefore never discarded over timing, and the
+            verified result is the only thing that can drop it.
             """
             nonlocal pending_jobs
             try:
                 if not accepting_injections.is_set():
                     return False
-                try:
-                    captured = target_probe.get(timeout=1.0) if target_probe is not None else None
-                except queue.Empty:
-                    logger.info("Dropping action: focus probe did not answer in time")
-                    return False
-                if not _focused_app_unchanged(captured):
+                if not _focused_app_unchanged(_probe_result(target_probe)):
                     logger.info("Dropping action: focus moved to another application")
                     return False
                 with injection_lock:

@@ -1364,7 +1364,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             mock_tray_cls=mock_tray_cls,
         )
 
-    def test_whitespace_only_is_skipped_through_main(self):
+    def test_whitespace_only_is_skipped_through_main(self) -> None:
         boot = self._boot_under_patches()
         try:
             self.assertIsNone(boot.text_cb("   \t  "))
@@ -1372,7 +1372,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         finally:
             boot.stack.close()
 
-    def test_newline_segment_skips_trailing_space_through_main(self):
+    def test_newline_segment_skips_trailing_space_through_main(self) -> None:
         boot = self._boot_under_patches()
         try:
             boot.text_cb("Hello.\n").result(timeout=10)
@@ -1380,7 +1380,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         finally:
             boot.stack.close()
 
-    def test_legacy_mode_adds_leading_space_in_session(self):
+    def test_legacy_mode_adds_leading_space_in_session(self) -> None:
         boot = self._boot_under_patches(append_trailing_space=False)
         try:
             boot.text_cb("Hello.").result(timeout=10)
@@ -1390,7 +1390,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         finally:
             boot.stack.close()
 
-    def test_failed_inject_does_not_remember_text(self):
+    def test_failed_inject_does_not_remember_text(self) -> None:
         boot = self._boot_under_patches(append_trailing_space=False, inject_ok=False)
         try:
             boot.text_cb("Hello.").result(timeout=10)
@@ -1577,22 +1577,28 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             gate.set()
             boot.stack.close()
 
-    def test_action_dropped_when_probe_times_out(self) -> None:
-        """A stalled focus probe drops the action instead of misdirecting it."""
+    def test_action_waits_for_slow_probe(self) -> None:
+        """A stalled focus probe delays the action but never discards it."""
         boot = self._boot_under_patches(post_script="/fake/script.sh")
         stall = threading.Event()
+
+        def stalled_probe() -> None:
+            stall.wait(30)
+            return None
+
         try:
             with patch(
                 "vocalinux.text_injection.focused_window.get_focused_window",
-                side_effect=lambda: stall.wait(30),
+                side_effect=stalled_probe,
             ):
                 action_future = boot.action_cb("select_all")
                 self.assertIsNotNone(action_future)
-                # The probe never answers, so the job drops the unverified
-                # action after its one-second bound rather than firing into
-                # whatever happens to be focused.
+                # While the probe has not answered the job cannot run the
+                # shortcut; once it answers, the command must still fire.
+                self.assertFalse(action_future.done())
+                stall.set()
                 action_future.result(timeout=10)
-            boot.mock_text._inject_keyboard_shortcut.assert_not_called()
+            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
         finally:
             stall.set()
             boot.stack.close()

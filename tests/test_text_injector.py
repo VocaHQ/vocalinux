@@ -275,6 +275,7 @@ class TestTextInjector(unittest.TestCase):
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=mock.ANY,
                 env=mock.ANY,
             )
 
@@ -300,6 +301,7 @@ class TestTextInjector(unittest.TestCase):
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=mock.ANY,
                 env=mock.ANY,
             )
 
