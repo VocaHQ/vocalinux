@@ -226,7 +226,9 @@ class TestPywhispercppLibraryHelpers:
             return handle
 
         monkeypatch.setattr(pywhispercpp_loader, "_PRELOADED_LIBS", [])
-        monkeypatch.setattr(pywhispercpp_loader, "find_shared_library_dirs", lambda: [str(libs_dir)])
+        monkeypatch.setattr(
+            pywhispercpp_loader, "find_shared_library_dirs", lambda: [str(libs_dir)]
+        )
         monkeypatch.setattr(pywhispercpp_loader.ctypes, "CDLL", fake_cdll)
 
         _preload_pywhispercpp_shared_libraries()
