@@ -3196,6 +3196,18 @@ class SpeechRecognitionManager:
             # stop_recognition owns the final buffer. Do not finish or allow a
             # new session until key release has completed that handoff.
             self._capture_finished.wait()
+            # The worker can exit during the bounded audio-thread join in
+            # stop_recognition, leaving the released key's final buffer — and
+            # any stragglers it never consumed — queued behind the stop
+            # sentinel. Transcribe what is still here before replacing the
+            # queue so the tail of the recording is not silently dropped.
+            # A failed capture or an explicit cancel still discards it.
+            if (
+                self.model_ready
+                and not self._buffered_capture_failed
+                and not self._cancel_buffered_session.is_set()
+            ):
+                self._transcribe_queued_segments()
             with self._buffer_lock:
                 self.audio_buffer = []
             self._segment_queue = queue.Queue(maxsize=32)
@@ -3688,6 +3700,26 @@ class SpeechRecognitionManager:
                 self._segment_queue.put_nowait(None)
             except queue.Empty:
                 logger.debug("Recognition queue emptied before stop signal")
+
+    def _transcribe_queued_segments(self) -> None:
+        """Transcribe audio segments still queued after the worker exited.
+
+        Runs on the reload thread once key release has finished its handoff,
+        so segments that missed the worker's final drain — the released
+        key's tail buffer queued during its bounded join — are still
+        transcribed instead of being thrown away with the queue.
+        """
+        while True:
+            try:
+                segment = self._segment_queue.get_nowait()
+            except queue.Empty:
+                return
+            if segment is None:
+                continue
+            try:
+                self._process_audio_buffer(segment)
+            except (ChecksumError, ImportError, OSError, RuntimeError, ValueError):
+                logger.exception("Failed to transcribe a leftover buffered segment")
 
     def reconfigure(
         self,

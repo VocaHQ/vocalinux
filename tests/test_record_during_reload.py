@@ -2,6 +2,7 @@
 
 import sys
 import threading
+import time
 from collections.abc import Generator
 from unittest.mock import Mock
 
@@ -88,6 +89,46 @@ def test_release_before_reload_finishes_preserves_whole_recording(session: Sessi
     assert manager.state == RecognitionState.IDLE
     assert manager.audio_buffer == []
     assert not manager.is_idle_unloaded
+
+
+def test_worker_exit_during_release_join_still_transcribes_final_buffer(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A release whose final enqueue lands after the worker exits is kept.
+
+    stop_recognition joins the audio thread with a bounded wait; while it
+    waits, the recognition worker can notice ``should_record`` is false and
+    exit. The final buffer it then enqueues must still be transcribed by
+    the reload teardown instead of being thrown away with the queue.
+    """
+    manager, captured, loading, release_load, transcribed = session
+    capture_release = threading.Event()
+
+    def slow_record() -> None:
+        with manager._buffer_lock:
+            manager.audio_buffer = [b"final speech"]
+            manager._recording_segment_has_speech = True
+        captured.set()
+        assert capture_release.wait(3)
+
+    monkeypatch.setattr(manager, "_record_audio", slow_record)
+    assert manager.start_recognition(mode="push_to_talk")
+    assert captured.wait(1)
+    assert loading.wait(1)
+    release_load.set()  # Model loads; the worker starts polling an empty queue.
+
+    stopper = threading.Thread(target=manager.stop_recognition)
+    stopper.start()
+    # The worker's 0.5s second-chance window elapses while the stop path is
+    # still joining the audio thread, so the tail buffer is enqueued only
+    # after the worker has already exited.
+    time.sleep(1.2)
+    capture_release.set()
+    stopper.join(3)
+    manager.recognition_thread.join(3)
+
+    assert transcribed == [[b"final speech"]]
+    assert manager.state == RecognitionState.IDLE
 
 
 def test_toggle_transcribes_queued_speech_after_reload(session: Session) -> None:
