@@ -75,3 +75,23 @@ def test_sensitivity_still_updates_while_settings_load(dialog_class: type[Any]) 
 
     dialog.tone_row.set_sensitive.assert_called_once_with(False)
     dialog.config_manager.set_sound_effects_enabled.assert_not_called()
+
+
+def test_loading_settings_syncs_tone_row_sensitivity(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """A saved sound-effects=off state must gray out the tone row on load."""
+    dialog = _dialog_stub(dialog_class)
+    dialog._get_current_settings.return_value = {
+        "engine": "whisper_cpp",
+        "language": "en",
+        "model_size": "base",
+    }
+    dialog.config_manager.get_settings.return_value = {}
+    dialog.config_manager.is_sound_effects_enabled.return_value = False
+    dialog.engine_combo.get_model.return_value = [["whisper.cpp"]]
+
+    with patch.object(settings_dialog, "get_available_engines", return_value={"whisper_cpp": True}):
+        dialog_class._load_and_apply_settings(dialog)
+
+    dialog.tone_row.set_sensitive.assert_called_once_with(False)
