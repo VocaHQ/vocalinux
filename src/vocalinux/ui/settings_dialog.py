@@ -115,6 +115,7 @@ from .keyboard_backends import (  # noqa: E402
     parse_shortcut_spec,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
+from .transcription_history import sanitize_max_items  # noqa: E402
 
 from ..utils.faster_whisper_model_info import (  # isort:skip
     FASTER_WHISPER_MODEL_INFO,
@@ -3220,10 +3221,43 @@ class SettingsDialog(Gtk.Dialog):
 
         self.general_tab.pack_start(group, False, False, 0)
 
+        # Transcription history group
+        history_group = PreferencesGroup(
+            title="Transcription History",
+            description="Recent dictation snippets are kept in memory and shown "
+            "in the tray menu. Nothing is written to disk; history clears on quit. "
+            "Changes take effect after restarting Vocalinux.",
+        )
+
+        self.history_enabled_switch = Gtk.Switch()
+        self.history_enabled_switch.set_tooltip_text(
+            "Keep recent dictation snippets in the tray menu for quick re-copying"
+        )
+        history_enabled_row = PreferenceRow(
+            title="Keep History",
+            subtitle="Show recent snippets in the tray menu",
+            widget=self.history_enabled_switch,
+        )
+        history_group.add_row(history_enabled_row)
+
+        self.history_max_items_spin = Gtk.SpinButton.new_with_range(1, 50, 1)
+        self.history_max_items_spin.set_tooltip_text("How many recent snippets to keep")
+        _prevent_scroll_on_hover(self.history_max_items_spin)
+        history_max_items_row = PreferenceRow(
+            title="Snippets to Keep",
+            subtitle="Number of recent snippets retained",
+            widget=self.history_max_items_spin,
+        )
+        history_group.add_row(history_max_items_row)
+
+        self.general_tab.pack_start(history_group, False, False, 0)
+
         self.autostart_switch.connect("state-set", self._on_autostart_toggled)
         self.start_minimized_switch.connect("state-set", self._on_start_minimized_toggled)
         self.missing_tray_warning_switch.connect("state-set", self._on_missing_tray_warning_toggled)
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
+        self.history_enabled_switch.connect("state-set", self._on_history_enabled_toggled)
+        self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
 
     def _build_auto_pause_section(self):
         """Build Auto-Pause settings: enable toggle + process name list."""
@@ -3578,6 +3612,27 @@ class SettingsDialog(Gtk.Dialog):
             return
         logger.info("Model keep-alive timeout set to %s seconds", seconds)
         self.config_manager.set("model_keepalive", "idle_timeout_seconds", seconds)
+        self.config_manager.save_settings()
+
+    def _on_history_enabled_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Handle toggle of the keep-history switch."""
+        if self._initializing or self._applying_settings:
+            return False
+
+        enabled = bool(state)
+        logger.info(f"Transcription history toggled: {enabled}")
+        self.config_manager.set("history", "enabled", enabled)
+        self.config_manager.save_settings()
+        return False
+
+    def _on_history_max_items_changed(self, widget: Gtk.SpinButton) -> None:
+        """Handle change of the snippets-to-keep spin button."""
+        if self._initializing or self._applying_settings:
+            return
+
+        max_items = widget.get_value_as_int()
+        logger.info(f"Transcription history max items: {max_items}")
+        self.config_manager.set("history", "max_items", max_items)
         self.config_manager.save_settings()
 
     def _on_autostart_toggled(self, widget, state):
@@ -6096,6 +6151,7 @@ class SettingsDialog(Gtk.Dialog):
         general_settings = self.config_manager.get_settings().get("general", {})
         ui_settings = self.config_manager.get_settings().get("ui", {})
         text_injection_settings = self.config_manager.get_settings().get("text_injection", {})
+        history_settings = self.config_manager.get_settings().get("history", {})
 
         autostart_enabled = general_settings.get("autostart", False)
         start_minimized = ui_settings.get("start_minimized", False)
@@ -6105,6 +6161,10 @@ class SettingsDialog(Gtk.Dialog):
         auto_capitalize = text_injection_settings.get("auto_capitalize", True)
         append_trailing_space = text_injection_settings.get("append_trailing_space", True)
         paste_shortcut = self.config_manager.get_paste_shortcut()
+        history_enabled = bool(history_settings.get("enabled", True))
+        # A hand-edited config.json can hold a non-numeric value; sanitize so a
+        # bad preference cannot crash the settings dialog.
+        history_max_items = sanitize_max_items(history_settings.get("max_items", 10))
 
         self.autostart_switch.set_active(autostart_enabled)
         self.start_minimized_switch.set_active(start_minimized)
@@ -6144,6 +6204,9 @@ class SettingsDialog(Gtk.Dialog):
         timeout_seconds = int(keepalive_settings.get("idle_timeout_seconds", 300) or 300)
         if not self.model_keepalive_timeout_combo.set_active_id(str(timeout_seconds)):
             self.model_keepalive_timeout_combo.set_active_id("300")
+
+        self.history_enabled_switch.set_active(history_enabled)
+        self.history_max_items_spin.set_value(history_max_items)
 
         disable_internal_hotkey = self.config_manager.get_bool(
             "shortcuts", "disable_internal_hotkey", False
@@ -7927,9 +7990,14 @@ class SettingsDialog(Gtk.Dialog):
 
         self._saved_text_callbacks = self.speech_engine.get_text_callbacks()
         self.speech_engine.set_text_callbacks([self._test_text_callback])
+        # History recording runs on segment callbacks keyed by capture time:
+        # stamp the floor so test speech stays out of Recent Snippets while
+        # leftover segments from a dictation still file normally.
+        self.speech_engine.test_capture_floor = time.monotonic()
 
         if not self.speech_engine.start_recognition():
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
+            self.speech_engine.test_capture_floor = None
             del self._saved_text_callbacks
             self.test_output_revealer.set_reveal_child(True)
             if getattr(self.speech_engine, "is_auto_paused", False):
@@ -8135,6 +8203,7 @@ class SettingsDialog(Gtk.Dialog):
         if hasattr(self, "_saved_text_callbacks"):
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
             del self._saved_text_callbacks
+        self.speech_engine.test_capture_floor = None
 
         # Check result after giving time for final callbacks to complete
         GLib.timeout_add(300, self._check_test_result)

@@ -72,6 +72,10 @@ class SpeechRecognitionManagerProtocol(Protocol):
         """Register a callback for recognized text."""
         ...
 
+    def register_segment_callback(self, callback: Callable[[str, float], None]) -> None:
+        """Register a callback for recognized text with its audio-capture start time."""
+        ...
+
 
 class TextInjectorProtocol(Protocol):
     """Protocol defining the interface for TextInjector."""

@@ -982,6 +982,87 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertIsNone(self.tray_indicator.overlay)
         patched_gtk.main_quit.assert_called_once()
 
+    # --- Recent Snippets history menu -------------------------------------
+
+    def test_truncate_label_collapses_and_truncates(self) -> None:
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        self.assertEqual(TrayIndicator._truncate_label("  a   b\nc  "), "a b c")
+        long = "x" * 200
+        truncated = TrayIndicator._truncate_label(long)
+        self.assertTrue(truncated.endswith("…"))
+        self.assertEqual(len(truncated), 50)
+
+    def test_refresh_history_menu_populated(self) -> None:
+        from vocalinux.ui.transcription_history import TranscriptionHistory
+
+        history = TranscriptionHistory()
+        history.add("first snippet")
+        history.add("second snippet")
+        self.tray_indicator.transcription_history = history
+        self.tray_indicator._history_menu_item = MagicMock()
+
+        result = self.tray_indicator._refresh_history_menu()
+
+        self.assertFalse(result)
+        self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
+
+    def test_refresh_history_menu_empty(self) -> None:
+        from vocalinux.ui.transcription_history import TranscriptionHistory
+
+        self.tray_indicator.transcription_history = TranscriptionHistory()
+        self.tray_indicator._history_menu_item = MagicMock()
+
+        result = self.tray_indicator._refresh_history_menu()
+
+        self.assertFalse(result)
+        self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
+
+    def test_refresh_history_menu_noop_without_item(self) -> None:
+        self.tray_indicator.transcription_history = None
+        self.tray_indicator._history_menu_item = None
+
+        # Should return False and not raise.
+        self.assertFalse(self.tray_indicator._refresh_history_menu())
+
+    def test_on_history_item_clicked_copies_to_clipboard(self) -> None:
+        self.tray_indicator._on_history_item_clicked(MagicMock(), "some snippet")
+
+        clipboard = mock_gtk.Clipboard.get.return_value
+        clipboard.set_text.assert_called_once_with("some snippet", -1)
+        clipboard.store.assert_called_once()
+
+    def test_on_clear_history_clicked_clears(self) -> None:
+        from vocalinux.ui.transcription_history import TranscriptionHistory
+
+        history = TranscriptionHistory()
+        history.add("a")
+        history.add("b")
+        self.tray_indicator.transcription_history = history
+
+        self.tray_indicator._on_clear_history_clicked(MagicMock())
+
+        self.assertEqual(len(history), 0)
+
+    def test_construct_with_history_creates_submenu_and_wires_callback(self) -> None:
+        from vocalinux.ui.transcription_history import TranscriptionHistory
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        history = TranscriptionHistory()
+        tray = TrayIndicator(
+            speech_engine=self.mock_speech_engine,
+            text_injector=self.mock_text_injector,
+            transcription_history=history,
+        )
+        tray.shortcut_manager = self.mock_ksm
+
+        # The submenu item is created during _init_indicator.
+        self.assertIsNotNone(tray._history_menu_item)
+        # Adding a snippet fires the change callback, which refreshes the menu
+        # (GLib.idle_add runs synchronously under the test mocks).
+        history.add("live snippet")
+        self.assertTrue(tray._history_menu_item.set_submenu.called)
+
 
 class TestTrayIndicatorFlatpakIcons(unittest.TestCase):
     """Tray icon names must adapt to the Flatpak runtime.

@@ -7,6 +7,7 @@ import argparse
 import atexit
 import logging
 import sys
+import threading
 from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -388,6 +389,11 @@ def main():
     from .ui.action_handler import ActionHandler
     from .ui.config_manager import get_shared_config_manager
     from .ui.logging_manager import initialize_logging
+    from .ui.transcription_history import (
+        DEFAULT_MAX_ITEMS,
+        TranscriptionHistory,
+        sanitize_max_items,
+    )
 
     # Initialize logging manager early
     initialize_logging()
@@ -483,6 +489,12 @@ def main():
 
     advanced_settings = config_manager.get_settings().get("advanced", {})
 
+    history_settings = config_manager.get_settings().get("history", {})
+    history_enabled = bool(history_settings.get("enabled", True))
+    # A hand-edited config.json can hold a non-numeric or out-of-range value;
+    # sanitize on load so a bad preference cannot abort startup.
+    history_max_items = sanitize_max_items(history_settings.get("max_items", DEFAULT_MAX_ITEMS))
+
     logger.info(f"Final settings: engine={engine}, language={language}, model={model_size}")
     if audio_device_index is not None:
         logger.info(
@@ -530,9 +542,48 @@ def main():
         # Initialize action handler
         action_handler = ActionHandler(text_system)
 
+        # Transcription history: an in-memory, newest-first list of recent
+        # dictation snippets surfaced in the tray menu. One snippet == one
+        # dictation session (everything said between start and stop).
+        transcription_history = TranscriptionHistory(
+            max_items=history_max_items, enabled=history_enabled
+        )
+        # Segments dictated during the open session, joined and committed to
+        # history when the session ends (state returns to IDLE). Each entry
+        # keeps the monotonic time its audio capture began: a history.clear()
+        # lands mid-decode, so capture time — not arrival order — decides
+        # whether a segment counts as pre-clear speech (dropped) or new
+        # dictation (kept).
+        #
+        # Session association: stop_recognition() emits IDLE after only a
+        # bounded wait on the recognition worker, so a slow final segment can
+        # still fire its text callback afterwards. Each segment must land in
+        # the session that produced it: while a session is open, segments
+        # accumulate in session_segments; a segment arriving on a worker that
+        # is not the open session's worker (or while no session is open) is a
+        # leftover of the just-ended session and is folded into its snippet
+        # instead of leaking into the next one.
+        session_lock = threading.Lock()
+        session_segments: list[tuple[str, float]] = []
+        session_open = False
+        # Worker thread that produced the open session's segments; used to
+        # detect callbacks from a previous session's still-running worker.
+        session_worker: Optional[threading.Thread] = None
+        # True when the newest history entry is the just-closed session's
+        # snippet, so late segments can still merge into it.
+        latest_snippet_extendable = False
+        # Clear epoch the most-recently-ended session was committed under;
+        # late segments merging into its snippet are judged against it.
+        ended_session_epoch = transcription_history.epoch
+
         # --- Callback wiring ---------------------------------------------------
-        # The speech engine emits three kinds of events, each handled by a
+        # The speech engine emits four kinds of events, each handled by a
         # dedicated callback registered below:
+        #
+        #   segment_callback(text: str, started_at: float)
+        #       Fires for each finalised segment with the monotonic time its
+        #       audio capture began, just before the text callbacks. Records
+        #       the segment into the transcription history.
         #
         #   text_callback(text: str)
         #       Called on the recognition thread when a transcription segment
@@ -550,6 +601,82 @@ def main():
         #       listening session ends.
         # ------------------------------------------------------------------
 
+        def _normalize_segment_text(text: str) -> str:
+            """Segment text as it is injected: stripped, auto-capitalized (Vosk)."""
+            normalized = text.lstrip().rstrip(" \t")
+            # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
+            if (
+                normalized
+                and config_manager.get("text_injection", "auto_capitalize")
+                and speech_engine.engine == "vosk"
+            ):
+                from vocalinux.speech_recognition.command_processor import capitalize_sentences
+
+                normalized = capitalize_sentences(normalized)
+            return normalized
+
+        def record_history_segment(segment: str, started_at: float) -> None:
+            """File a recognized segment under the dictation session it came from.
+
+            Runs on the recognition worker thread as a segment callback, so
+            ``started_at`` is the moment the segment's audio capture began.
+            While a session is open, segments accumulate into that session's
+            pending snippet; a segment delivered after the session was
+            finalized — the worker can outlive the manager's bounded stop
+            wait and emit text after IDLE — is folded into its own session's
+            snippet rather than the next one.
+
+            Segments whose capture began before the most recent
+            history.clear() are refused: their audio can only contain
+            pre-clear speech, however late the decode finishes. Segments
+            captured after the clear are kept, so dictation that continues
+            across a clear is still recoverable.
+            """
+            nonlocal session_worker, latest_snippet_extendable
+            if not transcription_history.enabled:
+                return
+            segment = _normalize_segment_text(segment)
+            if not segment:
+                return
+            worker = threading.current_thread()
+            # The engine's live worker, when it exposes one: a segment from
+            # any other thread is a leftover from an older session.
+            current_worker = getattr(speech_engine, "recognition_thread", None)
+            with session_lock:
+                if started_at <= transcription_history.cleared_at:
+                    # Captured before the last clear — must not re-enter.
+                    return
+                # Segments captured while the Settings mic test runs are test
+                # speech, not dictation; the floor is stamped before the test
+                # starts recognition, so leftovers from an earlier session —
+                # whose capture began before it — still file normally.
+                test_floor = getattr(speech_engine, "test_capture_floor", None)
+                if isinstance(test_floor, (int, float)) and started_at >= test_floor:
+                    return
+                if session_open and (
+                    worker is session_worker
+                    or worker is current_worker
+                    # When the engine exposes no worker (tests, mocks), the
+                    # first segment of a session tags it.
+                    or (session_worker is None and not isinstance(current_worker, threading.Thread))
+                ):
+                    session_worker = worker
+                    session_segments.append((segment, started_at))
+                    return
+                # Late segment from a session that already ended: merge into
+                # its committed snippet when there is one. Both writes are
+                # guarded by the ended session's epoch, so a clear() landing
+                # between that session's commit and this delivery still
+                # refuses the text.
+                if latest_snippet_extendable and transcription_history.extend_latest(
+                    segment, expected_epoch=ended_session_epoch
+                ):
+                    return
+                # Otherwise the late segments are the session's only output
+                # and form their own snippet.
+                if transcription_history.add(segment, expected_epoch=ended_session_epoch):
+                    latest_snippet_extendable = True
+
         def text_callback_wrapper(text: str) -> None:
             """Bridge between speech engine text events and the text injector.
 
@@ -564,16 +691,9 @@ def main():
             """
             # Preserve trailing newlines ("new line" / "new paragraph"); only
             # strip spaces/tabs that whisper sometimes wraps around tokens.
-            text_to_inject = text.lstrip().rstrip(" \t")
+            text_to_inject = _normalize_segment_text(text)
             if not text_to_inject:
                 return
-
-            # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
-            auto_capitalize = config_manager.get("text_injection", "auto_capitalize")
-            if auto_capitalize and speech_engine.engine == "vosk":
-                from vocalinux.speech_recognition.command_processor import capitalize_sentences
-
-                text_to_inject = capitalize_sentences(text_to_inject)
 
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
@@ -596,11 +716,62 @@ def main():
                 action_handler.set_last_injected_text(text_to_inject)
 
         def on_state_change(state: RecognitionState) -> None:
-            """Reset the last-injected buffer when a listening session ends."""
-            if state == RecognitionState.IDLE:
-                action_handler.set_last_injected_text("")
+            """Reset the last-injected buffer when a listening session ends.
 
-        # Connect speech recognition to text injection and action handling
+            Also commits the just-finished dictation session to the
+            transcription history as a single snippet.
+            """
+            nonlocal session_open, session_worker, latest_snippet_extendable
+            nonlocal ended_session_epoch
+            if state in (RecognitionState.IDLE, RecognitionState.ERROR):
+                if state == RecognitionState.IDLE:
+                    action_handler.set_last_injected_text("")
+                with session_lock:
+                    session_open = False
+                    session_worker = None
+                    ended_session_epoch = transcription_history.epoch
+                    # Only segments captured after the last clear() join the
+                    # snippet — speech captured before it is gone for good,
+                    # while dictation continued across the clear is kept.
+                    cleared_at = transcription_history.cleared_at
+                    joined = " ".join(
+                        text for text, started_at in session_segments if started_at > cleared_at
+                    )
+                    session_segments.clear()
+                    # Guarded by the epoch observed here: a clear() landing
+                    # between this read and the add still refuses the
+                    # snippet. The committed snippet stays open to late
+                    # segments still trickling out of the worker; a session
+                    # that produced no text leaves no entry to merge into.
+                    latest_snippet_extendable = transcription_history.add(
+                        joined, expected_epoch=ended_session_epoch
+                    )
+            else:
+                with session_lock:
+                    if not session_open:
+                        session_open = True
+                        session_worker = None
+                        # Segments left over by a session that ended without a
+                        # closing state commit as their own snippet rather
+                        # than leaking into the new session's — still only
+                        # those captured after the last clear().
+                        if session_segments:
+                            cleared_at = transcription_history.cleared_at
+                            latest_snippet_extendable = transcription_history.add(
+                                " ".join(
+                                    text
+                                    for text, started_at in session_segments
+                                    if started_at > cleared_at
+                                ),
+                                expected_epoch=transcription_history.epoch,
+                            )
+                            session_segments.clear()
+
+        # Connect speech recognition to text injection and action handling.
+        # Segments reach history with their capture-start time so a mid-
+        # session clear() can separate pre-clear speech from new dictation;
+        # injection keeps the plain text callback.
+        speech_engine.register_segment_callback(record_history_segment)
         speech_engine.register_text_callback(text_callback_wrapper)
         speech_engine.register_action_callback(action_handler.handle_action)
         speech_engine.register_state_callback(on_state_change)
@@ -609,6 +780,7 @@ def main():
         indicator = tray_indicator.TrayIndicator(
             speech_engine=speech_engine,
             text_injector=text_system,
+            transcription_history=transcription_history,
         )
 
         # Start the GTK main loop

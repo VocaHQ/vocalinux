@@ -196,6 +196,10 @@ DEFAULT_CONFIG = {
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
         "backend": "auto",
     },
+    "history": {
+        "enabled": True,  # Keep recent dictation snippets in the tray menu
+        "max_items": 10,  # How many snippets to retain (in-memory only, cleared on quit)
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,
