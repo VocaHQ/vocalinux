@@ -1,5 +1,6 @@
 """Recording and model reload must overlap without losing a released utterance."""
 
+import sys
 import threading
 from collections.abc import Generator
 from unittest.mock import Mock
@@ -224,6 +225,35 @@ def test_capture_failure_survives_key_release_during_reload(session: Session) ->
     assert transcribed == []
     assert manager.state == RecognitionState.IDLE
     assert manager.audio_buffer == []
+
+
+def test_capture_thread_failure_releases_reload_worker(
+    session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dead mic during buffered reload must not hang the reload worker."""
+    manager, _captured, _loading, _release_load, _transcribed = session
+    manager._buffered_reload_session = True
+    manager._buffered_capture_failed = False
+    manager._capture_finished.clear()
+    # The audio thread exits through its ImportError teardown: no
+    # stop_recognition handoff is left to set _capture_finished.
+    monkeypatch.setitem(sys.modules, "pyaudio", None)
+    monkeypatch.setattr("vocalinux.ui.audio_feedback.play_error_sound", Mock())
+    # Bypass the fixture's _record_audio stub to run the real capture thread.
+    rm.SpeechRecognitionManager._record_audio(manager)
+
+    assert manager._buffered_capture_failed
+    assert not manager.should_record
+    assert manager.state == RecognitionState.ERROR
+    assert manager._capture_finished.is_set()
+
+    manager._cancel_buffered_session.set()
+    worker = threading.Thread(target=manager._reload_and_recognize)
+    worker.start()
+    worker.join(2)
+    assert not worker.is_alive()
+    assert manager.state == RecognitionState.IDLE
+    assert not manager._buffered_reload_session
 
 
 def test_setting_defaults_to_disabled() -> None:

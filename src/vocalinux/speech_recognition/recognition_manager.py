@@ -3655,6 +3655,7 @@ class SpeechRecognitionManager:
             play_error_sound()
             self._buffered_capture_failed = True
             self._update_state(RecognitionState.ERROR)
+            self._signal_buffered_capture_done()
             return
 
         try:
@@ -4008,6 +4009,8 @@ class SpeechRecognitionManager:
             play_error_sound()
             self._buffered_capture_failed = True
             self._update_state(RecognitionState.ERROR)
+        finally:
+            self._signal_buffered_capture_done()
 
     def _process_final_buffer(self):
         """Process the final audio buffer after silence is detected."""
@@ -4194,6 +4197,16 @@ class SpeechRecognitionManager:
                 self._segment_queue.put_nowait(segment)
             except queue.Empty:
                 logger.warning("Could not recover queue space for transcription segment")
+
+    def _signal_buffered_capture_done(self) -> None:
+        """Release the reload worker once a failed capture can no longer hand off.
+
+        A buffered session whose capture died has no ``stop_recognition``
+        handoff left — key release already returned early — so the reload
+        worker's ``_capture_finished.wait()`` would block forever.
+        """
+        if getattr(self, "_buffered_reload_session", False) and self._buffered_capture_failed:
+            self._capture_finished.set()
 
     def _signal_recognition_stop(self):
         """Signal recognition thread to wake up and stop cleanly."""
