@@ -323,7 +323,7 @@ class TestFasterWhisperEngine:
 
             assert text == "Hello, world."
 
-    def test_transcribe_passes_initial_prompt(self):
+    def test_transcribe_passes_initial_prompt(self) -> None:
         """Test that vocabulary bias is forwarded to faster-whisper."""
         whisper_mock = self._mock_whisper_model([MagicMock(text="VocaLinux")])
         with patch.dict(sys.modules, {"faster_whisper": whisper_mock}):
