@@ -102,6 +102,7 @@ from .config_manager import (  # noqa: E402
     DEFAULT_SOUND_EFFECT_TONE,
     PASTE_SHORTCUTS,
     SOUND_EFFECT_TONES,
+    normalize_language_shortcuts,
     resolve_whispercpp_variant,
 )
 from .keyboard_backends import (  # noqa: E402
@@ -4786,17 +4787,33 @@ class SettingsDialog(Gtk.Dialog):
         """
         if self._initializing:
             return
+        # Each row's remembered binding belongs to that row first, so a
+        # shortcut typed into one row can never displace a binding another
+        # row already holds — the stealing edit is rejected instead.
+        owners: dict[str, int] = {}
+        for index, refs in enumerate(self._language_shortcut_rows):
+            owned = (refs.get("last_valid_shortcut") or "").strip().lower()
+            if owned and owned not in owners:
+                owners[owned] = index
         entries = []
         rejected = []
         claimed = set()
-        for refs in self._language_shortcut_rows:
+        for index, refs in enumerate(self._language_shortcut_rows):
             language = refs["language_picker"].get_active_id() or "auto"
             shortcut = refs["shortcut_entry"].get_text().strip().lower()
             last_valid = refs.get("last_valid_shortcut", "")
-            if shortcut and is_valid_shortcut(shortcut) and shortcut not in claimed:
+            owner = owners.get(shortcut)
+            if (
+                shortcut
+                and is_valid_shortcut(shortcut)
+                and shortcut not in claimed
+                and (owner is None or owner == index)
+            ):
                 refs["last_valid_shortcut"] = shortcut
                 claimed.add(shortcut)
-            elif last_valid and last_valid not in claimed:
+            elif (
+                last_valid and last_valid not in claimed and owners.get(last_valid, index) == index
+            ):
                 if shortcut and is_valid_shortcut(shortcut):
                     rejected.append(shortcut)
                 shortcut = last_valid
@@ -4806,6 +4823,12 @@ class SettingsDialog(Gtk.Dialog):
                     rejected.append(shortcut)
                 continue
             entries.append({"shortcut": shortcut, "language": language})
+        if normalize_language_shortcuts(entries) == self.config_manager.get_language_shortcuts():
+            # Nothing effective changed — a mid-edit keystroke, a rejected
+            # duplicate, or a reverted field — so the live listeners do not
+            # need another rebuild (and dictation never pauses for one).
+            self._report_language_shortcut_rejections(rejected)
+            return
         self.config_manager.set_language_shortcuts(entries)
         self.config_manager.save_settings()
         if self.language_shortcuts_update_callback:

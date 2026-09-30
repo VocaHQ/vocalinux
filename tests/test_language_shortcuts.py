@@ -574,7 +574,12 @@ def test_refresh_does_not_rearm_under_external_activation() -> None:
 
 
 def test_refresh_stops_a_held_push_to_talk_first() -> None:
-    """Rebuilding listeners cannot strand a session waiting on its release."""
+    """Rebuilding listeners cannot strand a session waiting on its release.
+
+    While a push-to-talk hold is live the rebuild is deferred instead of
+    stopping the session: the manager whose release callback will end the
+    hold is kept alive until the IDLE transition drains the refresh.
+    """
     from vocalinux.ui.tray_indicator import TrayIndicator
 
     tray = _tray_stub(
@@ -582,11 +587,17 @@ def test_refresh_stops_a_held_push_to_talk_first() -> None:
         entries=[{"shortcut": "alt+d", "language": "de"}],
     )
     tray.speech_engine.state = RecognitionState.LISTENING
+    tray._language_shortcuts_refresh_pending = False
+    armed = MagicMock()
+    tray._language_shortcut_managers = [armed]
 
     with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager"):
         TrayIndicator.refresh_language_shortcuts(tray)
 
-    tray.speech_engine.stop_recognition.assert_called_once()
+    tray.speech_engine.stop_recognition.assert_not_called()
+    assert tray._language_shortcuts_refresh_pending is True
+    assert tray._language_shortcut_managers == [armed]  # release callback survives
+    armed.stop.assert_not_called()
 
 
 def test_refresh_rebuilds_the_language_listeners() -> None:
@@ -909,3 +920,87 @@ def test_begin_recording_disarms_the_previous_target(dialog_class: type[Any]) ->
     )
 
     dialog._stop_recording_shortcut.assert_called_once()
+
+
+def test_persist_rejects_an_edit_that_claims_another_rows_binding(
+    dialog_class: type[Any],
+) -> None:
+    """Editing a row onto another row's key must not displace that row."""
+    dialog = _dialog_stub()
+    first_picker, second_picker = MagicMock(), MagicMock()
+    first_entry, second_entry = MagicMock(), MagicMock()
+    first_picker.get_active_id.return_value = "de"
+    second_picker.get_active_id.return_value = "fr"
+    first_entry.get_text.return_value = "alt+f"  # typed onto row two's key
+    second_entry.get_text.return_value = "alt+f"  # row two still holds it
+    dialog._language_shortcut_rows = [
+        {
+            "language_picker": first_picker,
+            "shortcut_entry": first_entry,
+            "last_valid_shortcut": "alt+d",
+        },
+        {
+            "language_picker": second_picker,
+            "shortcut_entry": second_entry,
+            "last_valid_shortcut": "alt+f",
+        },
+    ]
+    dialog._report_language_shortcut_rejections = (
+        lambda rejected: dialog_class._report_language_shortcut_rejections(dialog, rejected)
+    )
+    dialog.config_manager.get_language_shortcuts.return_value = [
+        {"shortcut": "alt+d", "language": "de"},
+        {"shortcut": "alt+f", "language": "fr"},
+    ]
+
+    dialog_class._persist_language_shortcuts(dialog)
+
+    # The resolved rows match the saved bindings — the stealing edit lost —
+    # so nothing is rewritten and no listener rebuild is triggered.
+    dialog.config_manager.set_language_shortcuts.assert_not_called()
+    dialog.language_shortcuts_update_callback.assert_not_called()
+    dialog.language_shortcuts_info_label.set_markup.assert_called_once()
+    assert dialog._language_shortcut_rows[0]["last_valid_shortcut"] == "alt+d"
+
+
+def test_refresh_defers_listener_rebuild_while_dictating() -> None:
+    """A binding edit during a session waits for IDLE, it must not stop it."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(entries=[{"shortcut": "alt+d", "language": "de"}])
+    tray.speech_engine.state = RecognitionState.LISTENING
+    tray._language_shortcuts_refresh_pending = False
+
+    TrayIndicator.refresh_language_shortcuts(tray)
+
+    assert tray._language_shortcuts_refresh_pending is True
+    tray.speech_engine.stop_recognition.assert_not_called()
+    assert tray._language_shortcut_managers == []
+
+    # The next IDLE transition drains the deferred rebuild.
+    tray.speech_engine.state = RecognitionState.IDLE
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as manager_class:
+        manager = MagicMock()
+        manager_class.return_value = manager
+        TrayIndicator._update_ui(tray, RecognitionState.IDLE)
+
+    assert tray._language_shortcuts_refresh_pending is False
+    manager_class.assert_called_once_with(shortcut="alt+d", mode="toggle")
+    manager.start.assert_called_once()
+
+
+def test_refresh_rebuilds_immediately_when_idle() -> None:
+    """The normal path still rebuilds the listeners right away."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(entries=[{"shortcut": "alt+d", "language": "de"}])
+    tray._language_shortcuts_refresh_pending = False
+
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as manager_class:
+        manager = MagicMock()
+        manager_class.return_value = manager
+        TrayIndicator.refresh_language_shortcuts(tray)
+
+    assert tray._language_shortcuts_refresh_pending is False
+    manager_class.assert_called_once_with(shortcut="alt+d", mode="toggle")
+    manager.start.assert_called_once()

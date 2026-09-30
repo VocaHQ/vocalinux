@@ -194,6 +194,9 @@ class TrayIndicator:
         # One listener per bound language shortcut (#805); rebuilt by
         # _setup_language_shortcuts alongside the main one.
         self._language_shortcut_managers: list[KeyboardShortcutManager] = []
+        # A settings edit landed while a dictation session was live; the
+        # listener rebuild is deferred to the next IDLE transition (#805).
+        self._language_shortcuts_refresh_pending = False
         # The binding whose press started the live push-to-talk session, so an
         # unrelated key's release cannot end it (#805).
         self._ptt_owner: Optional[KeyboardShortcutManager] = None
@@ -470,11 +473,19 @@ class TrayIndicator:
         self._language_shortcut_managers = []
 
     def refresh_language_shortcuts(self) -> None:
-        """Rebuild the per-language listeners after a settings change (#805)."""
+        """Rebuild the per-language listeners after a settings change (#805).
+
+        While a dictation session is live the rebuild is deferred to the
+        next IDLE transition instead: rebuilding stops recognition first,
+        and a keystroke-level settings edit must never cut an utterance off.
+        """
         if self._external_activation_active():
             # The internal listener family is off; a binding edit must not
             # arm language listeners behind the external-activation setting.
             self._stop_language_shortcut_managers()
+            return
+        if self.speech_engine.state != RecognitionState.IDLE:
+            self._language_shortcuts_refresh_pending = True
             return
         self._setup_language_shortcuts()
 
@@ -1204,12 +1215,19 @@ class TrayIndicator:
                 state wins: GLib.idle_add can deliver a captured PROCESSING
                 argument after stop already went IDLE (#739).
         """
-        if not hasattr(self, "indicator"):
-            return False
-
         engine_state = getattr(self.speech_engine, "state", None)
         if isinstance(engine_state, RecognitionState):
             state = engine_state
+
+        if state == RecognitionState.IDLE and getattr(
+            self, "_language_shortcuts_refresh_pending", False
+        ):
+            # The session the listener rebuild was deferred for has ended.
+            self._language_shortcuts_refresh_pending = False
+            self.refresh_language_shortcuts()
+
+        if not hasattr(self, "indicator"):
+            return False
 
         if state == RecognitionState.IDLE:
             self._set_indicator_icon(self._icon_keys["default"], "Microphone off")
