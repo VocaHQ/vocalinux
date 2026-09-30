@@ -268,6 +268,12 @@ class TestMainModule(unittest.TestCase):
             mock_speech_instance.register_action_callback.assert_called_once_with(
                 mock_action_instance.handle_action
             )
+            mock_speech_instance.register_action_callback.assert_called_once()
+            # The registered action callback queues the action onto the
+            # post-processing worker, which dispatches to the action handler.
+            action_cb = mock_speech_instance.register_action_callback.call_args.args[0]
+            action_cb("select_all").result(timeout=10)
+            mock_action_instance.handle_action.assert_called_once_with("select_all")
             mock_speech_instance.register_state_callback.assert_called_once()
 
             # Verify the tray indicator was started
@@ -1340,6 +1346,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         try:
             main()
             text_cb = mock_speech.register_text_callback.call_args.args[0]
+            action_cb = mock_speech.register_action_callback.call_args.args[0]
         except BaseException:
             # The caller only closes the stack once it gets one back, so a
             # failure here would leak these patches into every later test.
@@ -1349,6 +1356,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         return SimpleNamespace(
             stack=stack,
             text_cb=text_cb,
+            action_cb=action_cb,
             mock_text=mock_text,
             mock_config=mock_config,
             mock_tray_cls=mock_tray_cls,
@@ -1499,6 +1507,44 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             ):
                 boot.text_cb("hello").result(timeout=10)
             boot.mock_text.inject_text.assert_called_once_with("hello ")
+        finally:
+            boot.stack.close()
+
+    def test_voice_action_queues_behind_pending_text(self) -> None:
+        """A voice action cannot overtake a segment still waiting in the worker."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        started = threading.Event()
+        gate = threading.Event()
+
+        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+            started.set()
+            gate.wait(timeout=10)
+            return MagicMock(returncode=0, stdout="PROCESSED", stderr="")
+
+        try:
+            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+                text_future = boot.text_cb("hello")
+                self.assertTrue(started.wait(timeout=5))
+                # The action is issued while the script still holds the worker;
+                # it must run only after the queued text has been injected.
+                action_future = boot.action_cb("select_all")
+                gate.set()
+                text_future.result(timeout=10)
+                action_future.result(timeout=10)
+            call_names = [c[0] for c in boot.mock_text.mock_calls]
+            self.assertEqual(call_names, ["inject_text", "_inject_keyboard_shortcut"])
+        finally:
+            gate.set()
+            boot.stack.close()
+
+    def test_voice_action_without_script_still_uses_worker(self) -> None:
+        """With no script configured, actions still queue behind pending text."""
+        boot = self._boot_under_patches()
+        try:
+            action_future = boot.action_cb("select_all")
+            self.assertIsNotNone(action_future)
+            action_future.result(timeout=10)
+            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
         finally:
             boot.stack.close()
 
