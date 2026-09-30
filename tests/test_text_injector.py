@@ -275,6 +275,7 @@ class TestTextInjector(unittest.TestCase):
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=mock.ANY,
                 env=mock.ANY,
             )
 
@@ -289,6 +290,8 @@ class TestTextInjector(unittest.TestCase):
             # Initialize injector
             injector = TextInjector()
             self.assertEqual(injector.wayland_tool, "ydotool")
+            # _ensure_ydotoold spawns a real Popen, which patch("subprocess.run") misses.
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             # Inject text
             injector.inject_text("Hello world")
@@ -300,6 +303,7 @@ class TestTextInjector(unittest.TestCase):
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
+                timeout=mock.ANY,
                 env=mock.ANY,
             )
 
@@ -566,7 +570,7 @@ class TestTextInjector(unittest.TestCase):
         """Test that inject_text returns False on failure."""
         injector = TextInjector()
 
-        self.mock_subprocess.side_effect = Exception("Injection failed")
+        self.mock_subprocess.side_effect = subprocess.CalledProcessError(1, "xdotool")
 
         result = injector.inject_text("Test")
         self.assertFalse(result)
@@ -647,6 +651,7 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "ydotool"
             injector.environment = DesktopEnvironment.WAYLAND
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             # Reset call list so init calls don't interfere
             mock_run.reset_mock()
@@ -686,6 +691,7 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "ydotool"
             injector.environment = DesktopEnvironment.WAYLAND
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             mock_run.reset_mock()
             injector._inject_with_wayland_tool("Hello world")
@@ -1402,7 +1408,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
             injector = TextInjector()
 
             # Make xdotool fail to trigger error path
-            self.mock_subprocess.side_effect = Exception("Test error")
+            self.mock_subprocess.side_effect = subprocess.CalledProcessError(1, "xdotool")
 
             # Mock the audio import to fail
             with patch.dict("sys.modules", {"vocalinux.ui.audio_feedback": None}):

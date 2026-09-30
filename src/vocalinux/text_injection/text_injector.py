@@ -25,7 +25,13 @@ from .ibus_engine import (
     is_ibus_available,
     is_ibus_daemon_running,
 )
-from .remote_desktop_portal import KEYSYM_BACKSPACE, RemoteDesktopPortal, RemoteDesktopPortalError
+from .remote_desktop_portal import (
+    KEYSYM_BACKSPACE,
+    RemoteDesktopPortal,
+    RemoteDesktopPortalError,
+)
+
+_PORTAL_SUBMIT_TIMEOUT_S = 195.0  # portal's _START_TIMEOUT_S + _REQUEST_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +97,22 @@ class DesktopEnvironment(Enum):
     UNKNOWN = "unknown"
 
 
+class _InjectionAborted(Exception):
+    """Raised inside injection helpers when shutdown cuts an injection short."""
+
+
+class _PartiallyTyped(subprocess.CalledProcessError):
+    """A chunked type call delivered a prefix of the text before failing.
+
+    ``typed`` counts the characters already on screen so a fallback can
+    continue from the remainder instead of typing them a second time.
+    """
+
+    def __init__(self, typed: int, cause: subprocess.CalledProcessError) -> None:
+        super().__init__(cause.returncode, cause.cmd, output=cause.output, stderr=cause.stderr)
+        self.typed = typed
+
+
 class TextInjector:
     """
     Class for injecting text into the active application.
@@ -98,6 +120,16 @@ class TextInjector:
     This class handles the injection of text into the currently focused
     application window, supporting both X11 and Wayland environments.
     """
+
+    # Class-level fallback so objects built without __init__ (test helpers
+    # using __new__) still answer the abort checks; __init__ rebinds a fresh
+    # per-instance event, so the shared default is never the one that is set.
+    _abort_injections: threading.Event = threading.Event()
+
+    # Characters confirmed delivered by the most recent inject_text call:
+    # the full length on success, the confirmed prefix after a partial
+    # failure, -1 when delivery is unknowable, 0 when nothing was typed.
+    last_typed_count: int = 0
 
     def __init__(self, wayland_mode: bool = False):
         """
@@ -115,6 +147,8 @@ class TextInjector:
         self._ibus_init_failed = False
         self._ibus_init_thread: Optional[threading.Thread] = None
         self._state_lock = threading.Lock()
+        self._abort_injections = threading.Event()
+        self.last_typed_count = 0
         self._clipboard_tool_health = {}
         self._clipboard_timeout = 0.35
         # Overlapping ydotool pastes: bump generation to cancel stale restores;
@@ -1028,13 +1062,15 @@ class TextInjector:
             self.environment = DesktopEnvironment.WAYLAND
         logger.info(log_message, *args)
 
-    def _try_inject_with_portal(self, text: str) -> Tuple[bool, str]:
+    def _try_inject_with_portal(self, text: str) -> Tuple[bool, Optional[str]]:
         """Send text through the RemoteDesktop portal.
 
         Returns ``(True, "")`` on success. On failure the second element is
         the part of ``text`` the portal had not typed yet -- the whole string
         when it never got started, the tail when it failed mid-string -- so
-        the fallback backend does not duplicate delivered characters.
+        the fallback backend does not duplicate delivered characters. It is
+        ``None`` when the job timed out without reporting its count: whatever
+        reached the compositor is then unknowable and nothing may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1043,16 +1079,20 @@ class TextInjector:
             return bool(portal.inject_text(text)), ""
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal injection failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, text[e.delivered :]
         except Exception as e:
             logger.warning(f"RemoteDesktop portal injection failed: {e}")
             return False, text
 
-    def _try_portal_keypress(self, keysym: int, count: int = 1) -> Tuple[bool, int]:
+    def _try_portal_keypress(self, keysym: int, count: int = 1) -> Tuple[bool, Optional[int]]:
         """Tap one keysym ``count`` times through the portal.
 
         Returns ``(True, 0)`` on success; on failure the taps still owed, so
         the fallback does not re-send presses the portal already delivered.
+        ``None`` means a timed-out job never reported its count, so no part
+        of the request may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1062,6 +1102,8 @@ class TextInjector:
             return True, 0
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal key event failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, max(0, count - e.delivered)
         except Exception as e:
             logger.warning(f"RemoteDesktop portal key event failed: {e}")
@@ -1069,11 +1111,13 @@ class TextInjector:
 
     def _try_portal_shortcut(
         self, steps: List[Tuple[List[str], str]]
-    ) -> Tuple[bool, List[Tuple[List[str], str]]]:
+    ) -> Tuple[bool, Optional[List[Tuple[List[str], str]]]]:
         """Send parsed shortcut steps through the portal.
 
         Returns ``(True, [])`` on success; on failure the steps still to
         send, so the fallback does not re-run steps that already fired.
+        ``None`` means a timed-out job never reported its count, so no step
+        may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1083,6 +1127,8 @@ class TextInjector:
             return True, []
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, list(steps[e.delivered :])
         except Exception as e:
             logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
@@ -1515,6 +1561,17 @@ class TextInjector:
         except Exception as e:
             logger.debug(f"Could not show clipboard notification: {e}")
 
+    def abort_injections(self) -> None:
+        """Ask in-flight injections to stop at their next safe boundary.
+
+        Called on application quit so a worker holding the injection lock
+        finishes promptly: chunk loops and the Wayland typing call poll the
+        flag and raise ``_InjectionAborted`` instead of running to
+        completion, while every subprocess that is already in flight still
+        returns on its own timeout.
+        """
+        self._abort_injections.set()
+
     def inject_text(self, text: str) -> bool:
         """
         Inject text into the currently focused application.
@@ -1525,9 +1582,14 @@ class TextInjector:
         Returns:
             True if injection was successful, False otherwise
         """
+        self.last_typed_count = 0
+
         if not text or not text.strip():
             logger.debug("Empty text provided, skipping injection")
             return True
+
+        if self._abort_injections.is_set():
+            return False
 
         logger.info(f"Starting text injection: '{text}' (length: {len(text)})")
         logger.debug(f"Environment: {self.environment}")
@@ -1591,6 +1653,11 @@ class TextInjector:
                 try:
                     self._inject_with_wayland_tool(text)
                 except subprocess.CalledProcessError as e:
+                    # A chunked type call may have delivered a prefix; the
+                    # fallback continues from the untyped remainder so text
+                    # already on screen is never sent a second time.
+                    typed = e.typed if isinstance(e, _PartiallyTyped) else 0
+                    remaining = text[typed:]
                     stderr_msg = e.stderr.strip() if e.stderr else "No stderr output"
                     unsupported_wayland = (
                         "compositor does not support" in str(e).lower()
@@ -1614,7 +1681,11 @@ class TextInjector:
                         )
                         with self._state_lock:
                             self.environment = DesktopEnvironment.WAYLAND_XDOTOOL
-                        self._inject_with_xdotool(text)
+                        try:
+                            self._inject_with_xdotool(remaining)
+                        except _PartiallyTyped as nested:
+                            # Keep the count relative to the original text.
+                            raise _PartiallyTyped(typed + nested.typed, nested) from nested
                     else:
                         raise
             logger.info("Text injection completed successfully")
@@ -1626,7 +1697,44 @@ class TextInjector:
                     daemon=True,
                 ).start()
 
+            self.last_typed_count = len(text)
             return True
+        except _InjectionAborted:
+            self.last_typed_count = -1
+            logger.info("Injection aborted by shutdown")
+            return False
+        except _PartiallyTyped as e:
+            # A prefix is already on screen; the clipboard fallback must hold
+            # only the untyped remainder or a manual paste duplicates it.
+            # Reporting success would mark the whole transcription injected,
+            # so "delete that" could erase text before the typed prefix.
+            logger.error(f"Text injection failed after a prefix was typed: {e}")
+            self.last_typed_count = e.typed
+            remaining = text[e.typed :]
+            try:
+                if self._copy_to_clipboard(remaining):
+                    logger.info(
+                        "Remaining text copied to clipboard as fallback - user can paste manually"
+                    )
+                    self._show_clipboard_fallback_notification()
+            except (OSError, subprocess.SubprocessError, RuntimeError) as clipboard_error:
+                logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
+
+            try:
+                from ..ui.audio_feedback import play_error_sound
+
+                play_error_sound()
+            except ImportError:
+                logger.warning("Could not import audio feedback module")
+            return False
+        except subprocess.TimeoutExpired as e:
+            # A type call that ran past its bound may have delivered only part
+            # of the text; putting the full text on the clipboard would let a
+            # manual paste duplicate the fragment already typed.  How much
+            # arrived is unknowable, so the caller must not trust any count.
+            self.last_typed_count = -1
+            logger.error(f"Text injection timed out, text may be partially typed: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to inject text: {e}", exc_info=True)
 
@@ -1635,7 +1743,7 @@ class TextInjector:
                     logger.info("Text copied to clipboard as fallback - user can paste manually")
                     self._show_clipboard_fallback_notification()
                     return True
-            except Exception as clipboard_error:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as clipboard_error:
                 logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
 
             try:
@@ -1687,6 +1795,7 @@ class TextInjector:
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=2,
                 )
 
                 if active_window.returncode == 0 and active_window.stdout.strip():
@@ -1698,6 +1807,7 @@ class TextInjector:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
+                        timeout=5,
                     )
                     # Wait a moment for the focus to take effect
                     time.sleep(0.2)
@@ -1709,6 +1819,9 @@ class TextInjector:
             max_retries = 2
             logger.debug(f"Starting xdotool injection with {max_retries} max retries")
 
+            # Retries resume at the first untyped chunk: restarting from the
+            # top would duplicate the chunks a failed attempt already sent.
+            typed = 0
             for retry in range(max_retries + 1):
                 try:
                     # Inject in smaller chunks to avoid issues with very long text
@@ -1718,7 +1831,9 @@ class TextInjector:
                         f"Splitting text into {total_chunks} chunks of max {chunk_size} chars"
                     )
 
-                    for i in range(0, len(text), chunk_size):
+                    for i in range(typed, len(text), chunk_size):
+                        if self._abort_injections.is_set():
+                            raise _InjectionAborted
                         chunk = text[i : i + chunk_size]
                         chunk_num = (i // chunk_size) + 1
 
@@ -1734,6 +1849,7 @@ class TextInjector:
                             text=True,
                             timeout=5,
                         )
+                        typed = min(i + chunk_size, len(text))
 
                         # Add a larger delay between chunks
                         if i + chunk_size < len(text):
@@ -1752,7 +1868,9 @@ class TextInjector:
                         time.sleep(0.5)  # Wait before retry
                     else:
                         logger.error(f"Final attempt failed: {chunk_error.stderr}")
-                        raise  # Re-raise on final attempt
+                        # typed counts only completed chunks, so the
+                        # clipboard fallback gets the untyped remainder.
+                        raise _PartiallyTyped(typed, chunk_error) from chunk_error
                 except subprocess.TimeoutExpired:
                     if retry < max_retries:
                         logger.warning(
@@ -1784,6 +1902,7 @@ class TextInjector:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
+                    timeout=2,
                 )
             except Exception:
                 pass  # Ignore any errors from this command
@@ -1961,6 +2080,8 @@ class TextInjector:
                 "terminal" if use_terminal_paste else "standard",
                 paste_cmd,
             )
+            if self._abort_injections.is_set():
+                raise _InjectionAborted
             subprocess.run(
                 paste_cmd,
                 check=True,
@@ -2452,6 +2573,11 @@ class TextInjector:
         # still-held physical modifier, so the wait stays ahead of every tool.
         self._wait_for_modifiers_released()
 
+        # Characters the portal confirmed before a demote: partial-type counts
+        # raised later are relative to the shortened text and must be rebased
+        # by this prefix or the caller replays delivered input.
+        typed_prefix = 0
+
         if self.wayland_tool == "portal":
             portal_ok, remaining_text = self._try_inject_with_portal(text)
             if portal_ok:
@@ -2460,10 +2586,21 @@ class TextInjector:
                 raise RuntimeError(
                     "RemoteDesktop portal injection failed and no Wayland fallback is available"
                 )
+            if remaining_text is None:
+                # The timed-out job never reported its delivered count, so
+                # retyping any part could duplicate what already arrived.
+                # Surface as a timeout: the caller drops the injection rather
+                # than offering a clipboard copy of the full text.
+                raise subprocess.TimeoutExpired(cmd="portal", timeout=_PORTAL_SUBMIT_TIMEOUT_S)
             if not remaining_text:
                 return
+            typed_prefix = len(text) - len(remaining_text)
             if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
-                self._inject_with_xdotool(remaining_text)
+                try:
+                    self._inject_with_xdotool(remaining_text)
+                except _PartiallyTyped as nested:
+                    # Keep the count relative to the original text.
+                    raise _PartiallyTyped(typed_prefix + nested.typed, nested) from nested
                 return
             text = remaining_text
 
@@ -2488,21 +2625,48 @@ class TextInjector:
                 "(character-by-character; text may be scrambled on non-US layouts)"
             )
 
-        if self.wayland_tool == "wtype":
-            cmd = ["wtype", text]
-        else:  # ydotool
-            # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
-            # Low delay so fallback typing finishes quickly for long phrases.
-            key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
-            cmd = ["ydotool", "type", "--key-delay", key_delay, text]
-
-        try:
-            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=host_env())
-        except subprocess.CalledProcessError as e:
-            # Re-raise with stderr preserved for better diagnostics
-            raise subprocess.CalledProcessError(
-                e.returncode, e.cmd, output=e.output, stderr=e.stderr
-            ) from e
+        # Type in chunks so shutdown can abort between subprocess calls — one
+        # whole-string call could not be interrupted for its full
+        # length-scaled duration.  Each chunk's budget is a generous multiple
+        # of its expected duration: a legitimately slow type must never be cut
+        # mid-text — only a stall far beyond it is.
+        chunk_size = 200
+        for i in range(0, len(text), chunk_size):
+            if self._abort_injections.is_set():
+                raise _InjectionAborted
+            chunk = text[i : i + chunk_size]
+            if self.wayland_tool == "wtype":
+                cmd = ["wtype", chunk]
+                # wtype types at compositor pace; the budget scales with the
+                # chunk length so only a wedged process can ever hit it.
+                type_timeout = max(5, len(chunk) * 0.05)
+            else:  # ydotool
+                # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
+                # Low delay so fallback typing finishes quickly for long phrases.
+                key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
+                cmd = ["ydotool", "type", "--key-delay", key_delay, chunk]
+                type_timeout = max(5, len(chunk) * self._key_delay_seconds(key_delay) * 4)
+            try:
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=type_timeout,
+                    env=host_env(),
+                )
+            except subprocess.TimeoutExpired:
+                logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
+                raise
+            except subprocess.CalledProcessError as e:
+                if i > 0:
+                    # Earlier chunks are already on screen; let the caller
+                    # continue from the untyped remainder.
+                    raise _PartiallyTyped(typed_prefix + i, e) from e
+                # Re-raise with stderr preserved for better diagnostics
+                raise subprocess.CalledProcessError(
+                    e.returncode, e.cmd, output=e.output, stderr=e.stderr
+                ) from e
 
         logger.info(
             f"Text injected using {self.wayland_tool}: '{text[:20]}...' ({len(text)} chars)"
@@ -2519,6 +2683,9 @@ class TextInjector:
             True if injection was successful, False otherwise
         """
         logger.debug(f"Injecting keyboard shortcut: {shortcut}")
+
+        if self._abort_injections.is_set():
+            return False
 
         try:
             if (
@@ -2562,11 +2729,21 @@ class TextInjector:
 
         try:
             cmd = ["xdotool", "key", "--clearmodifiers", shortcut]
-            subprocess.run(cmd, env=host_env(env), check=True, stderr=subprocess.PIPE, text=True)
+            subprocess.run(
+                cmd,
+                env=host_env(env),
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5,
+            )
             logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
             return True
         except subprocess.CalledProcessError as e:
             logger.error(f"xdotool shortcut error: {e.stderr}")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error(f"xdotool shortcut timed out: '{shortcut}'")
             return False
 
     def _inject_shortcut_with_wayland_tool(self, shortcut: str) -> bool:
@@ -2589,11 +2766,20 @@ class TextInjector:
         # wait it out first -- same reason and placement as _inject_with_wayland_tool.
         self._wait_for_modifiers_released()
 
+        # Characters the portal confirmed before a demote: partial-type counts
+        # raised later are relative to the shortened text and must be rebased
+        # by this prefix or the caller replays delivered input.
+        typed_prefix = 0
+
         if self.wayland_tool == "portal":
             portal_ok, remaining_steps = self._try_portal_shortcut(steps)
             if portal_ok:
                 return True
             if not self._demote_portal_backend():
+                return False
+            if remaining_steps is None:
+                # Untracked delivery: replaying the shortcut could trigger
+                # actions the timed-out job already sent.
                 return False
             if not remaining_steps:
                 return True
@@ -2821,6 +3007,9 @@ class TextInjector:
         if count <= 0:
             return True
 
+        if self._abort_injections.is_set():
+            return False
+
         logger.debug(f"Sending {count} backspace key event(s)")
 
         if (
@@ -2868,6 +3057,10 @@ class TextInjector:
             if portal_ok:
                 return True
             if not self._demote_portal_backend():
+                return False
+            if remaining is None:
+                # Untracked delivery: replaying presses could delete text the
+                # timed-out job already removed.
                 return False
             if remaining <= 0:
                 return True

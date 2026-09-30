@@ -6,9 +6,11 @@ Main entry point for Vocalinux application.
 import argparse
 import atexit
 import logging
+import queue
 import sys
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -357,6 +359,7 @@ def main():
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
+    from .post_processor import apply_post_processing
 
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
@@ -424,7 +427,7 @@ def main():
     from .common_types import RecognitionState
     from .custom_dictionary import CustomDictionaryManager
     from .speech_recognition import recognition_manager
-    from .text_injection import text_injector
+    from .text_injection import focused_window, text_injector
     from .ui import tray_indicator
     from .ui.action_handler import ActionHandler
     from .ui.config_manager import get_shared_config_manager
@@ -630,15 +633,19 @@ def main():
         # TranscriptionHistory.add), so late segments extend that entry
         # rather than whichever snippet happens to be newest.
         latest_snippet_id: Optional[int] = None
-        # Worker thread that produced the most-recently-ended session's
-        # segments; deliveries on that same thread may extend its committed
-        # snippet once the next session has closed, so an older worker
-        # finishing two sessions later cannot leak into a newer entry.
-        ended_session_worker: Optional[threading.Thread] = None
+        # Commit epoch of latest_snippet_id, for guarded late merges.
+        latest_snippet_epoch = transcription_history.epoch
+        # Snippet each ended session's worker owns, as
+        # ``worker -> (snippet_id, commit epoch)``: a worker's late deliveries
+        # merge into its own session's entry however many sessions have
+        # committed since, so one session's stragglers can never leak into a
+        # newer entry or split across several snippets.
+        ended_worker_snippets: dict[threading.Thread, tuple[int, int]] = {}
         # Every worker that has delivered in-session segments; a delivery on
         # a thread never associated with a session is treated as the
         # just-ended session's trailing decode, while a worker seen producing
-        # an earlier session can never merge into a newer entry.
+        # an earlier session can never merge into a newer entry. Dead
+        # workers are pruned so long runs don't accumulate finished threads.
         session_workers_seen: set[threading.Thread] = set()
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
@@ -724,7 +731,8 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_snippet_id, ended_session_worker
+            nonlocal session_worker, latest_snippet_id, latest_snippet_epoch
+            nonlocal session_workers_seen, ended_worker_snippets
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -735,6 +743,12 @@ def main():
             # any other thread is a leftover from an older session.
             current_worker = getattr(speech_engine, "recognition_thread", None)
             with session_lock:
+                # Dead workers cannot deliver again; drop them so long runs
+                # don't accumulate finished threads.
+                session_workers_seen = {t for t in session_workers_seen if t.is_alive()}
+                ended_worker_snippets = {
+                    w: s for w, s in ended_worker_snippets.items() if w.is_alive()
+                }
                 if started_at <= transcription_history.cleared_at:
                     # Captured before the last clear — must not re-enter.
                     return
@@ -769,26 +783,27 @@ def main():
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
-                # its own snippet by id — a newer session may already have
-                # committed on top, so the newest entry is not the target.
-                # Two kinds are admitted: trickles on the ended session's own
-                # worker thread (the engine's decode finishing after IDLE),
-                # and any straggler while a newer session is still open —
-                # the open session has not committed yet, so the tracked id
-                # still points to the ended session's own snippet. An older
-                # worker delivering after that newer session committed forms
-                # its own entry rather than growing the wrong snippet. Both
-                # writes are guarded by the ended session's epoch, so a
-                # clear() landing between that commit and this delivery
-                # still refuses the text.
+                # its own session's snippet, found by the worker delivering
+                # it — a newer session may already have committed on top, so
+                # the newest entry is not the target. A delivery on a thread
+                # never associated with a session is treated as the
+                # just-ended session's trailing decode while a session is
+                # still open; a worker seen producing an earlier session can
+                # never merge into a newer entry. Every write is guarded by
+                # the snippet's own commit epoch, so a clear() landing
+                # between that commit and this delivery still refuses the
+                # text.
+                owner = ended_worker_snippets.get(worker)
+                if owner is not None and transcription_history.extend_entry(
+                    owner[0], segment, expected_epoch=owner[1]
+                ):
+                    return
                 if (
                     latest_snippet_id is not None
-                    and (
-                        worker is ended_session_worker
-                        or (session_open and worker not in session_workers_seen)
-                    )
+                    and session_open
+                    and worker not in session_workers_seen
                     and transcription_history.extend_entry(
-                        latest_snippet_id, segment, expected_epoch=ended_session_epoch
+                        latest_snippet_id, segment, expected_epoch=latest_snippet_epoch
                     )
                 ):
                     return
@@ -797,27 +812,20 @@ def main():
                 snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
-                    ended_session_worker = worker
+                    latest_snippet_epoch = ended_session_epoch
+                    ended_worker_snippets[worker] = (snippet_id, ended_session_epoch)
                     session_workers_seen.add(worker)
 
-        def text_callback_wrapper(text: str) -> None:
-            """Bridge between speech engine text events and the text injector.
-
-            Called on the recognition thread with each finalised transcription
-            segment.  Strips leading whitespace and trailing spaces/tabs (but
-            preserves trailing newlines from voice commands), then either
-            appends a trailing space (default) or uses the legacy in-session
-            leading-space separator, and injects via TextInjector.
+        def inject_transcription(text_to_inject: str, to_pad: Optional[bool] = None) -> None:
+            """Apply the separator rules and inject one finalised segment.
 
             Args:
-                text: Raw transcription segment from the speech engine.
+                text_to_inject: Post-processed text ready for the text injector.
+                to_pad: Destination decided when the job's focus check ran;
+                    the delivery must reuse that same decision — re-reading
+                    the live toggle here could disagree with the check and
+                    send the text somewhere it was never verified for.
             """
-            # Preserve trailing newlines ("new line" / "new paragraph"); only
-            # strip spaces/tabs that whisper sometimes wraps around tokens.
-            text_to_inject = _normalize_segment_text(text)
-            if not text_to_inject:
-                return
-
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
 
@@ -834,7 +842,7 @@ def main():
                 text_to_inject = " " + text_to_inject
                 logger.debug("Added space separator before new segment")
 
-            captured = dictate_to_pad_enabled()
+            captured = dictate_to_pad_enabled() if to_pad is None else to_pad
             if captured:
                 # In-app capture: skip cross-application injection entirely
                 # and land the text in the pad instead (#726).
@@ -845,19 +853,357 @@ def main():
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
                 last_injected["to_pad"] = captured
+            else:
+                # Deletion state must match what reached the app: a partial
+                # failure counts the confirmed prefix, an unknowable count
+                # (-1) clears it, and 0 leaves the previous segment's state —
+                # a failed injection types nothing, so "delete that" still
+                # means the segment before it.
+                typed = text_system.last_typed_count
+                if isinstance(typed, int) and typed > 0:
+                    action_handler.set_last_injected_text(text_to_inject[:typed])
+                elif isinstance(typed, int) and typed < 0:
+                    action_handler.set_last_injected_text("")
+
+        # Post-processing runs a user executable that may take seconds per
+        # segment.  Running it on the recognition thread would stall the
+        # consumer of the bounded audio-segment queue, and once that fills,
+        # queued dictation is dropped.  A dedicated worker applies the script
+        # and injects in order; its unbounded backlog waits instead of losing
+        # speech, and a timed-out script falls back to the original text.
+        #
+        # Every segment goes through this one worker — when no script is
+        # configured apply_post_processing is a pass-through — so clearing the
+        # script path mid-queue can never let a later segment overtake an
+        # earlier one still waiting behind a running script.
+        post_processing_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="vocalinux-post-processing"
+        )
+        # Cleared by the quit hook so a queued or in-flight job drops its
+        # segment instead of injecting while the injector is being stopped.
+        accepting_injections = threading.Event()
+        accepting_injections.set()
+        # Serialises the flag check and the inject call itself: quitting can
+        # wait out an injection already in progress while never blocking on a
+        # queued or running script.
+        injection_lock = threading.Lock()
+        # Segments that may sit in the backlog (a script is configured, or a
+        # job is still running) are bound to the app focused at submit time;
+        # the worker drops them if focus has moved to another application.
+        pending_jobs = 0
+        pending_jobs_lock = threading.Lock()
+
+        def _focused_app_unchanged(
+            target: Optional[focused_window.FocusedWindow],
+        ) -> bool:
+            """Return True unless focus verifiably moved to a different app.
+
+            A missing baseline or a failed re-probe stays permissive: without
+            a reliable identity the segment keeps the injector's own targeting.
+            """
+            if target is None:
+                return True
+            current = focused_window.get_focused_window()
+            if current is None:
+                return True
+            return current.identity_blob() == target.identity_blob()
+
+        def _start_focus_probe() -> queue.Queue[Optional[focused_window.FocusedWindow]]:
+            """Probe the focused window now, off the calling thread.
+
+            Focus probes shell out to compositor tools under their own
+            timeouts, so each runs on a fresh daemon thread: the recognition
+            thread never waits on them, and — unlike a shared worker — an
+            earlier slow probe cannot delay this one past the focus change it
+            is meant to capture.
+            """
+            probe_result: queue.Queue[Optional[focused_window.FocusedWindow]] = queue.Queue(
+                maxsize=1
+            )
+
+            def probe() -> None:
+                try:
+                    probe_result.put(focused_window.get_focused_window())
+                except (OSError, RuntimeError, queue.Full) as exc:
+                    # get_focused_window() reports Optional and should never
+                    # raise; if one escapes anyway the failed probe is
+                    # indistinguishable from unavailable focus information
+                    # unless it is logged — and the waiting job must still
+                    # be released.
+                    logger.exception("Focus probe crashed unexpectedly: %s", exc)
+                    probe_result.put(None)
+
+            threading.Thread(target=probe, daemon=True, name="vocalinux-focus-probe").start()
+            return probe_result
+
+        def _probe_result(
+            probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
+        ) -> Optional[focused_window.FocusedWindow]:
+            """Return the focus identity a submit-time probe captured.
+
+            The probe thread starts the moment the segment is submitted, so
+            joining it here adds no wait beyond the probe's own runtime.
+            """
+            if probe is None:
+                return None
+            return probe.get()
+
+        def post_process_and_inject(
+            text_to_inject: str,
+            target_probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
+        ) -> None:
+            """Apply the configured post-processing script, then inject.
+
+            Runs on the post-processing worker, never the recognition thread.
+            An unexpected failure falls back to the unprocessed segment so
+            dictation is never lost inside the worker.
+
+            Args:
+                text_to_inject: Finalised transcription segment.
+                target_probe: Probe of the app focused when the segment was
+                    dictated; the segment is dropped if focus has since moved
+                    elsewhere.  None keeps the injector's own targeting.
+            """
+            nonlocal pending_jobs
+            try:
+                if not accepting_injections.is_set():
+                    return
+                try:
+                    processed_text = apply_post_processing(text_to_inject, config_manager)
+                except Exception:
+                    logger.exception("Post-processing raised unexpectedly; injecting original text")
+                    processed_text = text_to_inject
+                if processed_text is None or not accepting_injections.is_set():
+                    return
+                # Pad-bound segments land in the dictation pad regardless of
+                # where focus sits, so a focus change since the segment was
+                # dictated must not drop them. The destination is decided
+                # once here and passed to the injector: re-reading the
+                # toggle at delivery could flip it after the check was
+                # skipped and send the segment to the focused application.
+                to_pad = dictate_to_pad_enabled()
+                if not to_pad and not _focused_app_unchanged(_probe_result(target_probe)):
+                    logger.info("Dropping queued segment: focus moved to another application")
+                    return
+                with injection_lock:
+                    if not accepting_injections.is_set():
+                        return
+                    inject_transcription(processed_text, to_pad)
+            finally:
+                with pending_jobs_lock:
+                    pending_jobs -= 1
+
+        def _run_action(
+            action: str,
+            target_probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
+        ) -> bool:
+            """Run one voice-command action on the post-processing worker.
+
+            Actions send keystrokes through the same injector as transcription
+            text, so they queue on the same worker in spoken order and are
+            bound to the app focused when the command was issued: even a
+            submission that looks immediate can run after a context switch,
+            so the binding applies to every action.  The job waits on the
+            probe for its full duration rather than racing it — the probe's
+            compositor calls carry their own one-second timeouts and
+            short-circuit on tools that are absent, so it answers in
+            milliseconds on a healthy desktop and always terminates; a valid
+            command is therefore never discarded over timing, and the
+            verified result is the only thing that can drop it.
+            """
+            nonlocal pending_jobs
+            try:
+                if not accepting_injections.is_set():
+                    return False
+                # Pad-bound actions run on the dictation pad no matter which
+                # application is focused, so a focus change since the command
+                # was issued must not drop them; only app-bound deliveries are
+                # focus-checked.
+                if action == "delete_last":
+                    targets_pad = bool(last_injected["to_pad"])
+                else:
+                    targets_pad = dictate_to_pad_enabled()
+                if not targets_pad and not _focused_app_unchanged(_probe_result(target_probe)):
+                    logger.info("Dropping action: focus moved to another application")
+                    return False
+                with injection_lock:
+                    if not accepting_injections.is_set():
+                        return False
+                    # "delete that" follows the segment it removes: the pad
+                    # when the last delivered text went there (even if capture
+                    # was toggled off since) and the focused application when
+                    # it was injected (even if capture was toggled on). Every
+                    # other editing command is handled pad-side while capturing
+                    # so its shortcuts never leak into whichever application
+                    # holds focus.
+                    if action == "delete_last":
+                        if not action_handler.last_injected_text:
+                            return True
+                        if last_injected["to_pad"]:
+                            # Only the pad's own segment bookkeeping may size
+                            # the deletion: a manual edit or a pad "undo"
+                            # blurs the boundaries (last_segment is None), and
+                            # falling back to the recorded text's length could
+                            # erase characters the user typed after dictating.
+                            # Refuse rather than misdelete — the tracking is
+                            # still cleared so a repeated command cannot retry
+                            # the stale length.
+                            target = dictation_pad.last_segment
+                            if target is None:
+                                action_handler.set_last_injected_text("")
+                                last_injected["to_pad"] = False
+                                return True
+                            deleted = dictation_pad.delete_last_chars(len(target))
+                            if deleted:
+                                action_handler.set_last_injected_text("")
+                                last_injected["to_pad"] = False
+                            return True
+                        handled_app: bool = action_handler.handle_action(action)
+                        return handled_app
+                    if targets_pad:
+                        handled = bool(dictation_pad.handle_action(action))
+                        if handled and action in ("undo", "redo") and last_injected["to_pad"]:
+                            # Pad history moved: retarget "delete that" at the
+                            # segment now at the pad's tail. Keep the pad
+                            # destination even when the tail is empty — a
+                            # redo can restore it.
+                            action_handler.set_last_injected_text(dictation_pad.last_segment or "")
+                        return handled
+                    handled_app = action_handler.handle_action(action)
+                    return handled_app
+            finally:
+                with pending_jobs_lock:
+                    pending_jobs -= 1
+
+        def action_callback_wrapper(action: str) -> Optional[Future]:
+            """Queue a voice-command action behind any pending text jobs.
+
+            Args:
+                action: Voice-command action from the speech engine.
+
+            Returns:
+                The queued worker future, or None while the application is
+                quitting.  Callers such as tests can wait on it; the speech
+                engine ignores the return value.
+            """
+            nonlocal pending_jobs
+            if not accepting_injections.is_set():
+                return None
+            # Every action is bound to the app focused at submit time:
+            # submission does not guarantee immediate execution, so there is
+            # always a focus-change window between the two.  The probe runs
+            # off this thread and the worker only waits on it briefly, so
+            # the binding costs nothing on a healthy desktop.
+            # Probing and submitting happen inside the lock so queue order
+            # matches the order these callbacks ran in — a job that saw an
+            # empty queue cannot end up waiting behind one that arrived while
+            # its submission was still in flight.
+            with pending_jobs_lock:
+                pending_jobs += 1
+                target_probe = _start_focus_probe()
+                try:
+                    future: Future = post_processing_executor.submit(
+                        _run_action, action, target_probe
+                    )
+                except RuntimeError:
+                    # The quit path already shut the worker down.
+                    pending_jobs -= 1
+                    return None
+            return future
+
+        def _reset_last_injected() -> None:
+            """Clear the last-injected buffer on the post-processing worker."""
+            action_handler.set_last_injected_text("")
+            last_injected["to_pad"] = False
+
+        def _shutdown_post_processing() -> None:
+            """Stop the post-processing worker for application quit.
+
+            Clearing the flag makes queued or in-flight jobs drop their
+            results, and pending submissions are cancelled without waiting on
+            a running script — quit must not freeze the tray on the script's
+            own timeout.  An injection already in progress is asked to abort
+            so the lock wait stays bounded by a single chunk's subprocess
+            timeout instead of a long transcription's whole budget, and the
+            injector is never stopped mid-inject.
+            """
+            accepting_injections.clear()
+            text_system.abort_injections()
+            with injection_lock:
+                pass
+            post_processing_executor.shutdown(wait=False, cancel_futures=True)
+
+        def text_callback_wrapper(text: str) -> Optional[Future]:
+            """Bridge between speech engine text events and the text injector.
+
+            Called on the recognition thread with each finalised transcription
+            segment.  Strips leading whitespace and trailing spaces/tabs (but
+            preserves trailing newlines from voice commands), then hands the
+            segment to the single post-processing worker — a pass-through when
+            no script is configured — which applies the separator rules and
+            injects via TextInjector in spoken order.
+
+            Args:
+                text: Raw transcription segment from the speech engine.
+
+            Returns:
+                The queued worker future, or None when the segment was dropped
+                before submission (an empty segment, or the application is
+                quitting).  Callers such as tests can wait on it; the speech
+                engine ignores the return value.
+            """
+            nonlocal pending_jobs
+            # Preserve trailing newlines ("new line" / "new paragraph"); only
+            # strip spaces/tabs that whisper sometimes wraps around tokens.
+            text_to_inject = _normalize_segment_text(text)
+            if not text_to_inject or not accepting_injections.is_set():
+                return None
+
+            # A backlog or a configured script means this segment can inject
+            # long after it was dictated; bind it to the app it targets now so
+            # it cannot land in whatever the user switched to meanwhile.  The
+            # probe runs off this thread: compositor tools could otherwise
+            # stall the consumer of the bounded audio-segment queue for seconds
+            # per segment.
+            script_configured = bool(config_manager.get_str("post_processing", "script_path", ""))
+            with pending_jobs_lock:
+                may_queue = pending_jobs > 0 or script_configured
+                pending_jobs += 1
+                target_probe = _start_focus_probe() if may_queue else None
+                try:
+                    future: Future = post_processing_executor.submit(
+                        post_process_and_inject, text_to_inject, target_probe
+                    )
+                except RuntimeError:
+                    # The quit path already shut the worker down.
+                    pending_jobs -= 1
+                    return None
+            return future
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.
 
             Also commits the just-finished dictation session to the
-            transcription history as a single snippet.
+            transcription history as a single snippet. With jobs still queued
+            the reset is queued behind them, so a "delete that" action
+            recognised just before the session ended still sees the text it
+            refers to.
             """
             nonlocal session_open, session_worker, latest_snippet_id
-            nonlocal ended_session_epoch, ended_session_worker, session_started_floor
+            nonlocal ended_session_epoch, session_started_floor, latest_snippet_epoch
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
-                    action_handler.set_last_injected_text("")
-                    last_injected["to_pad"] = False
+                    with pending_jobs_lock:
+                        backlog = pending_jobs > 0
+                    if backlog and accepting_injections.is_set():
+                        try:
+                            post_processing_executor.submit(_reset_last_injected)
+                        except RuntimeError:
+                            action_handler.set_last_injected_text("")
+                            last_injected["to_pad"] = False
+                    else:
+                        action_handler.set_last_injected_text("")
+                        last_injected["to_pad"] = False
                 with session_lock:
                     session_open = False
                     closing_worker = session_worker
@@ -879,7 +1225,12 @@ def main():
                     latest_snippet_id = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
-                    ended_session_worker = closing_worker
+                    latest_snippet_epoch = ended_session_epoch
+                    if latest_snippet_id is not None and closing_worker is not None:
+                        ended_worker_snippets[closing_worker] = (
+                            latest_snippet_id,
+                            ended_session_epoch,
+                        )
             else:
                 with session_lock:
                     if not session_open:
@@ -893,15 +1244,25 @@ def main():
                         # those captured after the last clear().
                         if session_segments:
                             cleared_at = transcription_history.cleared_at
+                            # A clear() during the unclosed session bumped the
+                            # epoch since the previous close — judge against
+                            # the live epoch, not the stale ended one, or
+                            # valid post-clear dictation is refused.
+                            stray_epoch = transcription_history.epoch
                             latest_snippet_id = transcription_history.add(
                                 " ".join(
                                     text
                                     for text, started_at in session_segments
                                     if started_at > cleared_at
                                 ),
-                                expected_epoch=ended_session_epoch,
+                                expected_epoch=stray_epoch,
                             )
-                            ended_session_worker = leftover_worker
+                            latest_snippet_epoch = stray_epoch
+                            if latest_snippet_id is not None and leftover_worker is not None:
+                                ended_worker_snippets[leftover_worker] = (
+                                    latest_snippet_id,
+                                    stray_epoch,
+                                )
                             session_segments.clear()
 
         # Connect speech recognition to text injection and action handling.
@@ -909,48 +1270,6 @@ def main():
         # session clear() can separate pre-clear speech from new dictation;
         # injection keeps the plain text callback.
         speech_engine.register_segment_callback(record_history_segment)
-
-        def action_callback_wrapper(action: str) -> bool:
-            """Route editing voice commands to the pad while capture is on.
-
-            "delete that" follows the segment it removes: the pad when the
-            last delivered text went there (even if capture was toggled off
-            since) and the focused application when it was injected (even if
-            capture was toggled on). Every other editing command is handled
-            pad-side while capturing so its shortcuts never leak into
-            whichever application holds focus.
-            """
-            if action == "delete_last":
-                if not action_handler.last_injected_text:
-                    return True
-                if last_injected["to_pad"]:
-                    # Only the pad's own segment bookkeeping may size the
-                    # deletion: a manual edit or a pad "undo" blurs the
-                    # boundaries (last_segment is None), and falling back to
-                    # the recorded text's length could erase characters the
-                    # user typed after dictating. Refuse rather than
-                    # misdelete — the tracking is still cleared so a repeated
-                    # command cannot retry the stale length.
-                    target = dictation_pad.last_segment
-                    if target is None:
-                        action_handler.set_last_injected_text("")
-                        last_injected["to_pad"] = False
-                        return True
-                    deleted = dictation_pad.delete_last_chars(len(target))
-                    if deleted:
-                        action_handler.set_last_injected_text("")
-                        last_injected["to_pad"] = False
-                    return True
-                return bool(action_handler.handle_action(action))
-            if dictate_to_pad_enabled():
-                handled = bool(dictation_pad.handle_action(action))
-                if handled and action in ("undo", "redo") and last_injected["to_pad"]:
-                    # Pad history moved: retarget "delete that" at the segment
-                    # now at the pad's tail. Keep the pad destination even
-                    # when the tail is empty — a redo can restore it.
-                    action_handler.set_last_injected_text(dictation_pad.last_segment or "")
-                return handled
-            return bool(action_handler.handle_action(action))
 
         speech_engine.register_text_callback(text_callback_wrapper)
         speech_engine.register_action_callback(action_callback_wrapper)
@@ -961,6 +1280,7 @@ def main():
             speech_engine=speech_engine,
             text_injector=text_system,
             transcription_history=transcription_history,
+            on_quit=_shutdown_post_processing,
             dictation_pad=dictation_pad,
         )
 

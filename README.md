@@ -306,7 +306,7 @@ vocalinux --start-minimized
 
 ### Configuration
 
-Stored at `~/.config/vocalinux/config.json`. Prefer the Settings dialog for day-to-day changes. **Settings → Speech Model** starts with a simple setup; expand **Advanced** for engine, size, and specialization.
+Stored at `~/.config/vocalinux/config.json`. Prefer the Settings dialog for day-to-day changes. **Settings → Speech Model** starts with a simple setup; expand **Advanced** for engine, size, and specialization. Set `post_processing.script_path` to an executable to transform each transcription result (stdin → stdout) before it is injected; leave empty to disable.
 
 Neural VAD (Silero) is used when `onnxruntime` is available; install via `pip install "vocalinux[vad]"` for manual/PyPI installs. The installer attempts this automatically.
 

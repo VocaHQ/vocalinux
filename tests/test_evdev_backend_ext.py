@@ -23,6 +23,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     DEVICE_RESCAN_SECONDS,
     EVDEV_AVAILABLE,
     MODIFIER_KEY_CODES,
+    EvdevDeviceHub,
     EvdevKeyboardBackend,
     device_has_key,
     device_has_modifier_key,
@@ -865,7 +866,7 @@ class TestEvdevKeyboardBackendHotplug:
         backend.devices = [device]
         backend.device_fds = [10]
         backend._remove_keyboard_device = MagicMock(
-            side_effect=lambda fd, device: setattr(backend, "running", False)
+            side_effect=lambda fd, device, generation: setattr(backend, "running", False)
         )
 
         with (
@@ -880,7 +881,9 @@ class TestEvdevKeyboardBackendHotplug:
         ):
             backend._monitor_devices()
 
-        backend._remove_keyboard_device.assert_called_once_with(10, device)
+        backend._remove_keyboard_device.assert_called_once_with(
+            10, device, backend._hub._generation
+        )
 
     def test_monitor_handles_fd_lookup_error(self):
         """Test fd lookup errors do not try to remove an unknown device."""
@@ -1641,3 +1644,409 @@ class TestEvdevGrabAndForwarding:
 
         backend._handle_key_event.assert_not_called()
         forwarder.write_event.assert_called_once_with(other_event)
+
+    def test_pure_modifier_press_stays_consumed(self) -> None:
+        """A real PTT hold never reaches the application."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        backend._forwarders[fd] = MagicMock()
+        backend._forwarded_held[fd] = set()
+        backend._withheld_modifier[fd] = {}
+
+        assert backend._event_is_shortcut(fd, self._key_event(100, 1)) is True
+        assert backend._event_is_shortcut(fd, self._key_event(100, 0)) is True
+        backend._forwarders[fd].write_event.assert_not_called()
+
+    def test_altgr_chord_replays_withheld_press(self) -> None:
+        """RightAlt held for composition replays its press and release."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        forwarder = MagicMock()
+        backend._forwarders[fd] = forwarder
+        backend._forwarded_held[fd] = set()
+        backend._withheld_modifier[fd] = {}
+
+        press = self._key_event(100, 1)  # KEY_RIGHTALT down
+        key_e = self._key_event(18, 1)  # KEY_E down (AltGr+e)
+        release = self._key_event(100, 0)  # KEY_RIGHTALT up
+
+        assert backend._event_is_shortcut(fd, press) is True
+        forwarder.write_event.assert_not_called()
+
+        assert backend._event_is_shortcut(fd, key_e) is False
+        forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[fd]
+
+        assert backend._event_is_shortcut(fd, release) is True
+        # The replayed modifier's release passes through so the clone's key
+        # state matches the physical keyboard.
+        assert forwarder.write_event.call_count == 2
+        forwarder.write_event.assert_called_with(release)
+
+    def test_withheld_state_drops_on_device_removal(self) -> None:
+        """Disconnecting a keyboard forgets its withheld modifier presses."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend.device_paths = {"/dev/input/event0"}
+        backend._device_paths_by_fd = {10: "/dev/input/event0"}
+        backend._forwarders = {10: forwarder}
+        backend._withheld_modifier[10] = {100: [self._key_event(100, 1), False]}
+
+        backend._remove_keyboard_device(10, device)
+
+        assert backend._withheld_modifier == {}
+
+    def test_split_keyboard_altgr_replays_modifier_from_other_device(self) -> None:
+        """A chord spanning two devices still replays the withheld modifier.
+
+        On a split keyboard RightAlt arrives on one device and the character
+        key on another: the modifier is withheld under its own fd, so the
+        replay must scan every device — checking only the character key's fd
+        would forward a plain character and lose the AltGr composition.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        mod_fd, char_fd = 10, 20
+        mod_forwarder, char_forwarder = MagicMock(), MagicMock()
+        backend._forwarders = {mod_fd: mod_forwarder, char_fd: char_forwarder}
+        backend._forwarded_held = {mod_fd: set(), char_fd: set()}
+        backend._withheld_modifier = {mod_fd: {}, char_fd: {}}
+
+        press = self._key_event(100, 1)  # KEY_RIGHTALT down on the left half
+        key_e = self._key_event(18, 1)  # KEY_E down on the right half
+
+        assert backend._event_is_shortcut(mod_fd, press) is True
+        mod_forwarder.write_event.assert_not_called()
+
+        assert backend._event_is_shortcut(char_fd, key_e) is False
+        # The modifier press is replayed through ITS OWN device's clone —
+        # before the character is forwarded — so the app sees AltGr+e.
+        mod_forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[mod_fd]
+
+    def test_syn_dropped_prunes_unreplayed_withheld_modifier(self) -> None:
+        """A withheld press whose release SYN_DROPPED ate leaves no stale entry.
+
+        When the modifier was never replayed the clone holds nothing, so the
+        old early return skipped the withheld-state cleanup entirely and a
+        later ordinary press would replay a modifier that is not held.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        device = MagicMock()
+        device.active_keys.return_value = []  # modifier already released
+        backend._forwarders = {fd: MagicMock()}
+        backend._forwarded_held = {fd: set()}  # nothing forwarded
+        backend._withheld_modifier = {fd: {100: [self._key_event(100, 1), False]}}
+
+        backend._resync_clone_key_state(fd, device)
+
+        assert backend._withheld_modifier[fd] == {}
+
+
+class TestSharedEvdevDeviceLayer:
+    """Several backends share one evdev reader instead of competing grabs.
+
+    Regression tests for the "language listeners compete for keyboards"
+    finding: each EvdevKeyboardBackend used to open and grab its own
+    InputDevice on the same keyboard, so the first grabber won and every
+    other listener received no events — language shortcuts could never
+    fire on Wayland.
+    """
+
+    def _key_event(self, code: int, value: int = 1) -> MagicMock:
+        return MagicMock(type=ecodes.EV_KEY, code=code, value=value)
+
+    def _registered(self, *engines: EvdevKeyboardBackend) -> EvdevDeviceHub:
+        """Register engines on the shared hub without opening devices."""
+        hub = engines[0]._hub
+        hub.running = True
+        for engine in engines:
+            assert hub.register(engine) is True
+        return hub
+
+    def test_backends_share_one_device_layer(self) -> None:
+        """Every backend binds to the same process-wide hub."""
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        second = EvdevKeyboardBackend(shortcut="alt+d")
+
+        assert first._hub is second._hub
+        assert second.devices is first.devices
+        assert second._forwarders is first._forwarders
+        assert second._device_paths_by_fd is first._device_paths_by_fd
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    def test_second_start_registers_without_reopening_devices(
+        self, mock_find: Mock, mock_input_device: Mock, mock_uinput: Mock
+    ) -> None:
+        """The first backend opens and grabs once; later ones just register."""
+        mock_find.return_value = ["/dev/input/event0"]
+        device = MagicMock()
+        device.name = "test-kbd"
+        device.fileno.return_value = 10
+        device.capabilities.return_value = {}
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        forwarder.device.path = "/dev/input/event9"
+        mock_uinput.return_value = forwarder
+
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        with patch("select.select", return_value=([], [], [])):
+            assert first.start() is True
+            second = EvdevKeyboardBackend(shortcut="alt+d")
+            assert second.start() is True
+
+            assert mock_input_device.call_count == 1  # device opened once
+            assert device.grab.call_count == 1  # grabbed once
+            assert set(first._hub._engine_snapshot()) == {first, second}
+
+            second.stop()
+            assert first._hub.running is True  # layer outlives one listener
+            first.stop()
+            assert first._hub.running is False
+            device.close.assert_called()
+
+    def test_two_engines_both_fire_on_one_device(self) -> None:
+        """Events on a shared keyboard reach every registered engine."""
+        german = EvdevKeyboardBackend(shortcut="ctrl+ctrl", mode="toggle")
+        french = EvdevKeyboardBackend(shortcut="alt+d", mode="toggle")
+        hub = self._registered(german, french)
+
+        german_fired = MagicMock()
+        french_fired = MagicMock()
+        german.register_toggle_callback(german_fired)
+        french.register_toggle_callback(french_fired)
+
+        device = MagicMock()
+        fd = 10
+        device.read.return_value = [
+            self._key_event(29, 1),  # ctrl press (german tap 1)
+            self._key_event(29, 0),  # ctrl release
+            self._key_event(29, 1),  # ctrl press (german double-tap)
+            self._key_event(56, 1),  # alt press (french modifier)
+            self._key_event(32, 1),  # d press (french combo main key)
+        ]
+
+        hub._dispatch_events(fd, device)
+
+        time.sleep(0.1)
+        german_fired.assert_called_once()
+        french_fired.assert_called_once()
+
+    def test_shortcut_events_consumed_once_across_engines(self) -> None:
+        """An event claimed by any engine never reaches the application."""
+        pure = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        combo = EvdevKeyboardBackend(shortcut="ctrl+f", mode="toggle")
+        hub = self._registered(pure, combo)
+        fd = 10
+        forwarder = MagicMock()
+        hub._forwarders = {fd: forwarder}
+        hub._forwarded_held = {fd: set()}
+
+        ctrl_press = self._key_event(29, 1)
+        f_press = self._key_event(33, 1)
+        a_press = self._key_event(30, 1)
+        ralt_press = self._key_event(100, 1)
+        ralt_release = self._key_event(100, 0)
+        device = MagicMock()
+        device.read.return_value = [ctrl_press, f_press, a_press, ralt_press, ralt_release]
+
+        hub._dispatch_events(fd, device)
+
+        # f is consumed by the combo engine while ctrl is held, both right-alt
+        # events by the pure-modifier engine; unrelated keys still pass through.
+        forwarded = [call.args[0] for call in forwarder.write_event.call_args_list]
+        assert forwarded == [ctrl_press, a_press]
+
+    def test_unregister_shuts_down_only_when_last_engine_leaves(self) -> None:
+        """The shared layer stays up until its last listener stops."""
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        second = EvdevKeyboardBackend(shortcut="alt+d")
+        hub = self._registered(first, second)
+        first.active = True
+        second.active = True
+        device = MagicMock()
+        hub.devices = [device]
+
+        first.stop()
+        assert hub.running is True
+        device.close.assert_not_called()
+
+        second.stop()
+        assert hub.running is False
+        assert hub.devices == []
+        device.close.assert_called_once()
+
+    def test_dispatch_reaches_only_registered_engines(self) -> None:
+        """A backend that never started observes nothing."""
+        active = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        idle = EvdevKeyboardBackend(shortcut="alt+d")
+        hub = self._registered(active)
+        active._handle_key_event = MagicMock()
+        idle._handle_key_event = MagicMock()
+
+        device = MagicMock()
+        device.read.return_value = [self._key_event(29, 1)]
+        hub._dispatch_events(10, device)
+
+        active._handle_key_event.assert_called_once()
+        idle._handle_key_event.assert_not_called()
+
+    def test_register_waits_for_in_flight_teardown(self) -> None:
+        """Devices opened after teardown starts are never closed by it.
+
+        Regression test for "keyboard listener can lose devices": the last
+        engine's unregister used to release the lock before closing, so a
+        new register could open keyboards in the gap only for the stale
+        teardown to close them — the new listener stayed active but dead.
+        """
+        hub = EvdevDeviceHub()
+        old_engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        new_engine = EvdevKeyboardBackend(shortcut="alt+d")
+        old_device = MagicMock()
+        hub.running = True
+        hub._engines.add(old_engine)
+        hub.devices = [old_device]
+
+        teardown_started = threading.Event()
+        finish_teardown = threading.Event()
+
+        def blocking_close() -> None:
+            teardown_started.set()
+            finish_teardown.wait(timeout=5.0)
+
+        hub._close_all_devices = blocking_close
+
+        unregister_done = threading.Event()
+
+        def run_unregister() -> None:
+            hub.unregister(old_engine)
+            unregister_done.set()
+
+        threading.Thread(target=run_unregister, daemon=True).start()
+        assert teardown_started.wait(timeout=5.0)
+
+        new_device = MagicMock()
+        new_device.fileno.return_value = 42
+        result: list[bool] = []
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices",
+                return_value=["/dev/input/event9"],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.InputDevice",
+                return_value=new_device,
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.UInput",
+                return_value=MagicMock(),
+            ),
+        ):
+            register_thread = threading.Thread(
+                target=lambda: result.append(hub.register(new_engine)),
+                daemon=True,
+            )
+            register_thread.start()
+            register_thread.join(timeout=0.5)
+            assert register_thread.is_alive()  # blocked while teardown runs
+
+            finish_teardown.set()
+            register_thread.join(timeout=5.0)
+            assert result == [True]
+            new_device.close.assert_not_called()
+            assert hub.running is True
+            assert hub.devices == [new_device]
+            assert new_engine in hub._engines
+            assert old_engine not in hub._engines
+
+        assert unregister_done.wait(timeout=5.0)
+        hub.reset()
+
+    def test_unregister_joins_monitor_outside_the_lifecycle_lock(self) -> None:
+        """The monitor join must not hold the lock its cleanup queues on.
+
+        Regression test for "monitor cleanup delays shutdown": joining under
+        _lifecycle_lock stalled the full 2s timeout whenever the monitor's
+        unexpected-exit cleanup raced in for the same lock.
+        """
+        hub = EvdevDeviceHub()
+        engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        hub.running = True
+        hub._engines.add(engine)
+        monitor = MagicMock()
+        hub.monitor_thread = monitor
+
+        lock_was_free = threading.Event()
+
+        def join_and_probe(timeout: float) -> None:
+            if hub._lifecycle_lock.acquire(blocking=False):
+                lock_was_free.set()
+                hub._lifecycle_lock.release()
+
+        monitor.join = join_and_probe
+
+        hub.unregister(engine)
+
+        assert lock_was_free.is_set()
+        assert hub.running is False
+        assert hub.monitor_thread is None
+        assert engine not in hub._engines
+        hub.reset()
+
+    def test_stale_monitor_leaves_new_generation_devices_alone(self) -> None:
+        """A monitor that outlived its generation can't touch new devices.
+
+        Regression test for "old monitor reaches new devices": once the
+        generation advanced, every fd the new listener opened is off-limits
+        to the stale reader — no dispatch, no forward, no removal — even
+        though its fd number is readable and mapped.
+        """
+        hub = EvdevDeviceHub()
+        hub.running = True
+        hub._generation = 6
+
+        new_device = MagicMock()
+        new_device.fileno.return_value = 10
+        new_device.name = "External Keyboard"
+        new_clone = MagicMock()
+        hub.devices = [new_device]
+        hub.device_fds = [10]
+        hub.device_paths = {"/dev/input/event4"}
+        hub._device_paths_by_fd = {10: "/dev/input/event4"}
+        hub._forwarders = {10: new_clone}
+        hub._fd_generation = {10: 6}
+        hub._dispatch_events = MagicMock()
+
+        def select_then_stop(read_fds, write_fds, error_fds, timeout):
+            hub.running = False
+            return [10], [], []
+
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                side_effect=[0.0, 0.0],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                side_effect=select_then_stop,
+            ),
+        ):
+            hub._monitor_devices(generation=5)
+
+        hub._dispatch_events.assert_not_called()
+
+        hub._forward_event(10, MagicMock(type=1, code=30, value=1), generation=5)
+        new_clone.write_event.assert_not_called()
+
+        hub._remove_keyboard_device(10, new_device, generation=5)
+        new_device.close.assert_not_called()
+        assert hub.devices == [new_device]
+        assert hub.device_fds == [10]
+
+        hub.reset()

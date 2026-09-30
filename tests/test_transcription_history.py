@@ -163,6 +163,23 @@ class TestTranscriptionHistory(unittest.TestCase):
         history.extend_latest("b")
         self.assertEqual(calls, [1])
 
+    def test_extend_entry_targets_by_id(self) -> None:
+        """A late segment lands in its own session's entry even when a newer
+        session has committed a snippet on top of it."""
+        history = TranscriptionHistory()
+        first_id = history.add("session one")
+        history.add("session two")
+        self.assertTrue(history.extend_entry(first_id, "tail"))
+        self.assertEqual(history.get_all(), ["session two", "session one tail"])
+
+    def test_extend_entry_unknown_id_refuses(self) -> None:
+        """An evicted or never-recorded id is refused so the caller falls
+        back to recording the late text as its own snippet."""
+        history = TranscriptionHistory()
+        history.add("session one")
+        self.assertFalse(history.extend_entry(9999, "tail"))
+        self.assertEqual(history.get_all(), ["session one"])
+
     def test_clear(self) -> None:
         history = TranscriptionHistory()
         history.add("a")

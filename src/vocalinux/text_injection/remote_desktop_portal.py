@@ -52,10 +52,12 @@ class RemoteDesktopPortalError(RuntimeError):
     failure -- characters for ``inject_text``, taps for ``tap_keysym`` and
     steps for ``send_shortcut`` -- so the caller can retry only the
     remainder through a fallback backend instead of replaying the whole
-    request.
+    request. ``None`` means the delivery could not be tracked -- a timed-out
+    job that never reported back may or may not have emitted portal events,
+    so the caller must not replay any part of the request.
     """
 
-    def __init__(self, message: str = "", delivered: int = 0) -> None:
+    def __init__(self, message: str = "", delivered: Optional[int] = 0) -> None:
         super().__init__(message)
         self.delivered = delivered
 
@@ -382,7 +384,10 @@ class RemoteDesktopPortal:
             if "result" in box:
                 return box["result"]
             error = box.get("error")
-            delivered = getattr(error, "delivered", 0) if error is not None else 0
+            # A job that never reported back may still have delivered part of
+            # the request before noticing the cancel -- None marks that count
+            # as unknowable so the caller does not replay delivered input.
+            delivered = getattr(error, "delivered", 0) if error is not None else None
             raise RemoteDesktopPortalError("Timed out waiting for the portal", delivered=delivered)
         if "error" in box:
             error = box["error"]
@@ -628,7 +633,7 @@ class RemoteDesktopPortal:
                 delivered += 1
                 self._notify_key_state(keysym, _KEY_RELEASED)
         except RemoteDesktopPortalError as e:
-            e.delivered = max(e.delivered, delivered)
+            e.delivered = max(e.delivered or 0, delivered)
             raise
         except Exception as e:
             raise RemoteDesktopPortalError(str(e), delivered=delivered) from e
@@ -654,7 +659,7 @@ class RemoteDesktopPortal:
                 delivered = index + 1
                 self._notify_key_state(keysym, _KEY_RELEASED)
         except RemoteDesktopPortalError as e:
-            e.delivered = max(e.delivered, delivered)
+            e.delivered = max(e.delivered or 0, delivered)
             raise
         except Exception as e:
             raise RemoteDesktopPortalError(str(e), delivered=delivered) from e
@@ -687,7 +692,7 @@ class RemoteDesktopPortal:
                 for modifier in reversed(modifier_keysyms):
                     self._notify_key_state(modifier, _KEY_RELEASED)
             except RemoteDesktopPortalError as e:
-                e.delivered = max(e.delivered, delivered)
+                e.delivered = max(e.delivered or 0, delivered)
                 self._release_held_modifiers(modifier_keysyms)
                 raise
             except Exception as e:

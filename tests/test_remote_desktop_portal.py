@@ -1,5 +1,6 @@
 """Tests for the RemoteDesktop portal injection backend and its selection."""
 
+import subprocess
 import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock, patch
@@ -721,6 +722,85 @@ class TestPortalInjectionPaths:
             # Two steps: [([], "Home"), (["shift"], "End")]; the first fired.
             assert injector._inject_shortcut_with_wayland_tool("Home+shift+End") is True
         assert mock_run.call_args[0][0] == ["wtype", "-M", "shift", "-k", "End", "-m", "shift"]
+
+    def test_partial_type_rebases_onto_portal_prefix(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A fallback's typed count must include what the portal delivered."""
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        # The portal typed 2 chars before the error; the fallback gets "x"*248.
+        injector._portal.inject_text.side_effect = RemoteDesktopPortalError("boom", delivered=2)
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+
+        calls = []
+
+        def wtype_side_effect(cmd: list, **kwargs: object) -> MagicMock:
+            calls.append(cmd)
+            if len(calls) == 2:
+                raise subprocess.CalledProcessError(1, cmd, stderr="wedged")
+            return MagicMock(returncode=0, stderr="")
+
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run", side_effect=wtype_side_effect),
+        ):
+            with pytest.raises(ti._PartiallyTyped) as exc_info:
+                injector._inject_with_wayland_tool("x" * 250)
+        # The error count is against the original 250-char text, so the
+        # caller clips the typed prefix instead of replaying it.
+        assert exc_info.value.typed == 2 + 200
+
+    def test_inject_untracked_timeout_replays_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A portal timeout with no delivered count must not retype anything."""
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.inject_text.side_effect = RemoteDesktopPortalError(
+            "Timed out waiting for the portal", delivered=None
+        )
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            with pytest.raises(subprocess.TimeoutExpired):
+                injector._inject_with_wayland_tool("hello")
+        # The broken portal is demoted, but no fallback retypes the text.
+        assert injector.wayland_tool == "wtype"
+        mock_run.assert_not_called()
+
+    def test_backspace_untracked_timeout_replays_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.tap_keysym.side_effect = RemoteDesktopPortalError(
+            "Timed out waiting for the portal", delivered=None
+        )
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            assert injector.press_backspace(3) is False
+        assert injector.wayland_tool == "wtype"
+        mock_run.assert_not_called()
+
+    def test_shortcut_untracked_timeout_replays_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._portal = MagicMock()
+        injector._portal.send_shortcut.side_effect = RemoteDesktopPortalError(
+            "Timed out waiting for the portal", delivered=None
+        )
+        monkeypatch.setattr("shutil.which", lambda c: "/usr/bin/wtype" if c == "wtype" else None)
+        with (
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch("subprocess.run") as mock_run,
+        ):
+            assert injector._inject_shortcut_with_wayland_tool("ctrl+a") is False
+        mock_run.assert_not_called()
 
     def test_shortcut_routes_to_portal(self) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
