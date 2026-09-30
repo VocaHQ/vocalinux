@@ -1842,15 +1842,17 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
             state_cb(RecognitionState.LISTENING)
             state_cb(RecognitionState.IDLE)
 
-            # A's old worker finally delivers: judged against A's own
+            # The newer worker delivers first: it is the engine's live
+            # worker, so it claims the newest untagged binding — judged
+            # under B's own (post-clear) epoch, it must be kept.
+            jobs_b.put(lambda: text_cb("B late output"))
+            jobs_b.join()
+            self.assertEqual(self._texts(history), ["B late output"])
+
+            # A's stale worker finally delivers: judged against A's own
             # (pre-clear) epoch, not B's — refused.
             jobs_a.put(lambda: text_cb("cleared dictation"))
             jobs_a.join()
-            self.assertEqual(self._texts(history), [])
-
-            # B's own late worker still lands under B's epoch.
-            jobs_b.put(lambda: text_cb("B late output"))
-            jobs_b.join()
             self.assertEqual(self._texts(history), ["B late output"])
 
             jobs_a.put(None)

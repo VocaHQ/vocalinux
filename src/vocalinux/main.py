@@ -700,36 +700,44 @@ def main():
                         resolved = True
                         break
                 if not resolved:
-                    # A session whose worker produced nothing before it
-                    # ended leaves an untagged binding. Claim the oldest
-                    # unclaimed one: the earliest epoch such a worker could
-                    # still belong to, so text dictated before a later
-                    # clear() is judged against its own session's epoch
-                    # rather than a newer empty session's.
-                    for idx in range(len(ended_worker_entries)):
-                        entry_worker, entry, entry_epoch = ended_worker_entries[idx]
-                        if entry_worker is None:
-                            ended_worker_entries[idx] = (worker, entry, entry_epoch)
-                            target_entry, target_epoch = entry, entry_epoch
-                            claimed_idx = idx
-                            resolved = True
-                            break
-                if not resolved:
                     if (
-                        worker is ended_session_worker
-                        or worker is current_worker
+                        worker is current_worker
+                        or worker is ended_session_worker
                         or not isinstance(current_worker, threading.Thread)
                     ):
-                        # Attributable to the just-ended session: its
-                        # recorded worker still draining, the engine's live
-                        # worker thread, or an engine exposing no worker at
-                        # all (mocks, tests).
+                        # The engine's live worker, the just-ended session's
+                        # recorded worker still draining, or an engine
+                        # exposing no worker at all (mocks, tests): the most
+                        # recently ended session is the plausible owner, so
+                        # an untracked newer worker is judged under the
+                        # newest epoch rather than an older session's.
+                        newest_idx = len(ended_worker_entries) - 1
+                        if newest_idx >= 0 and ended_worker_entries[newest_idx][0] is None:
+                            ended_worker_entries[newest_idx] = (
+                                worker,
+                                ended_worker_entries[newest_idx][1],
+                                ended_worker_entries[newest_idx][2],
+                            )
+                            claimed_idx = newest_idx
                         target_entry, target_epoch = ended_session_entry, ended_session_epoch
                         resolved = True
-                if not resolved:
-                    # A worker no binding or fallback can attribute: its
-                    # session is older than the deque retains. Drop.
-                    return
+                    else:
+                        # A stale worker, no longer the engine's: claim the
+                        # oldest unclaimed untagged binding — the earliest
+                        # epoch it could belong to — so text dictated before
+                        # a later clear() is judged against its own
+                        # session's epoch rather than a newer session's.
+                        for idx in range(len(ended_worker_entries)):
+                            entry_worker, entry, entry_epoch = ended_worker_entries[idx]
+                            if entry_worker is None:
+                                ended_worker_entries[idx] = (worker, entry, entry_epoch)
+                                target_entry, target_epoch = entry, entry_epoch
+                                claimed_idx = idx
+                                resolved = True
+                                break
+                        if not resolved:
+                            # Its session is older than the deque retains.
+                            return
                 if target_entry is not None:
                     # Bound to its own session's transcript, judged against
                     # that session's epoch: extend it or drop. Never fall
