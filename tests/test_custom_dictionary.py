@@ -180,18 +180,33 @@ def test_oversized_terms_file_supplies_its_leading_lines(tmp_path: Path, monkeyp
 
 
 def test_add_term_on_oversized_file_stays_visible(tmp_path: Path, monkeypatch) -> None:
-    """Appending past the byte bound would hide the new term, so the write
-    normalizes the file to its readable terms plus the addition."""
+    """Prepending past the read window keeps the new term visible while
+    preserving every scanner-owned line, comment, and blank line."""
     manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
     line_count = MAX_TERMS_FILE_BYTES // 8 + 2
-    (tmp_path / TERMS_FILENAME).write_bytes(
-        b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
-    )
+    original = b"# scanner tail\n" + b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    (tmp_path / TERMS_FILENAME).write_bytes(original)
 
     assert manager.add_term("brandnew")
+    assert (tmp_path / TERMS_FILENAME).read_bytes() == b"brandnew\n" + original
     terms = manager.get_terms()
-    assert terms[-1] == "brandnew"
-    assert len(terms) <= MAX_TERMS_YIELDED
+    assert terms[0] == "brandnew"
+    assert len(terms) == MAX_TERMS_YIELDED
+
+
+def test_add_term_on_yield_capped_file_stays_visible(tmp_path: Path, monkeypatch) -> None:
+    """A file at the yield cap but under the byte bound also needs the new
+    term prepended so Settings and the prompt can see it."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    original = "".join(f"t{i:05d}\n" for i in range(MAX_TERMS_YIELDED))
+    terms_file = tmp_path / TERMS_FILENAME
+    terms_file.write_text(original, encoding="utf-8")
+
+    assert manager.add_term("brandnew")
+    assert terms_file.read_text(encoding="utf-8") == f"brandnew\n{original}"
+    terms = manager.get_terms()
+    assert terms[0] == "brandnew"
+    assert len(terms) == MAX_TERMS_YIELDED
 
 
 def test_oversized_terms_file_without_complete_line_yields_nothing(

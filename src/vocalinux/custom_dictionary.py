@@ -358,7 +358,7 @@ class CustomDictionaryManager:
         return self._atomic_write(path, contents)
 
     def add_term(self, term: str) -> bool:
-        """Append one valid term without rewriting comments or blank lines."""
+        """Add one valid term without dropping or rewriting unrelated lines."""
         if self.is_transient_terms:
             logger.info("Ignoring terms edit while a CLI override is active")
             return False
@@ -376,11 +376,15 @@ class CustomDictionaryManager:
         if any(existing.casefold() == cleaned.casefold() for existing in existing_terms):
             logger.warning("Ignoring duplicate custom term %r", cleaned)
             return False
-        if len(contents.encode("utf-8")) > MAX_TERMS_FILE_BYTES:
-            # A tail append would land past the read bound where the new term
-            # stays invisible; normalize the file to its readable terms plus
-            # the addition instead, keeping the result inside the yield cap.
-            return self.save_terms([*existing_terms[: MAX_TERMS_YIELDED - 1], cleaned])
+        if (
+            len(contents.encode("utf-8")) > MAX_TERMS_FILE_BYTES
+            or len(existing_terms) >= MAX_TERMS_YIELDED
+        ):
+            # A tail append would land past the read window where the new term
+            # stays invisible, while rewriting from a capped read would drop
+            # scanner-owned lines. Prepending keeps the addition readable and
+            # leaves every existing line, comment, and blank line intact.
+            return self._atomic_write(path, f"{cleaned}\n{contents}")
         separator = "" if not contents or contents.endswith(("\n", "\r")) else "\n"
         return self._atomic_write(path, f"{contents}{separator}{cleaned}\n")
 

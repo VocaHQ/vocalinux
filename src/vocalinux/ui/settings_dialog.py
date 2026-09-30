@@ -471,6 +471,9 @@ _ACTION_WIDTH = 96
 _SPIN_WIDTH = 88
 _ICON_BUTTON_WIDTH = 36
 _PAIRED_COMBO_WIDTH = _CONTROL_WIDTH - _ICON_BUTTON_WIDTH - 8
+# Term rows are built on the UI thread, so a scanner-managed file with
+# thousands of entries is capped and the remainder summarized in one row.
+_MAX_TERMS_DISPLAYED = 500
 
 
 def _style_combo(combo: Gtk.ComboBox, width: int = _CONTROL_WIDTH) -> Gtk.ComboBox:
@@ -3656,7 +3659,8 @@ class SettingsDialog(Gtk.Dialog):
 
         for child in list(self.dictionary_terms_listbox.get_children()):
             self.dictionary_terms_listbox.remove(child)
-        for term in self.dictionary_manager.get_terms():
+        terms = self.dictionary_manager.get_terms()
+        for term in terms[:_MAX_TERMS_DISPLAYED]:
             row = Gtk.ListBoxRow()
             row.set_activatable(False)
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -3675,6 +3679,24 @@ class SettingsDialog(Gtk.Dialog):
             row_box.pack_start(remove_button, False, False, 0)
             row.add(row_box)
             self.dictionary_terms_listbox.add(row)
+        if len(terms) > _MAX_TERMS_DISPLAYED:
+            overflow_row = Gtk.ListBoxRow()
+            overflow_row.set_activatable(False)
+            overflow_label = Gtk.Label(
+                label=(
+                    f"Showing the first {_MAX_TERMS_DISPLAYED} of {len(terms)} terms; "
+                    "edit the terms file to manage the rest."
+                ),
+                xalign=0,
+            )
+            overflow_label.set_line_wrap(True)
+            overflow_label.set_margin_top(6)
+            overflow_label.set_margin_bottom(6)
+            overflow_label.set_margin_start(16)
+            overflow_label.set_margin_end(16)
+            overflow_label.get_style_context().add_class("tip-label")
+            overflow_row.add(overflow_label)
+            self.dictionary_terms_listbox.add(overflow_row)
 
         for child in list(self.dictionary_corrections_listbox.get_children()):
             self.dictionary_corrections_listbox.remove(child)
