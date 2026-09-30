@@ -1,13 +1,15 @@
 """File-backed custom dictionary support for recognition bias and transcript fixes."""
 
+import itertools
 import json
 import logging
 import os
 import re
+import shutil
 import unicodedata
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 from .utils.paths import config_dir
 
@@ -254,14 +256,12 @@ class CustomDictionaryManager:
         return False
 
     def corrections_path(self) -> Path:
-        """Return the structured corrections path.
+        """Return the fixed structured corrections path.
 
-        Corrections live beside the active terms file when that path resolves;
-        otherwise under config_dir().
+        Corrections always live under config_dir(), the location promised by
+        the file contract, so a custom or session-only terms path cannot
+        strand or duplicate them.
         """
-        terms = self.terms_path()
-        if terms is not None:
-            return terms.parent / CORRECTIONS_FILENAME
         return Path(config_dir()) / CORRECTIONS_FILENAME
 
     def get_terms(self) -> list[str]:
@@ -269,24 +269,25 @@ class CustomDictionaryManager:
         path = self.terms_path()
         if path is None:
             return []
+        return list(self._iter_terms(path))
+
+    @staticmethod
+    def _iter_terms(path: Path) -> Iterator[str]:
+        """Yield normalized, de-duplicated terms lazily so callers can stop early."""
+        seen: set[str] = set()
         try:
-            contents = path.read_text(encoding="utf-8-sig")
+            with path.open("r", encoding="utf-8-sig") as terms_file:
+                for line in terms_file:
+                    term = unicodedata.normalize("NFC", line.strip())
+                    normalized_term = term.casefold()
+                    if not term or term.startswith("#") or normalized_term in seen:
+                        continue
+                    seen.add(normalized_term)
+                    yield term
         except FileNotFoundError:
-            return []
+            return
         except (OSError, UnicodeError) as error:
             logger.warning("Could not read custom terms file: %s", error)
-            return []
-
-        terms: list[str] = []
-        seen: set[str] = set()
-        for line in contents.splitlines():
-            term = unicodedata.normalize("NFC", line.strip())
-            normalized_term = term.casefold()
-            if not term or term.startswith("#") or normalized_term in seen:
-                continue
-            seen.add(normalized_term)
-            terms.append(term)
-        return terms
 
     def save_terms(self, terms: list[str]) -> bool:
         """Safely replace the standard terms file with normalized line entries."""
@@ -363,9 +364,12 @@ class CustomDictionaryManager:
         except (TypeError, ValueError):
             logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
             max_terms = DEFAULT_MAX_TERMS
+        path = self.terms_path()
+        if path is None:
+            return None
         prompt_terms: list[str] = []
         prompt_characters = 0
-        for term in self.get_terms()[:max_terms]:
+        for term in itertools.islice(self._iter_terms(path), max_terms):
             additional_characters = len(term) + (1 if prompt_terms else 0)
             if prompt_characters + additional_characters > MAX_PROMPT_CHARACTERS:
                 logger.warning("Custom terms prompt reached %d characters", MAX_PROMPT_CHARACTERS)
@@ -390,16 +394,18 @@ class CustomDictionaryManager:
     def _read_corrections_text(self, path: Path) -> Optional[str]:
         """Return corrections JSON text, or None when no file exists.
 
-        If *path* is missing, copy once from ``config_dir()`` when that leftover
-        file exists at a different location so later saves stay co-located.
-        Copy failure still returns the old text so entries are not lost.
+        If *path* is missing, copy once from beside the terms file when a
+        leftover file from the earlier co-located contract exists there so
+        those entries survive the move to the fixed location. Copy failure
+        still returns the old text so entries are not lost.
         """
         try:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
             pass
-        old_path = Path(config_dir()) / CORRECTIONS_FILENAME
-        if old_path == path or not old_path.is_file():
+        terms = self.terms_path()
+        old_path = terms.parent / CORRECTIONS_FILENAME if terms is not None else None
+        if old_path is None or old_path == path or not old_path.is_file():
             return None
         try:
             contents = old_path.read_text(encoding="utf-8")
@@ -576,6 +582,12 @@ class CustomDictionaryManager:
                 temporary_file.write(contents)
                 temporary_file.flush()
                 os.fsync(temporary_file.fileno())
+            try:
+                # A replacement keeps the existing file's permissions; a new
+                # file keeps the umask-derived mode of the temporary file.
+                shutil.copymode(path, temporary_path)
+            except OSError:
+                pass
             os.replace(temporary_path, path)
             return True
         except OSError as error:
