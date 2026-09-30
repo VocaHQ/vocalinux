@@ -11,6 +11,7 @@ import base64
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -330,6 +331,66 @@ class TestDownloadWhispercppModel:
 
         with patch.dict("sys.modules", {"requests": mock_requests}):
             with pytest.raises(RuntimeError, match="cancelled"):
+                manager._stream_model_download("https://example.com/model.bin", dest)
+
+        assert not os.path.exists(dest)
+
+    def test_stream_model_download_cancelled_while_connecting(self, tmp_path):
+        """Cancel must not wait out a blocked request open.
+
+        requests offers no way to abort a request stuck resolving, connecting,
+        or waiting on headers — exactly what an unreachable download server
+        does. The flag is only read once chunks flow, so Cancel used to ride
+        out the whole connect/read timeout (issue #679).
+        """
+        manager = _make_manager(engine="whisper_cpp")
+        dest = str(tmp_path / "never.bin")
+
+        mock_requests = MagicMock()
+
+        def blocked_get(*args, **kwargs):
+            time.sleep(60)  # a server that never answers
+            return MagicMock()
+
+        mock_requests.get.side_effect = blocked_get
+
+        def cancel_soon():
+            time.sleep(0.3)
+            manager._download_cancelled = True
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            threading.Thread(target=cancel_soon, daemon=True).start()
+            started = time.monotonic()
+            with pytest.raises(RuntimeError, match="cancelled"):
+                manager._stream_model_download("https://example.com/model.bin", dest)
+            assert time.monotonic() - started < 10
+
+        assert not os.path.exists(dest)
+
+    def test_stream_model_download_propagates_request_errors(self, tmp_path):
+        """A failed open re-raises the original error for callers to classify."""
+        manager = _make_manager(engine="whisper_cpp")
+        dest = str(tmp_path / "err.bin")
+
+        mock_requests = MagicMock()
+        mock_requests.get.side_effect = FakeRequestError("Connection refused")
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with pytest.raises(FakeRequestError, match="Connection refused"):
+                manager._stream_model_download("https://example.com/model.bin", dest)
+
+        assert not os.path.exists(dest)
+
+    def test_stream_model_download_no_response(self, tmp_path):
+        """A helper that produced neither a response nor an error still fails."""
+        manager = _make_manager(engine="whisper_cpp")
+        dest = str(tmp_path / "none.bin")
+
+        mock_requests = MagicMock()
+        mock_requests.get.return_value = None
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with pytest.raises(RuntimeError, match="no response"):
                 manager._stream_model_download("https://example.com/model.bin", dest)
 
         assert not os.path.exists(dest)

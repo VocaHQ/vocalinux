@@ -101,9 +101,26 @@ def test_success_still_returns_true():
 def test_both_download_threads_ask_for_the_failure():
     """Source guard: every _apply_settings_internal call made off the main loop
     passes raise_errors=True, so a regression cannot silently reintroduce the
-    swallowed-error path on a worker thread."""
+    swallowed-error path on a worker thread. The two download workers must
+    also force the engine re-init — their apply exists because a model is
+    missing, and a no-op reconfigure would report the green "Model ready to
+    use" for a download that never ran."""
     import inspect
+    import re
 
     source = inspect.getsource(settings_dialog)
-    thread_calls = source.count("_apply_settings_internal(settings, raise_errors=True)")
-    assert thread_calls == 3
+    calls = re.findall(r"_apply_settings_internal\(([^)]*)\)", source)
+    worker_calls = [args for args in calls if "raise_errors=True" in args]
+    assert len(worker_calls) == 3
+    assert sum("force_reinit=True" in args for args in worker_calls) == 2
+
+
+def test_force_reinit_reaches_reconfigure():
+    """The flag exists so a needed download cannot no-op its way to green."""
+    dialog = _dialog_stub()
+
+    assert (
+        SettingsDialog._apply_settings_internal(dialog, {"engine": "vosk"}, force_reinit=True)
+        is True
+    )
+    dialog.speech_engine.reconfigure.assert_called_once_with(force_reinit=True, engine="vosk")

@@ -7506,7 +7506,9 @@ class SettingsDialog(Gtk.Dialog):
                         cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                         try:
-                            applied = self._apply_settings_internal(settings, raise_errors=True)
+                            applied = self._apply_settings_internal(
+                                settings, raise_errors=True, force_reinit=True
+                            )
                             if applied:
                                 GLib.idle_add(download_dialog.set_complete, True, "")
                                 GLib.idle_add(self._populate_model_options)
@@ -7967,7 +7969,9 @@ For now, the engine has been reverted to VOSK."""
                     cancel_check_id = GLib.timeout_add(100, check_cancelled)
 
                     try:
-                        applied = self._apply_settings_internal(settings, raise_errors=True)
+                        applied = self._apply_settings_internal(
+                            settings, raise_errors=True, force_reinit=True
+                        )
                         if applied:
                             GLib.idle_add(download_dialog.set_complete, True, "")
                         else:
@@ -8018,7 +8022,9 @@ For now, the engine has been reverted to VOSK."""
         dialog.run()
         dialog.destroy()
 
-    def _apply_settings_internal(self, settings: dict, raise_errors: bool = False) -> bool:
+    def _apply_settings_internal(
+        self, settings: dict, raise_errors: bool = False, force_reinit: bool = False
+    ) -> bool:
         """Internal method to apply settings.
 
         Args:
@@ -8027,6 +8033,10 @@ For now, the engine has been reverted to VOSK."""
                 The download threads pass True: their own handlers report the
                 failure through the progress dialog, and building a Gtk dialog
                 off the main loop is not safe anyway.
+            force_reinit: Re-initialize the engine even when the selection
+                matches its live state. The download threads pass True: they
+                only run because the model is missing on disk, and a no-op
+                reconfigure would report success for a download that never ran.
         """
         try:
             was_running = self.speech_engine.state != RecognitionState.IDLE
@@ -8037,7 +8047,7 @@ For now, the engine has been reverted to VOSK."""
             # Persist only once the engine really runs these settings: this call
             # downloads missing models, and a config saved up front would keep
             # pointing at a model that never made it to disk.
-            self.speech_engine.reconfigure(**settings)
+            self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
             self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")

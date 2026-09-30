@@ -2837,6 +2837,12 @@ class SpeechRecognitionManager:
     # without a timeout when the CDN is degraded (e.g. 504 / empty body).
     _MODEL_DOWNLOAD_TIMEOUT = (15, 120)
 
+    # How often a blocked request is re-checked for a pending cancel. requests
+    # has no cancellation API, so the blocking open runs on a helper thread:
+    # on cancel the caller stops waiting instead of riding out the whole
+    # network timeout (up to two minutes when a server never answers).
+    _DOWNLOAD_CANCEL_POLL_SECONDS = 0.2
+
     def _stream_model_download(self, url: str, dest_path: str) -> None:
         """Stream a model file from ``url`` to ``dest_path`` with progress.
 
@@ -2845,12 +2851,38 @@ class SpeechRecognitionManager:
         import requests
 
         logger.info(f"Downloading from {url}")
-        response = requests.get(
-            url,
-            stream=True,
-            timeout=self._MODEL_DOWNLOAD_TIMEOUT,
-            headers={"User-Agent": f"vocalinux/{__version__}"},
-        )
+
+        # While requests.get() is stuck resolving, connecting, or waiting for
+        # response headers — exactly what an unreachable server causes — it
+        # cannot see the cancel flag, and Cancel used to wait out the timeout.
+        # The attempt itself stays bounded by _MODEL_DOWNLOAD_TIMEOUT.
+        outcome: dict = {}
+
+        def _open() -> None:
+            try:
+                outcome["response"] = requests.get(
+                    url,
+                    stream=True,
+                    timeout=self._MODEL_DOWNLOAD_TIMEOUT,
+                    headers={"User-Agent": f"vocalinux/{__version__}"},
+                )
+            except Exception as e:  # surfaced on the calling thread below
+                outcome["error"] = e
+
+        opener = threading.Thread(target=_open, daemon=True)
+        opener.start()
+        while opener.is_alive():
+            if self._download_cancelled:
+                logger.info("Download cancelled by user")
+                raise RuntimeError("Download cancelled")
+            opener.join(self._DOWNLOAD_CANCEL_POLL_SECONDS)
+
+        if "error" in outcome:
+            raise outcome["error"]
+        response = outcome.get("response")
+        if response is None:
+            raise RuntimeError(f"Model download from {url} produced no response")
+
         response.raise_for_status()
 
         content_type = (response.headers.get("content-type") or "").lower()
