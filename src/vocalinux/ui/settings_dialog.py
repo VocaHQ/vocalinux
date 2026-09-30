@@ -2196,8 +2196,8 @@ def _set_no_show_all_visible(widget: Gtk.Widget, visible: bool) -> None:
 
     ``show_all()`` skips flagged widgets, so revealing one means clearing the
     flag first; hiding re-arms it so the next dialog-level ``show_all()``
-    leaves it alone. The rows created hidden (second language, custom
-    shortcut, model recommendation, language warning) all go through here.
+    leaves it alone. The second-language and custom-shortcut rows use this
+    helper.
     """
     if visible:
         widget.set_no_show_all(False)
@@ -2309,7 +2309,9 @@ def _undownloaded_model_info(language: str, engine: str, model_name: str) -> Opt
     return None
 
 
-def _make_download_dialog(dialog: "SettingsDialog", model_name: str, size_mb: int, engine: str):
+def _make_download_dialog(
+    dialog: "SettingsDialog", model_name: str, size_mb: int, engine: str
+) -> "ModelDownloadDialog":
     """Build the modal progress dialog for a pending model download."""
     return ModelDownloadDialog(
         dialog,
