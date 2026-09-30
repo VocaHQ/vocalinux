@@ -14,7 +14,7 @@ import subprocess
 import threading
 import time
 from enum import Enum
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from ..utils.host_process import host_env
 from ..utils.paths import config_dir
@@ -25,6 +25,7 @@ from .ibus_engine import (
     is_ibus_available,
     is_ibus_daemon_running,
 )
+from .remote_desktop_portal import KEYSYM_BACKSPACE, RemoteDesktopPortal, RemoteDesktopPortalError
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,7 @@ class TextInjector:
             wayland_mode: Force Wayland compatibility mode
         """
         self._ibus_injector: Optional[IBusTextInjector] = None
+        self._portal: Optional[RemoteDesktopPortal] = None
         self._backend_pin: Tuple[str, Optional[str]] = ("auto", None)
         self.environment = self._detect_environment()
         self._session_environment = self.environment
@@ -194,6 +196,11 @@ class TextInjector:
                 logger.info("Stopping IBus text injector")
                 self._ibus_injector.stop()
                 self._ibus_injector = None
+            portal = getattr(self, "_portal", None)
+            if portal is not None:
+                logger.info("Closing RemoteDesktop portal session")
+                portal.close()
+                self._portal = None
             self._ibus_ready = False
 
     def _probe_wtype_support(self) -> subprocess.CompletedProcess:
@@ -258,7 +265,11 @@ class TextInjector:
     # Backends a user may pin explicitly, via VOCALINUX_FORCE_BACKEND or the
     # text_injection.backend setting. Named once so the two readers and the two
     # "expected ..." messages cannot drift apart as values are added.
-    _SELECTABLE_BACKENDS = ("ibus", "wtype", "ydotool", "xdotool")
+    _SELECTABLE_BACKENDS = ("ibus", "portal", "wtype", "ydotool", "xdotool")
+
+    # The chosen Wayland injection tool; None until _check_dependencies picks
+    # one (readers go through getattr because __new__ tests skip __init__).
+    wayland_tool: Optional[str]
 
     @staticmethod
     def _accepted_backends_help() -> str:
@@ -502,7 +513,8 @@ class TextInjector:
         variable exists for. Collapsing it into "nothing was set" would let the
         saved pin win and make the variable useless for that.
 
-        Accepts ``ibus``, ``wtype``, ``ydotool``, ``xdotool`` or ``auto``.
+        Accepts ``ibus``, ``portal``, ``wtype``, ``ydotool``, ``xdotool`` or
+        ``auto``.
         """
         raw = os.environ.get("VOCALINUX_FORCE_BACKEND")
         if raw is None:
@@ -567,8 +579,9 @@ class TextInjector:
         when the inference is wrong, and makes the two paths A/B-testable
         without editing code.
 
-        Accepts ``ibus``, ``wtype``, ``ydotool``, ``xdotool`` or ``auto``. Anything else is
-        ignored with a warning, so a typo cannot silently pin a backend.
+        Accepts ``ibus``, ``portal``, ``wtype``, ``ydotool``, ``xdotool`` or
+        ``auto``. Anything else is ignored with a warning, so a typo cannot
+        silently pin a backend.
 
         This covers the environment variable only. ``_backend_preference()``
         combines it with the persistent ``text_injection.backend`` setting, and
@@ -788,10 +801,13 @@ class TextInjector:
         if resolved is None or resolved == pinned:
             return
 
-        if pinned in self._SELECTABLE_BACKENDS and pinned != "ibus":
+        if pinned == "ibus":
+            reason = " (IBus support is not available)" if not is_ibus_available() else ""
+        elif pinned == "portal":
+            # The portal is not a binary; probe it rather than PATH.
+            reason = "" if self._portal_probe() else " (RemoteDesktop portal is not available)"
+        elif pinned in self._SELECTABLE_BACKENDS:
             reason = f" ({pinned} is not installed)" if not shutil.which(pinned) else ""
-        elif pinned == "ibus" and not is_ibus_available():
-            reason = " (IBus support is not available)"
         else:
             reason = ""
         logger.warning(
@@ -904,19 +920,39 @@ class TextInjector:
             wtype_available = shutil.which("wtype") is not None
             ydotool_available = shutil.which("ydotool") is not None
             xdotool_available = shutil.which("xdotool") is not None
+            # A pinned wtype/ydotool that is installed is honoured without
+            # autodetection, so probing the portal -- a session-bus round
+            # trip on a private worker -- is skipped for those users.
+            pinned_tool_present = (forced == "wtype" and wtype_available) or (
+                forced == "ydotool" and ydotool_available
+            )
+            portal_available = not pinned_tool_present and self._portal_probe()
 
             if ydotool_available:
                 _warn_if_ydotool_globally_enabled()
 
             # Prefer ydotool when the daemon is (or can be) ready. Flatpak ships
             # ydotool for native Wayland typing; wtype needs a Wayland socket.
-            if forced == "wtype" and wtype_available:
+            # The RemoteDesktop portal sits ahead of both in autodetection: it
+            # is the only injection path Wayland sanctions, works inside the
+            # Flatpak sandbox without /dev/uinput, and reaches native clients
+            # on compositors with no input-method-v2 bridge.
+            if forced == "portal" and portal_available:
+                self._select_portal_backend(
+                    "%s=portal: using RemoteDesktop portal for Wayland injection",
+                    pin_source,
+                )
+            elif forced == "wtype" and wtype_available:
                 self.wayland_tool = "wtype"
                 logger.info("%s=wtype: using wtype for Wayland injection", pin_source)
             elif forced == "ydotool" and ydotool_available:
                 self._ensure_ydotoold()
                 self.wayland_tool = "ydotool"
                 logger.info("%s=ydotool: using ydotool for Wayland injection", pin_source)
+            elif portal_available:
+                self._select_portal_backend(
+                    "Using the RemoteDesktop portal for Wayland text injection"
+                )
             elif ydotool_available and self._ensure_ydotoold():
                 self.wayland_tool = "ydotool"
                 logger.info("Using ydotool for Wayland text injection")
@@ -955,6 +991,144 @@ class TextInjector:
 
         if ibus_requested:
             self._start_ibus_initialization()
+
+    def _portal_probe(self) -> bool:
+        """Check whether the RemoteDesktop portal can inject keyboard events.
+
+        The client is created lazily and cached on first success so
+        ``wayland_tool == "portal"`` reuses the same connection/worker. The
+        probe itself only asks the portal for its interface version; the
+        session handshake (and its one-time permission prompt) is deferred
+        to the first actual injection.
+        """
+        # getattr: __new__-constructed injectors (tests) lack __init__ attrs.
+        portal = getattr(self, "_portal", None)
+        if portal is None:
+            if not RemoteDesktopPortal.supported():
+                return False
+            try:
+                portal = RemoteDesktopPortal()
+            except Exception as e:
+                logger.debug(f"Could not create the RemoteDesktop portal client: {e}")
+                return False
+        try:
+            if portal.probe():
+                self._portal = portal
+                return True
+        except Exception as e:
+            logger.debug(f"RemoteDesktop portal probe failed: {e}")
+        return False
+
+    def _select_portal_backend(self, log_message: str, *args: object) -> None:
+        """Select the RemoteDesktop portal as the Wayland injection tool."""
+        self.wayland_tool = "portal"
+        if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
+            # The portal reaches native Wayland clients, not just XWayland, so
+            # a Flatpak session that demoted to XWayland upgrades back.
+            self.environment = DesktopEnvironment.WAYLAND
+        logger.info(log_message, *args)
+
+    def _try_inject_with_portal(self, text: str) -> Tuple[bool, str]:
+        """Send text through the RemoteDesktop portal.
+
+        Returns ``(True, "")`` on success. On failure the second element is
+        the part of ``text`` the portal had not typed yet -- the whole string
+        when it never got started, the tail when it failed mid-string -- so
+        the fallback backend does not duplicate delivered characters.
+        """
+        portal = getattr(self, "_portal", None)
+        if portal is None:
+            return False, text
+        try:
+            return bool(portal.inject_text(text)), ""
+        except RemoteDesktopPortalError as e:
+            logger.warning(f"RemoteDesktop portal injection failed: {e}")
+            return False, text[e.delivered :]
+        except Exception as e:
+            logger.warning(f"RemoteDesktop portal injection failed: {e}")
+            return False, text
+
+    def _try_portal_keypress(self, keysym: int, count: int = 1) -> Tuple[bool, int]:
+        """Tap one keysym ``count`` times through the portal.
+
+        Returns ``(True, 0)`` on success; on failure the taps still owed, so
+        the fallback does not re-send presses the portal already delivered.
+        """
+        portal = getattr(self, "_portal", None)
+        if portal is None:
+            return False, count
+        try:
+            portal.tap_keysym(keysym, count)
+            return True, 0
+        except RemoteDesktopPortalError as e:
+            logger.warning(f"RemoteDesktop portal key event failed: {e}")
+            return False, max(0, count - e.delivered)
+        except Exception as e:
+            logger.warning(f"RemoteDesktop portal key event failed: {e}")
+            return False, count
+
+    def _try_portal_shortcut(
+        self, steps: List[Tuple[List[str], str]]
+    ) -> Tuple[bool, List[Tuple[List[str], str]]]:
+        """Send parsed shortcut steps through the portal.
+
+        Returns ``(True, [])`` on success; on failure the steps still to
+        send, so the fallback does not re-run steps that already fired.
+        """
+        portal = getattr(self, "_portal", None)
+        if portal is None:
+            return False, steps
+        try:
+            portal.send_shortcut(steps)
+            return True, []
+        except RemoteDesktopPortalError as e:
+            logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
+            return False, list(steps[e.delivered :])
+        except Exception as e:
+            logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
+            return False, list(steps)
+
+    def _demote_portal_backend(self) -> bool:
+        """Drop the portal for this run and pick the next Wayland tool.
+
+        Mirrors the startup preference: ydotool with a ready daemon, then
+        ydotool alone when wtype is absent, then wtype, then the XWayland
+        fallback. Returns False when nothing else exists, leaving the
+        clipboard fallback to report the failure.
+        """
+        portal = getattr(self, "_portal", None)
+        if portal is not None:
+            try:
+                portal.close()
+            except Exception as e:
+                logger.debug(f"Could not close RemoteDesktop portal client: {e}")
+            self._portal = None
+        with self._state_lock:
+            self.wayland_tool = None
+
+        ydotool_available = shutil.which("ydotool") is not None
+        wtype_available = shutil.which("wtype") is not None
+        xdotool_available = shutil.which("xdotool") is not None
+
+        tool = None
+        if ydotool_available and self._ensure_ydotoold():
+            tool = "ydotool"
+        elif ydotool_available and not wtype_available:
+            tool = "ydotool"
+        elif wtype_available:
+            tool = "wtype"
+        elif xdotool_available:
+            with self._state_lock:
+                self.environment = DesktopEnvironment.WAYLAND_XDOTOOL
+            logger.warning("RemoteDesktop portal failed; using xdotool/XWayland fallback")
+            return True
+        else:
+            return False
+
+        with self._state_lock:
+            self.wayland_tool = tool
+        logger.warning(f"RemoteDesktop portal failed; falling back to {tool}")
+        return True
 
     def _start_ibus_initialization(self) -> None:
         if self._ibus_injector is None or self._ibus_init_thread is not None:
@@ -2274,8 +2448,24 @@ class TextInjector:
         """
         # Wait for the shortcut modifier(s) to be released first, so a held Alt
         # doesn't turn the Ctrl+V paste into Ctrl+Alt+V (nothing pastes) or
-        # modify typed keys.
+        # modify typed keys. The portal's keysyms are equally affected by a
+        # still-held physical modifier, so the wait stays ahead of every tool.
         self._wait_for_modifiers_released()
+
+        if self.wayland_tool == "portal":
+            portal_ok, remaining_text = self._try_inject_with_portal(text)
+            if portal_ok:
+                return
+            if not self._demote_portal_backend():
+                raise RuntimeError(
+                    "RemoteDesktop portal injection failed and no Wayland fallback is available"
+                )
+            if not remaining_text:
+                return
+            if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
+                self._inject_with_xdotool(remaining_text)
+                return
+            text = remaining_text
 
         # Prefer clipboard + paste chord for ydotool: one chord instead of
         # per-character evdev keycodes (those follow physical US key positions
@@ -2398,6 +2588,19 @@ class TextInjector:
         # A held toggle/PTT modifier rewrites the chord we are about to send, so
         # wait it out first -- same reason and placement as _inject_with_wayland_tool.
         self._wait_for_modifiers_released()
+
+        if self.wayland_tool == "portal":
+            portal_ok, remaining_steps = self._try_portal_shortcut(steps)
+            if portal_ok:
+                return True
+            if not self._demote_portal_backend():
+                return False
+            if not remaining_steps:
+                return True
+            steps = remaining_steps
+            if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
+                return self._inject_shortcut_with_xdotool(self._steps_to_shortcut(steps))
+            # Fall through to the demoted wtype/ydotool.
 
         if self.wayland_tool == "wtype":
             # wtype does support combinations: -M presses a modifier, -k types a
@@ -2593,6 +2796,15 @@ class TextInjector:
             raise ValueError("no key found")
         return steps
 
+    @staticmethod
+    def _steps_to_shortcut(steps: List[Tuple[List[str], str]]) -> str:
+        """Render parsed ``_parse_shortcut`` steps back as a ``+``-joined string.
+
+        Used to hand only the unsent tail of a partially delivered shortcut
+        to the xdotool fallback, which takes a shortcut string, not steps.
+        """
+        return "+".join("+".join(modifiers + [key]) for modifiers, key in steps)
+
     def press_backspace(self, count: int) -> bool:
         """Send ``count`` real BackSpace key events.
 
@@ -2650,6 +2862,16 @@ class TextInjector:
         if not tool:
             logger.error("No virtual-keyboard tool available to send backspaces")
             return False
+
+        if tool == "portal":
+            portal_ok, remaining = self._try_portal_keypress(KEYSYM_BACKSPACE, count)
+            if portal_ok:
+                return True
+            if not self._demote_portal_backend():
+                return False
+            if remaining <= 0:
+                return True
+            return self.press_backspace(remaining)
 
         if tool == "ydotool" and not self._ensure_ydotoold():
             # Checked on every call, not just when the tool is first resolved:

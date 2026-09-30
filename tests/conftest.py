@@ -141,6 +141,17 @@ def _suppress_desktop_notifications(request):
 
 
 @pytest.fixture(autouse=True)
+def _no_remote_desktop_portal(monkeypatch):
+    """Keep the RemoteDesktop portal probe off in tests.
+
+    ``gi`` is a MagicMock here, so the module's import-time availability flag
+    is True and an unpatched probe would spawn its worker thread against a
+    mocked D-Bus. Tests that exercise the portal re-patch this themselves.
+    """
+    monkeypatch.setattr("vocalinux.text_injection.remote_desktop_portal.PORTAL_AVAILABLE", False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_shared_config_manager():
     """Drop the process-wide ConfigManager between tests.
 

@@ -16,15 +16,17 @@ finish-args:
   # Shared memory for X11 / XWayland.
   - --share=ipc
   # X11 for xdotool fallback; Wayland for wl-copy (instant paste into native apps).
-  # Injection itself uses ydotool/uinput (not the Wayland virtual-keyboard protocol).
+  # Injection prefers the RemoteDesktop portal (DBus, keysyms) and falls back
+  # to ydotool/uinput -- not the Wayland virtual-keyboard protocol.
   - --socket=x11
   - --socket=wayland
   # Microphone capture (works against PulseAudio and PipeWire-pulse).
   - --socket=pulseaudio
   # GPU render node for the Vulkan-accelerated whisper.cpp build.
   - --device=dri
-  # /dev/input for global hotkeys (evdev) and /dev/uinput for ydotool (Ctrl+V /
-  # type). Flatpak has no narrower flag than "all" for uinput.
+  # /dev/input for global hotkeys (evdev) and /dev/uinput for the ydotool
+  # injection fallback (Ctrl+V / type) when the RemoteDesktop portal is
+  # unavailable. Flatpak has no narrower flag than "all" for uinput.
   - --device=all
   # IBus Unicode injection backend.
   - --talk-name=org.freedesktop.IBus
