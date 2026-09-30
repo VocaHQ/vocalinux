@@ -2470,6 +2470,10 @@ class SettingsDialog(Gtk.Dialog):
         self._follow_layout_active = False
         self._applying_settings = False  # Flag to prevent recursive settings application
         self._advanced_prompt_dirty = False
+        self._language_candidates_dirty = False
+        # Deferred text edits stashed when the dialog closes mid-apply; persisted
+        # by _finish_auto_apply once the running apply releases the guard.
+        self._pending_text_edits: Optional[dict] = None
         self._about_release_url = ""
         self._update_check_in_progress = False
         self._update_check_generation = 0
@@ -4853,7 +4857,9 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_entropy_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_logprob_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_no_speech_thold_spin.connect("value-changed", self._on_advanced_param_changed)
-        self.advanced_language_candidates_entry.connect("changed", self._on_advanced_param_changed)
+        self.advanced_language_candidates_entry.connect(
+            "changed", self._on_language_candidates_changed
+        )
 
         self.advanced_initial_prompt_buffer = self.advanced_initial_prompt_textview.get_buffer()
         self.advanced_initial_prompt_buffer.connect("changed", self._on_advanced_prompt_changed)
@@ -5539,23 +5545,63 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_advanced_prompt_changed(self, buffer):
         """Track prompt edits without applying settings on every keystroke."""
-        if self._initializing or self._applying_settings:
+        if self._initializing:
             return
         self._advanced_prompt_dirty = True
 
+    def _on_language_candidates_changed(self, entry):
+        """Track candidate edits without applying settings on every keystroke."""
+        if self._initializing:
+            return
+        self._language_candidates_dirty = True
+
+    def _deferred_text_edit_settings(self) -> dict[str, Any]:
+        """Current values of the deferred text fields, for a mid-apply close."""
+        pending: dict[str, Any] = {}
+        if self._advanced_prompt_dirty:
+            pending["whispercpp_initial_prompt"] = self.advanced_initial_prompt_buffer.get_text(
+                self.advanced_initial_prompt_buffer.get_start_iter(),
+                self.advanced_initial_prompt_buffer.get_end_iter(),
+                False,
+            )
+        if self._language_candidates_dirty:
+            pending["whispercpp_language_candidates"] = (
+                self.advanced_language_candidates_entry.get_text()
+            )
+        return pending
+
     def _flush_advanced_prompt_if_dirty(self):
-        """Apply deferred initial prompt edits."""
-        if not self._advanced_prompt_dirty or self._initializing or self._applying_settings:
+        """Apply deferred advanced text edits (initial prompt, language candidates)."""
+        if self._initializing:
+            return
+        if not (self._advanced_prompt_dirty or self._language_candidates_dirty):
+            return
+        if self._applying_settings:
+            # The apply holding the guard cannot see these edits; stash them so
+            # _finish_auto_apply can re-apply (dialog open) or persist (closed).
+            self._pending_text_edits = self._deferred_text_edit_settings()
             return
         self._auto_apply_settings()
-        self._advanced_prompt_dirty = False
+
+    def _persist_pending_text_edits(self) -> None:
+        """Persist deferred edits captured when the dialog closed mid-apply."""
+        pending = self._pending_text_edits
+        self._pending_text_edits = None
+        if not pending:
+            return
+        try:
+            self.speech_engine.reconfigure(**pending)
+            for key, value in pending.items():
+                self.config_manager.set("advanced", key, value)
+            self.config_manager.save_settings()
+        except Exception as e:
+            logger.warning(f"Could not persist deferred settings edits: {e}")
 
     def _on_advanced_param_changed(self, widget, *args):
         """Handle any advanced parameter change."""
         if self._initializing or self._applying_settings:
             return False
         self._auto_apply_settings()
-        self._advanced_prompt_dirty = False
         return False
 
     def _on_reset_advanced_clicked(self, widget):
@@ -5729,8 +5775,16 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_initial_prompt_buffer.set_text(
             advanced_settings.get("whispercpp_initial_prompt", ""), -1
         )
+        # The saved value may be a JSON list (the engine accepts both forms);
+        # render the canonical comma-separated text its normalization produces.
+        from ..speech_recognition.recognition_manager import SpeechRecognitionManager
+
         self.advanced_language_candidates_entry.set_text(
-            advanced_settings.get("whispercpp_language_candidates", "")
+            ",".join(
+                SpeechRecognitionManager._normalize_language_candidates(
+                    advanced_settings.get("whispercpp_language_candidates", "")
+                )
+            )
         )
         self.advanced_temperature_spin.set_value(
             advanced_settings.get("whispercpp_temperature", 0.0)
@@ -7169,6 +7223,11 @@ class SettingsDialog(Gtk.Dialog):
         worker_holds_guard = False
         try:
             settings = self.get_selected_settings()
+            # Collecting consumed every deferred text field; clear the flags
+            # here so edits that arrived mid-apply still schedule a follow-up.
+            self._advanced_prompt_dirty = False
+            self._language_candidates_dirty = False
+            self._pending_text_edits = None
             engine = settings.get("engine", "vosk")
             model_name = settings.get("model_size", "small")
 
@@ -7304,7 +7363,15 @@ class SettingsDialog(Gtk.Dialog):
         """
         self._applying_settings = False
         if self._dialog_is_alive():
-            self._resync_model_ui_from_config()
+            if self._advanced_prompt_dirty or self._language_candidates_dirty:
+                # Edits landed while the guard was held; run their apply now.
+                self._auto_apply_settings()
+            else:
+                self._resync_model_ui_from_config()
+        else:
+            # Closed mid-apply: the running apply saved an older snapshot, so
+            # write any edits it could not see now that it has finished.
+            self._persist_pending_text_edits()
         return False
 
     def _idle_resync_model_ui_from_config(self) -> bool:
@@ -7633,6 +7700,11 @@ For now, the engine has been reverted to VOSK."""
             return False
 
         settings = self.get_selected_settings()
+        # Same consumption as _auto_apply_settings: an apply snapshots the
+        # deferred text fields, so their pending-edit flags are done.
+        self._advanced_prompt_dirty = False
+        self._language_candidates_dirty = False
+        self._pending_text_edits = None
         logger.info(f"Applying settings: {settings}")
 
         engine = settings.get("engine", "vosk")
