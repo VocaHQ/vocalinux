@@ -1788,6 +1788,42 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
         finally:
             stack.close()
 
+    def test_late_first_transcript_from_untagged_worker_is_saved(self) -> None:
+        """A worker that produced nothing before IDLE still lands its late output."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            state_cb(RecognitionState.IDLE)  # produced nothing: worker never tagged
+            self.assertEqual(self._texts(history), [])
+
+            # A new session opens on a different worker before A's worker
+            # emits its first text: the straggler is still the just-ended
+            # session's, and its only output becomes its own entry — it must
+            # not be dropped just because the engine's current worker moved on.
+            worker_b, jobs_b = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_b
+            state_cb(RecognitionState.LISTENING)
+            jobs_a.put(lambda: text_cb("A late output"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), ["A late output"])
+
+            jobs_b.put(lambda: text_cb("session B"))
+            jobs_b.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["session B", "A late output"])
+
+            # And a further straggler from A keeps merging into A's entry.
+            jobs_a.put(lambda: text_cb("tail"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), ["session B", "A late output tail"])
+
+            jobs_a.put(None)
+            jobs_b.put(None)
+        finally:
+            stack.close()
+
     def test_late_segment_from_untracked_worker_is_dropped(self) -> None:
         """A worker no session recorded cannot be attributed; it drops."""
         stack, text_cb, state_cb, history, _ = self._boot()

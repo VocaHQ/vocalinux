@@ -700,14 +700,19 @@ def main():
                     target_entry, target_epoch = mapped
                 elif (
                     worker is ended_session_worker
+                    or ended_session_worker is None
                     or worker is current_worker
                     or not isinstance(current_worker, threading.Thread)
                 ):
                     # Unmapped but attributable to the just-ended session:
                     # its recorded worker still draining, the engine's live
-                    # worker thread, or an engine exposing no worker at all
-                    # (mocks, tests), where any late segment is presumed to
-                    # be the just-ended session's straggler.
+                    # worker thread, an engine exposing no worker at all
+                    # (mocks, tests), or a session whose worker was never
+                    # tagged — it produced nothing while open, so a late
+                    # fragment is presumed to be its only output trickling
+                    # out. That also means ended_session_entry is None here,
+                    # so this path can only form the session's own entry,
+                    # never extend a different session's.
                     target_entry, target_epoch = ended_session_entry, ended_session_epoch
                 else:
                     # A worker from a session older than the map retains:
