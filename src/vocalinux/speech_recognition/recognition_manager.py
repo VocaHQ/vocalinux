@@ -3931,7 +3931,7 @@ class SpeechRecognitionManager:
 
                     audio = pyaudio.PyAudio()
                     self._pyaudio_instance = audio
-                except Exception as e:
+                except (ImportError, OSError, AttributeError) as e:
                     logger.error(f"Failed to initialize PyAudio for reconnection: {e}")
                     return False
         ok = source.reopen(audio)

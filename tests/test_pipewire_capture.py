@@ -5,8 +5,10 @@ integration into recognition_manager (issue #751).
 
 import io
 import json
+import os
 import sys
 import unittest
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
 from vocalinux.audio.pipewire import (
@@ -32,7 +34,9 @@ from vocalinux.speech_recognition.recognition_manager import (
 )
 
 
-def _node(object_id, serial, media_class, node_name, description):
+def _node(
+    object_id: int, serial: int, media_class: str, node_name: str, description: str
+) -> Dict[str, Any]:
     return {
         "id": object_id,
         "type": "PipeWire:Interface:Node",
@@ -73,7 +77,11 @@ PW_DUMP = [
 ]
 
 
-def _source(node_name="alsa_output.dac", description="Built-in Audio Analog Stereo", **kw):
+def _source(
+    node_name: str = "alsa_output.dac",
+    description: str = "Built-in Audio Analog Stereo",
+    **kw: Any,
+) -> PipeWireSource:
     return PipeWireSource(
         node_name=node_name,
         description=description,
@@ -85,38 +93,40 @@ def _source(node_name="alsa_output.dac", description="Built-in Audio Analog Ster
 class _FakeProcess:
     """Minimal Popen stand-in for PipeWireCaptureSource tests."""
 
-    def __init__(self, payload=b"", exit_code=None):
+    def __init__(self, payload: bytes = b"", exit_code: Optional[int] = None) -> None:
         self.stdout = io.BytesIO(payload)
         self._exit_code = exit_code
         self.terminated = False
         self.killed = False
         self.waited = False
 
-    def poll(self):
+    def poll(self) -> Optional[int]:
         return self._exit_code
 
-    def terminate(self):
+    def terminate(self) -> None:
         self.terminated = True
         self._exit_code = 0
 
-    def kill(self):
+    def kill(self) -> None:
         self.killed = True
         self._exit_code = -9
 
-    def wait(self, timeout=None):
+    def wait(self, timeout: Optional[float] = None) -> int:
         self.waited = True
         return self._exit_code if self._exit_code is not None else 0
 
 
-def _popen_factory(process, calls):
-    def _fake_popen(args, **kwargs):
+def _popen_factory(
+    process: _FakeProcess, calls: List[Tuple[List[str], Dict[str, Any]]]
+) -> Callable[..., _FakeProcess]:
+    def _fake_popen(args: List[str], **kwargs: Any) -> _FakeProcess:
         calls.append((args, kwargs))
         return process
 
     return _fake_popen
 
 
-def _make_manager(**kw):
+def _make_manager(**kw: Any) -> SpeechRecognitionManager:
     """Create a manager with engine init patched out."""
     with patch.object(SpeechRecognitionManager, "_init_vosk"):
         with patch.object(SpeechRecognitionManager, "_init_whisper"):
@@ -131,23 +141,23 @@ def _make_manager(**kw):
 
 
 class TestParsePwDump(unittest.TestCase):
-    def test_sinks_only_sorted_by_serial(self):
+    def test_sinks_only_sorted_by_serial(self) -> None:
         sources = _parse_pw_dump(PW_DUMP)
         names = [s.node_name for s in sources]
         # Mic sources and app streams are excluded; order follows serials.
         assert names == ["alsa_output.dac", "obs_sink"]
 
-    def test_default_sink_flagged(self):
+    def test_default_sink_flagged(self) -> None:
         sources = _parse_pw_dump(PW_DUMP)
         by_name = {s.node_name: s for s in sources}
         assert by_name["alsa_output.dac"].is_default is True
         assert by_name["obs_sink"].is_default is False
 
-    def test_display_name_uses_prefix(self):
+    def test_display_name_uses_prefix(self) -> None:
         sources = _parse_pw_dump(PW_DUMP)
         assert sources[0].display_name == f"{SYSTEM_AUDIO_PREFIX}Built-in Audio Analog Stereo"
 
-    def test_duplicate_descriptions_get_disambiguated(self):
+    def test_duplicate_descriptions_get_disambiguated(self) -> None:
         objects = [
             _node(1, 1, "Audio/Sink", "sink_a", "Speakers"),
             _node(2, 2, "Audio/Sink", "sink_b", "Speakers"),
@@ -156,7 +166,7 @@ class TestParsePwDump(unittest.TestCase):
         labels = sorted(s.label for s in sources)
         assert labels == ["Speakers (sink_a)", "Speakers (sink_b)"]
 
-    def test_missing_description_falls_back_to_node_name(self):
+    def test_missing_description_falls_back_to_node_name(self) -> None:
         objects = [
             {
                 "id": 1,
@@ -173,35 +183,43 @@ class TestParsePwDump(unittest.TestCase):
         sources = _parse_pw_dump(objects)
         assert sources[0].display_name == f"{SYSTEM_AUDIO_PREFIX}sink_x"
 
-    def test_non_list_and_malformed_entries(self):
+    def test_non_list_and_malformed_entries(self) -> None:
         assert _parse_pw_dump("not a list") == []
         assert _parse_pw_dump([None, "x", {"type": "PipeWire:Interface:Node"}]) == []
 
 
 class TestGetSystemAudioSources(unittest.TestCase):
-    def test_missing_pw_dump_returns_empty(self):
+    def test_missing_pw_dump_returns_empty(self) -> None:
         assert get_system_audio_sources(which=lambda name: None) == []
 
-    def test_nonzero_exit_returns_empty(self):
+    def test_missing_pw_record_returns_empty(self) -> None:
+        # pw-dump alone cannot capture — without pw-record the picker must
+        # not offer sources that always fail to open.
+        def _which(name: str) -> Optional[str]:
+            return "/usr/bin/pw-dump" if name == "pw-dump" else None
+
+        assert get_system_audio_sources(which=_which) == []
+
+    def test_nonzero_exit_returns_empty(self) -> None:
         sources = get_system_audio_sources(
             runner=lambda args: (1, "", "boom"), which=lambda name: "/usr/bin/pw-dump"
         )
         assert sources == []
 
-    def test_invalid_json_returns_empty(self):
+    def test_invalid_json_returns_empty(self) -> None:
         sources = get_system_audio_sources(
             runner=lambda args: (0, "{nope", ""), which=lambda name: "/usr/bin/pw-dump"
         )
         assert sources == []
 
-    def test_runner_exception_returns_empty(self):
-        def _boom(args):
+    def test_runner_exception_returns_empty(self) -> None:
+        def _boom(args: List[str]) -> Tuple[int, str, str]:
             raise OSError("spawn failed")
 
         sources = get_system_audio_sources(runner=_boom, which=lambda name: "/usr/bin/pw-dump")
         assert sources == []
 
-    def test_happy_path_parses_dump(self):
+    def test_happy_path_parses_dump(self) -> None:
         sources = get_system_audio_sources(
             runner=lambda args: (0, json.dumps(PW_DUMP), ""),
             which=lambda name: "/usr/bin/pw-dump",
@@ -210,7 +228,7 @@ class TestGetSystemAudioSources(unittest.TestCase):
 
 
 class TestDevicePredicates(unittest.TestCase):
-    def test_is_pipewire_device_index(self):
+    def test_is_pipewire_device_index(self) -> None:
         assert is_pipewire_device_index(PIPEWIRE_INDEX_BASE)
         assert is_pipewire_device_index(-3)
         assert not is_pipewire_device_index(-1)  # -1 is PortAudio "system default"
@@ -218,7 +236,7 @@ class TestDevicePredicates(unittest.TestCase):
         assert not is_pipewire_device_index(None)
         assert not is_pipewire_device_index(True)
 
-    def test_is_pipewire_device(self):
+    def test_is_pipewire_device(self) -> None:
         assert is_pipewire_device(-2, None)
         assert is_pipewire_device(None, f"{SYSTEM_AUDIO_PREFIX}Speakers")
         assert is_pipewire_device(3, f"{SYSTEM_AUDIO_PREFIX}Speakers")
@@ -227,35 +245,82 @@ class TestDevicePredicates(unittest.TestCase):
 
 
 class TestResolvePipewireSource(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.sources = [
             _source("alsa_output.dac", "DAC", serial=41),
             _source("obs_sink", "OBS Output", serial=55),
         ]
 
-    def test_resolves_by_display_name(self):
+    def test_resolves_by_display_name(self) -> None:
         name = self.sources[1].display_name
         assert resolve_pipewire_source(None, name, self.sources) is self.sources[1]
 
-    def test_resolves_by_index_position(self):
+    def test_resolves_by_index_position(self) -> None:
         assert resolve_pipewire_source(PIPEWIRE_INDEX_BASE, None, self.sources) is self.sources[0]
         assert (
             resolve_pipewire_source(PIPEWIRE_INDEX_BASE - 1, None, self.sources) is self.sources[1]
         )
 
-    def test_name_wins_over_index(self):
+    def test_name_wins_over_index(self) -> None:
         name = self.sources[1].display_name
         # Stale index pointing at position 0, name pointing at OBS.
         assert resolve_pipewire_source(PIPEWIRE_INDEX_BASE, name, self.sources) is self.sources[1]
 
-    def test_out_of_range_and_missing(self):
+    def test_out_of_range_and_missing(self) -> None:
         assert resolve_pipewire_source(PIPEWIRE_INDEX_BASE - 9, None, self.sources) is None
         assert resolve_pipewire_source(PIPEWIRE_INDEX_BASE, "System audio: Gone", []) is None
         assert resolve_pipewire_source(None, None, self.sources) is None
 
+    def test_unresolved_name_never_falls_back_to_index(self) -> None:
+        # The named sink is gone; another sink now sits at the stored index
+        # position. Index fallback would silently capture the wrong device.
+        assert (
+            resolve_pipewire_source(PIPEWIRE_INDEX_BASE, "System audio: Gone", self.sources) is None
+        )
+
+    def test_duplicate_description_disambiguated_by_position(self) -> None:
+        # A second sink with the same description was added after the name
+        # was stored; its higher serial sorts it last, so the stored index
+        # position still points at the originally selected sink.
+        dup_a = _source("sink_a", "Speakers", serial=10, label="Speakers (sink_a)")
+        dup_b = _source("sink_b", "Speakers", serial=20, label="Speakers (sink_b)")
+        sources = [dup_a, dup_b]
+        assert (
+            resolve_pipewire_source(PIPEWIRE_INDEX_BASE, "System audio: Speakers", sources) is dup_a
+        )
+        assert (
+            resolve_pipewire_source(PIPEWIRE_INDEX_BASE - 1, "System audio: Speakers", sources)
+            is dup_b
+        )
+
+    def test_ambiguous_description_without_position_returns_none(self) -> None:
+        # Labels as _parse_pw_dump emits them once descriptions collide.
+        dup_a = _source("sink_a", "Speakers", serial=10, label="Speakers (sink_a)")
+        dup_b = _source("sink_b", "Speakers", serial=20, label="Speakers (sink_b)")
+        sources = [dup_a, dup_b]
+        assert resolve_pipewire_source(None, "System audio: Speakers", sources) is None
+        # Index pointing at a non-candidate must not pick one anyway.
+        assert (
+            resolve_pipewire_source(PIPEWIRE_INDEX_BASE - 5, "System audio: Speakers", sources)
+            is None
+        )
+
+    def test_node_name_suffix_survives_description_change(self) -> None:
+        renamed = _source("alsa_output.dac", "New DAC", serial=41, label="New DAC")
+        assert (
+            resolve_pipewire_source(None, "System audio: DAC (alsa_output.dac)", [renamed])
+            is renamed
+        )
+
+    def test_description_parens_not_parsed_as_node_name(self) -> None:
+        intended = _source("alsa_output.a", "Speakers (HDMI)", serial=10)
+        other = _source("HDMI", "Different sink", serial=20)
+        sources = [intended, other]
+        assert resolve_pipewire_source(None, "System audio: Speakers (HDMI)", sources) is intended
+
 
 class TestPipewireAvailable(unittest.TestCase):
-    def test_requires_both_tools(self):
+    def test_requires_both_tools(self) -> None:
         tools = {"pw-dump": "/usr/bin/pw-dump"}
         assert not pipewire_available(which=tools.get)
         tools["pw-record"] = "/usr/bin/pw-record"
@@ -263,7 +328,7 @@ class TestPipewireAvailable(unittest.TestCase):
 
 
 class TestPipeWireCaptureSource(unittest.TestCase):
-    def test_open_builds_pw_record_command(self):
+    def test_open_builds_pw_record_command(self) -> None:
         process = _FakeProcess()
         calls = []
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
@@ -282,18 +347,18 @@ class TestPipeWireCaptureSource(unittest.TestCase):
         assert "env" in kwargs  # host binaries get the de-bundled environment
         assert capture.stream is process
 
-    def test_open_requires_pw_record(self):
+    def test_open_requires_pw_record(self) -> None:
         capture = PipeWireCaptureSource(device_index=PIPEWIRE_INDEX_BASE, which=lambda name: None)
         with self.assertRaises(FileNotFoundError):
             capture.open()
 
-    def test_open_raises_when_source_gone(self):
+    def test_open_raises_when_source_gone(self) -> None:
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=None):
             capture = PipeWireCaptureSource(device_index=PIPEWIRE_INDEX_BASE, which=lambda n: "x")
             with self.assertRaises(IOError):
                 capture.open()
 
-    def test_read_chunk_returns_exact_frame_bytes(self):
+    def test_read_chunk_returns_exact_frame_bytes(self) -> None:
         payload = b"\x01\x02" * 4096
         process = _FakeProcess(payload)
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
@@ -307,7 +372,7 @@ class TestPipeWireCaptureSource(unittest.TestCase):
         assert data == payload[:2048]
         assert capture.read_chunk() == payload[2048:4096]
 
-    def test_read_chunk_raises_ioerror_at_eof(self):
+    def test_read_chunk_raises_ioerror_at_eof(self) -> None:
         process = _FakeProcess(b"\x01\x02" * 512, exit_code=0)
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
             capture = PipeWireCaptureSource(
@@ -319,12 +384,12 @@ class TestPipeWireCaptureSource(unittest.TestCase):
         with self.assertRaises(IOError):
             capture.read_chunk()
 
-    def test_read_chunk_raises_when_not_open(self):
+    def test_read_chunk_raises_when_not_open(self) -> None:
         capture = PipeWireCaptureSource(device_index=PIPEWIRE_INDEX_BASE, which=lambda n: "x")
         with self.assertRaises(IOError):
             capture.read_chunk()
 
-    def test_read_chunk_raises_when_process_died(self):
+    def test_read_chunk_raises_when_process_died(self) -> None:
         process = _FakeProcess(exit_code=1)
         process.stdout = io.BytesIO(b"")  # dead process yields EOF
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
@@ -338,7 +403,30 @@ class TestPipeWireCaptureSource(unittest.TestCase):
             capture.read_chunk()
         assert "exit status" in str(ctx.exception)
 
-    def test_close_terminates_process(self):
+    def test_read_chunk_raises_when_stream_stalls(self) -> None:
+        # A wedged pw-record that stays alive but emits nothing must not
+        # block the read forever — stop_recognition needs the lock the
+        # capture thread is holding.
+        read_fd, write_fd = os.pipe()
+        process = _FakeProcess()
+        process.stdout = os.fdopen(read_fd, "rb")
+        try:
+            with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
+                capture = PipeWireCaptureSource(
+                    device_index=PIPEWIRE_INDEX_BASE,
+                    popen=_popen_factory(process, []),
+                    which=lambda n: "x",
+                )
+                capture._STALL_TIMEOUT_SECONDS = 0.05
+                capture.open()
+            with self.assertRaises(IOError) as ctx:
+                capture.read_chunk()
+            assert "stalled" in str(ctx.exception)
+        finally:
+            os.close(write_fd)
+            process.stdout.close()
+
+    def test_close_terminates_process(self) -> None:
         process = _FakeProcess()
         with patch("vocalinux.audio.pipewire.resolve_pipewire_source", return_value=_source()):
             capture = PipeWireCaptureSource(
@@ -354,12 +442,12 @@ class TestPipeWireCaptureSource(unittest.TestCase):
         # close is idempotent
         capture.close()
 
-    def test_reopen_respawns_process(self):
+    def test_reopen_respawns_process(self) -> None:
         calls = []
         first, second = _FakeProcess(), _FakeProcess()
         processes = iter([first, second])
 
-        def _factory(args, **kwargs):
+        def _factory(args: List[str], **kwargs: Any) -> _FakeProcess:
             calls.append(args)
             return next(processes)
 
@@ -373,7 +461,7 @@ class TestPipeWireCaptureSource(unittest.TestCase):
         assert first.terminated
         assert capture.stream is second
 
-    def test_reopen_returns_false_when_source_gone(self):
+    def test_reopen_returns_false_when_source_gone(self) -> None:
         capture = PipeWireCaptureSource(
             device_index=PIPEWIRE_INDEX_BASE,
             popen=_popen_factory(_FakeProcess(), []),
@@ -384,7 +472,7 @@ class TestPipeWireCaptureSource(unittest.TestCase):
 
 
 class TestManagerPipeWireIntegration(unittest.TestCase):
-    def test_get_audio_input_devices_appends_system_audio(self):
+    def test_get_audio_input_devices_appends_system_audio(self) -> None:
         sources = [
             _source("alsa_output.dac", "DAC", serial=41, is_default=True),
             _source("obs_sink", "OBS Output", serial=55),
@@ -412,7 +500,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         assert devices[1] == (PIPEWIRE_INDEX_BASE, "System audio: DAC", True)
         assert devices[2] == (PIPEWIRE_INDEX_BASE - 1, "System audio: OBS Output", False)
 
-    def test_record_audio_uses_pipewire_source_for_system_audio(self):
+    def test_record_audio_uses_pipewire_source_for_system_audio(self) -> None:
         manager = _make_manager(
             audio_device_index=PIPEWIRE_INDEX_BASE,
             audio_device_name="System audio: DAC",
@@ -429,7 +517,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         fake_source.stream = MagicMock()
         fake_source.audio = None
 
-        def _read_once():
+        def _read_once() -> bytes:
             manager.should_record = False
             return b"\x00" * 2048
 
@@ -460,7 +548,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         mock_portaudio_cls.assert_not_called()
         mock_audio.open.assert_not_called()
 
-    def test_reconnect_reopens_pipewire_source(self):
+    def test_reconnect_reopens_pipewire_source(self) -> None:
         manager = _make_manager(
             audio_device_index=PIPEWIRE_INDEX_BASE,
             audio_device_name="System audio: DAC",
@@ -496,7 +584,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         assert manager._capture_sample_rate == 16000
         assert manager._capture_channels == 1
 
-    def test_reconnect_fails_when_pipewire_source_gone(self):
+    def test_reconnect_fails_when_pipewire_source_gone(self) -> None:
         manager = _make_manager(
             audio_device_index=PIPEWIRE_INDEX_BASE,
             audio_device_name="System audio: DAC",
@@ -525,7 +613,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
             assert manager._attempt_audio_reconnection(MagicMock()) is False
             mock_portaudio_cls.assert_not_called()
 
-    def test_audio_input_routes_negative_index_to_pipewire(self):
+    def test_audio_input_routes_negative_index_to_pipewire(self) -> None:
         source = _source()
         fake_capture = MagicMock()
         fake_capture.sample_rate = 16000
@@ -559,7 +647,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         assert result["has_signal"] is True
         assert result["error"] is None
 
-    def test_pipewire_input_reports_missing_source(self):
+    def test_pipewire_input_reports_missing_source(self) -> None:
         with patch(
             "vocalinux.audio.pipewire.resolve_pipewire_source",
             return_value=None,
@@ -568,7 +656,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
         assert result["success"] is False
         assert result["error"]
 
-    def test_playback_duck_skipped_for_system_audio(self):
+    def test_playback_duck_skipped_for_system_audio(self) -> None:
         manager = _make_manager(
             audio_device_index=PIPEWIRE_INDEX_BASE,
             audio_device_name="System audio: DAC",
@@ -582,7 +670,7 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
 
         manager._playback_duck.start.assert_not_called()
 
-    def test_playback_duck_still_arms_for_microphone(self):
+    def test_playback_duck_still_arms_for_microphone(self) -> None:
         manager = _make_manager(audio_device_index=0, audio_device_name="USB Microphone")
         manager.should_record = True
         manager.state = RecognitionState.LISTENING

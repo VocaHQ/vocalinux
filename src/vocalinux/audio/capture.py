@@ -221,11 +221,14 @@ def get_audio_input_devices() -> list:
     try:
         for position, source in enumerate(get_system_audio_sources()):
             devices.append((PIPEWIRE_INDEX_BASE - position, source.display_name, source.is_default))
-    except (OSError, subprocess.SubprocessError) as e:
-        logger.debug("PipeWire source enumeration failed: %s", e)
-    except Exception:
-        # Unexpected: system-audio sources silently vanish from the picker
-        # without a trace at info level otherwise.
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ):
         logger.warning("PipeWire source enumeration failed", exc_info=True)
 
     return devices
@@ -909,6 +912,7 @@ class PortAudioCaptureSource:
         FORMAT = pyaudio.paInt16
         self.audio = audio_instance
 
+        new_stream: Any = None
         try:
             # Close existing stream if it exists
             if self.stream:
@@ -977,9 +981,11 @@ class PortAudioCaptureSource:
 
         except (IOError, OSError) as e:
             logger.error(f"Audio reconnection failed: {e}")
+            _safe_close_stream(new_stream)
             return False
         except Exception as e:
             logger.error(f"Unexpected error during audio reconnection: {e}")
+            _safe_close_stream(new_stream)
             return False
 
     def close(self) -> None:

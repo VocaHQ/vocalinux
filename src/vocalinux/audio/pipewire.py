@@ -19,8 +19,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import select
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, List, Optional, Tuple
 
@@ -168,7 +171,10 @@ def get_system_audio_sources(
     microphone enumeration.
     """
     which = which or shutil.which
-    if which("pw-dump") is None:
+    # Both tools are required: pw-dump enumerates, pw-record captures. A
+    # system missing pw-record would otherwise list sources that can never
+    # be opened.
+    if which("pw-dump") is None or which("pw-record") is None:
         return []
     runner = runner or _run_host_command
     try:
@@ -208,6 +214,60 @@ def is_pipewire_device(device_index: Optional[int], device_name: Optional[str]) 
     return bool(device_name) and str(device_name).startswith(SYSTEM_AUDIO_PREFIX)
 
 
+def _source_at_position(
+    device_index: Optional[int], sources: List[PipeWireSource]
+) -> Optional[PipeWireSource]:
+    """Return the source at a stored negative index position, if in range."""
+    if device_index is None or not is_pipewire_device_index(device_index):
+        return None
+    position = PIPEWIRE_INDEX_BASE - device_index
+    if 0 <= position < len(sources):
+        return sources[position]
+    return None
+
+
+def _resolve_by_stored_name(
+    device_name: str,
+    device_index: Optional[int],
+    sources: List[PipeWireSource],
+) -> Optional[PipeWireSource]:
+    """Match a stored display name to a live source by stable identifiers.
+
+    Match order, strongest evidence first:
+
+    1. Exact ``display_name`` equality.
+    2. ``node.description`` equality on the stored remainder. When several
+       sources share the description (dedup labels changed since the name was
+       stored), the stored index position disambiguates: a sink added later
+       gets a higher ``object.serial`` and sorts after the original.
+    3. A trailing ``(node.name)`` — the dedup format written when two sinks
+       shared a description. ``node.name`` is stable across description
+       changes, so a renamed sink still resolves. Description matching runs
+       first so a description that itself ends in parentheses is not
+       mistaken for the suffix.
+    """
+    for source in sources:
+        if source.display_name == device_name:
+            return source
+    remainder = device_name
+    if remainder.startswith(SYSTEM_AUDIO_PREFIX):
+        remainder = remainder[len(SYSTEM_AUDIO_PREFIX) :]
+    matches = [s for s in sources if s.description == remainder]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        positioned = _source_at_position(device_index, sources)
+        if positioned in matches:
+            return positioned
+        return None  # Genuinely ambiguous — refuse rather than guess.
+    if remainder.endswith(")") and " (" in remainder:
+        node_part = remainder.rpartition(" (")[2][:-1]
+        node_matches = [s for s in sources if s.node_name == node_part]
+        if len(node_matches) == 1:
+            return node_matches[0]
+    return None
+
+
 def resolve_pipewire_source(
     device_index: Optional[int],
     device_name: Optional[str],
@@ -215,21 +275,16 @@ def resolve_pipewire_source(
 ) -> Optional[PipeWireSource]:
     """Resolve a stored selection to a live PipeWire source.
 
-    Name is matched first: it survives reordering when sinks are added or
-    removed. The negative index is a positional fallback for selections made
-    before a name was stored.
+    A stored name that no longer resolves returns ``None`` rather than
+    falling back to a positional index: index positions shift as sinks come
+    and go, and guessing wrong would capture a different device. The index
+    fallback only applies when no name was stored (legacy selections).
     """
     if sources is None:
         sources = get_system_audio_sources()
     if device_name:
-        for source in sources:
-            if source.display_name == device_name:
-                return source
-    if device_index is not None and is_pipewire_device_index(device_index):
-        position = PIPEWIRE_INDEX_BASE - device_index
-        if 0 <= position < len(sources):
-            return sources[position]
-    return None
+        return _resolve_by_stored_name(device_name, device_index, sources)
+    return _source_at_position(device_index, sources)
 
 
 class PipeWireCaptureSource:
@@ -326,22 +381,64 @@ class PipeWireCaptureSource:
             return False
         return True
 
+    #: Seconds a chunk read may wait for samples before the stream is
+    #: declared stalled. pw-record streams continuously — even a silent sink
+    #: emits zeros — so a long gap means the process is wedged, not quiet.
+    _STALL_TIMEOUT_SECONDS = 5.0
+
     def read_chunk(self) -> bytes:
-        """Return one 1024-frame chunk of mono int16 PCM; IOError on stream death."""
+        """Return one 1024-frame chunk of mono int16 PCM.
+
+        Raises IOError when the process dies or when no samples arrive within
+        ``_STALL_TIMEOUT_SECONDS`` — a blocking ``read`` would keep the
+        capture thread (and ``_buffer_lock``) held forever on a wedged
+        pw-record, preventing a clean stop.
+        """
         process = self.stream
         if process is None or process.stdout is None:
             raise IOError("PipeWire capture stream is not open")
         need = self._CHUNK_FRAMES * self.channels * 2
         try:
-            data: bytes = process.stdout.read(need)
-        except (OSError, ValueError) as exc:
-            raise IOError(f"PipeWire capture read failed: {exc}") from exc
-        # Buffered reads only return short at EOF: pw-record exiting mid-dictation
-        # is the same class of event as a PortAudio device loss.
-        if data is None or len(data) < need:
-            code = process.poll()
-            raise IOError(f"pw-record stopped streaming (exit status {code})")
-        return data
+            fd = process.stdout.fileno()
+        except (OSError, ValueError, AttributeError):
+            fd = None
+        if not isinstance(fd, int) or fd < 0:
+            fd = None
+        deadline = time.monotonic() + self._STALL_TIMEOUT_SECONDS
+        parts: List[bytes] = []
+        remaining = need
+        while remaining > 0:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                code = process.poll()
+                raise IOError(
+                    "pw-record stalled: no audio for "
+                    f"{self._STALL_TIMEOUT_SECONDS:.0f}s (exit status {code})"
+                )
+            if fd is not None:
+                try:
+                    ready, _, _ = select.select([fd], [], [], left)
+                except (OSError, ValueError) as exc:
+                    raise IOError(f"PipeWire capture read failed: {exc}") from exc
+                if not ready:
+                    continue
+                try:
+                    chunk = os.read(fd, remaining)
+                except OSError as exc:
+                    raise IOError(f"PipeWire capture read failed: {exc}") from exc
+            else:
+                # File-like substitutes without a descriptor (tests) cannot
+                # block, so they read directly.
+                try:
+                    chunk = process.stdout.read(remaining)
+                except (OSError, ValueError) as exc:
+                    raise IOError(f"PipeWire capture read failed: {exc}") from exc
+            if not chunk:
+                code = process.poll()
+                raise IOError(f"pw-record stopped streaming (exit status {code})")
+            parts.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(parts)
 
     def close(self) -> None:
         """Terminate the process, reap it (killing if needed), release the pipe."""
@@ -355,20 +452,24 @@ class PipeWireCaptureSource:
             pass
         try:
             process.wait(timeout=1.0)
-        except Exception:
+        except subprocess.TimeoutExpired:
             try:
                 process.kill()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.warning("Could not kill stalled pw-record: %s", exc)
             try:
                 process.wait(timeout=1.0)
-            except Exception:
-                pass
+            except subprocess.TimeoutExpired:
+                logger.warning("pw-record did not exit after kill")
+            except OSError as exc:
+                logger.warning("Error waiting for pw-record after kill: %s", exc)
+        except OSError as exc:
+            logger.warning("Error waiting for pw-record to exit: %s", exc)
         if process.stdout is not None:
             try:
                 process.stdout.close()
-            except OSError:
-                pass
+            except OSError as exc:
+                logger.debug("Error closing pw-record stdout: %s", exc)
         self.stream = None
 
 

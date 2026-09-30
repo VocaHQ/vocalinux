@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -152,7 +153,7 @@ def _no_remote_desktop_portal(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_real_pipewire_enumeration():
+def _no_real_pipewire_enumeration() -> Generator[None, None, None]:
     """Keep host PipeWire enumeration out of unit tests.
 
     get_audio_input_devices appends the machine's real PipeWire sinks when
@@ -161,7 +162,7 @@ def _no_real_pipewire_enumeration():
     """
     try:
         from vocalinux.audio import capture as _capture
-    except Exception:
+    except ImportError:
         yield
         return
     with patch.object(_capture, "get_system_audio_sources", return_value=[]):
