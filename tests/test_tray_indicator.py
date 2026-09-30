@@ -5,13 +5,22 @@ These tests mock the GTK/GI modules to allow testing without a display server.
 The tests focus on the business logic of the TrayIndicator class.
 """
 
+import importlib
 import os
 import sys
 import tempfile
 import time
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
+
+# test_recognition_manager.py and test_speech_recognition.py put a MagicMock in
+# sys.modules["tempfile"] at import time and never restore it, so this file
+# (imported after them) would bind the mock — Rebind the real module.
+if not isinstance(tempfile, types.ModuleType):
+    sys.modules.pop("tempfile", None)
+    tempfile = importlib.import_module("tempfile")
 
 import pytest
 
@@ -987,7 +996,13 @@ class TestTrayIndicator(unittest.TestCase):
     # --- Recent Transcripts history menu ------------------------------------
 
     def _make_history(self, **kwargs):
+        import vocalinux.ui.transcription_history as _th_module
         from vocalinux.ui.transcription_history import TranscriptionHistory
+
+        # If the store module imported while tempfile was mocked (see the
+        # import guard at the top of this file), undo that binding so its
+        # mkstemp-based writes use the real module.
+        _th_module.tempfile = tempfile
 
         # Never touch the real XDG data dir in tests.
         tmp = tempfile.TemporaryDirectory()

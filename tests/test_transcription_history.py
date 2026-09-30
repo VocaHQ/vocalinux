@@ -2,12 +2,24 @@
 Tests for the persistent transcription history.
 """
 
+import importlib
 import json
 import os
 import stat
+import sys
 import tempfile
+import types
 import unittest
 
+# test_recognition_manager.py and test_speech_recognition.py put a MagicMock in
+# sys.modules["tempfile"] at import time and never restore it, so any module
+# imported after them binds the mock (same wart test_verify_release.py works
+# around). Rebind the real module for this file and the module under test.
+if not isinstance(tempfile, types.ModuleType):
+    sys.modules.pop("tempfile", None)
+    tempfile = importlib.import_module("tempfile")
+
+import vocalinux.ui.transcription_history as _th_module
 from vocalinux.ui.transcription_history import (
     DEFAULT_MAX_ITEMS,
     HISTORY_FILENAME,
@@ -15,6 +27,8 @@ from vocalinux.ui.transcription_history import (
     TranscriptionHistory,
     default_history_path,
 )
+
+_th_module.tempfile = tempfile
 
 
 class TestTranscriptionHistory(unittest.TestCase):
