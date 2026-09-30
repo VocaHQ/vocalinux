@@ -412,9 +412,11 @@ class TranscriptionHistory:
                 except OSError:
                     pass
                 raise
-        except Exception as e:
+        except (OSError, TypeError, ValueError) as e:
             # Persistence must never break recording — the in-memory history
-            # still serves the tray menu for this session.
+            # still serves the tray menu for this session. Tolerated failures
+            # are I/O errors (OSError) and serialization errors (TypeError,
+            # ValueError) from building the JSON payload.
             logger.warning(f"Could not persist transcript history to {self._path}: {e}")
 
     def _remove_file(self) -> None:
@@ -437,6 +439,8 @@ class TranscriptionHistory:
             return
         try:
             callback()
-        except Exception:
-            # A misbehaving UI callback must never break recording.
+        except (RuntimeError, TypeError, ValueError, AttributeError):
+            # A misbehaving UI callback must never break recording: tolerate
+            # the failures a torn-down or re-entrant UI hook can raise while
+            # letting genuine programming errors surface.
             logger.exception("Transcription history change callback failed")

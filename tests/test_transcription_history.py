@@ -230,7 +230,7 @@ class TestTranscriptionHistory(unittest.TestCase):
     def test_change_callback_exception_is_swallowed(self) -> None:
         history = self._history()
 
-        def boom():
+        def boom() -> None:
             raise RuntimeError("callback failure")
 
         history.set_change_callback(boom)

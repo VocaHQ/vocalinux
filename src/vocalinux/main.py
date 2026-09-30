@@ -564,11 +564,12 @@ def main():
         # Worker thread that produced the open session's segments; used to
         # detect callbacks from a previous session's still-running worker.
         session_worker: Optional[threading.Thread] = None
-        # Worker thread -> the history entry its session committed, so a
-        # segment arriving late from an earlier session's worker merges into
-        # that session's transcript rather than the newest entry. Bounded:
+        # Worker thread -> (the history entry its session committed, the
+        # epoch that session ran under), so a segment arriving late from an
+        # earlier session's worker merges into that session's transcript,
+        # judged against its own epoch — never a newer session's. Bounded:
         # sessions past this many are treated as orphans.
-        ended_worker_entries: Deque[Tuple[threading.Thread, TranscriptEntry]] = deque(maxlen=8)
+        ended_worker_entries: Deque[Tuple[threading.Thread, TranscriptEntry, int]] = deque(maxlen=8)
         # True when the newest history entry is the just-closed session's
         # transcript, so late segments can still merge into it.
         ended_session_entry: Optional[TranscriptEntry] = None
@@ -664,7 +665,7 @@ def main():
             IDLE — is folded into its own session's transcript rather than
             the next one.
             """
-            nonlocal session_worker, ended_session_entry
+            nonlocal session_worker, ended_session_entry, ended_session_worker
             worker = threading.current_thread()
             # The engine's live worker, when it exposes one: a segment from
             # any other thread is a leftover from an older session.
@@ -684,29 +685,53 @@ def main():
                 # that session's committed transcript. The worker→entry map
                 # binds it to the session that produced it — a straggler from
                 # an earlier worker must not extend the newest entry, which
-                # may belong to a different session. Workers not in the map
-                # (mocks, sessions that committed before tagging) fall back
-                # to the just-ended entry. Both writes are guarded by the
-                # ended session's epoch, so text dictated before a clear()
-                # cannot re-enter history afterwards.
-                mapped_entry = next(
+                # may belong to a different session.
+                mapped = next(
                     (
-                        entry
-                        for entry_worker, entry in ended_worker_entries
+                        (entry, entry_epoch)
+                        for entry_worker, entry, entry_epoch in reversed(ended_worker_entries)
                         if entry_worker is worker
                     ),
                     None,
                 )
-                target_entry = mapped_entry if mapped_entry is not None else ended_session_entry
-                if target_entry is not None and transcription_history.extend_entry(
-                    target_entry, segment, expected_epoch=ended_session_epoch
+                target_entry: Optional[TranscriptEntry]
+                target_epoch: int
+                if mapped is not None:
+                    target_entry, target_epoch = mapped
+                elif (
+                    worker is ended_session_worker
+                    or worker is current_worker
+                    or not isinstance(current_worker, threading.Thread)
                 ):
+                    # Unmapped but attributable to the just-ended session:
+                    # its recorded worker still draining, the engine's live
+                    # worker thread, or an engine exposing no worker at all
+                    # (mocks, tests), where any late segment is presumed to
+                    # be the just-ended session's straggler.
+                    target_entry, target_epoch = ended_session_entry, ended_session_epoch
+                else:
+                    # A worker from a session older than the map retains:
+                    # it cannot be attributed safely, so the fragment drops.
                     return
-                # Otherwise the late segments are the session's only output
-                # and form their own transcript.
-                new_entry = transcription_history.add(segment, expected_epoch=ended_session_epoch)
+                if target_entry is not None:
+                    # Bound to its own session's transcript, judged against
+                    # that session's epoch: extend it or drop. Never fall
+                    # back to a fresh add — text cleared or trimmed out of
+                    # history must not re-enter through this path, and a
+                    # late fragment must not evict a retained transcript.
+                    transcription_history.extend_entry(
+                        target_entry, segment, expected_epoch=target_epoch
+                    )
+                    return
+                # The just-ended session left no entry: these late segments
+                # are its only output and form their own transcript — still
+                # under that session's epoch, so a clear() since refuses it.
+                new_entry = transcription_history.add(segment, expected_epoch=target_epoch)
                 if new_entry is not None:
                     ended_session_entry = new_entry
+                    if ended_session_worker is None:
+                        ended_session_worker = worker
+                    ended_worker_entries.append((worker, new_entry, target_epoch))
 
         def commit_pending_session() -> None:
             """Commit the open session's buffered segments to history.
@@ -718,6 +743,11 @@ def main():
             nonlocal session_open, session_worker, session_started_at
             nonlocal ended_session_entry, ended_session_epoch, ended_session_worker
             with session_lock:
+                if not session_open and not session_segments:
+                    # Nothing ended since the last commit: re-running would
+                    # only clobber the just-ended session's binding, which
+                    # late worker segments may still need.
+                    return
                 session_open = False
                 ended_session_worker = session_worker
                 session_worker = None
@@ -744,7 +774,9 @@ def main():
                     expected_epoch=ended_session_epoch,
                 )
                 if ended_session_entry is not None and ended_session_worker is not None:
-                    ended_worker_entries.append((ended_session_worker, ended_session_entry))
+                    ended_worker_entries.append(
+                        (ended_session_worker, ended_session_entry, ended_session_epoch)
+                    )
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.
@@ -758,6 +790,7 @@ def main():
             """
             nonlocal session_open, session_worker, session_started_at
             nonlocal session_epoch, ended_session_entry
+            nonlocal ended_session_epoch, ended_session_worker
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     action_handler.set_last_injected_text("")
@@ -771,6 +804,12 @@ def main():
                         # epoch that produced them, so a clear() between the
                         # sessions keeps them out.
                         if session_segments:
+                            # Adopt the ending session's worker and epoch as
+                            # the just-ended binding before they are
+                            # overwritten below, so its late segments stay
+                            # judged against the session that produced them.
+                            ended_session_worker = session_worker
+                            ended_session_epoch = session_epoch
                             ended_session_entry = transcription_history.add(
                                 " ".join(session_segments),
                                 engine=speech_engine.engine,
@@ -785,7 +824,11 @@ def main():
                             )
                             if ended_session_entry is not None and ended_session_worker is not None:
                                 ended_worker_entries.append(
-                                    (ended_session_worker, ended_session_entry)
+                                    (
+                                        ended_session_worker,
+                                        ended_session_entry,
+                                        ended_session_epoch,
+                                    )
                                 )
                             session_segments.clear()
                         session_open = True

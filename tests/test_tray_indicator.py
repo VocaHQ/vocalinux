@@ -13,6 +13,7 @@ import time
 import types
 import unittest
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, PropertyMock, patch
 
 # test_recognition_manager.py and test_speech_recognition.py put a MagicMock in
@@ -23,6 +24,9 @@ if not isinstance(tempfile, types.ModuleType):
     tempfile = importlib.import_module("tempfile")
 
 import pytest
+
+import vocalinux.ui.transcription_history as _th_module
+from vocalinux.ui.transcription_history import TranscriptionHistory
 
 # Create mock modules for GTK/GI BEFORE importing anything
 mock_gi = MagicMock()
@@ -244,7 +248,7 @@ class TestTrayIndicator(unittest.TestCase):
             self.mock_ksm.stop.assert_called_once()
             patched_gtk.main_quit.assert_called_once()
 
-    def test_quit_runs_before_quit_hook(self):
+    def test_quit_runs_before_quit_hook(self) -> None:
         """The quit path flushes the in-flight dictation session via the hook."""
         hook = MagicMock()
         self.tray_indicator._before_quit = hook
@@ -254,7 +258,7 @@ class TestTrayIndicator(unittest.TestCase):
             hook.assert_called_once()
             patched_gtk.main_quit.assert_called_once()
 
-    def test_quit_survives_before_quit_failure(self):
+    def test_quit_survives_before_quit_failure(self) -> None:
         """A failing hook must not block shutdown."""
         hook = MagicMock(side_effect=RuntimeError("flush failed"))
         self.tray_indicator._before_quit = hook
@@ -1015,10 +1019,7 @@ class TestTrayIndicator(unittest.TestCase):
 
     # --- Recent Transcripts history menu ------------------------------------
 
-    def _make_history(self, **kwargs):
-        import vocalinux.ui.transcription_history as _th_module
-        from vocalinux.ui.transcription_history import TranscriptionHistory
-
+    def _make_history(self, **kwargs: Any) -> TranscriptionHistory:
         # If the store module imported while tempfile was mocked (see the
         # import guard at the top of this file), undo that binding so its
         # mkstemp-based writes use the real module.
@@ -1030,7 +1031,7 @@ class TestTrayIndicator(unittest.TestCase):
         kwargs.setdefault("path", f"{tmp.name}/transcript_history.json")
         return TranscriptionHistory(**kwargs)
 
-    def test_truncate_label_collapses_and_truncates(self):
+    def test_truncate_label_collapses_and_truncates(self) -> None:
         from vocalinux.ui.tray_indicator import TrayIndicator
 
         self.assertEqual(TrayIndicator._truncate_label("  a   b\nc  "), "a b c")
@@ -1039,7 +1040,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertTrue(truncated.endswith("…"))
         self.assertEqual(len(truncated), 50)
 
-    def test_history_entry_label_prefixes_time(self):
+    def test_history_entry_label_prefixes_time(self) -> None:
         from vocalinux.ui.transcription_history import TranscriptEntry
         from vocalinux.ui.tray_indicator import TrayIndicator
 
@@ -1051,7 +1052,7 @@ class TestTrayIndicator(unittest.TestCase):
         no_time = TrayIndicator._history_entry_label(TranscriptEntry(text="hello"))
         self.assertEqual(no_time, "hello")
 
-    def test_history_entry_tooltip_includes_metadata(self):
+    def test_history_entry_tooltip_includes_metadata(self) -> None:
         from vocalinux.ui.transcription_history import TranscriptEntry
         from vocalinux.ui.tray_indicator import TrayIndicator
 
@@ -1075,7 +1076,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertIn("a &amp; &lt;b&gt;", tooltip)
         self.assertEqual(plain, "just text")
 
-    def test_history_entry_tooltip_escapes_metadata(self):
+    def test_history_entry_tooltip_escapes_metadata(self) -> None:
         """Markup-hostile engine/model/language values cannot break tooltips."""
         from vocalinux.ui.transcription_history import TranscriptEntry
         from vocalinux.ui.tray_indicator import TrayIndicator
@@ -1097,7 +1098,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertNotIn("<engine>", tooltip)
         self.assertNotIn("<odel", tooltip)
 
-    def test_refresh_history_menu_populated(self):
+    def test_refresh_history_menu_populated(self) -> None:
         history = self._make_history()
         history.add("first transcript", engine="whisper_cpp")
         history.add("second transcript")
@@ -1109,7 +1110,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertFalse(result)
         self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
 
-    def test_refresh_history_menu_empty(self):
+    def test_refresh_history_menu_empty(self) -> None:
         self.tray_indicator.transcription_history = self._make_history()
         self.tray_indicator._history_menu_item = MagicMock()
 
@@ -1118,7 +1119,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertFalse(result)
         self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
 
-    def test_refresh_history_menu_disabled_shows_hint(self):
+    def test_refresh_history_menu_disabled_shows_hint(self) -> None:
         self.tray_indicator.transcription_history = self._make_history(enabled=False)
         self.tray_indicator._history_menu_item = MagicMock()
 
@@ -1127,21 +1128,21 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertFalse(result)
         self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
 
-    def test_refresh_history_menu_noop_without_item(self):
+    def test_refresh_history_menu_noop_without_item(self) -> None:
         self.tray_indicator.transcription_history = None
         self.tray_indicator._history_menu_item = None
 
         # Should return False and not raise.
         self.assertFalse(self.tray_indicator._refresh_history_menu())
 
-    def test_on_history_item_clicked_copies_to_clipboard(self):
+    def test_on_history_item_clicked_copies_to_clipboard(self) -> None:
         self.tray_indicator._on_history_item_clicked(MagicMock(), "some transcript")
 
         clipboard = mock_gtk.Clipboard.get.return_value
         clipboard.set_text.assert_called_once_with("some transcript", -1)
         clipboard.store.assert_called_once()
 
-    def test_on_clear_history_clicked_clears(self):
+    def test_on_clear_history_clicked_clears(self) -> None:
         history = self._make_history()
         history.add("a")
         history.add("b")
@@ -1151,7 +1152,7 @@ class TestTrayIndicator(unittest.TestCase):
 
         self.assertEqual(len(history), 0)
 
-    def test_construct_with_history_creates_submenu_and_wires_callback(self):
+    def test_construct_with_history_creates_submenu_and_wires_callback(self) -> None:
         from vocalinux.ui.tray_indicator import TrayIndicator
 
         history = self._make_history()
@@ -1169,7 +1170,7 @@ class TestTrayIndicator(unittest.TestCase):
         history.add("live transcript")
         self.assertTrue(tray._history_menu_item.set_submenu.called)
 
-    def test_settings_dialog_receives_transcription_history(self):
+    def test_settings_dialog_receives_transcription_history(self) -> None:
         import vocalinux.ui.tray_indicator as tray_module
 
         history = self._make_history()

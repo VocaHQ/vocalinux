@@ -4,6 +4,7 @@ Tests for the main module functionality.
 
 import argparse
 import os
+import queue
 import sys
 import tempfile
 import threading
@@ -1425,6 +1426,8 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
         mock_speech = MagicMock()
         mock_speech.engine = "whisper_cpp"
         mock_speech_cls.return_value = mock_speech
+        # Let tests pose as a real engine worker thread via recognition_thread.
+        self._mock_speech = mock_speech
 
         mock_text_cls = stack.enter_context(
             patch("vocalinux.text_injection.text_injector.TextInjector")
@@ -1459,6 +1462,31 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
             raise
 
         return stack, text_cb, state_cb, history, before_quit
+
+    @staticmethod
+    def _spawn_worker() -> Tuple[threading.Thread, queue.Queue]:
+        """Start a long-lived thread that runs queued callbacks on its own identity.
+
+        Models a recognition worker thread: jobs are executed on that thread,
+        so callbacks observe it via ``threading.current_thread()`` — including
+        segments delivered long after the session ended. Queue items are
+        ``Optional[Callable[[], None]]``: ``None`` stops the worker.
+        """
+        jobs: queue.Queue = queue.Queue()
+
+        def _run() -> None:
+            while True:
+                job = jobs.get()
+                try:
+                    if job is None:
+                        return
+                    job()
+                finally:
+                    jobs.task_done()
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        return thread, jobs
 
     def _texts(self, history: TranscriptionHistory) -> List[str]:
         return [e.text for e in history.get_all()]
@@ -1659,6 +1687,129 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
             text_cb("after re-enable")
             state_cb(RecognitionState.IDLE)
             self.assertEqual(self._texts(history), [])
+        finally:
+            stack.close()
+
+    def test_late_segment_extends_its_own_workers_entry(self) -> None:
+        """A mapped worker's straggler lands in its own session's transcript."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            jobs_a.put(lambda: text_cb("alpha"))
+            jobs_a.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["alpha"])
+
+            worker_b, jobs_b = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_b
+            state_cb(RecognitionState.LISTENING)
+            jobs_b.put(lambda: text_cb("gamma"))
+            jobs_b.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["gamma", "alpha"])
+
+            # A's worker finally delivers: it must extend A's entry, judged
+            # against A's epoch — never merge into B's transcript.
+            jobs_a.put(lambda: text_cb("beta"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), ["gamma", "alpha beta"])
+
+            jobs_a.put(None)
+            jobs_b.put(None)
+        finally:
+            stack.close()
+
+    def test_late_segment_after_clear_from_old_worker_is_dropped(self) -> None:
+        """A cleared session's late fragment must not re-enter history."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            jobs_a.put(lambda: text_cb("session A"))
+            jobs_a.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["session A"])
+
+            history.clear()
+            self.assertEqual(self._texts(history), [])
+
+            worker_b, jobs_b = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_b
+            state_cb(RecognitionState.LISTENING)
+            jobs_b.put(lambda: text_cb("session B"))
+            jobs_b.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["session B"])
+
+            # Worker A finally delivers: its entry is gone and its epoch is
+            # stale, so the fragment drops — it must not re-enter under B's
+            # epoch or merge into B's transcript.
+            jobs_a.put(lambda: text_cb("A tail"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), ["session B"])
+
+            jobs_a.put(None)
+            jobs_b.put(None)
+        finally:
+            stack.close()
+
+    def test_late_segment_for_trimmed_entry_is_dropped(self) -> None:
+        """A fragment whose entry was trimmed must not evict retained text."""
+        stack, text_cb, state_cb, history, _ = self._boot(
+            extra_settings={"history": {"max_items": 2}}
+        )
+        try:
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            jobs_a.put(lambda: text_cb("session A"))
+            jobs_a.join()
+            state_cb(RecognitionState.IDLE)
+
+            for name in ("session B", "session C"):
+                worker_n, jobs_n = self._spawn_worker()
+                self._mock_speech.recognition_thread = worker_n
+                state_cb(RecognitionState.LISTENING)
+                jobs_n.put(lambda name=name: text_cb(name))
+                jobs_n.join()
+                state_cb(RecognitionState.IDLE)
+                jobs_n.put(None)
+
+            # The cap evicted A's entry; its late fragment must drop rather
+            # than re-enter as a new transcript (which would evict B's).
+            jobs_a.put(lambda: text_cb("A tail"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), ["session C", "session B"])
+
+            jobs_a.put(None)
+        finally:
+            stack.close()
+
+    def test_late_segment_from_untracked_worker_is_dropped(self) -> None:
+        """A worker no session recorded cannot be attributed; it drops."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            jobs_a.put(lambda: text_cb("session A"))
+            jobs_a.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["session A"])
+
+            # An unknown worker delivers: it belongs to a session older than
+            # the tracked bindings, so the fragment is dropped rather than
+            # guessed into the newest transcript.
+            worker_x, jobs_x = self._spawn_worker()
+            jobs_x.put(lambda: text_cb("mystery"))
+            jobs_x.join()
+            self.assertEqual(self._texts(history), ["session A"])
+
+            jobs_a.put(None)
+            jobs_x.put(None)
         finally:
             stack.close()
 
