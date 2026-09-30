@@ -1076,7 +1076,7 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("self.sidebar_listbox = Gtk.ListBox()", self.source_code)
         self.assertNotIn("Gtk.Notebook()", self.source_code)
 
-    def test_topic_pages_exist(self):
+    def test_topic_pages_exist(self) -> None:
         for name, title in [
             ("dictation", "Dictation"),
             ("dictionary", "Custom Dictionary"),
@@ -1149,6 +1149,28 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("normalize_corrections", body)
         self.assertLess(body.find("normalize_corrections"), body.find("save_corrections"))
         self.assertLess(body.find("normalize_corrections"), body.find("entries.append"))
+
+    def test_terms_list_builds_in_bounded_idle_slices_with_pinned_adds(self) -> None:
+        """Large term files never build all their GTK rows synchronously.
+
+        The stall finding requires two guards to hold together: the row
+        build is sliced through GLib idle callbacks, and a saved term that
+        lands past the display cap is pinned so success is never reported
+        for an invisible term.
+        """
+        self.assertIn("_TERMS_ROWS_PER_IDLE", self.source_code)
+        refresh_body = self.source_code.split("def _refresh_dictionary_ui")[1].split("\n    def ")[
+            0
+        ]
+        self.assertNotIn("for term in visible_terms:", refresh_body)
+        self.assertIn("self._build_term_rows(", refresh_body)
+        build_body = self.source_code.split("def _build_term_rows")[1].split("\n    def ")[0]
+        self.assertIn("GLib.idle_add", build_body)
+        self.assertIn("_TERMS_ROWS_PER_IDLE", build_body)
+        self.assertIn("self._terms_build_token", build_body)
+        add_body = self.source_code.split("def _on_dictionary_add_term")[1].split("\n    def ")[0]
+        self.assertIn("self._pinned_terms.append(term)", add_body)
+        self.assertIn("self._pinned_terms", self.source_code)
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)

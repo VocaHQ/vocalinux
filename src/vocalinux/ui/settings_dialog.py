@@ -17,6 +17,7 @@ UX Design Notes:
 - Modal dialog for model downloads (explicit confirmation for large downloads)
 """
 
+import itertools
 import logging
 import math
 import os
@@ -474,6 +475,9 @@ _PAIRED_COMBO_WIDTH = _CONTROL_WIDTH - _ICON_BUTTON_WIDTH - 8
 # Term rows are built on the UI thread, so a scanner-managed file with
 # thousands of entries is capped and the remainder summarized in one row.
 _MAX_TERMS_DISPLAYED = 500
+# Rows appended per GLib idle slice: building thousands at once stalls the
+# UI the same way an uncapped list would.
+_TERMS_ROWS_PER_IDLE = 150
 
 
 def _style_combo(combo: Gtk.ComboBox, width: int = _CONTROL_WIDTH) -> Gtk.ComboBox:
@@ -2759,9 +2763,16 @@ class SettingsDialog(Gtk.Dialog):
         # Marks dictionary pane switches made by the search filter itself so a
         # user-initiated switch can drop the saved pre-search pane.
         self._search_pane_programmatic = False
-        # Custom-terms list stays capped for GTK row count until the user (or a
-        # term add beyond the cap) asks to render the whole file.
+        # Custom-terms list stays capped for GTK row count until the user
+        # asks to render the whole file.
         self._show_all_terms = False
+        # Bumps on every refresh so idle-sliced row builders left over from
+        # an older pass stop instead of re-adding cleared rows.
+        self._terms_build_token = 0
+        # Terms added in this dialog that land past the display cap; they are
+        # pinned to the top so a successful save is never invisible.
+        self._pinned_terms: list[str] = []
+        self._scroll_terms_to_end = False
 
         # Set content_box to speech_engine_tab for backward compatibility
         self.content_box = self.speech_engine_tab
@@ -3454,11 +3465,13 @@ class SettingsDialog(Gtk.Dialog):
         terms_list_row.add(self.dictionary_terms_listbox)
         terms_group.add_row(terms_list_row)
 
-        terms_scroller = Gtk.ScrolledWindow()
-        terms_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        terms_scroller.set_shadow_type(Gtk.ShadowType.NONE)
-        terms_scroller.add(terms_group)
-        self.dictionary_management_stack.add_titled(terms_scroller, "terms", "Custom terms")
+        self.dictionary_terms_scroller = Gtk.ScrolledWindow()
+        self.dictionary_terms_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.dictionary_terms_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        self.dictionary_terms_scroller.add(terms_group)
+        self.dictionary_management_stack.add_titled(
+            self.dictionary_terms_scroller, "terms", "Custom terms"
+        )
 
         corrections_group = PreferencesGroup(
             title="Transcript corrections",
@@ -3575,12 +3588,17 @@ class SettingsDialog(Gtk.Dialog):
         terms_now = self.dictionary_manager.get_terms()
         if any(existing.casefold() == term.casefold() for existing in terms_now):
             self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
+            if self._show_all_terms:
+                # Appends land at the end of a list the user is scrolling;
+                # jump there once the idle-sliced rebuild finishes.
+                self._scroll_terms_to_end = True
+            else:
+                # A term that lands past the display cap is pinned to the top
+                # of the capped list — a saved term is never invisible. The
+                # next refresh drops the pin if the term is already visible.
+                self._pinned_terms.append(term)
         else:
             self.dictionary_feedback_label.set_text("That term is not valid for the terms file.")
-        # Appends past the display cap stay hidden until "Show all" is
-        # clicked — expanding automatically would rebuild thousands of GTK
-        # rows on the UI thread. The overflow button already carries the
-        # full count, so the new term is one click away.
         self._refresh_dictionary_ui()
 
     def _on_terms_show_all(self, widget: Any) -> None:
@@ -3673,6 +3691,94 @@ class SettingsDialog(Gtk.Dialog):
             )
         self._refresh_dictionary_ui()
 
+    def _make_term_row(self, term: str, transient: bool) -> Gtk.ListBoxRow:
+        """Build one removable term row for the custom terms list."""
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row_box.set_margin_top(6)
+        row_box.set_margin_bottom(6)
+        row_box.set_margin_start(16)
+        row_box.set_margin_end(16)
+        label = Gtk.Label(label=term, xalign=0)
+        label.set_hexpand(True)
+        row_box.pack_start(label, True, True, 0)
+        remove_button = Gtk.Button(label="Remove")
+        remove_button.set_tooltip_text(f"Remove term {term}")
+        remove_button.get_accessible().set_name(f"Remove term {term}")
+        remove_button.set_sensitive(not transient)
+        remove_button.connect("clicked", self._on_dictionary_remove_term, term)
+        row_box.pack_start(remove_button, False, False, 0)
+        row.add(row_box)
+        return row
+
+    def _build_term_rows(
+        self, terms: list[str], total_terms: int, transient: bool, token: int
+    ) -> None:
+        """Populate the terms listbox in idle slices of bounded size.
+
+        Building thousands of GTK rows synchronously stalls the whole
+        dialog, so each slice appends at most ``_TERMS_ROWS_PER_IDLE`` rows
+        and reschedules itself. Every refresh bumps the build token, which
+        retires pending slices from an older pass instead of letting them
+        re-add rows the refresh already cleared.
+        """
+        pending = iter(terms)
+
+        def build_chunk() -> bool:
+            if token != self._terms_build_token:
+                return False
+            batch = list(itertools.islice(pending, _TERMS_ROWS_PER_IDLE))
+            for term in batch:
+                self.dictionary_terms_listbox.add(self._make_term_row(term, transient))
+            self.dictionary_terms_listbox.show_all()
+            if len(batch) == _TERMS_ROWS_PER_IDLE:
+                return True
+            self._finish_term_rows(total_terms)
+            return False
+
+        # The first slice runs inline so small lists appear immediately;
+        # a slice never exceeds _TERMS_ROWS_PER_IDLE rows of work.
+        if build_chunk():
+            GLib.idle_add(build_chunk)
+
+    def _finish_term_rows(self, total_terms: int) -> None:
+        """Append the overflow summary row after the last term slice."""
+        if total_terms > _MAX_TERMS_DISPLAYED:
+            overflow_row = Gtk.ListBoxRow()
+            overflow_row.set_activatable(False)
+            overflow_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            overflow_box.set_margin_top(6)
+            overflow_box.set_margin_bottom(6)
+            overflow_box.set_margin_start(16)
+            overflow_box.set_margin_end(16)
+            if self._show_all_terms:
+                overflow_text = f"Showing all {total_terms} terms."
+                toggle_button = Gtk.Button(label=f"Show first {_MAX_TERMS_DISPLAYED}")
+                toggle_button.connect("clicked", self._on_terms_show_fewer)
+            else:
+                overflow_text = f"Showing the first {_MAX_TERMS_DISPLAYED} of {total_terms} terms."
+                toggle_button = Gtk.Button(label=f"Show all {total_terms}")
+                toggle_button.connect("clicked", self._on_terms_show_all)
+            overflow_label = Gtk.Label(label=overflow_text, xalign=0)
+            overflow_label.set_line_wrap(True)
+            overflow_label.set_hexpand(True)
+            overflow_label.get_style_context().add_class("tip-label")
+            overflow_box.pack_start(overflow_label, True, True, 0)
+            overflow_box.pack_start(toggle_button, False, False, 0)
+            overflow_row.add(overflow_box)
+            self.dictionary_terms_listbox.add(overflow_row)
+        self.dictionary_terms_listbox.show_all()
+        if self._scroll_terms_to_end:
+            self._scroll_terms_to_end = False
+            adjustment = self.dictionary_terms_scroller.get_vadjustment()
+
+            def scroll_to_end() -> bool:
+                adjustment.set_value(adjustment.get_upper())
+                return False
+
+            GLib.idle_add(scroll_to_end)
+
     def _refresh_dictionary_ui(self) -> None:
         """Rebuild custom dictionary controls from the live, file-backed state."""
         if not hasattr(self, "dictionary_terms_enabled_switch"):
@@ -3699,52 +3805,24 @@ class SettingsDialog(Gtk.Dialog):
             self.dictionary_terms_listbox.remove(child)
         terms = self.dictionary_manager.get_terms()
         visible_terms = terms if self._show_all_terms else terms[:_MAX_TERMS_DISPLAYED]
-        for term in visible_terms:
-            row = Gtk.ListBoxRow()
-            row.set_activatable(False)
-            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            row_box.set_margin_top(6)
-            row_box.set_margin_bottom(6)
-            row_box.set_margin_start(16)
-            row_box.set_margin_end(16)
-            label = Gtk.Label(label=term, xalign=0)
-            label.set_hexpand(True)
-            row_box.pack_start(label, True, True, 0)
-            remove_button = Gtk.Button(label="Remove")
-            remove_button.set_tooltip_text(f"Remove term {term}")
-            remove_button.get_accessible().set_name(f"Remove term {term}")
-            remove_button.set_sensitive(not transient)
-            remove_button.connect("clicked", self._on_dictionary_remove_term, term)
-            row_box.pack_start(remove_button, False, False, 0)
-            row.add(row_box)
-            self.dictionary_terms_listbox.add(row)
-        if len(terms) > _MAX_TERMS_DISPLAYED:
-            overflow_row = Gtk.ListBoxRow()
-            overflow_row.set_activatable(False)
-            overflow_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-            overflow_box.set_margin_top(6)
-            overflow_box.set_margin_bottom(6)
-            overflow_box.set_margin_start(16)
-            overflow_box.set_margin_end(16)
-            if self._show_all_terms:
-                overflow_text = f"Showing all {len(terms)} terms."
-                toggle_button = Gtk.Button(label=f"Show first {_MAX_TERMS_DISPLAYED}")
-                toggle_button.connect("clicked", self._on_terms_show_fewer)
-            else:
-                overflow_text = f"Showing the first {_MAX_TERMS_DISPLAYED} of {len(terms)} terms."
-                toggle_button = Gtk.Button(label=f"Show all {len(terms)}")
-                toggle_button.connect("clicked", self._on_terms_show_all)
-            overflow_label = Gtk.Label(label=overflow_text, xalign=0)
-            overflow_label.set_line_wrap(True)
-            overflow_label.set_hexpand(True)
-            overflow_label.get_style_context().add_class("tip-label")
-            overflow_box.pack_start(overflow_label, True, True, 0)
-            overflow_box.pack_start(toggle_button, False, False, 0)
-            overflow_row.add(overflow_box)
-            self.dictionary_terms_listbox.add(overflow_row)
+        # Recently added terms that would fall outside the visible window
+        # stay pinned to the top while they remain unseen; a pin expires as
+        # soon as the term disappears or becomes visible on its own.
+        visible_keys = {term.casefold() for term in visible_terms}
+        term_keys = {term.casefold() for term in terms}
+        self._pinned_terms = [
+            pinned
+            for pinned in self._pinned_terms
+            if pinned.casefold() in term_keys and pinned.casefold() not in visible_keys
+        ]
+        self._terms_build_token += 1
+        self._build_term_rows(
+            [*self._pinned_terms, *visible_terms], len(terms), transient, self._terms_build_token
+        )
 
         for child in list(self.dictionary_corrections_listbox.get_children()):
             self.dictionary_corrections_listbox.remove(child)
+
         for entry in self.dictionary_manager.get_corrections():
             row = Gtk.ListBoxRow()
             row.set_activatable(False)
