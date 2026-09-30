@@ -640,7 +640,7 @@ class SpeechRecognitionManager:
             raise ValueError(f"Unsupported speech recognition engine: {engine}")
 
     @staticmethod
-    def _normalize_language_candidates(value) -> list[str]:
+    def _normalize_language_candidates(value: str | list[str] | None) -> list[str]:
         """Normalize a comma-separated string or list of Whisper language codes."""
         if value is None:
             return []
@@ -1706,19 +1706,43 @@ class SpeechRecognitionManager:
                         audio_float,
                         n_threads=min(4, max(1, os.cpu_count() or 1)),
                     )
+                    # lang_probs names every language whisper.cpp can return; a
+                    # configured code missing from it (a typo, or "auto") has no
+                    # real probability and must not win the max() below.
                     candidate_probs = {
-                        candidate: float(lang_probs.get(candidate, 0.0))
+                        candidate: float(lang_probs[candidate])
                         for candidate in self.whispercpp_language_candidates
+                        if candidate in lang_probs
                     }
-                    lang = max(candidate_probs, key=candidate_probs.get)
-                    logger.info(
-                        "whisper.cpp restricted language detection: detected=%s %.3f, candidates=%s, using=%s %.3f",
-                        detected[0],
-                        float(detected[1]),
-                        ",".join(self.whispercpp_language_candidates),
-                        lang,
-                        candidate_probs[lang],
-                    )
+                    unsupported = [
+                        candidate
+                        for candidate in self.whispercpp_language_candidates
+                        if candidate not in lang_probs
+                    ]
+                    if unsupported:
+                        logger.warning(
+                            "Ignoring unsupported whisper.cpp language candidates: %s",
+                            ",".join(unsupported),
+                        )
+                    if candidate_probs:
+                        lang = max(candidate_probs, key=candidate_probs.get)
+                        logger.info(
+                            "whisper.cpp restricted language detection: detected=%s %.3f, candidates=%s, using=%s %.3f",
+                            detected[0],
+                            float(detected[1]),
+                            ",".join(candidate_probs.keys()),
+                            lang,
+                            candidate_probs[lang],
+                        )
+                    else:
+                        # Every configured candidate was unusable; keep the
+                        # unrestricted detection rather than forcing a code the
+                        # model never scored.
+                        lang = detected[0]
+                        logger.warning(
+                            "No usable whisper.cpp language candidates configured; using detected language %s",
+                            lang,
+                        )
 
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
