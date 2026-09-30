@@ -12,6 +12,7 @@ from vocalinux.custom_dictionary import (
     DEFAULT_TERMS_PATH,
     LEGACY_DEFAULT_TERMS_PATH,
     MAX_CORRECTION_CHARACTERS,
+    MAX_TERMS_FILE_BYTES,
     TERMS_FILENAME,
     CustomDictionaryManager,
     apply_corrections,
@@ -141,14 +142,33 @@ def test_enable_rollback_when_config_persistence_fails(tmp_path: Path, monkeypat
 
 
 def test_prompt_read_stops_at_the_terms_limit(tmp_path: Path, monkeypatch) -> None:
-    """Prompt assembly stops reading after the configured term cap."""
+    """Prompt assembly stops processing terms after the configured term cap."""
     config = FakeConfig({"dictionary": {"enabled": True, "max_words": 2}})
     manager = manager_at(tmp_path, monkeypatch, config)
-    # Corrupt UTF-8 past the read buffer boundary proves the tail was never read.
+    (tmp_path / TERMS_FILENAME).write_text("one\ntwo\nthree\n", encoding="utf-8")
+
+    assert manager.build_initial_prompt() == "one two"
+
+
+def test_partially_invalid_terms_file_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    """Valid lines before corrupt UTF-8 must not reach recognition."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
     payload = b"one\ntwo\n" + b"x" * 9000 + b"\xff\nthree\n"
     (tmp_path / TERMS_FILENAME).write_bytes(payload)
 
-    assert manager.build_initial_prompt() == "one two"
+    assert manager.get_terms() == []
+    assert manager.build_initial_prompt() is None
+    assert manager.terms_status() == "Terms file is not valid UTF-8."
+
+
+def test_oversized_terms_file_is_ignored_consistently(tmp_path: Path, monkeypatch) -> None:
+    """A file beyond the read bound is invalid everywhere, not partially used."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    (tmp_path / TERMS_FILENAME).write_bytes(b"term\n" * (MAX_TERMS_FILE_BYTES // 5 + 1))
+
+    assert manager.get_terms() == []
+    assert manager.build_initial_prompt() is None
+    assert manager.terms_status() == "Terms file is too large to use."
 
 
 def test_pr_767_dictionary_configuration_keys_and_contract_are_preserved(
@@ -345,6 +365,30 @@ def test_transient_terms_override_keeps_corrections_at_config_dir(
 
     assert manager.corrections_path() == xdg_dir / CORRECTIONS_FILENAME
     assert manager.corrections_path() != tmp_path / CORRECTIONS_FILENAME
+
+
+def test_transient_terms_override_does_not_import_beside_corrections(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A --dictionary-file session must not import the override's neighbor file."""
+    xdg_dir = tmp_path / "xdg-config"
+    override_dir = tmp_path / "elsewhere"
+    xdg_dir.mkdir()
+    override_dir.mkdir()
+    monkeypatch.setattr("vocalinux.custom_dictionary.config_dir", lambda: str(xdg_dir))
+    override = override_dir / "terms.txt"
+    override.write_text("Override\n", encoding="utf-8")
+    payload = {
+        "version": 1,
+        "corrections": [{"heard": "super base", "replacement": "Supabase"}],
+    }
+    (override_dir / CORRECTIONS_FILENAME).write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    manager = CustomDictionaryManager(FakeConfig(), str(override))
+
+    assert manager.get_corrections() == []
+    assert manager.get_corrections_for_edit() == []
+    assert not (xdg_dir / CORRECTIONS_FILENAME).exists()
 
 
 def test_historical_legacy_looking_path_without_explicit_marker_is_not_migrated(

@@ -31,6 +31,10 @@ MAX_TERM_CHARACTERS = 200
 MAX_PROMPT_CHARACTERS = 2_000
 MAX_CORRECTIONS = 500
 MAX_CORRECTION_CHARACTERS = 500
+# A terms file beyond this bound is invalid everywhere rather than read in
+# part: the read itself stays bounded and no partial dictionary can reach
+# recognition while Settings reports the file unusable.
+MAX_TERMS_FILE_BYTES = 1_048_576
 
 
 class _DuplicateJsonKeyError(ValueError):
@@ -273,21 +277,37 @@ class CustomDictionaryManager:
 
     @staticmethod
     def _iter_terms(path: Path) -> Iterator[str]:
-        """Yield normalized, de-duplicated terms lazily so callers can stop early."""
-        seen: set[str] = set()
+        """Yield normalized, de-duplicated terms from a fully validated file.
+
+        The bounded read validates the whole file before any term is yielded:
+        an oversized or partly invalid file yields nothing, so recognition can
+        never consume terms a status check would call invalid. Iterating over
+        the decoded lines still lets callers stop processing early.
+        """
         try:
-            with path.open("r", encoding="utf-8-sig") as terms_file:
-                for line in terms_file:
-                    term = unicodedata.normalize("NFC", line.strip())
-                    normalized_term = term.casefold()
-                    if not term or term.startswith("#") or normalized_term in seen:
-                        continue
-                    seen.add(normalized_term)
-                    yield term
+            with path.open("rb") as terms_file:
+                raw = terms_file.read(MAX_TERMS_FILE_BYTES + 1)
         except FileNotFoundError:
             return
-        except (OSError, UnicodeError) as error:
+        except OSError as error:
             logger.warning("Could not read custom terms file: %s", error)
+            return
+        if len(raw) > MAX_TERMS_FILE_BYTES:
+            logger.warning("Ignoring custom terms file larger than %d bytes", MAX_TERMS_FILE_BYTES)
+            return
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeError as error:
+            logger.warning("Could not read custom terms file: %s", error)
+            return
+        seen: set[str] = set()
+        for line in text.splitlines():
+            term = unicodedata.normalize("NFC", line.strip())
+            normalized_term = term.casefold()
+            if not term or term.startswith("#") or normalized_term in seen:
+                continue
+            seen.add(normalized_term)
+            yield term
 
     def save_terms(self, terms: list[str]) -> bool:
         """Safely replace the standard terms file with normalized line entries."""
@@ -403,6 +423,11 @@ class CustomDictionaryManager:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
             pass
+        if self.is_transient_terms:
+            # A --dictionary-file override scopes to terms for the session;
+            # an unrelated file beside it must not become persistent
+            # corrections.
+            return None
         terms = self.terms_path()
         old_path = terms.parent / CORRECTIONS_FILENAME if terms is not None else None
         if old_path is None or old_path == path or not old_path.is_file():
@@ -500,6 +525,8 @@ class CustomDictionaryManager:
                 return "Terms file does not exist yet; add a term to create it."
             if not path.is_file():
                 return "Terms path is not a regular file."
+            if path.stat().st_size > MAX_TERMS_FILE_BYTES:
+                return "Terms file is too large to use."
             path.read_text(encoding="utf-8-sig")
         except UnicodeError:
             return "Terms file is not valid UTF-8."
