@@ -234,4 +234,61 @@ def test_the_release_notes_document_flatpak_bundles():
     assert "org.gnome.Platform//50" in body
     assert "no auto-update" in body
     assert "not on Flathub" in body
-    assert "Vocalinux-${{ steps.get_version.outputs.VERSION }}-x86_64.flatpak" in body
+    assert "Vocalinux-__VERSION__-x86_64.flatpak" in body
+
+
+def test_the_remote_install_guidance_only_runs_when_the_remote_publishes():
+    """The notes recommend `flatpak install` of the `.flatpakref` only for a
+    tag the remote will actually carry: stable, with both publish secrets
+    configured — the same gates publish-flatpak-remote applies. Otherwise the
+    prominent command would point at a remote that never gets this release."""
+    body = _jobs()["build-and-release"]
+    assert (
+        "steps.flatpak_notes.outputs.flatpak" in body
+    ), "the Flatpak notes must come from the conditional step, not inline text"
+    for secret in ("FLATPAK_GPG_PRIVATE_KEY", "FLATPAK_REPO_TOKEN"):
+        assert f"secrets.{secret}" in body, f"the notes do not gate on {secret}"
+    assert "*alpha*|*beta*|*rc*" in body, "the notes do not detect prerelease tags"
+    assert "__FLATPAKREF_URL__" in body, "the notes do not publish the .flatpakref path"
+    # Clean installs without Flathub cannot resolve the GNOME runtime from the
+    # remote alone: the manual path has to add flathub first.
+    assert "remote-add --if-not-exists flathub" in body
+
+
+def test_the_flatpak_remote_publishes_signed_and_secret_gated():
+    """#785's self-hosted OSTree remote signs with a provisioned GPG key and
+    pushes to VocaHQ/vocalinux-flatpak, never to the release — and it skips
+    itself instead of failing the release while secrets are unconfigured.
+    """
+    block = _jobs()["publish-flatpak-remote"]
+    assert _needs(block) >= {
+        "build-and-release",
+        "build-flatpak-amd64",
+        "build-flatpak-arm64",
+    }, "the remote must not publish bundles still building or lead the GitHub Release"
+    for secret in ("FLATPAK_GPG_PRIVATE_KEY", "FLATPAK_REPO_TOKEN"):
+        assert f"secrets.{secret}" in block, f"{secret} is not wired into the job"
+    assert "build-import-bundle" in block
+    assert "--gpg-sign" in block, "the remote must sign what it publishes"
+    assert "--generate-static-deltas" in block, "updates would re-download whole apps"
+    assert "external_repository" in block, "the tap repo gets no push without it"
+    assert "gh release upload" not in block, "the remote is not a release asset"
+    assert _permissions(block).get("id-token") != "write"
+
+
+def test_the_remote_publish_is_stable_gated_and_keeps_history():
+    """A prerelease tag must not reach `flatpak update` users, and a transient
+    checkout failure must not be mistaken for a first publish — the empty-repo
+    path would drop the objects clients still delta from."""
+    block = _jobs()["publish-flatpak-remote"]
+    job_if = re.search(r"^    if: (.+)$", block, re.M)
+    assert job_if, "the job is not gated to stable tags"
+    for marker in ("alpha", "beta", "rc"):
+        assert f"contains(github.ref, '{marker}')" in job_if.group(1)
+    assert (
+        "ls-remote --exit-code" in block
+    ), "no explicit check decides whether the remote was published before"
+    assert (
+        "continue-on-error" not in block
+    ), "a tolerated checkout failure falls through to the empty-repo path"
+    assert ".flatpakref" in block, "no app ref is written for one-command installs"

@@ -101,13 +101,25 @@ See [AUR.md](AUR.md).
 
 ## Flatpak
 
-GitHub Releases attach `Vocalinux-<version>-x86_64.flatpak` and `Vocalinux-<version>-aarch64.flatpak`. After the Flathub GNOME runtime is present:
+Install and auto-update via the self-hosted VocaHQ remote (`flatpak update` picks up each release):
+
+```bash
+flatpak install https://vocahq.github.io/vocalinux-flatpak/com.vocalinux.Vocalinux.flatpakref
+```
+
+The `.flatpakref` adds the `vocahq` remote and resolves the GNOME runtime through Flathub. Manually instead:
+
+```bash
+flatpak remote-add --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak remote-add --if-not-exists vocahq https://vocahq.github.io/vocalinux-flatpak/vocahq.flatpakrepo
+flatpak install vocahq com.vocalinux.Vocalinux
+```
+
+Or sideload a GitHub Release bundle (`Vocalinux-<version>-x86_64.flatpak` or `-aarch64.flatpak`) after the Flathub GNOME runtime is present — bundles do not auto-update:
 
 ```bash
 flatpak install --user ./Vocalinux-<version>-x86_64.flatpak
 ```
-
-Bundles do not auto-update.
 
 Local build (contributors):
 
