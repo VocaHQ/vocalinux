@@ -361,7 +361,12 @@ def _is_gnome_session() -> bool:
 
 
 def _read_gnome_input_sources_key(key: str) -> Optional[list]:
-    """Return the parsed list for a gsettings org.gnome.desktop.input-sources key, or None."""
+    """Return the parsed list for a gsettings org.gnome.desktop.input-sources key.
+
+    Returns None when the key cannot be read or parsed. A successfully read
+    empty list comes back as ``[]`` so callers can tell a failed read from a
+    configured-empty list.
+    """
     try:
         result = subprocess.run(
             ["gsettings", "get", "org.gnome.desktop.input-sources", key],
@@ -382,7 +387,7 @@ def _read_gnome_input_sources_key(key: str) -> Optional[list]:
         if sources_text.startswith("@"):
             sources_text = sources_text.split(" ", 1)[1] if " " in sources_text else "[]"
         sources = ast.literal_eval(sources_text)
-        if not isinstance(sources, (list, tuple)) or not sources:
+        if not isinstance(sources, (list, tuple)):
             return None
         return list(sources)
     except (subprocess.SubprocessError, OSError, TypeError, ValueError, SyntaxError) as e:
@@ -687,6 +692,9 @@ def _get_gnome_xkb_keymap() -> Optional[tuple[list, list, list]]:
     signals to XWayland on an input-source switch. Options come from the
     ``xkb-options`` key (e.g. ``grp:alt_shift_toggle``).
     """
+    if not _is_gnome_session():
+        return None
+
     sources = _read_gnome_input_sources_key("sources")
     if not sources:
         return None
@@ -707,11 +715,14 @@ def _get_gnome_xkb_keymap() -> Optional[tuple[list, list, list]]:
     if not layouts:
         return None
 
-    options = [
-        option
-        for option in (_read_gnome_input_sources_key("xkb-options") or [])
-        if isinstance(option, str) and option
-    ]
+    # The repair write clears XKB options with 'setxkbmap -option ""' before
+    # re-adding them, so a failed options read must not look like an empty
+    # list — it would drop the live XWayland options it could not see.
+    options_list = _read_gnome_input_sources_key("xkb-options")
+    if options_list is None:
+        logger.debug("GNOME xkb-options unreadable; not syncing the XWayland map")
+        return None
+    options = [option for option in options_list if isinstance(option, str) and option]
     return layouts, variants, options
 
 
@@ -725,7 +736,8 @@ def _query_xserver_xkb_rules() -> Optional[tuple[str, str, str]]:
         result = subprocess.run(
             ["setxkbmap", "-query"], capture_output=True, text=True, timeout=2, env=host_env()
         )
-    except (subprocess.SubprocessError, FileNotFoundError):
+    except (subprocess.SubprocessError, OSError) as e:
+        logger.debug(f"Could not query the X server XKB rules: {e}")
         return None
     if result.returncode != 0:
         return None
@@ -771,7 +783,9 @@ def sync_xwayland_layout_from_gnome() -> bool:
     source until Mutter's next group event, which any keypress or focus
     change produces.
 
-    Native Wayland sessions with no X DISPLAY are left alone.
+    Non-GNOME sessions and native Wayland sessions with no X DISPLAY are
+    left alone — a gsettings schema copied onto another desktop can hold
+    stale sources that do not describe that desktop's keymap.
     """
     if not _is_wayland_session():
         return False

@@ -77,6 +77,8 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
 
     _SOURCES = [("xkb", "us"), ("xkb", "ru")]
     _OPTIONS = ["grp:alt_shift_toggle", "terminate:ctrl_alt_bksp"]
+    _WAYLAND_XENV = {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"}
+    _GNOME_WAYLAND_ENV = {**_WAYLAND_XENV, "XDG_CURRENT_DESKTOP": "GNOME"}
 
     def _sync(self):
         # Import at call time so patches hit the module other test files reloaded.
@@ -128,12 +130,36 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         return_value=None,
     )
     @patch("vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules")
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
+    def test_missing_gnome_config_is_noop(self, mock_query, mock_read, mock_run):
+        self.assertFalse(self._sync())
+        mock_query.assert_not_called()
+        mock_run.assert_not_called()
+
+    @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
+    @patch("vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key")
+    @patch("vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules")
     @patch.dict(
         "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
+        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0", "XDG_CURRENT_DESKTOP": "KDE"},
         clear=True,
     )
-    def test_missing_gnome_config_is_noop(self, mock_query, mock_read, mock_run):
+    def test_non_gnome_wayland_does_not_sync(self, mock_query, mock_read, mock_run):
+        """A stale GNOME schema must never reach another desktop's XWayland."""
+        self.assertFalse(self._sync())
+        mock_read.assert_not_called()
+        mock_query.assert_not_called()
+        mock_run.assert_not_called()
+
+    @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
+    @patch(
+        "vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key",
+        side_effect=_gnome_reader(_SOURCES, None),
+    )
+    @patch("vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules")
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
+    def test_failed_options_read_does_not_clear_options(self, mock_query, mock_read, mock_run):
+        """A failed xkb-options read must not trigger an 'setxkbmap -option ""' write."""
         self.assertFalse(self._sync())
         mock_query.assert_not_called()
         mock_run.assert_not_called()
@@ -144,11 +170,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         side_effect=_gnome_reader([("ibus", "libpinyin")], []),
     )
     @patch("vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules")
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_ibus_only_sources_is_noop(self, mock_query, mock_read, mock_run):
         self.assertFalse(self._sync())
         mock_query.assert_not_called()
@@ -163,11 +185,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us,ru", "", "grp:alt_shift_toggle,terminate:ctrl_alt_bksp"),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_complete_map_is_not_rewritten(self, mock_query, mock_read, mock_run):
         """An already-correct XWayland map is left alone so the active group survives."""
         self.assertTrue(self._sync())
@@ -183,11 +201,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us", "", "grp:alt_shift_toggle,terminate:ctrl_alt_bksp"),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_single_layout_map_rewritten_with_full_gnome_map(
         self, mock_query, mock_read, mock_run, mock_restore
     ):
@@ -224,11 +238,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us,ru", "", "grp:alt_shift_toggle"),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_variants_written_with_layouts(self, mock_query, mock_read, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         self.assertTrue(self._sync())
@@ -259,11 +269,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us", "", ""),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_empty_variant_position_is_padded(self, mock_query, mock_read, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         self.assertTrue(self._sync())
@@ -284,11 +290,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us", "", ""),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_non_xkb_sources_are_filtered(self, mock_query, mock_read, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         self.assertTrue(self._sync())
@@ -309,11 +311,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=None,
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_query_failure_still_writes(self, mock_query, mock_read, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stderr="")
         self.assertTrue(self._sync())
@@ -344,11 +342,7 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us", "", ""),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_setxkbmap_failure_returns_false(self, mock_query, mock_read, mock_run):
         mock_run.return_value = MagicMock(returncode=1, stderr="Cannot open display")
         self.assertFalse(self._sync())
@@ -362,16 +356,13 @@ class TestSyncXwaylandLayoutFromGnome(unittest.TestCase):
         "vocalinux.text_injection.ibus_engine._query_xserver_xkb_rules",
         return_value=("us", "", ""),
     )
-    @patch.dict(
-        "os.environ",
-        {"XDG_SESSION_TYPE": "wayland", "DISPLAY": ":0"},
-        clear=True,
-    )
+    @patch.dict("os.environ", _GNOME_WAYLAND_ENV, clear=True)
     def test_missing_setxkbmap_returns_false(self, mock_query, mock_read, mock_run):
         mock_run.side_effect = FileNotFoundError("setxkbmap")
         self.assertFalse(self._sync())
 
 
+@patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "GNOME"})
 class TestGetGnomeXkbKeymap(unittest.TestCase):
     """_get_gnome_xkb_keymap parses GNOME sources and xkb-options (#848)."""
 
@@ -405,12 +396,27 @@ class TestGetGnomeXkbKeymap(unittest.TestCase):
         self.assertIsNone(self._keymap())
 
     @patch("vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key")
-    def test_missing_options_returns_empty_options(self, mock_read):
+    def test_empty_options_returns_empty_options(self, mock_read):
+        mock_read.side_effect = lambda key: {
+            "sources": [("xkb", "us"), ("xkb", "ru")],
+            "xkb-options": [],
+        }.get(key)
+        self.assertEqual(self._keymap(), (["us", "ru"], ["", ""], []))
+
+    @patch("vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key")
+    def test_failed_options_read_returns_none(self, mock_read):
+        """A failed options read is not a configured-empty option list."""
         mock_read.side_effect = lambda key: {
             "sources": [("xkb", "us"), ("xkb", "ru")],
             "xkb-options": None,
         }.get(key)
-        self.assertEqual(self._keymap(), (["us", "ru"], ["", ""], []))
+        self.assertIsNone(self._keymap())
+
+    @patch.dict("os.environ", {"XDG_CURRENT_DESKTOP": "KDE"})
+    @patch("vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key")
+    def test_non_gnome_session_returns_none(self, mock_read):
+        self.assertIsNone(self._keymap())
+        mock_read.assert_not_called()
 
     @patch("vocalinux.text_injection.ibus_engine._read_gnome_input_sources_key")
     def test_malformed_source_entries_are_skipped(self, mock_read):
@@ -465,6 +471,12 @@ class TestQueryXserverXkbRules(unittest.TestCase):
     @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
     def test_missing_setxkbmap_returns_none(self, mock_run):
         mock_run.side_effect = FileNotFoundError("setxkbmap")
+        self.assertIsNone(self._query())
+
+    @patch("vocalinux.text_injection.ibus_engine.subprocess.run")
+    def test_oserror_does_not_escape(self, mock_run):
+        """Launch errors like PermissionError must not escape inject's finally."""
+        mock_run.side_effect = PermissionError("setxkbmap")
         self.assertIsNone(self._query())
 
 
