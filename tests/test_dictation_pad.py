@@ -593,6 +593,53 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
+    def test_queued_append_lands_before_user_edit(self) -> None:
+        """Dictation queued before a keystroke must precede it in the buffer."""
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("dictated ")
+            # insert-text/delete-range fire before the edit is applied, so
+            # the queued append lands first and cannot leapfrog new text.
+            pad._on_buffer_user_edit()
+            pad._buffer.insert.assert_called_once()
+            self.assertEqual(pad._pending_idle, [])
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_same_text_appends_do_not_cancel_each_other(self) -> None:
+        """A stale dispatch must not consume a later entry with the same text."""
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("y")
+            pad._flush_idle_ops()
+            pad.append_text("z")
+            pad.append_text("y")
+            calls = pad._GLib.idle_add.call_args_list
+            calls[0].args[0]()  # late dispatch of the already-flushed "y"
+            calls[1].args[0]()  # "z"
+            calls[2].args[0]()  # "y"
+
+            inserted = [c.args[1] for c in pad._buffer.insert.call_args_list]
+            self.assertEqual(inserted, ["y", "z", "y"])
+        finally:
+            pad._window = None
+            pad.destroy()
+
     def test_widget_edit_drops_stale_full_refresh(self) -> None:
         """A queued full refresh must not erase a manual edit.
 

@@ -282,6 +282,10 @@ class DictationPad:
         # Manual edits in the widget feed back into the controller so
         # deletion history never computes against stale dictated text.
         self._buffer.connect("changed", self._on_buffer_changed)
+        # insert-text/delete-range fire BEFORE the edit is applied, so the
+        # queued dictation ops replay ahead of it in true chronological order.
+        self._buffer.connect("insert-text", self._on_buffer_user_edit)
+        self._buffer.connect("delete-range", self._on_buffer_user_edit)
         scrolled.add(self._textview)
 
         button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -376,9 +380,14 @@ class DictationPad:
 
         def _call() -> bool:
             # A flush may have already run this op; GLib still dispatches the
-            # callback, so only act while the entry is still pending.
-            if entry in self._pending_idle:
-                self._pending_idle.remove(entry)
+            # callback, so only act while this entry is still pending. Match
+            # by identity — an equal payload must not cancel a later twin.
+            idx = next(
+                (i for i, pending in enumerate(self._pending_idle) if pending is entry),
+                None,
+            )
+            if idx is not None:
+                del self._pending_idle[idx]
                 func(*args)
             return False
 
@@ -518,13 +527,24 @@ class DictationPad:
         self._bump_generation()
         self._idle_add(self._apply_set_text, self.controller.text, self._generation)
 
+    def _on_buffer_user_edit(self, *_args: Any) -> None:
+        """Replay queued dictation ops before a manual edit reaches the buffer.
+
+        GTK input events outrank idle callbacks, so a keystroke can land
+        before an append queued earlier. insert-text/delete-range fire before
+        the edit is applied, so flushing here keeps the widget (and the
+        controller sync that follows) in the order the controller applied.
+        """
+        if self._syncing_widget:
+            return
+        self._flush_idle_ops()
+
     def _on_buffer_changed(self, buffer: Any) -> None:
         """Mirror edits made directly in the widget back into the controller."""
         if self._syncing_widget:
             return
-        # A keystroke may land while dictation appends still sit in the idle
-        # queue; replay them first so the read below includes them and the
-        # controller is not overwritten with a stale view.
+        # Fallback for edit paths that bypass insert-text/delete-range. A
+        # stale whole-view refresh must not erase the edit that just landed.
         self._flush_idle_ops(keep_user_view=True)
         try:
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
