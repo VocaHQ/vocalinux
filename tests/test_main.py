@@ -1908,6 +1908,43 @@ class TestPadRoutingCallbacks(unittest.TestCase):
         finally:
             boot.stack.close()
 
+    def test_segment_destination_decided_once_between_check_and_delivery(self) -> None:
+        """A toggle flip between the focus check and delivery cannot reroute
+        a pad-bound segment into whichever application holds focus."""
+        boot = _boot_main_callbacks(dictate_to_pad=True, post_script="/bin/cat")
+        try:
+            # The routing decision reads the toggle once; a stale re-read at
+            # delivery would see it off and inject into the focused app.
+            boot.config.is_dictate_to_pad_enabled.side_effect = [True, False]
+            app_a = MagicMock()
+            app_a.identity_blob.return_value = "app-a"
+            with patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                return_value=app_a,
+            ):
+                boot.text_cb("hello").result(timeout=10)
+            boot.pad.append_text.assert_called_once_with("hello ")
+            boot.text_system.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_action_destination_decided_once_between_check_and_delivery(self) -> None:
+        """The same single decision binds a pad-targeted editing command."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.config.is_dictate_to_pad_enabled.side_effect = [True, False]
+            boot.pad.handle_action.return_value = True
+            app_a = MagicMock()
+            app_a.identity_blob.return_value = "app-a"
+            with patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                return_value=app_a,
+            ):
+                self.assertTrue(boot.action_cb("select_all").result(timeout=10))
+            boot.pad.handle_action.assert_called_once_with("select_all")
+        finally:
+            boot.stack.close()
+
     def test_app_bound_segment_drops_on_focus_change(self) -> None:
         """App-bound text is still dropped when focus moved since the dictate."""
         # A configured script arms the submit-time focus probe.
@@ -2170,15 +2207,17 @@ class TestSessionHistoryRecording(unittest.TestCase):
             segment_cb("second", time.monotonic())
             state_cb(RecognitionState.IDLE)
 
-            # The older session's worker decodes last: its text belongs to
-            # the first session, not to the currently-newest entry.
+            # The older session's worker decodes last: its text still belongs
+            # to the first session — worker ownership extends that session's
+            # own snippet rather than the currently-newest entry or an
+            # orphan one.
             on_old_worker("late tail")
-            self.assertEqual(history.get_all(), ["late tail", "second", "first"])
+            self.assertEqual(history.get_all(), ["second", "first late tail"])
 
-            # A later straggler on that same worker still extends the
-            # snippet it owns.
+            # A later straggler on that same worker still extends the same
+            # snippet it owns — one session never splits across entries.
             on_old_worker("more tail")
-            self.assertEqual(history.get_all(), ["late tail more tail", "second", "first"])
+            self.assertEqual(history.get_all(), ["second", "first late tail more tail"])
         finally:
             close_old_worker()
             stack.close()

@@ -633,15 +633,19 @@ def main():
         # TranscriptionHistory.add), so late segments extend that entry
         # rather than whichever snippet happens to be newest.
         latest_snippet_id: Optional[int] = None
-        # Worker thread that produced the most-recently-ended session's
-        # segments; deliveries on that same thread may extend its committed
-        # snippet once the next session has closed, so an older worker
-        # finishing two sessions later cannot leak into a newer entry.
-        ended_session_worker: Optional[threading.Thread] = None
+        # Commit epoch of latest_snippet_id, for guarded late merges.
+        latest_snippet_epoch = transcription_history.epoch
+        # Snippet each ended session's worker owns, as
+        # ``worker -> (snippet_id, commit epoch)``: a worker's late deliveries
+        # merge into its own session's entry however many sessions have
+        # committed since, so one session's stragglers can never leak into a
+        # newer entry or split across several snippets.
+        ended_worker_snippets: dict[threading.Thread, tuple[int, int]] = {}
         # Every worker that has delivered in-session segments; a delivery on
         # a thread never associated with a session is treated as the
         # just-ended session's trailing decode, while a worker seen producing
-        # an earlier session can never merge into a newer entry.
+        # an earlier session can never merge into a newer entry. Dead
+        # workers are pruned so long runs don't accumulate finished threads.
         session_workers_seen: set[threading.Thread] = set()
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
@@ -727,7 +731,8 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_snippet_id, ended_session_worker
+            nonlocal session_worker, latest_snippet_id, latest_snippet_epoch
+            nonlocal session_workers_seen, ended_worker_snippets
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -738,6 +743,12 @@ def main():
             # any other thread is a leftover from an older session.
             current_worker = getattr(speech_engine, "recognition_thread", None)
             with session_lock:
+                # Dead workers cannot deliver again; drop them so long runs
+                # don't accumulate finished threads.
+                session_workers_seen = {t for t in session_workers_seen if t.is_alive()}
+                ended_worker_snippets = {
+                    w: s for w, s in ended_worker_snippets.items() if w.is_alive()
+                }
                 if started_at <= transcription_history.cleared_at:
                     # Captured before the last clear — must not re-enter.
                     return
@@ -772,26 +783,27 @@ def main():
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
-                # its own snippet by id — a newer session may already have
-                # committed on top, so the newest entry is not the target.
-                # Two kinds are admitted: trickles on the ended session's own
-                # worker thread (the engine's decode finishing after IDLE),
-                # and any straggler while a newer session is still open —
-                # the open session has not committed yet, so the tracked id
-                # still points to the ended session's own snippet. An older
-                # worker delivering after that newer session committed forms
-                # its own entry rather than growing the wrong snippet. Both
-                # writes are guarded by the ended session's epoch, so a
-                # clear() landing between that commit and this delivery
-                # still refuses the text.
+                # its own session's snippet, found by the worker delivering
+                # it — a newer session may already have committed on top, so
+                # the newest entry is not the target. A delivery on a thread
+                # never associated with a session is treated as the
+                # just-ended session's trailing decode while a session is
+                # still open; a worker seen producing an earlier session can
+                # never merge into a newer entry. Every write is guarded by
+                # the snippet's own commit epoch, so a clear() landing
+                # between that commit and this delivery still refuses the
+                # text.
+                owner = ended_worker_snippets.get(worker)
+                if owner is not None and transcription_history.extend_entry(
+                    owner[0], segment, expected_epoch=owner[1]
+                ):
+                    return
                 if (
                     latest_snippet_id is not None
-                    and (
-                        worker is ended_session_worker
-                        or (session_open and worker not in session_workers_seen)
-                    )
+                    and session_open
+                    and worker not in session_workers_seen
                     and transcription_history.extend_entry(
-                        latest_snippet_id, segment, expected_epoch=ended_session_epoch
+                        latest_snippet_id, segment, expected_epoch=latest_snippet_epoch
                     )
                 ):
                     return
@@ -800,14 +812,19 @@ def main():
                 snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
-                    ended_session_worker = worker
+                    latest_snippet_epoch = ended_session_epoch
+                    ended_worker_snippets[worker] = (snippet_id, ended_session_epoch)
                     session_workers_seen.add(worker)
 
-        def inject_transcription(text_to_inject: str) -> None:
+        def inject_transcription(text_to_inject: str, to_pad: Optional[bool] = None) -> None:
             """Apply the separator rules and inject one finalised segment.
 
             Args:
                 text_to_inject: Post-processed text ready for the text injector.
+                to_pad: Destination decided when the job's focus check ran;
+                    the delivery must reuse that same decision — re-reading
+                    the live toggle here could disagree with the check and
+                    send the text somewhere it was never verified for.
             """
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
@@ -825,7 +842,7 @@ def main():
                 text_to_inject = " " + text_to_inject
                 logger.debug("Added space separator before new segment")
 
-            captured = dictate_to_pad_enabled()
+            captured = dictate_to_pad_enabled() if to_pad is None else to_pad
             if captured:
                 # In-app capture: skip cross-application injection entirely
                 # and land the text in the pad instead (#726).
@@ -955,16 +972,18 @@ def main():
                     return
                 # Pad-bound segments land in the dictation pad regardless of
                 # where focus sits, so a focus change since the segment was
-                # dictated must not drop them.
-                if not dictate_to_pad_enabled() and not _focused_app_unchanged(
-                    _probe_result(target_probe)
-                ):
+                # dictated must not drop them. The destination is decided
+                # once here and passed to the injector: re-reading the
+                # toggle at delivery could flip it after the check was
+                # skipped and send the segment to the focused application.
+                to_pad = dictate_to_pad_enabled()
+                if not to_pad and not _focused_app_unchanged(_probe_result(target_probe)):
                     logger.info("Dropping queued segment: focus moved to another application")
                     return
                 with injection_lock:
                     if not accepting_injections.is_set():
                         return
-                    inject_transcription(processed_text)
+                    inject_transcription(processed_text, to_pad)
             finally:
                 with pending_jobs_lock:
                     pending_jobs -= 1
@@ -1036,7 +1055,7 @@ def main():
                             return True
                         handled_app: bool = action_handler.handle_action(action)
                         return handled_app
-                    if dictate_to_pad_enabled():
+                    if targets_pad:
                         handled = bool(dictation_pad.handle_action(action))
                         if handled and action in ("undo", "redo") and last_injected["to_pad"]:
                             # Pad history moved: retarget "delete that" at the
@@ -1166,7 +1185,7 @@ def main():
             refers to.
             """
             nonlocal session_open, session_worker, latest_snippet_id
-            nonlocal ended_session_epoch, ended_session_worker, session_started_floor
+            nonlocal ended_session_epoch, session_started_floor, latest_snippet_epoch
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     with pending_jobs_lock:
@@ -1201,7 +1220,12 @@ def main():
                     latest_snippet_id = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
-                    ended_session_worker = closing_worker
+                    latest_snippet_epoch = ended_session_epoch
+                    if latest_snippet_id is not None and closing_worker is not None:
+                        ended_worker_snippets[closing_worker] = (
+                            latest_snippet_id,
+                            ended_session_epoch,
+                        )
             else:
                 with session_lock:
                     if not session_open:
@@ -1215,15 +1239,25 @@ def main():
                         # those captured after the last clear().
                         if session_segments:
                             cleared_at = transcription_history.cleared_at
+                            # A clear() during the unclosed session bumped the
+                            # epoch since the previous close — judge against
+                            # the live epoch, not the stale ended one, or
+                            # valid post-clear dictation is refused.
+                            stray_epoch = transcription_history.epoch
                             latest_snippet_id = transcription_history.add(
                                 " ".join(
                                     text
                                     for text, started_at in session_segments
                                     if started_at > cleared_at
                                 ),
-                                expected_epoch=ended_session_epoch,
+                                expected_epoch=stray_epoch,
                             )
-                            ended_session_worker = leftover_worker
+                            latest_snippet_epoch = stray_epoch
+                            if latest_snippet_id is not None and leftover_worker is not None:
+                                ended_worker_snippets[leftover_worker] = (
+                                    latest_snippet_id,
+                                    stray_epoch,
+                                )
                             session_segments.clear()
 
         # Connect speech recognition to text injection and action handling.

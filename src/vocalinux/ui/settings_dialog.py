@@ -3570,6 +3570,10 @@ class SettingsDialog(Gtk.Dialog):
             return False
         if not self.dictionary_manager.set_terms_enabled(bool(state)):
             self.dictionary_feedback_label.set_text("Could not save custom terms setting.")
+            self._refresh_dictionary_ui()
+            # Returning True suppresses GTK's own state-set so the switch
+            # shows the value that actually persisted, not the requested one.
+            return True
         self._refresh_dictionary_ui()
         return False
 
