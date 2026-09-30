@@ -16,6 +16,13 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
+from .pipewire import (
+    PIPEWIRE_INDEX_BASE,
+    _test_pipewire_input,
+    get_system_audio_sources,
+    is_pipewire_device_index,
+)
+
 if TYPE_CHECKING:
     import numpy as np
 
@@ -206,6 +213,15 @@ def get_audio_input_devices() -> list:
         logger.error("PyAudio not installed, cannot enumerate audio devices")
     except OSError as e:
         logger.error(f"Error enumerating audio devices: {e}")
+
+    # PipeWire sinks exposed as system-audio sources. Indices count down from
+    # PIPEWIRE_INDEX_BASE so they can never collide with a PortAudio index.
+    # Kept outside the PortAudio block so a missing PyAudio still lists them.
+    try:
+        for position, source in enumerate(get_system_audio_sources()):
+            devices.append((PIPEWIRE_INDEX_BASE - position, source.display_name, source.is_default))
+    except Exception:
+        logger.debug("PipeWire source enumeration failed", exc_info=True)
 
     return devices
 
@@ -617,6 +633,9 @@ def test_audio_input(device_index: int = None, duration: float = 1.0) -> dict:
         "has_signal": False,
         "error": None,
     }
+
+    if is_pipewire_device_index(device_index):
+        return _test_pipewire_input(device_index, duration)
 
     try:
         import numpy as np

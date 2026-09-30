@@ -152,6 +152,23 @@ def _no_remote_desktop_portal(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_pipewire_enumeration():
+    """Keep host PipeWire enumeration out of unit tests.
+
+    get_audio_input_devices appends the machine's real PipeWire sinks when
+    pw-dump is present and a daemon answers; tests exercising PipeWire
+    sources patch the seam with the sources they want.
+    """
+    try:
+        from vocalinux.audio import capture as _capture
+    except Exception:
+        yield
+        return
+    with patch.object(_capture, "get_system_audio_sources", return_value=[]):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _reset_shared_config_manager():
     """Drop the process-wide ConfigManager between tests.
 

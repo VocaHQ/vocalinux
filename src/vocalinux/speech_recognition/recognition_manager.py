@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 if TYPE_CHECKING:
     import numpy as np
@@ -41,6 +41,7 @@ from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     get_audio_input_devices,
     test_audio_input,
 )
+from ..audio.pipewire import PipeWireCaptureSource, is_pipewire_device
 from ..audio.playback_ducker import default_dictation_duck_session, duck_delay_seconds
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
@@ -604,7 +605,7 @@ class SpeechRecognitionManager:
         self._capture_channels = 1  # Default, updated when device is opened
         self._capture_downmix_channel = None  # Speech-gated sticky N>=3 channel for open stream
         # The active capture source while a recording session is open.
-        self._capture_source: Optional[PortAudioCaptureSource] = None
+        self._capture_source: Optional[Union[PortAudioCaptureSource, PipeWireCaptureSource]] = None
 
         # Recover a sink left quiet by a crash before doing anything slow.
         # Tests inject a session so this never touches a real audio server.
@@ -2916,6 +2917,10 @@ class SpeechRecognitionManager:
         try:
             if not self._playback_duck.enabled():
                 return
+            if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+                # Ducking lowers the default sink — the very audio a
+                # system-audio source is capturing.
+                return
             # The capture thread may already have failed and released the duck;
             # arming now would lower playback in the error state with nothing
             # left to put it back.
@@ -3202,10 +3207,7 @@ class SpeechRecognitionManager:
             # The capture source owns the device: resolution, format
             # negotiation, downmixing, and resampling. This loop only consumes
             # mono 16 kHz chunks and applies dictation segmentation policy.
-            source = PortAudioCaptureSource(
-                device_index=self.audio_device_index,
-                device_name=self.audio_device_name,
-            )
+            source = self._new_capture_source()
             self._capture_source = source
             # The attempt count belongs to this session — a previous thread
             # may still be finishing and must not leave its retries here.
@@ -3824,18 +3826,36 @@ class SpeechRecognitionManager:
             # If only VOSK params changed, just log it
             logger.info("Applied VAD/silence timeout changes.")
 
-    def _capture_source_for_session(self) -> PortAudioCaptureSource:
+    def _new_capture_source(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
+        """Build the capture source matching the configured device."""
+        if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+            return PipeWireCaptureSource(
+                device_index=self.audio_device_index,
+                device_name=self.audio_device_name,
+            )
+        return PortAudioCaptureSource(
+            device_index=self.audio_device_index,
+            device_name=self.audio_device_name,
+        )
+
+    def _capture_source_for_session(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
         """Return the session's capture source, creating one when absent.
 
         Device selection is refreshed from the manager's configured device so
-        reconnections track the current setting.
+        reconnections track the current setting. The source is rebuilt when
+        the configured device switched families (PortAudio <-> PipeWire).
         """
+        want_pipewire = is_pipewire_device(
+            getattr(self, "audio_device_index", None),
+            getattr(self, "audio_device_name", None),
+        )
         source = getattr(self, "_capture_source", None)
-        if source is None:
-            source = PortAudioCaptureSource()
+        if source is None or isinstance(source, PipeWireCaptureSource) != want_pipewire:
+            source = self._new_capture_source()
             self._capture_source = source
-        source.device_index = getattr(self, "audio_device_index", None)
-        source.device_name = getattr(self, "audio_device_name", None)
+        else:
+            source.device_index = getattr(self, "audio_device_index", None)
+            source.device_name = getattr(self, "audio_device_name", None)
         return source
 
     def _sync_capture_state(self) -> None:
