@@ -209,6 +209,7 @@ vocalinux --engine parakeet
 vocalinux --model medium.en-q5_0
 vocalinux --wayland
 vocalinux --start-minimized
+vocalinux --transcribe-file meeting.wav   # diarized transcript on stdout, then exits
 ```
 
 ## Custom Dictionary Support
@@ -243,6 +244,8 @@ vocalinux --dictionary-file /path/to/dictionary.txt
 This temporarily enables terms from that file without changing saved settings;
 the Custom terms controls are disabled for the session. It does not disable
 transcript corrections.
+
+`--transcribe-file` uses the TinyDiarize model (`small.en-tdrz`) and needs it downloaded first — the tray "Transcribe Audio File…" entry fetches it on demand.
 
 ## Troubleshooting
 

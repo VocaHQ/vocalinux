@@ -47,6 +47,7 @@ from vocalinux.speech_recognition.recognition_manager import (
 from vocalinux.speech_recognition.recognition_manager import (  # noqa: E402
     test_audio_input as _test_audio_input,
 )
+from vocalinux.utils import pywhispercpp_loader
 
 # Restore immediately
 for _k, _v in _ORIG.items():
@@ -224,9 +225,11 @@ class TestPywhispercppLibraryHelpers:
             loaded_handles.append(handle)
             return handle
 
-        monkeypatch.setattr(rm, "_PYWHISPERCPP_PRELOADED_LIBS", [])
-        monkeypatch.setattr(rm, "_find_pywhispercpp_shared_library_dirs", lambda: [str(libs_dir)])
-        monkeypatch.setattr(rm.ctypes, "CDLL", fake_cdll)
+        monkeypatch.setattr(pywhispercpp_loader, "_PRELOADED_LIBS", [])
+        monkeypatch.setattr(
+            pywhispercpp_loader, "find_shared_library_dirs", lambda: [str(libs_dir)]
+        )
+        monkeypatch.setattr(pywhispercpp_loader.ctypes, "CDLL", fake_cdll)
 
         _preload_pywhispercpp_shared_libraries()
 
@@ -234,7 +237,7 @@ class TestPywhispercppLibraryHelpers:
             str(ggml_lib),
             str(whisper_lib),
         ]
-        assert rm._PYWHISPERCPP_PRELOADED_LIBS == loaded_handles
+        assert pywhispercpp_loader._PRELOADED_LIBS == loaded_handles
 
 
 class TestTestAudioInput(unittest.TestCase):

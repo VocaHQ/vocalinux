@@ -54,7 +54,7 @@ def session(monkeypatch: pytest.MonkeyPatch) -> Generator[Session, None, None]:
         manager.model = object()
         manager._model_initialized = True
 
-    def collect_transcription(audio: list[bytes]) -> None:
+    def collect_transcription(audio: list[bytes], language: str | None = None) -> None:
         transcribed.append(audio)
 
     monkeypatch.setattr(manager, "_record_audio", record)

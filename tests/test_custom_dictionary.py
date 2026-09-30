@@ -985,7 +985,7 @@ def test_faster_whisper_receives_the_live_custom_terms_prompt(tmp_path: Path, mo
 
     assert manager._transcribe_with_faster_whisper([b"\x00\x00"]) == "ok"
     manager._faster_whisper_engine.transcribe.assert_called_once_with(
-        [b"\x00\x00"], initial_prompt="VocaLinux"
+        [b"\x00\x00"], language="auto", initial_prompt="VocaLinux"
     )
 
 

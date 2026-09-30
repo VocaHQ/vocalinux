@@ -26,7 +26,23 @@ logger = logging.getLogger(__name__)
 # sha256 per file, and a file replaced upstream would turn every download into a
 # checksum failure. Both the pin and the digests are refreshed together by
 # scripts/generate-model-checksums.py.
-_WHISPERCPP_REPO = "https://huggingface.co/ggerganov/whisper.cpp/resolve"
+_WHISPERCPP_REPO_SLUG = "ggerganov/whisper.cpp"
+_WHISPERCPP_REPO = f"https://huggingface.co/{_WHISPERCPP_REPO_SLUG}/resolve"
+
+# TinyDiarize (tdrz) ships from its own upstream repository — the main one
+# carries only dictation weights. The repo is static since 2023, so the
+# commit is pinned here rather than in model_checksums.txt like the others.
+_TDRZ_REPO = "akashmjn/tinydiarize-whisper.cpp"
+_TDRZ_REVISION = "d44ba793fc67e509623a88a409723311fa677744"
+
+#: Catalog model for speaker-turn diarization. TinyDiarize emits
+#: ``[SPEAKER_TURN]`` markup rather than plain text, so it is fetchable through
+#: the catalog but must never be offered or accepted as a dictation model:
+#: bracketed tokens would type noise into the focused window.
+TDRZ_MODEL = "small.en-tdrz"
+
+#: whisper.cpp catalog models that are not usable for keystroke dictation.
+NON_DICTATION_MODELS = frozenset({TDRZ_MODEL})
 
 
 def whispercpp_model_file(model_name: str) -> str:
@@ -40,6 +56,11 @@ def whispercpp_model_file(model_name: str) -> str:
 
 def _model_url(model_name: str) -> str:
     """Build the Hugging Face URL for a ggml whisper.cpp model."""
+    if model_name in NON_DICTATION_MODELS:
+        repo, revision = _WHISPERCPP_SIDE_SOURCES[model_name]
+        return (
+            f"https://huggingface.co/{repo}/resolve/{revision}/{whispercpp_model_file(model_name)}"
+        )
     return f"{_WHISPERCPP_REPO}/{whispercpp_revision()}/{whispercpp_model_file(model_name)}"
 
 
@@ -73,7 +94,15 @@ _WHISPERCPP_MODEL_SPECS = [
     ("large-v3-turbo", 1620, "809M", "High accuracy, lower memory than large"),
     ("large-v3-turbo-q5_0", 574, "809M", "Quantized large v3 Turbo model"),
     ("large-v3-turbo-q8_0", 874, "809M", "Q8 quantized large v3 Turbo model"),
+    ("small.en-tdrz", 465, "244M", "TinyDiarize speaker-turn model, English-only"),
 ]
+
+#: Repository ``(slug, pinned_revision)`` for catalog models hosted outside the
+#: main whisper.cpp repository. Keyed by model name; also drives
+#: :func:`whispercpp_model_source`.
+_WHISPERCPP_SIDE_SOURCES = {
+    TDRZ_MODEL: (_TDRZ_REPO, _TDRZ_REVISION),
+}
 
 WHISPERCPP_MODEL_INFO = {
     spec[0]: {
@@ -148,6 +177,26 @@ def default_variant_for_size(model_size: str, language_is_english: bool) -> Opti
 def is_english_only_model(model_name: str) -> bool:
     """Return whether a whisper.cpp model variant is English-only."""
     return ".en" in model_name.lower()
+
+
+def is_dictation_model(model_name: str) -> bool:
+    """Return whether a catalog model is a valid keystroke-dictation model."""
+    return model_name in WHISPERCPP_MODEL_INFO and model_name not in NON_DICTATION_MODELS
+
+
+def whispercpp_model_source(model_name: str) -> tuple[str, str]:
+    """Return the ``(repo_slug, pinned_revision)`` hosting a catalog model.
+
+    Main-repository models return an empty revision: their digests are pinned
+    to the commit recorded in ``model_checksums.txt`` and re-resolved by
+    ``scripts/generate-model-checksums.py`` each run. Models hosted in a
+    separate repository pin their own commit in this module, the same way
+    parakeet bundles pin theirs.
+    """
+    source = _WHISPERCPP_SIDE_SOURCES.get(model_name)
+    if source is not None:
+        return source
+    return _WHISPERCPP_REPO_SLUG, ""
 
 
 # Compute backend types

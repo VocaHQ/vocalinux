@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Vocalinux
+Comment=Seamless voice dictation system for Linux
+GenericName=Voice Typing
+Exec=vocalinux
+Icon=vocalinux
+Terminal=false
+Categories=Utility;Accessibility;AudioVideo;
+Keywords=voice;typing;dictation;speech;recognition;transcription;accessibility;
+StartupNotify=true
+X-GNOME-UsesNotifications=true

@@ -24,6 +24,8 @@ from .base import (
     is_valid_shortcut,
     parse_shortcut,
     parse_shortcut_spec,
+    shortcut_gesture,
+    shortcut_gestures_collide,
 )
 
 logger = logging.getLogger(__name__)

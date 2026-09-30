@@ -26,7 +26,7 @@ CAPTURE_CHUNK = 1024
 
 
 # ALSA error handler to suppress warnings during PyAudio initialization
-def _setup_alsa_error_handler():
+def _setup_alsa_error_handler() -> Optional[Any]:
     """Set up an error handler to suppress ALSA warnings."""
     try:
         # Try multiple library name variations for cross-distro compatibility
@@ -45,7 +45,9 @@ def _setup_alsa_error_handler():
                 )
 
                 # Create a no-op error handler
-                def _error_handler(filename, line, function, err, fmt):
+                def _error_handler(
+                    filename: bytes, line: int, function: bytes, err: int, fmt: bytes
+                ) -> None:
                     pass
 
                 _alsa_error_handler = ERROR_HANDLER_FUNC(_error_handler)
@@ -131,7 +133,7 @@ def _is_bluetooth_device(device_name: Optional[str]) -> bool:
     return any(pattern in name_lower for pattern in bluetooth_patterns)
 
 
-def _safe_close_stream(stream) -> None:
+def _safe_close_stream(stream: Any) -> None:
     """Stop and close a PortAudio stream without raising.
 
     Closing an active stream (especially Bluetooth SCO/HFP capture) without
@@ -154,7 +156,7 @@ def _safe_close_stream(stream) -> None:
         pass
 
 
-def _get_device_info_safe(audio, device_index: Optional[int] = None) -> dict:
+def _get_device_info_safe(audio: Any, device_index: Optional[int] = None) -> dict:
     """Fetch PortAudio device info, returning {} on failure."""
     try:
         if device_index is not None:
@@ -211,7 +213,7 @@ def get_audio_input_devices() -> list:
 
 
 def _resolve_device_by_name(
-    audio, device_name: Optional[str], fallback_index: Optional[int] = None
+    audio: Any, device_name: Optional[str], fallback_index: Optional[int] = None
 ) -> Optional[int]:
     """Resolve a device index by name, falling back to index, then system default.
 
@@ -241,7 +243,7 @@ def _resolve_device_by_name(
     return _resolve_valid_input_device(audio, fallback_index)
 
 
-def _resolve_valid_input_device(audio, preferred_index: Optional[int] = None) -> Optional[int]:
+def _resolve_valid_input_device(audio: Any, preferred_index: Optional[int] = None) -> Optional[int]:
     """Resolve a valid audio input device, skipping unsafe or output-only devices.
 
     Checks that the device has maxInputChannels > 0. Falls back from
@@ -324,7 +326,7 @@ def _resolve_valid_input_device(audio, preferred_index: Optional[int] = None) ->
     return input_device_indices[0]
 
 
-def _open_capture_stream(audio, device_index: Optional[int] = None) -> tuple[int, int, object]:
+def _open_capture_stream(audio: Any, device_index: Optional[int] = None) -> tuple[int, int, object]:
     """
     Negotiate a working (channels, sample_rate) and return the opened stream.
 
@@ -498,7 +500,7 @@ def _downmix_to_mono(
     return mono, None
 
 
-def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
+def _get_supported_channels(audio: Any, device_index: Optional[int] = None) -> int:
     """
     Detect the supported number of channels for the audio device.
 
@@ -519,7 +521,7 @@ def _get_supported_channels(audio, device_index: Optional[int] = None) -> int:
     return channels
 
 
-def _get_supported_sample_rate(audio, device_index: Optional[int], channels: int = 1) -> int:
+def _get_supported_sample_rate(audio: Any, device_index: Optional[int], channels: int = 1) -> int:
     """
     Get a supported sample rate for the audio device.
 
@@ -589,7 +591,7 @@ def _get_supported_sample_rate(audio, device_index: Optional[int], channels: int
     return 16000
 
 
-def test_audio_input(device_index: int = None, duration: float = 1.0) -> dict:
+def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) -> dict:
     """
     Test audio input from a device and return diagnostic information.
 

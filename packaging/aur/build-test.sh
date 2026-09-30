@@ -189,4 +189,35 @@ import pywhispercpp.model
 print("   main, tray, recognition, injection and keyboard backends import")
 PY
 
-echo "PASS: the PKGBUILD builds on Arch (this commit, not the last tag)"
+echo "== Build vocalinux-bin against a stub AppImage =="
+# The -bin package's arch sources are the published release assets, which do
+# not exist for an untagged HEAD. A placeholder exercises the same package()
+# install path on this arch; the pinned sums still describe the real assets,
+# so this stage skips checksum verification — release.yml's updpkgsums keeps
+# the published PKGBUILD pinned to the actual files.
+BINPKGDIR="$REPO/packaging/aur/vocalinux-bin"
+[ -f "$BINPKGDIR/PKGBUILD" ] || fail "$BINPKGDIR/PKGBUILD not found"
+# shellcheck source=/dev/null
+source "$BINPKGDIR/PKGBUILD"
+echo "   building ${pkgname} ${pkgver}-${pkgrel} (tagged _tag=${_tag})"
+
+pacman_retry -S --needed --noconfirm --asdeps "${depends[@]}" >/dev/null
+
+# WORKDIR was handed to `builder` before this stage, so create the bin
+# directory as that user — makepkg writes into it as `builder`.
+BINBUILD="$WORKDIR/binpkg"
+runuser -u builder -- mkdir -p "$BINBUILD"
+cp "$BINPKGDIR/PKGBUILD" "$BINPKGDIR/vocalinux.desktop" \
+  "$BINPKGDIR/vocalinux.svg" "$BINPKGDIR/LICENSE" "$BINBUILD/"
+CARCH="$(uname -m)"
+printf 'aur gate stub\n' >"$BINBUILD/Vocalinux-${_tag}-${CARCH}.AppImage"
+
+(
+  cd "$BINBUILD"
+  runuser -u builder -- makepkg -f --noconfirm --skipchecksums
+)
+
+check_namcap "$BINPKGDIR/PKGBUILD"
+check_namcap "$BINBUILD"/*.pkg.tar.*
+
+echo "PASS: both PKGBUILDs build on Arch (this commit, not the last tag)"

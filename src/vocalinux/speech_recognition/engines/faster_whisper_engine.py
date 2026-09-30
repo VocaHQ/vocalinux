@@ -122,19 +122,29 @@ class FasterWhisperEngine:
         self._model = None
         self._model_initialized = False
 
-    def _normalize_language(self) -> Optional[str]:
+    def _normalize_language(self, language: Optional[str] = None) -> Optional[str]:
         """Map Vocalinux language codes to faster-whisper language codes."""
-        if self.language == "auto":
+        language = self.language if language is None else language
+        if language == "auto":
             return None
-        if self.language == "en-us" or self.language == "en-in":
+        if language == "en-us" or language == "en-in":
             return "en"
-        return self.language
+        return language
 
-    def transcribe(self, audio_buffer: list[bytes], initial_prompt: Optional[str] = None) -> str:
+    def transcribe(
+        self,
+        audio_buffer: list[bytes],
+        language: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
+    ) -> str:
         """Transcribe the provided audio buffer.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz).
+            language: Per-call override of the configured engine language
+                (#805): a one-shot dictation binds its session language here
+                so a later restore cannot rewrite it mid-flight. None uses
+                ``self.language``.
             initial_prompt: Optional vocabulary prompt used to bias recognition.
 
         Returns:
@@ -154,7 +164,7 @@ class FasterWhisperEngine:
 
             segments, _info = model.transcribe(
                 audio_float,
-                language=self._normalize_language(),
+                language=self._normalize_language(language),
                 task="transcribe",
                 beam_size=5,
                 best_of=5,
