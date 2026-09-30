@@ -35,6 +35,10 @@ MAX_CORRECTION_CHARACTERS = 500
 # part: the read itself stays bounded and no partial dictionary can reach
 # recognition while Settings reports the file unusable.
 MAX_TERMS_FILE_BYTES = 1_048_576
+# Even within the byte bound a scanner-managed file can hold ~130k terms; the
+# dictionary is a prompt vocabulary, so yields stop here — Settings would
+# otherwise build a row per term.
+MAX_TERMS_YIELDED = 4_096
 
 
 class _DuplicateJsonKeyError(ValueError):
@@ -331,6 +335,12 @@ class CustomDictionaryManager:
                 continue
             seen.add(normalized_term)
             yield term
+            if len(seen) >= MAX_TERMS_YIELDED:
+                logger.warning(
+                    "Custom terms file supplies more than %d terms; trailing entries ignored",
+                    MAX_TERMS_YIELDED,
+                )
+                return
 
     def save_terms(self, terms: list[str]) -> bool:
         """Safely replace the standard terms file with normalized line entries."""
@@ -362,9 +372,15 @@ class CustomDictionaryManager:
         contents = self._read_terms_contents(path, missing_value="")
         if contents is None:
             return False
-        if any(existing.casefold() == cleaned.casefold() for existing in self.get_terms()):
+        existing_terms = self.get_terms()
+        if any(existing.casefold() == cleaned.casefold() for existing in existing_terms):
             logger.warning("Ignoring duplicate custom term %r", cleaned)
             return False
+        if len(contents.encode("utf-8")) > MAX_TERMS_FILE_BYTES:
+            # A tail append would land past the read bound where the new term
+            # stays invisible; normalize the file to its readable terms plus
+            # the addition instead, keeping the result inside the yield cap.
+            return self.save_terms([*existing_terms[: MAX_TERMS_YIELDED - 1], cleaned])
         separator = "" if not contents or contents.endswith(("\n", "\r")) else "\n"
         return self._atomic_write(path, f"{contents}{separator}{cleaned}\n")
 
@@ -550,6 +566,8 @@ class CustomDictionaryManager:
             if path.stat().st_size > MAX_TERMS_FILE_BYTES:
                 count = len(self.get_terms())
                 return f"{count} term(s) available from the file's leading lines only."
+            if len(list(self._iter_terms(path))) >= MAX_TERMS_YIELDED:
+                return f"Only the first {MAX_TERMS_YIELDED} terms are used."
             path.read_text(encoding="utf-8-sig")
         except UnicodeError:
             return "Terms file is not valid UTF-8."

@@ -14,6 +14,7 @@ from vocalinux.custom_dictionary import (
     LEGACY_DEFAULT_TERMS_PATH,
     MAX_CORRECTION_CHARACTERS,
     MAX_TERMS_FILE_BYTES,
+    MAX_TERMS_YIELDED,
     TERMS_FILENAME,
     CustomDictionaryManager,
     apply_corrections,
@@ -173,9 +174,24 @@ def test_oversized_terms_file_supplies_its_leading_lines(tmp_path: Path, monkeyp
     terms = manager.get_terms()
     assert terms
     assert all(re.fullmatch(r"t\d{6}", term) for term in terms)
-    assert len(terms) > 100000
+    assert len(terms) == MAX_TERMS_YIELDED
     assert manager.build_initial_prompt() is not None
     assert "leading lines only" in manager.terms_status()
+
+
+def test_add_term_on_oversized_file_stays_visible(tmp_path: Path, monkeypatch) -> None:
+    """Appending past the byte bound would hide the new term, so the write
+    normalizes the file to its readable terms plus the addition."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+
+    assert manager.add_term("brandnew")
+    terms = manager.get_terms()
+    assert terms[-1] == "brandnew"
+    assert len(terms) <= MAX_TERMS_YIELDED
 
 
 def test_oversized_terms_file_without_complete_line_yields_nothing(
