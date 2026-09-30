@@ -225,6 +225,18 @@ class CustomDictionaryManager:
             logger.warning("Could not expand custom terms path %r: %s", configured, error)
             return None
 
+    def _saved_terms_path(self) -> Optional[Path]:
+        """Return the persisted terms path, ignoring any CLI override."""
+        default_path = str(Path(config_dir()) / TERMS_FILENAME)
+        configured = self.config.get("dictionary", "file_path", default_path)
+        if not isinstance(configured, str) or not configured.strip():
+            configured = default_path
+        try:
+            return Path(configured.strip()).expanduser()
+        except RuntimeError as error:
+            logger.warning("Could not expand saved terms path %r: %s", configured, error)
+            return None
+
     def set_terms_path(self, path: str) -> bool:
         """Persist a usable terms path, retaining the prior setting on save failure."""
         if self.is_transient_terms:
@@ -277,12 +289,14 @@ class CustomDictionaryManager:
 
     @staticmethod
     def _iter_terms(path: Path) -> Iterator[str]:
-        """Yield normalized, de-duplicated terms from a fully validated file.
+        """Yield normalized, de-duplicated terms from a bounded read.
 
-        The bounded read validates the whole file before any term is yielded:
-        an oversized or partly invalid file yields nothing, so recognition can
-        never consume terms a status check would call invalid. Iterating over
-        the decoded lines still lets callers stop processing early.
+        The bounded read validates the whole file when it fits the limit, so
+        a partly invalid file yields nothing and recognition never consumes
+        terms a status check would call invalid. Files past the limit still
+        supply their complete leading lines — a scanner-managed file can grow
+        past the bound without losing its usable prefix. Iterating over the
+        decoded lines still lets callers stop processing early.
         """
         try:
             with path.open("rb") as terms_file:
@@ -293,8 +307,17 @@ class CustomDictionaryManager:
             logger.warning("Could not read custom terms file: %s", error)
             return
         if len(raw) > MAX_TERMS_FILE_BYTES:
-            logger.warning("Ignoring custom terms file larger than %d bytes", MAX_TERMS_FILE_BYTES)
-            return
+            logger.warning(
+                "Custom terms file exceeds %d bytes; reading complete leading lines only",
+                MAX_TERMS_FILE_BYTES,
+            )
+            # Keep the valid leading lines: a scanner-managed file can grow
+            # past the bound, but its usable prefix still supplies terms. A
+            # prefix with no complete line supplies nothing.
+            last_newline = raw.rfind(b"\n")
+            if last_newline == -1:
+                return
+            raw = raw[:last_newline]
         try:
             text = raw.decode("utf-8-sig")
         except UnicodeError as error:
@@ -423,12 +446,11 @@ class CustomDictionaryManager:
             return path.read_text(encoding="utf-8")
         except FileNotFoundError:
             pass
-        if self.is_transient_terms:
-            # A --dictionary-file override scopes to terms for the session;
-            # an unrelated file beside it must not become persistent
-            # corrections.
-            return None
-        terms = self.terms_path()
+        # Legacy corrections lived beside the persisted terms file. Resolve
+        # that path from the saved setting — never the CLI override — so an
+        # override's sibling is not adopted while a saved file's corrections
+        # still apply.
+        terms = self._saved_terms_path()
         old_path = terms.parent / CORRECTIONS_FILENAME if terms is not None else None
         if old_path is None or old_path == path or not old_path.is_file():
             return None
@@ -526,7 +548,8 @@ class CustomDictionaryManager:
             if not path.is_file():
                 return "Terms path is not a regular file."
             if path.stat().st_size > MAX_TERMS_FILE_BYTES:
-                return "Terms file is too large to use."
+                count = len(self.get_terms())
+                return f"{count} term(s) available from the file's leading lines only."
             path.read_text(encoding="utf-8-sig")
         except UnicodeError:
             return "Terms file is not valid UTF-8."

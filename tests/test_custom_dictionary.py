@@ -1,6 +1,7 @@
 """Tests for the file-backed custom dictionary contract."""
 
 import json
+import re
 import stat
 import threading
 from pathlib import Path
@@ -161,14 +162,30 @@ def test_partially_invalid_terms_file_fails_closed(tmp_path: Path, monkeypatch) 
     assert manager.terms_status() == "Terms file is not valid UTF-8."
 
 
-def test_oversized_terms_file_is_ignored_consistently(tmp_path: Path, monkeypatch) -> None:
-    """A file beyond the read bound is invalid everywhere, not partially used."""
+def test_oversized_terms_file_supplies_its_leading_lines(tmp_path: Path, monkeypatch) -> None:
+    """A file beyond the read bound still supplies its complete leading lines."""
     manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
-    (tmp_path / TERMS_FILENAME).write_bytes(b"term\n" * (MAX_TERMS_FILE_BYTES // 5 + 1))
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2  # 8-byte lines plus a partial tail
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+
+    terms = manager.get_terms()
+    assert terms
+    assert all(re.fullmatch(r"t\d{6}", term) for term in terms)
+    assert len(terms) > 100000
+    assert manager.build_initial_prompt() is not None
+    assert "leading lines only" in manager.terms_status()
+
+
+def test_oversized_terms_file_without_complete_line_yields_nothing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A huge file whose first line never ends supplies no terms."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    (tmp_path / TERMS_FILENAME).write_bytes(b"x" * (MAX_TERMS_FILE_BYTES + 10))
 
     assert manager.get_terms() == []
-    assert manager.build_initial_prompt() is None
-    assert manager.terms_status() == "Terms file is too large to use."
 
 
 def test_pr_767_dictionary_configuration_keys_and_contract_are_preserved(
