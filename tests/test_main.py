@@ -162,6 +162,7 @@ class TestMainModule(unittest.TestCase):
                 mock_exit.assert_called_once_with(1)
 
     @patch("vocalinux.main.check_dependencies")
+    @patch("vocalinux.ui.dictation_pad.DictationPad")
     @patch("vocalinux.ui.action_handler.ActionHandler")
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
@@ -178,6 +179,7 @@ class TestMainModule(unittest.TestCase):
         mock_text,
         mock_speech,
         mock_action_handler,
+        mock_dictation_pad,
         mock_check_deps,
     ):
         """Test that main initializes all the required components."""
@@ -199,12 +201,14 @@ class TestMainModule(unittest.TestCase):
         mock_text_instance = MagicMock()
         mock_tray_instance = MagicMock()
         mock_action_instance = MagicMock()
+        mock_pad_instance = MagicMock()
 
         # Setup return values
         mock_speech.return_value = mock_speech_instance
         mock_text.return_value = mock_text_instance
         mock_tray.return_value = mock_tray_instance
         mock_action_handler.return_value = mock_action_instance
+        mock_dictation_pad.return_value = mock_pad_instance
 
         # Mock the arguments
         with patch("vocalinux.main.parse_arguments") as mock_parse:
@@ -253,14 +257,17 @@ class TestMainModule(unittest.TestCase):
                 speech_engine=mock_speech_instance,
                 text_injector=mock_text_instance,
                 transcription_history=ANY,
+                dictation_pad=mock_pad_instance,
             )
 
             # Verify callbacks were registered
             mock_speech_instance.register_text_callback.assert_called_once()
             mock_speech_instance.register_segment_callback.assert_called_once()
-            mock_speech_instance.register_action_callback.assert_called_once_with(
-                mock_action_instance.handle_action
-            )
+            mock_speech_instance.register_action_callback.assert_called_once()
+            # The registered wrapper delegates non-pad actions to ActionHandler.
+            action_callback = mock_speech_instance.register_action_callback.call_args.args[0]
+            action_callback("undo")
+            mock_action_instance.handle_action.assert_called_once_with("undo")
             mock_speech_instance.register_state_callback.assert_called_once()
 
             # Verify the tray indicator was started

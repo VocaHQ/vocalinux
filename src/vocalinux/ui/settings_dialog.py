@@ -3735,6 +3735,18 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Copy to clipboard {'enabled' if enabled else 'disabled'}")
         return False
 
+    def _on_dictation_pad_toggled(self, widget, state):
+        """Handle toggle of the in-app dictation pad switch."""
+        if _handlers_suppressed(self):
+            return False
+
+        enabled = bool(state)
+        logger.info(f"Dictate to pad toggled: {enabled}")
+        self.config_manager.set("text_injection", "dictate_to_pad", enabled)
+        self.config_manager.save_settings()
+        logger.info(f"Dictate to pad {'enabled' if enabled else 'disabled'}")
+        return False
+
     def _on_auto_capitalize_toggled(self, widget, state):
         """Handle toggle of the auto-capitalize switch."""
         if _handlers_suppressed(self):
@@ -4289,6 +4301,19 @@ class SettingsDialog(Gtk.Dialog):
             ),
         )
 
+        self.dictation_pad_switch = _add_switch_row(
+            output_group,
+            title="Dictation Pad",
+            subtitle="Capture dictation in an in-app text box instead of other apps",
+            keywords=("wayland", "pad", "fallback", "text box"),
+            tooltip=(
+                "Type dictation into Vocalinux's own Dictation Pad window instead "
+                "of injecting it into other apps. The pad opens from the tray menu; "
+                "copy text out of it by hand. Useful on Wayland, where injecting "
+                "keystrokes into other windows is restricted."
+            ),
+        )
+
         self.append_trailing_space_switch = _add_switch_row(
             output_group,
             title="Trailing Space After Dictation",
@@ -4323,6 +4348,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.recognition_settings_tab.pack_start(output_group, False, False, 0)
         self.copy_to_clipboard_switch.connect("state-set", self._on_copy_to_clipboard_toggled)
+        self.dictation_pad_switch.connect("state-set", self._on_dictation_pad_toggled)
         self.auto_capitalize_switch.connect("state-set", self._on_auto_capitalize_toggled)
         self.append_trailing_space_switch.connect(
             "state-set", self._on_append_trailing_space_toggled
@@ -6573,6 +6599,7 @@ class SettingsDialog(Gtk.Dialog):
         show_missing_tray_warning = ui_settings.get("show_missing_tray_warning", True)
         show_overlay = ui_settings.get("show_overlay", True)
         copy_to_clipboard = text_injection_settings.get("copy_to_clipboard", False)
+        dictate_to_pad = text_injection_settings.get("dictate_to_pad", False)
         auto_capitalize = text_injection_settings.get("auto_capitalize", True)
         append_trailing_space = text_injection_settings.get("append_trailing_space", True)
         paste_shortcut = self.config_manager.get_paste_shortcut()
@@ -6586,6 +6613,7 @@ class SettingsDialog(Gtk.Dialog):
         self.missing_tray_warning_switch.set_active(show_missing_tray_warning)
         self.show_overlay_switch.set_active(show_overlay)
         self.copy_to_clipboard_switch.set_active(copy_to_clipboard)
+        self.dictation_pad_switch.set_active(dictate_to_pad)
         self.auto_capitalize_switch.set_active(auto_capitalize)
         self.append_trailing_space_switch.set_active(append_trailing_space)
         if not self.paste_shortcut_combo.set_active_id(paste_shortcut):

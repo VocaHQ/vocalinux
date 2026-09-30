@@ -52,6 +52,28 @@ def _should_append_trailing_space() -> bool:
     return True
 
 
+def _should_dictate_to_pad() -> bool:
+    """Return whether dictation should be captured in the in-app pad.
+
+    Reads config.json from disk on each call so the Settings toggle takes
+    effect immediately (same pattern as _should_append_trailing_space).
+    """
+    try:
+        import json
+        import os
+
+        from .utils.paths import config_dir
+
+        config_path = os.path.join(config_dir(), "config.json")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                config = json.load(f)
+            return bool(config.get("text_injection", {}).get("dictate_to_pad", False))
+    except Exception as e:
+        logger.debug(f"Could not read dictate_to_pad setting: {e}")
+    return False
+
+
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(prog="vocalinux", description="Vocalinux")
@@ -611,6 +633,16 @@ def main():
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
 
+        # In-app dictation pad: the Wayland-proof fallback target that
+        # receives dictated text when "dictate to pad" capture is enabled
+        # (#726). Constructed before the tray so the tray menu can open it.
+        from .ui.dictation_pad import DictationPad
+
+        dictation_pad = DictationPad(
+            enabled=_should_dictate_to_pad(),
+            config_manager=config_manager,
+        )
+
         # --- Callback wiring ---------------------------------------------------
         # The speech engine emits four kinds of events, each handled by a
         # dedicated callback registered below:
@@ -746,7 +778,13 @@ def main():
                 text_to_inject = " " + text_to_inject
                 logger.debug("Added space separator before new segment")
 
-            success = text_system.inject_text(text_to_inject)
+            if _should_dictate_to_pad():
+                # In-app capture: skip cross-application injection entirely
+                # and land the text in the pad instead (#726).
+                dictation_pad.append_text(text_to_inject)
+                success = True
+            else:
+                success = text_system.inject_text(text_to_inject)
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
 
@@ -807,8 +845,24 @@ def main():
         # session clear() can separate pre-clear speech from new dictation;
         # injection keeps the plain text callback.
         speech_engine.register_segment_callback(record_history_segment)
+
+        def action_callback_wrapper(action: str) -> bool:
+            """Route 'delete that' into the pad while capture mode is on.
+
+            All other voice commands still go through the injector-driven
+            ActionHandler unchanged.
+            """
+            if action == "delete_last" and _should_dictate_to_pad():
+                if not action_handler.last_injected_text:
+                    return True
+                deleted = dictation_pad.delete_last_chars(len(action_handler.last_injected_text))
+                if deleted:
+                    action_handler.set_last_injected_text("")
+                return True
+            return bool(action_handler.handle_action(action))
+
         speech_engine.register_text_callback(text_callback_wrapper)
-        speech_engine.register_action_callback(action_handler.handle_action)
+        speech_engine.register_action_callback(action_callback_wrapper)
         speech_engine.register_state_callback(on_state_change)
 
         # Initialize and start the system tray indicator
@@ -816,6 +870,7 @@ def main():
             speech_engine=speech_engine,
             text_injector=text_system,
             transcription_history=transcription_history,
+            dictation_pad=dictation_pad,
         )
 
         # Start the GTK main loop

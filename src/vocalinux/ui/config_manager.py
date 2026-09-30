@@ -199,6 +199,9 @@ DEFAULT_CONFIG = {
         # "ydotool"/"xdotool" when autodetection is wrong (#476).
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
         "backend": "auto",
+        # Route dictation into the in-app Dictation Pad window instead of
+        # injecting into other apps — the Wayland-safe fallback (#726).
+        "dictate_to_pad": False,
     },
     "history": {
         "enabled": True,  # Keep recent dictation snippets in the tray menu
@@ -880,6 +883,14 @@ class ConfigManager:
     def set_overlay_enabled(self, enabled: bool) -> None:
         """Enable or disable the floating dictation overlay."""
         self.set("ui", "show_overlay", bool(enabled))
+
+    def is_dictate_to_pad_enabled(self) -> bool:
+        """Check if dictation is routed into the in-app pad (default False)."""
+        return self.get_bool("text_injection", "dictate_to_pad", False)
+
+    def set_dictate_to_pad(self, enabled: bool) -> None:
+        """Route dictation into the in-app Dictation Pad instead of injecting."""
+        self.set("text_injection", "dictate_to_pad", bool(enabled))
 
     def _update_dict_recursive(self, target: dict, source: dict):
         """
