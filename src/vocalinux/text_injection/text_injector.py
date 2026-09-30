@@ -120,6 +120,11 @@ class TextInjector:
     # per-instance event, so the shared default is never the one that is set.
     _abort_injections: threading.Event = threading.Event()
 
+    # Characters confirmed delivered by the most recent inject_text call:
+    # the full length on success, the confirmed prefix after a partial
+    # failure, -1 when delivery is unknowable, 0 when nothing was typed.
+    last_typed_count: int = 0
+
     def __init__(self, wayland_mode: bool = False):
         """
         Initialize the text injector.
@@ -137,6 +142,7 @@ class TextInjector:
         self._ibus_init_thread: Optional[threading.Thread] = None
         self._state_lock = threading.Lock()
         self._abort_injections = threading.Event()
+        self.last_typed_count = 0
         self._clipboard_tool_health = {}
         self._clipboard_timeout = 0.35
         # Overlapping ydotool pastes: bump generation to cancel stale restores;
@@ -1558,6 +1564,8 @@ class TextInjector:
         Returns:
             True if injection was successful, False otherwise
         """
+        self.last_typed_count = 0
+
         if not text or not text.strip():
             logger.debug("Empty text provided, skipping injection")
             return True
@@ -1671,8 +1679,10 @@ class TextInjector:
                     daemon=True,
                 ).start()
 
+            self.last_typed_count = len(text)
             return True
         except _InjectionAborted:
+            self.last_typed_count = -1
             logger.info("Injection aborted by shutdown")
             return False
         except _PartiallyTyped as e:
@@ -1681,6 +1691,7 @@ class TextInjector:
             # Reporting success would mark the whole transcription injected,
             # so "delete that" could erase text before the typed prefix.
             logger.error(f"Text injection failed after a prefix was typed: {e}")
+            self.last_typed_count = e.typed
             remaining = text[e.typed :]
             try:
                 if self._copy_to_clipboard(remaining):
@@ -1701,7 +1712,9 @@ class TextInjector:
         except subprocess.TimeoutExpired as e:
             # A type call that ran past its bound may have delivered only part
             # of the text; putting the full text on the clipboard would let a
-            # manual paste duplicate the fragment already typed.
+            # manual paste duplicate the fragment already typed.  How much
+            # arrived is unknowable, so the caller must not trust any count.
+            self.last_typed_count = -1
             logger.error(f"Text injection timed out, text may be partially typed: {e}")
             return False
         except Exception as e:

@@ -6,12 +6,10 @@ import argparse
 import sys
 import threading
 import time
-import threading
 import unittest
 from contextlib import ExitStack
-from typing import Any, Callable, Dict, Optional, Tuple
-from unittest.mock import ANY, MagicMock, patch
 from types import SimpleNamespace
+from typing import Any, Callable, Dict, Optional, Tuple
 from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
@@ -257,17 +255,12 @@ class TestMainModule(unittest.TestCase):
                 speech_engine=mock_speech_instance,
                 text_injector=mock_text_instance,
                 transcription_history=ANY,
-                speech_engine=mock_speech_instance,
-                text_injector=mock_text_instance,
                 on_quit=ANY,
             )
 
             # Verify callbacks were registered
             mock_speech_instance.register_text_callback.assert_called_once()
             mock_speech_instance.register_segment_callback.assert_called_once()
-            mock_speech_instance.register_action_callback.assert_called_once_with(
-                mock_action_instance.handle_action
-            )
             mock_speech_instance.register_action_callback.assert_called_once()
             # The registered action callback queues the action onto the
             # post-processing worker, which dispatches to the action handler.

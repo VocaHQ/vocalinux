@@ -740,6 +740,17 @@ def main():
             success = text_system.inject_text(text_to_inject)
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
+            else:
+                # Deletion state must match what reached the app: a partial
+                # failure counts the confirmed prefix, an unknowable count
+                # (-1) clears it, and 0 leaves the previous segment's state —
+                # a failed injection types nothing, so "delete that" still
+                # means the segment before it.
+                typed = text_system.last_typed_count
+                if isinstance(typed, int) and typed > 0:
+                    action_handler.set_last_injected_text(text_to_inject[:typed])
+                elif isinstance(typed, int) and typed < 0:
+                    action_handler.set_last_injected_text("")
 
         # Post-processing runs a user executable that may take seconds per
         # segment.  Running it on the recognition thread would stall the
