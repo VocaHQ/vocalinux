@@ -3,8 +3,13 @@
 import unittest
 from pathlib import Path
 
+import yaml
+
 INSTALLER = Path(__file__).resolve().parents[1] / "install.sh"
 INSTALLER_MODULES = Path(__file__).resolve().parents[1] / "install.d"
+PACKAGE_MAP = yaml.safe_load(
+    (INSTALLER.parent / "scripts" / "distro-package-map.yaml").read_text(encoding="utf-8")
+)["distributions"]
 
 
 def _installer_source() -> str:
@@ -83,40 +88,25 @@ class InstallerCudaDiagnosticsTests(unittest.TestCase):
 
     def test_installer_includes_xsel_for_wayland_clipboard_fallback(self) -> None:
         """Fresh installs should include xsel for ydotool's layout-safe paste path."""
-        source = _installer_source()
+        for distro, config in PACKAGE_MAP.items():
+            for tool in ("xclip", "xsel", "wl-clipboard"):
+                self.assertTrue(
+                    any(
+                        package == tool or package.endswith(f"/{tool}")
+                        for package in config["system"]
+                    ),
+                    f"{distro} does not install {tool}",
+                )
 
-        required_lines = [
-            "local APT_PACKAGES_UBUNTU=",
-            "local APT_PACKAGES_DEBIAN_BASE=",
-            "local DNF_PACKAGES=",
-            "local PACMAN_PACKAGES=",
-            "local ZYPPER_PACKAGES=",
-            "local EMERGE_PACKAGES=",
-            "local APK_PACKAGES=",
-            "local XBPS_PACKAGES=",
-            "local EOPKG_PACKAGES=",
-        ]
-
-        for name in required_lines:
-            line = next(line for line in source.splitlines() if name in line)
-            self.assertIn("xclip", line)
-            self.assertIn("xsel", line)
-            self.assertIn("wl-clipboard", line)
-
-    def test_ubuntu_22_package_list_omits_util_linux_extra(self) -> None:
+    def test_optional_apt_package_is_not_in_base_lists(self) -> None:
         """util-linux-extra is probed via apt-cache, not hardcoded in base package lists."""
         source = _installer_source()
 
-        ubuntu_line = next(
-            line for line in source.splitlines() if "local APT_PACKAGES_UBUNTU=" in line
-        )
-        debian_13_line = next(
-            line for line in source.splitlines() if "local APT_PACKAGES_DEBIAN_13_PLUS=" in line
-        )
-        self.assertNotIn("util-linux-extra", ubuntu_line)
-        self.assertNotIn("util-linux-extra", debian_13_line)
-        self.assertIn("apt-cache show util-linux-extra", source)
-        self.assertIn('APT_PACKAGES="$APT_PACKAGES util-linux-extra"', source)
+        for distro in ("ubuntu", "debian_12", "debian_13_plus"):
+            self.assertNotIn("util-linux-extra", PACKAGE_MAP[distro]["system"])
+            self.assertIn("util-linux-extra", PACKAGE_MAP[distro]["optional_system"])
+        self.assertIn('apt-cache show "$OPTIONAL_PACKAGE"', source)
+        self.assertIn('SYSTEM_PACKAGES+=("$OPTIONAL_PACKAGE")', source)
 
 
 if __name__ == "__main__":

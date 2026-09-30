@@ -193,6 +193,15 @@ lock-check:
 export-check:
     python3 scripts/check_exports.py
 
+# Regenerate the shell package inventory consumed by install.sh. The committed
+# output keeps the runtime installer independent of a YAML parser.
+distro-packages: _tooling
+    uv run --no-sync python scripts/generate_distro_package_map.py
+
+# Fail if install.d/package_map.sh is behind its YAML source.
+distro-packages-check: _tooling
+    uv run --no-sync python scripts/generate_distro_package_map.py --check
+
 # The export pins names, versions and digests; this looks up the URL that serves
 # those bytes, so it needs PyPI. tests/test_flatpak_packaging.py checks the same
 # invariant offline, which is what CI gates on.

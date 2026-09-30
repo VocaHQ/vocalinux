@@ -36,9 +36,10 @@ The `.desktop` entry is automatically configured with the detected `GI_TYPELIB_P
 ## Officially Supported Distributions
 
 These distributions are tested and known to work well with Vocalinux. A
-derivative is judged by the Python it ships rather than by its own version
-number, which rarely tracks the base release, and `install.sh` checks the
-interpreter rather than the release label.
+derivative is judged by the Python and package repositories it ships rather
+than by its own version number, which rarely tracks the base release. In
+particular, `install.sh` does not interpret a Debian-based derivative's product
+version as a Debian release number.
 
 | Distribution | Version | Status | Notes |
 |--------------|---------|--------|-------|
@@ -72,13 +73,20 @@ These distributions are known to be incompatible:
 
 | Distribution | Status | Reason |
 |--------------|--------|--------|
+| Debian 11 and earlier | ❌ Not Supported | EOL and below the Python 3.11 floor; the installer requires Debian 12+ |
 | NixOS | ❌ Not Supported | Completely different filesystem layout (/nix/store), incompatible with standard installer |
 
 ## Requirements by Distribution
 
+These are baseline commands for manual installations. The exact inventory used
+by `install.sh`, including package alternatives and conditional dependencies,
+lives in [`scripts/distro-package-map.yaml`](../scripts/distro-package-map.yaml).
+For the complete manual setup sequence, including native build prerequisites,
+use [INSTALL_MANUAL.md](INSTALL_MANUAL.md#system-packages-by-distribution).
+
 ### Ubuntu/Debian-based
 ```bash
-sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-gdkpixbuf-2.0 \
+sudo apt install -y python3-gi gir1.2-gtk-3.0 gir1.2-ibus-1.0 gir1.2-gdkpixbuf-2.0 \
   portaudio19-dev python3-dev python3-venv pkg-config
 ```
 
@@ -134,13 +142,13 @@ the VOSK engine (`--engine=vosk`) as a fully-packaged alternative.
 
 ### Fedora/RHEL-based
 ```bash
-sudo dnf install -y python3-gobject gtk3-devel gobject-introspection-devel \
+sudo dnf install -y python3-gobject gtk3-devel ibus-devel cairo-devel gobject-introspection-devel \
   portaudio-devel python3-devel python3-virtualenv pkg-config
 ```
 
 ### Arch Linux-based
 ```bash
-sudo pacman -S --needed python-gobject gtk3 gobject-introspection \
+sudo pacman -S --needed python-gobject gtk3 ibus gobject-introspection \
   portaudio python pkg-config
 ```
 
@@ -151,9 +159,11 @@ PYVER=$(python3 -c 'import sys; print(f"python{sys.version_info.major}{sys.versi
 sudo zypper install -y \
   "${PYVER}-pip" "${PYVER}-gobject" "${PYVER}-gobject-cairo" \
   "${PYVER}-devel" "${PYVER}-virtualenv" \
-  gtk3 typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1 \
+  gtk3 ibus typelib-1_0-IBus-1_0 \
+  typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1 \
   typelib-1_0-Notify-0_7 libnotify4 \
   gobject-introspection-devel portaudio-devel pkg-config cmake wget curl unzip \
+  gcc gcc-c++ make patchelf \
   xdotool wtype
 
 # Optional: only needed for whisper.cpp Vulkan GPU builds
@@ -224,7 +234,7 @@ Before running `pip install vocalinux`, `pip install "vocalinux[vosk]"`, or
 
 #### Ubuntu/Debian
 ```bash
-sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ayatanaappindicator3-0.1 \
+sudo apt install python3-gi gir1.2-gtk-3.0 gir1.2-ibus-1.0 gir1.2-ayatanaappindicator3-0.1 \
   libgirepository1.0-dev libcairo2-dev portaudio19-dev python3-dev \
   python3-venv pkg-config xdotool wtype wl-clipboard xclip xsel
 ```
@@ -234,14 +244,14 @@ On Ubuntu 24.04+ or Pop!_OS, install `libgirepository-2.0-dev` if
 
 #### Fedora
 ```bash
-sudo dnf install python3-gobject gtk3 gtk3-devel libayatana-appindicator-gtk3 \
+sudo dnf install python3-gobject gtk3 gtk3-devel ibus-devel cairo-devel libayatana-appindicator-gtk3 \
   gobject-introspection-devel portaudio-devel python3-devel \
   python3-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel
 ```
 
 #### Arch Linux
 ```bash
-sudo pacman -S python-gobject gtk3 libayatana-appindicator gobject-introspection \
+sudo pacman -S python-gobject gtk3 ibus libayatana-appindicator gobject-introspection \
   python-cairo portaudio python-virtualenv pkg-config xdotool wtype wl-clipboard xclip xsel
 ```
 
@@ -249,7 +259,8 @@ sudo pacman -S python-gobject gtk3 libayatana-appindicator gobject-introspection
 ```bash
 PYVER=$(python3 -c 'import sys; print(f"python{sys.version_info.major}{sys.version_info.minor}")')
 
-sudo zypper install "${PYVER}-gobject" "${PYVER}-gobject-cairo" gtk3 \
+sudo zypper install "${PYVER}-gobject" "${PYVER}-gobject-cairo" gtk3 ibus typelib-1_0-IBus-1_0 \
+  gcc gcc-c++ make patchelf \
   typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1 \
   typelib-1_0-Notify-0_7 libnotify4 \
   portaudio-devel "${PYVER}-devel" "${PYVER}-virtualenv" pkg-config xdotool wtype wl-clipboard xclip xsel

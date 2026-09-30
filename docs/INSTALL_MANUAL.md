@@ -2,11 +2,20 @@
 
 Use this when the [recommended installer](INSTALL.md) is not a fit, or you want an explicit package list. Prefer `./install.sh` for a normal desktop install.
 
+The commands below are human-readable baselines for manual installs. The
+installer's authoritative package inventory, including build helpers and
+fallbacks, is [`scripts/distro-package-map.yaml`](../scripts/distro-package-map.yaml).
+Its generated shell module is committed so installations do not need a YAML
+parser.
+
 Related: [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
 ## System packages by distribution
 
 Install desktop/system dependencies **before** creating a venv or running `pip install vocalinux`. Pip cannot install GTK typelibs, AppIndicator, PortAudio, or text-injection tools.
+
+Debian 11 and earlier are unsupported; the Debian instructions start at Debian
+12, which is the oldest release with the required Python 3.11.
 
 ### Ubuntu
 
@@ -15,8 +24,9 @@ sudo apt update
 sudo apt install -y \
     python3-pip python3-venv python3-dev \
     python3-gi python3-gi-cairo \
-    gir1.2-gtk-3.0 \
-    libgirepository1.0-dev portaudio19-dev \
+    gir1.2-gtk-3.0 gir1.2-ibus-1.0 \
+    libgirepository1.0-dev libcairo2-dev portaudio19-dev \
+    build-essential pkg-config cmake libssl-dev autoconf automake libtool patchelf \
     wget curl unzip
 
 # Tray: older Ubuntu → gir1.2-appindicator3-0.1
@@ -36,8 +46,9 @@ sudo apt update
 sudo apt install -y \
     python3-pip python3-venv python3-dev \
     python3-gi python3-gi-cairo \
-    gir1.2-gtk-3.0 \
+    gir1.2-gtk-3.0 gir1.2-ibus-1.0 \
     libgirepository1.0-dev libcairo2-dev portaudio19-dev \
+    build-essential pkg-config cmake libssl-dev autoconf automake libtool patchelf \
     wget curl unzip \
     gir1.2-ayatanaappindicator3-0.1 \
     xdotool wtype wl-clipboard xclip xsel
@@ -50,8 +61,9 @@ sudo apt update
 sudo apt install -y \
     python3-pip python3-venv python3-dev \
     python3-gi python3-gi-cairo \
-    gir1.2-gtk-3.0 \
+    gir1.2-gtk-3.0 gir1.2-ibus-1.0 \
     libgirepository-2.0-dev libcairo2-dev portaudio19-dev \
+    build-essential pkg-config cmake libssl-dev autoconf automake libtool patchelf \
     wget curl unzip \
     gir1.2-ayatanaappindicator3-0.1 \
     xdotool wtype wl-clipboard xclip xsel
@@ -64,8 +76,9 @@ Debian notes (OpenSSL build deps, ydotool, etc.): [DISTRO_COMPATIBILITY.md](DIST
 ```bash
 sudo dnf install -y \
     python3-pip python3-devel python3-virtualenv \
-    python3-gobject gtk3 libayatana-appindicator-gtk3 \
-    gobject-introspection-devel portaudio-devel \
+    python3-gobject gtk3 ibus-devel libayatana-appindicator-gtk3 \
+    gobject-introspection-devel portaudio-devel cairo-devel \
+    gcc gcc-c++ make pkg-config cmake patchelf \
     wget curl unzip xdotool wtype wl-clipboard xclip xsel
 ```
 
@@ -75,9 +88,10 @@ Prefer the AUR package (`yay -S vocalinux`). Manual packages:
 
 ```bash
 sudo pacman -S --needed \
-    python-pip python-gobject gtk3 \
+    python-pip python-gobject gtk3 ibus \
     libayatana-appindicator gobject-introspection \
     python-cairo portaudio python-virtualenv \
+    base-devel pkg-config cmake patchelf \
     wget curl unzip xdotool wtype wl-clipboard xclip xsel
 ```
 
@@ -89,9 +103,11 @@ PYVER=$(python3 -c 'import sys; print(f"python{sys.version_info.major}{sys.versi
 sudo zypper install -y \
     "${PYVER}-pip" "${PYVER}-gobject" "${PYVER}-gobject-cairo" \
     "${PYVER}-devel" "${PYVER}-virtualenv" \
-    gtk3 typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1 \
+    gtk3 ibus typelib-1_0-IBus-1_0 \
+    typelib-1_0-AyatanaAppIndicator3-0_1 libayatana-appindicator3-1 \
     typelib-1_0-Notify-0_7 libnotify4 \
     gobject-introspection-devel portaudio-devel pkg-config cmake \
+    gcc gcc-c++ make patchelf \
     wget curl unzip xdotool wtype wl-clipboard xclip xsel
 
 # Optional: whisper.cpp Vulkan builds
