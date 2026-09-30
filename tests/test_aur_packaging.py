@@ -426,9 +426,7 @@ def test_bin_pkgbuild_tracks_the_release_tag_like_the_source_one() -> None:
     )
     # The publish step's own updpkgsums only refreshes the x86_64 array, so
     # release.yml pins both per-arch digests itself right before publishing.
-    assert re.search(
-        r"for arch in x86_64 aarch64[\s\S]*sha256sums_\$\{arch\}", release
-    ), (
+    assert re.search(r"for arch in x86_64 aarch64[\s\S]*sha256sums_\$\{arch\}", release), (
         "release.yml must pin per-arch AppImage digests for vocalinux-bin — "
         "the publish action's updpkgsums only covers the runner's arch"
     )
