@@ -500,9 +500,24 @@ class PlaybackDucker:
                 logger.warning("Could not lower sink %s", sink_id, exc_info=True)
                 return
             if not applied:
-                # The sink was not changed, so the record would restore nothing
-                # useful and might later skip a real user volume.
-                self._forget()
+                # A reported failure is only the tool's word for it: the
+                # command can still have applied before the failure was
+                # reported (a dropped reply, a daemon disconnect). Re-read
+                # the sink and drop the record only when it provably stayed
+                # at the original level; otherwise restore() is the only way
+                # back and the record has to stay.
+                try:
+                    verify = self._control.volume_of(sink_id)
+                except Exception:
+                    verify = None
+                if verify is not None and channels_match(verify, original_channels):
+                    self._forget()
+                    return
+                logger.warning(
+                    "Sink %s reported a failed volume set without confirming it was "
+                    "unchanged; keeping the restore point",
+                    sink_id,
+                )
                 return
             logger.info(
                 "Lowered sink %s from %s to %s (%d%%) while dictating",
@@ -568,10 +583,7 @@ class PlaybackDucker:
             self._forget()
 
     def _current_percent(self) -> int:
-        from ..ui.config_manager import (
-            DEFAULT_PLAYBACK_DUCK_PERCENT,
-            clamp_playback_duck_percent,
-        )
+        from ..ui.config_manager import DEFAULT_PLAYBACK_DUCK_PERCENT, clamp_playback_duck_percent
 
         try:
             return clamp_playback_duck_percent(self._percent_fn())

@@ -91,8 +91,9 @@ if IBus.Engine.__gtype__.name in ("void", "invalid"):
     raise SystemExit("IBus typelib loaded but its library did not")
 
 from vocalinux.text_injection import text_injector  # noqa: F401
+from vocalinux import gateway_embed  # noqa: F401
 
-print("  Gtk 3.0, IBus and text_injection all import")
+print("  Gtk 3.0, IBus, text_injection and gateway_embed all import")
 PY
 
 echo "== Host binaries still run when the app spawns them =="

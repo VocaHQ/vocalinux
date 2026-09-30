@@ -127,3 +127,9 @@ class CancelableTimer(Protocol):
     def cancel(self) -> None:
         """Drop the scheduled call if it has not started."""
         ...
+
+
+class Readable(Protocol):
+    """Minimal read() surface for urlopen-like responses."""
+
+    def read(self, n: int = ...) -> bytes: ...

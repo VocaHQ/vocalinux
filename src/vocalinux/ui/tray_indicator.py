@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import gi
 
@@ -37,6 +37,8 @@ from gi.repository import GdkPixbuf, Gio, GLib, GObject, Gtk
 # Import local modules - Use protocols to avoid circular imports
 from ..auto_pause_monitor import DEFAULT_POLL_INTERVAL_SECONDS, AutoPauseMonitor
 from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, TextInjectorProtocol
+from ..dbus_service import VocalinuxDBusService
+from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
 from ..suspend_handler import SuspendHandler
 from ..utils.host_process import host_env
@@ -130,6 +132,11 @@ class TrayIndicator:
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
+        # Set once by _on_dbus_registration_failed and never cleared: the
+        # service does not retry, so every later reconfigure (mode change,
+        # settings toggle, resume) must keep honoring the fallback rather
+        # than reapplying a disable_internal_hotkey setting D-Bus cannot serve.
+        self._external_activation_unavailable = False
         self._syncing_autostart_menu = False
 
         # Get configured shortcut and mode from config
@@ -226,8 +233,63 @@ class TrayIndicator:
         # Set up keyboard shortcuts with mode support
         self._setup_keyboard_shortcuts()
 
+        # Register the session-bus service so external triggers (e.g. a KDE
+        # Plasma global shortcut running `vocalinux --toggle`) can control this
+        # running instance. Handlers marshal onto the GTK main thread.
+        self._dbus_service = VocalinuxDBusService(
+            on_toggle=self._toggle_recognition,
+            on_start=self._external_start,
+            on_stop=self._external_stop,
+            on_registration_failed=self._on_dbus_registration_failed,
+        )
+
+    def _external_activation_active(self) -> bool:
+        """Whether the internal listener should stay off right now.
+
+        True only when the saved setting asks for it *and* the D-Bus service
+        has not already failed to register this run. The service does not
+        retry, so once it has failed, this stays False for the rest of the
+        process regardless of the saved setting — every later reconfigure
+        (mode change, settings toggle, resume) must keep using the fallback
+        instead of re-disabling the only working activation path.
+        """
+        if self._external_activation_unavailable:
+            return False
+        return self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False)
+
+    def _on_dbus_registration_failed(self) -> None:
+        """Fall back to the internal listener if external activation cannot work.
+
+        Runs when the D-Bus service could not claim its bus name or register
+        its object (no session bus, name already owned, etc.). If the internal
+        evdev/pynput listener is also disabled, the user would otherwise be
+        left with no way to start or stop dictation at all.
+        """
+        if not self.config_manager.get_bool("shortcuts", "disable_internal_hotkey", False):
+            return
+        logger.error(
+            "D-Bus activation unavailable and the internal listener is disabled; "
+            "falling back to the internal listener"
+        )
+        notifications.notify(
+            "External activation unavailable",
+            "The D-Bus service could not start, so Vocalinux is using the "
+            "internal keyboard shortcut instead. Check Settings -> Shortcuts.",
+            "dialog-warning",
+        )
+        self._external_activation_unavailable = True
+        self._setup_keyboard_shortcuts()
+
     def _setup_keyboard_shortcuts(self):
         """Set up keyboard shortcuts based on configured mode."""
+        # Reconfiguring (e.g. live-toggling external activation) tears down the
+        # release callback below. A push-to-talk session held at that moment
+        # would then never see its release, leaving recognition and the
+        # microphone running with no way back except another control surface.
+        if self.speech_engine.state != RecognitionState.IDLE:
+            logger.info("Stopping active recognition before reconfiguring shortcuts")
+            self._stop_recognition()
+
         # Stop existing shortcut manager if running
         if self.shortcut_manager.active:
             logger.info("Stopping existing shortcut manager before reconfiguration")
@@ -237,6 +299,13 @@ class TrayIndicator:
         self.shortcut_manager.register_toggle_callback(None)
         self.shortcut_manager.register_press_callback(None)
         self.shortcut_manager.register_release_callback(None)
+
+        # External-activation mode: skip the internal evdev/pynput listener
+        # entirely so no /dev/input access is required. Activation then comes
+        # in over D-Bus (see VocalinuxDBusService).
+        if self._external_activation_active():
+            logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
+            return
 
         # Get configured mode from config
         mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
@@ -343,6 +412,11 @@ class TrayIndicator:
         self._add_menu_separator()
         self._add_menu_item("Settings", self._on_settings_clicked)
         self._add_menu_item("View Logs", self._on_logs_clicked)
+        self._gateway_stop_menu_item = self._add_menu_item(
+            "Stop local Gateway", self._on_stop_local_gateway_clicked
+        )
+        self._gateway_stop_menu_item.set_no_show_all(True)
+        self._gateway_stop_menu_item.hide()
         self._add_menu_separator()
         # Hidden until a background check finds a newer release.
         self._update_menu_item = self._add_menu_item(
@@ -363,6 +437,12 @@ class TrayIndicator:
             self._update_menu_item.hide()
         else:
             self._show_update_menu_item(self._pending_update)
+        self._gateway_stop_menu_item.hide()
+        self._gateway_manager = get_gateway_embed_manager()
+        self._gateway_manager.add_listener(self._on_gateway_status_for_tray)
+        # Runtime detect + leftover compose probe (Quit does not stop compose).
+        self._gateway_manager.begin_runtime_detection()
+        self._sync_gateway_stop_menu(self._gateway_manager.status)
 
         # Update the UI based on the initial state
         self._update_ui(RecognitionState.IDLE)
@@ -458,6 +538,21 @@ class TrayIndicator:
         """Start voice recognition (for push-to-talk mode)."""
         if self.speech_engine.state == RecognitionState.IDLE:
             self.speech_engine.start_recognition(mode="push_to_talk")
+
+    def _external_start(self) -> None:
+        """Start recognition for an external (D-Bus) trigger.
+
+        Uses normal start semantics — not push-to-talk — so a single
+        `vocalinux --start` transcribes immediately/with silence detection
+        rather than deferring until a Stop.
+        """
+        if self.speech_engine.state == RecognitionState.IDLE:
+            self.speech_engine.start_recognition()
+
+    def _external_stop(self) -> None:
+        """Stop recognition for an external (D-Bus) trigger."""
+        if self.speech_engine.state != RecognitionState.IDLE:
+            self.speech_engine.stop_recognition()
 
     def _stop_recognition(self):
         """Stop voice recognition (for push-to-talk mode)."""
@@ -831,6 +926,7 @@ class TrayIndicator:
                 available, release, notify=False
             ),
             overlay_enabled_callback=self.set_overlay_enabled,
+            hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)
@@ -1086,7 +1182,14 @@ class TrayIndicator:
             logger.info("Skipping resume reinit: auto-pause still active")
         else:
             GLib.timeout_add_seconds(2, self._reinit_speech_after_resume)
-        GLib.timeout_add_seconds(2, self._start_input_device_monitor)
+
+        # External-activation mode never started the /dev/input listener in
+        # the first place; watching it here on every resume would open the
+        # very file descriptor that mode promises to avoid.
+        if self._external_activation_active():
+            logger.info("Skipping input device monitor: external activation via D-Bus")
+        else:
+            GLib.timeout_add_seconds(2, self._start_input_device_monitor)
 
     def _reinit_speech_after_resume(self):
         try:
@@ -1154,6 +1257,32 @@ class TrayIndicator:
             self._input_monitor.cancel()
             self._input_monitor = None
 
+    def _on_gateway_status_for_tray(self, status: GatewayStatus, detail: str) -> None:
+        """Update tray Stop local Gateway visibility from a worker thread."""
+        GLib.idle_add(self._sync_gateway_stop_menu, status)
+
+    def _sync_gateway_stop_menu(self, status: GatewayStatus) -> bool:
+        item = getattr(self, "_gateway_stop_menu_item", None)
+        if item is None:
+            return False
+        # Show Stop for leftover compose too; managed_by_us is session memory only.
+        show = status in {
+            GatewayStatus.STARTING,
+            GatewayStatus.LIVE,
+            GatewayStatus.PAIRABLE,
+            GatewayStatus.READY,
+            GatewayStatus.ERROR,
+        }
+        if show:
+            item.show()
+        else:
+            item.hide()
+        return False
+
+    def _on_stop_local_gateway_clicked(self, widget: Any) -> None:
+        """Stop local compose, including leftovers from a previous session."""
+        get_gateway_embed_manager().stop_async()
+
     def _on_quit_clicked(self, widget):
         """Handle click on the Quit menu item."""
         logger.debug("Quit clicked")
@@ -1185,6 +1314,9 @@ class TrayIndicator:
 
         if getattr(self, "_update_monitor", None) is not None:
             self._update_monitor.shutdown()
+
+        if getattr(self, "_dbus_service", None) is not None:
+            self._dbus_service.shutdown()
 
         self._cleanup_input_monitor()
 

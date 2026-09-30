@@ -37,21 +37,24 @@ This installs system dependencies, creates a venv from the system Python, instal
    ```bash
    sudo apt update
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository-2.0-dev libgirepository1.0-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libgirepository1.0-dev \
+        build-essential pkg-config libcairo2-dev \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
    **Debian 12** cannot pip-build PyGObject 3.56 (glib 2.74). Use `./install.sh --dev` for tests and running from source, then `venv/bin/pytest` / `venv/bin/python -m vocalinux.main --debug`.
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository1.0-dev libcairo2-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository1.0-dev libcairo2-dev \
+        build-essential pkg-config \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
    **Debian 13+:**
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
-       gir1.2-gtk-3.0 libgirepository-2.0-dev libcairo2-dev \
+        gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libcairo2-dev \
+        build-essential pkg-config \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
@@ -138,7 +141,9 @@ vocalinux/
 ├── tests/
 ├── resources/                # Icons and sounds
 ├── docs/
+├── install.d/                # Installer modules, including generated package data
 ├── packaging/                # AppImage, AUR, Flatpak
+├── scripts/                  # Maintenance tools and distro package-map source
 ├── snap/                     # Snap recipe
 └── web/                      # Marketing site (Next.js)
 ```
@@ -150,6 +155,24 @@ vocalinux/
 | Recognition engines | `src/vocalinux/speech_recognition/recognition_manager.py` |
 | Text injection | `src/vocalinux/text_injection/text_injector.py` |
 | Settings / config | `src/vocalinux/ui/config_manager.py`, `settings_dialog.py` |
+| Installer package names | `scripts/distro-package-map.yaml` |
+
+### Installer package map
+
+`scripts/distro-package-map.yaml` is the source of truth for package names,
+alternatives, and conditional package probes used by `install.sh`. Do not edit
+the generated `install.d/package_map.sh` directly. After changing the YAML, run:
+
+```bash
+just distro-packages
+just distro-packages-check
+```
+
+Commit both the YAML and generated shell module. Package-manager control flow
+and installation policy remain handwritten in
+`install.d/system_dependencies.sh`; user systems never parse the YAML. The
+remote bootstrap's pre-checkout `git` installation is the deliberate exception
+because the generated module is not available yet.
 
 ## Testing
 

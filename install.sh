@@ -707,7 +707,7 @@ source_installer_module() {
 # Shared by the model installer module and the runtime downloader.
 MODEL_CHECKSUMS_FILE="$INSTALL_DIR/src/vocalinux/utils/model_checksums.txt"
 
-for INSTALLER_MODULE in interactive.sh system_dependencies.sh models.sh desktop.sh; do
+for INSTALLER_MODULE in package_map.sh interactive.sh system_dependencies.sh models.sh desktop.sh; do
     source_installer_module "$INSTALLER_MODULE" || exit 1
 done
 unset INSTALLER_MODULE

@@ -12,6 +12,7 @@ EXPECTED_MODULES = {
     "desktop.sh",
     "interactive.sh",
     "models.sh",
+    "package_map.sh",
     "system_dependencies.sh",
 }
 
@@ -22,6 +23,7 @@ def test_installer_loads_every_module_from_the_resolved_tree() -> None:
     assert "source_installer_module()" in source
     for module in EXPECTED_MODULES:
         assert module in source
+    assert source.index("package_map.sh") < source.index("system_dependencies.sh")
 
     remote_handoff = source.index("handoff_to_tagged_installer")
     module_loader = source.index("source_installer_module()")

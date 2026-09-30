@@ -72,6 +72,7 @@ dev = [
     "pytest-timeout>=2.1.0",
     "pre-commit>=3.0.0",
     "mypy>=1.0.0",
+    "pyyaml>=6.0,<7",
 ]
 docs = [
     "sphinx>=6.0.0",
@@ -125,6 +126,7 @@ required-version = ">=0.12,<0.13"
 packages = [
     "vocalinux",
     "vocalinux.audio",
+    "vocalinux.gateway_embed",
     "vocalinux.resources",
     "vocalinux.resources.icons",
     "vocalinux.resources.icons.scalable",

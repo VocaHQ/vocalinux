@@ -148,6 +148,10 @@ DEFAULT_CONFIG = {
     "shortcuts": {
         "toggle_recognition": "right_alt+right_alt",
         "mode": "push_to_talk",  # "toggle" or "push_to_talk"
+        # When True, the internal evdev/pynput listener is not started; activation
+        # comes in over D-Bus instead (e.g. a KDE Plasma global shortcut running
+        # `vocalinux --toggle`). Avoids /dev/input access and the input group.
+        "disable_internal_hotkey": False,
         # Pure-modifier gestures: "ctrl+ctrl", "alt+alt", "shift+shift" (and
         # left_/right_ variants) — double-tap (toggle) or hold (push_to_talk).
         # Modifier+key combos are also supported, e.g. "alt+r", "ctrl+alt+r",
@@ -214,6 +218,10 @@ DEFAULT_CONFIG = {
         "channel": "stable",
         # Tag last announced via desktop notification (avoids re-notifying every 6h).
         "last_notified_version": "",
+    },
+    # Optional local VocaGateway (podman/docker). Never flips the default engine.
+    "gateway_embed": {
+        "lan_publish": False,  # VOCAGATEWAY_PUBLISH_HOST=0.0.0.0 when True (Phone on LAN)
     },
 }
 

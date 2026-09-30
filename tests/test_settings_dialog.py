@@ -534,6 +534,8 @@ class TestSettingsDialogInstantApply(unittest.TestCase):
         # separate Advanced page, which the advanced_tab assertions below still guard.
         self.assertIn("self.advanced_box.pack_start(self.remote_server_group", source_code)
         self.assertIn("self.advanced_box.pack_start(self.remote_status_label", source_code)
+        self.assertIn("self.advanced_box.pack_start(self.gateway_embed_group", source_code)
+        self.assertNotIn("self.content_box.pack_start(self.gateway_embed_group", source_code)
         self.assertIn("self.remote_api_model_entry", source_code)
         self.assertIn("OpenAI/FunASR", source_code)
         self.assertNotIn("advanced_tab.pack_start(self.remote_server_group", source_code)
