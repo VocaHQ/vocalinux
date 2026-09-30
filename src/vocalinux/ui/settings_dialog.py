@@ -140,6 +140,11 @@ logger = logging.getLogger(__name__)
 # must agree on whose snapshot is newest.
 _apply_settings_lock = threading.Lock()
 _apply_settings_generation = 0
+# Generation of the apply that last wrote each advanced key. A deferred
+# persist uses it to tell "a newer apply rewrote this key" apart from "the
+# config still holds the baseline" — a newer user choice can legally equal
+# that baseline, so comparing values alone is not enough.
+_apply_settings_written: dict[str, int] = {}
 
 
 def _raw_audio_device_name(device_name: Optional[str]) -> Optional[str]:
@@ -6501,11 +6506,16 @@ class SettingsDialog(Gtk.Dialog):
                         # A newer apply already reconfigured the shared engine
                         # and saved newer values. Keep only the keys it left
                         # untouched — the rest of the snapshot is stale and
-                        # must not reach the engine or the config again.
+                        # must not reach the engine or the config again. A key
+                        # counts as touched only when the newer apply wrote
+                        # it: its choice can legally equal the baseline, and
+                        # the older edit must not overwrite it.
                         surviving = {
                             key: value
                             for key, value in pending.items()
-                            if self.config_manager.get("advanced", key) == baseline.get(key)
+                            if _apply_settings_written.get(key, self._pending_apply_generation)
+                            <= self._pending_apply_generation
+                            and self.config_manager.get("advanced", key) == baseline.get(key)
                         }
                     else:
                         surviving = dict(pending)
@@ -6520,6 +6530,7 @@ class SettingsDialog(Gtk.Dialog):
                     self.speech_engine.reconfigure(**surviving)
                     for key, value in surviving.items():
                         self.config_manager.set("advanced", key, value)
+                        _apply_settings_written[key] = _apply_settings_generation
                     self.config_manager.save_settings()
             except (OSError, ValueError, TypeError, RuntimeError) as e:
                 logger.warning(
@@ -8129,6 +8140,7 @@ class SettingsDialog(Gtk.Dialog):
         # generation that already includes this in-flight apply.
         global _apply_settings_generation
         _apply_settings_generation += 1
+        apply_generation = _apply_settings_generation
         self._applying_settings = True
         # Already-downloaded apply is handed to a worker that clears this flag
         # via GLib.idle_add. Download still holds it for the modal run() below.
@@ -8231,7 +8243,9 @@ class SettingsDialog(Gtk.Dialog):
 
             def apply_already_downloaded() -> None:
                 try:
-                    self._apply_settings_internal(settings, raise_errors=True)
+                    self._apply_settings_internal(
+                        settings, raise_errors=True, apply_generation=apply_generation
+                    )
                     logger.info("Settings auto-applied successfully")
                 except Exception as e:
                     logger.error(f"Failed to auto-apply settings: {e}")
@@ -8835,7 +8849,11 @@ For now, the engine has been reverted to VOSK."""
         dialog.destroy()
 
     def _apply_settings_internal(
-        self, settings: dict, raise_errors: bool = False, force_reinit: bool = False
+        self,
+        settings: dict,
+        raise_errors: bool = False,
+        force_reinit: bool = False,
+        apply_generation: Optional[int] = None,
     ) -> bool:
         """Internal method to apply settings.
 
@@ -8849,6 +8867,10 @@ For now, the engine has been reverted to VOSK."""
                 matches its live state. The download threads pass True: they
                 only run because the model is missing on disk, and a no-op
                 reconfigure would report success for a download that never ran.
+            apply_generation: The apply generation captured when this snapshot
+                was collected. When a newer apply began since, this snapshot is
+                stale and its write is skipped — otherwise lock order, not
+                collection order, would decide which snapshot wins.
         """
         try:
             was_running = self.speech_engine.state != RecognitionState.IDLE
@@ -8861,8 +8883,19 @@ For now, the engine has been reverted to VOSK."""
             # pointing at a model that never made it to disk. The lock orders
             # this snapshot against _persist_pending_text_edits' deferred one.
             with _apply_settings_lock:
+                if apply_generation is not None and _apply_settings_generation != apply_generation:
+                    logger.info(
+                        "Settings apply superseded by a newer one; " "skipping the stale snapshot"
+                    )
+                    return True
                 self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
                 self._save_selected_settings(settings)
+                written_gen = (
+                    apply_generation if apply_generation is not None else _apply_settings_generation
+                )
+                for key in settings:
+                    if key.startswith("whispercpp_"):
+                        _apply_settings_written[key] = written_gen
 
             logger.info("Settings applied successfully.")
             return True

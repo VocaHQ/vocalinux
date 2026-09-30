@@ -213,7 +213,9 @@ def test_already_downloaded_auto_apply_runs_on_a_worker(settings_dialog, dialog_
     ):
         dialog_class._auto_apply_settings(dialog)
 
-    dialog._apply_settings_internal.assert_called_once_with(settings, raise_errors=True)
+    dialog._apply_settings_internal.assert_called_once_with(
+        settings, raise_errors=True, apply_generation=settings_dialog._apply_settings_generation
+    )
     dialog.speech_engine.reconfigure.assert_not_called()
     assert dialog._applying_settings is True
     _run_finish_idle(dialog, dialog_class, idle_calls)
@@ -304,7 +306,11 @@ def test_second_pick_during_apply_resyncs_ui_when_the_worker_finishes(
         assert len(workers) == 1
 
         workers[0].target()
-        dialog._apply_settings_internal.assert_called_once_with(first, raise_errors=True)
+        dialog._apply_settings_internal.assert_called_once_with(
+            first,
+            raise_errors=True,
+            apply_generation=settings_dialog._apply_settings_generation,
+        )
         assert dialog._applying_settings is True
 
         _run_finish_idle(dialog, dialog_class, idle_calls)
@@ -1385,13 +1391,70 @@ def test_deferred_text_edits_dropped_when_a_newer_apply_ran(
     """A newer apply owns the engine and config; the stashed snapshot stays stale."""
     dialog = _dialog_stub()
     dialog._pending_text_edits = {"whispercpp_language_candidates": "en,es"}
+    dialog._pending_text_edit_baseline = {"whispercpp_language_candidates": "en"}
     dialog._pending_apply_generation = settings_dialog._apply_settings_generation
-    # A newer apply began after the edits were stashed.
+    # A newer apply began after the edits were stashed and rewrote the key.
+    settings_dialog._apply_settings_generation += 1
+    settings_dialog._apply_settings_written["whispercpp_language_candidates"] = (
+        settings_dialog._apply_settings_generation
+    )
+    dialog.config_manager.get.side_effect = lambda section, key, default=None: "en"
+
+    try:
+        with patch.object(settings_dialog.threading, "Thread", _InlineThread):
+            dialog_class._persist_pending_text_edits(dialog)
+    finally:
+        settings_dialog._apply_settings_written.pop("whispercpp_language_candidates", None)
+
+    dialog.speech_engine.reconfigure.assert_not_called()
+    dialog.config_manager.set.assert_not_called()
+    dialog.config_manager.save_settings.assert_not_called()
+
+
+def test_deferred_text_edits_dropped_when_newer_apply_wrote_baseline_value(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """A newer choice equal to the baseline is still a choice the edit must lose to."""
+    dialog = _dialog_stub()
+    dialog._pending_text_edits = {"whispercpp_language_candidates": "en,es"}
+    dialog._pending_text_edit_baseline = {"whispercpp_language_candidates": "en"}
+    dialog._pending_apply_generation = settings_dialog._apply_settings_generation
+    # The reopened dialog applied the key back to its baseline value. The
+    # config is indistinguishable from untouched, yet the write counts as
+    # touched — the closed dialog's older edit must not overwrite it.
+    settings_dialog._apply_settings_generation += 1
+    settings_dialog._apply_settings_written["whispercpp_language_candidates"] = (
+        settings_dialog._apply_settings_generation
+    )
+    dialog.config_manager.get.side_effect = lambda section, key, default=None: "en"
+
+    try:
+        with patch.object(settings_dialog.threading, "Thread", _InlineThread):
+            dialog_class._persist_pending_text_edits(dialog)
+    finally:
+        settings_dialog._apply_settings_written.pop("whispercpp_language_candidates", None)
+
+    dialog.speech_engine.reconfigure.assert_not_called()
+    dialog.config_manager.set.assert_not_called()
+    dialog.config_manager.save_settings.assert_not_called()
+
+
+def test_superseded_apply_skips_the_stale_snapshot(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """A worker whose snapshot a newer apply predates must not write at all."""
+    dialog = _dialog_stub()
+    stale_generation = settings_dialog._apply_settings_generation
+    # A newer apply began after this snapshot was collected.
     settings_dialog._apply_settings_generation += 1
 
-    with patch.object(settings_dialog.threading, "Thread", _InlineThread):
-        dialog_class._persist_pending_text_edits(dialog)
+    result = dialog_class._apply_settings_internal(
+        dialog,
+        {"whispercpp_language_candidates": "en,es"},
+        apply_generation=stale_generation,
+    )
 
+    assert result is True
     dialog.speech_engine.reconfigure.assert_not_called()
     dialog.config_manager.set.assert_not_called()
     dialog.config_manager.save_settings.assert_not_called()
