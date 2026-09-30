@@ -1717,7 +1717,7 @@ class TextInjector:
                         "Remaining text copied to clipboard as fallback - user can paste manually"
                     )
                     self._show_clipboard_fallback_notification()
-            except Exception as clipboard_error:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as clipboard_error:
                 logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
 
             try:
@@ -1743,7 +1743,7 @@ class TextInjector:
                     logger.info("Text copied to clipboard as fallback - user can paste manually")
                     self._show_clipboard_fallback_notification()
                     return True
-            except Exception as clipboard_error:
+            except (OSError, subprocess.SubprocessError, RuntimeError) as clipboard_error:
                 logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
 
             try:

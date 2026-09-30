@@ -570,7 +570,7 @@ class TestTextInjector(unittest.TestCase):
         """Test that inject_text returns False on failure."""
         injector = TextInjector()
 
-        self.mock_subprocess.side_effect = Exception("Injection failed")
+        self.mock_subprocess.side_effect = subprocess.CalledProcessError(1, "xdotool")
 
         result = injector.inject_text("Test")
         self.assertFalse(result)
@@ -1408,7 +1408,7 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
             injector = TextInjector()
 
             # Make xdotool fail to trigger error path
-            self.mock_subprocess.side_effect = Exception("Test error")
+            self.mock_subprocess.side_effect = subprocess.CalledProcessError(1, "xdotool")
 
             # Mock the audio import to fail
             with patch.dict("sys.modules", {"vocalinux.ui.audio_feedback": None}):
