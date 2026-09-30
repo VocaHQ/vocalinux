@@ -924,13 +924,13 @@ def main():
             def probe() -> None:
                 try:
                     probe_result.put(focused_window.get_focused_window())
-                except Exception:
+                except (OSError, RuntimeError, queue.Full) as exc:
                     # get_focused_window() reports Optional and should never
                     # raise; if one escapes anyway the failed probe is
                     # indistinguishable from unavailable focus information
                     # unless it is logged — and the waiting job must still
                     # be released.
-                    logger.exception("Focus probe crashed unexpectedly")
+                    logger.exception("Focus probe crashed unexpectedly: %s", exc)
                     probe_result.put(None)
 
             threading.Thread(target=probe, daemon=True, name="vocalinux-focus-probe").start()
