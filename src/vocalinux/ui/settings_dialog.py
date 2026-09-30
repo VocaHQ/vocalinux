@@ -114,7 +114,7 @@ from .keyboard_backends import (  # noqa: E402
     parse_shortcut_spec,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
-from .transcription_history import default_history_path  # noqa: E402
+from .transcription_history import default_history_path, remove_history_files  # noqa: E402
 
 from ..utils.faster_whisper_model_info import (  # isort:skip
     FASTER_WHISPER_MODEL_INFO,
@@ -3113,7 +3113,7 @@ class SettingsDialog(Gtk.Dialog):
         self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
         self.history_clear_button.connect("clicked", self._on_history_clear_clicked)
 
-    def _on_history_enabled_toggled(self, widget, state):
+    def _on_history_enabled_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
         """Handle toggle of the keep-history switch; applies immediately."""
         if self._initializing or self._applying_settings:
             return False
@@ -3129,7 +3129,7 @@ class SettingsDialog(Gtk.Dialog):
             self.transcription_history.set_enabled(enabled)
         return False
 
-    def _on_history_max_items_changed(self, widget):
+    def _on_history_max_items_changed(self, widget: Gtk.SpinButton) -> None:
         """Handle change of the transcripts-to-keep spin button."""
         if self._initializing or self._applying_settings:
             return
@@ -3141,19 +3141,15 @@ class SettingsDialog(Gtk.Dialog):
         if self.transcription_history is not None:
             self.transcription_history.set_max_items(max_items)
 
-    def _on_history_clear_clicked(self, _widget):
+    def _on_history_clear_clicked(self, _widget: Gtk.Button) -> None:
         """Delete all stored transcripts immediately."""
         logger.info("Clear transcript history clicked")
         if self.transcription_history is not None:
             self.transcription_history.clear()
         else:
-            # No live store (e.g. tests): still honor the click on disk.
-            path = default_history_path()
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except OSError as e:
-                logger.warning(f"Could not delete transcript history {path}: {e}")
+            # No live store (e.g. tests): still honor the click on disk,
+            # including any quarantined copy left by a failed load.
+            remove_history_files(default_history_path())
 
     def _update_history_sensitivity(self, enabled: bool) -> None:
         """Grey out the count/clear rows while history is off."""

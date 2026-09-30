@@ -6,7 +6,9 @@ import argparse
 import os
 import sys
 import tempfile
+import threading
 import unittest
+from typing import Any, Callable, Dict, Optional, Tuple
 from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
@@ -266,6 +268,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
                 speech_engine=mock_speech_instance,
                 text_injector=mock_text_instance,
                 transcription_history=ANY,
+                before_quit=ANY,
             )
 
             # Verify callbacks were registered
@@ -327,6 +330,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
         text_callback = mock_speech_instance.register_text_callback.call_args.args[0]
         state_callback = mock_speech_instance.register_state_callback.call_args.args[0]
 
+        state_callback(RecognitionState.LISTENING)
         text_callback("Hello.")
         state_callback(RecognitionState.PROCESSING)
         state_callback(RecognitionState.LISTENING)
@@ -1376,6 +1380,284 @@ class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase)
             text_cb("World")
             # Failure means last_injected stays empty; next segment has no leading space
             mock_text.inject_text.assert_called_once_with("World")
+        finally:
+            stack.close()
+
+
+class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
+    """Segments commit to transcription history as one entry per session."""
+
+    def _boot(self, *, extra_settings: Optional[Dict[str, Any]] = None) -> Tuple[
+        Any,
+        Callable[[str], None],
+        Callable[[RecognitionState], None],
+        Any,
+        Callable[[], None],
+    ]:
+        """Boot main() under mocks; return (stack, text_cb, state_cb, history, before_quit).
+
+        The history is the real TranscriptionHistory instance handed to the
+        (mocked) TrayIndicator, so assertions observe actual recording; its
+        file lands in a temp dir via _IsolatedHistoryDir.
+        """
+        from contextlib import ExitStack
+
+        stack = ExitStack()
+        stack.enter_context(patch("vocalinux.main.check_dependencies", return_value=True))
+        mock_config_cls = stack.enter_context(
+            patch("vocalinux.ui.config_manager.get_shared_config_manager")
+        )
+        mock_config = MagicMock()
+        settings = {
+            "speech_recognition": {},
+            "general": {"first_run": False},
+        }
+        if extra_settings:
+            settings.update(extra_settings)
+        mock_config.get_settings.return_value = settings
+        mock_config.get.return_value = False  # auto_capitalize off
+        mock_config_cls.return_value = mock_config
+
+        mock_speech_cls = stack.enter_context(
+            patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
+        )
+        mock_speech = MagicMock()
+        mock_speech.engine = "whisper_cpp"
+        mock_speech_cls.return_value = mock_speech
+
+        mock_text_cls = stack.enter_context(
+            patch("vocalinux.text_injection.text_injector.TextInjector")
+        )
+        mock_text = MagicMock()
+        mock_text.inject_text.return_value = True
+        mock_text_cls.return_value = mock_text
+
+        mock_tray_cls = stack.enter_context(patch("vocalinux.ui.tray_indicator.TrayIndicator"))
+        mock_tray_cls.return_value = MagicMock()
+
+        stack.enter_context(patch("vocalinux.ui.logging_manager.initialize_logging"))
+        mock_parse = stack.enter_context(patch("vocalinux.main.parse_arguments"))
+        stack.enter_context(patch("sys.argv", ["vocalinux"]))
+
+        mock_args = MagicMock()
+        mock_args.debug = False
+        mock_args.model = "tiny"
+        mock_args.engine = "whisper_cpp"
+        mock_args.language = "en-us"
+        mock_args.wayland = False
+        mock_args.start_minimized = False
+        mock_parse.return_value = mock_args
+        try:
+            main()
+            text_cb = mock_speech.register_text_callback.call_args.args[0]
+            state_cb = mock_speech.register_state_callback.call_args.args[0]
+            history = mock_tray_cls.call_args.kwargs["transcription_history"]
+            before_quit = mock_tray_cls.call_args.kwargs["before_quit"]
+        except BaseException:
+            stack.close()
+            raise
+
+        return stack, text_cb, state_cb, history, before_quit
+
+    def _texts(self, history) -> list:
+        return [e.text for e in history.get_all()]
+
+    def test_session_segments_commit_as_single_entry(self) -> None:
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("Hello.")
+            state_cb(RecognitionState.PROCESSING)
+            state_cb(RecognitionState.LISTENING)
+            text_cb("World")
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["Hello. World"])
+        finally:
+            stack.close()
+
+    def test_successive_sessions_record_separate_entries_newest_first(self) -> None:
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("first session")
+            state_cb(RecognitionState.IDLE)
+
+            state_cb(RecognitionState.LISTENING)
+            text_cb("second session")
+            state_cb(RecognitionState.IDLE)
+
+            self.assertEqual(self._texts(history), ["second session", "first session"])
+        finally:
+            stack.close()
+
+    def test_late_segment_merges_into_its_own_sessions_entry(self) -> None:
+        """A worker that outlives the bounded stop wait lands in its entry."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("hello")
+            text_cb("world")
+            # IDLE fires while the worker still holds a final segment.
+            state_cb(RecognitionState.IDLE)
+            text_cb("late tail")
+            self.assertEqual(self._texts(history), ["hello world late tail"])
+
+            # The next session's entry is not contaminated.
+            state_cb(RecognitionState.LISTENING)
+            text_cb("next session")
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["next session", "hello world late tail"])
+        finally:
+            stack.close()
+
+    def test_late_segment_from_old_worker_during_next_session(self) -> None:
+        """A leftover worker delivering on its own thread stays out of the open session."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("one")
+            state_cb(RecognitionState.IDLE)
+
+            state_cb(RecognitionState.LISTENING)
+            text_cb("two")
+            # The previous session's worker finally delivers on its own thread.
+            t = threading.Thread(target=text_cb, args=("trailing",))
+            t.start()
+            t.join()
+            self.assertEqual(self._texts(history), ["one trailing"])
+
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["two", "one trailing"])
+        finally:
+            stack.close()
+
+    def test_session_without_segments_creates_no_entry(self) -> None:
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), [])
+
+            # A segment arriving now belongs to that empty session: it becomes
+            # its own entry rather than merging into an older one.
+            text_cb("orphan")
+            self.assertEqual(self._texts(history), ["orphan"])
+        finally:
+            stack.close()
+
+    def test_error_state_also_commits_partial_entry(self) -> None:
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("partial")
+            state_cb(RecognitionState.ERROR)
+            self.assertEqual(self._texts(history), ["partial"])
+        finally:
+            stack.close()
+
+    def test_quit_commits_pending_session(self) -> None:
+        """The tray quit path never emits IDLE; the before_quit hook must flush."""
+        stack, text_cb, state_cb, history, before_quit = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("unsaved words")
+            before_quit()
+            self.assertEqual(self._texts(history), ["unsaved words"])
+
+            # Idempotent: a second flush with nothing pending adds nothing.
+            before_quit()
+            self.assertEqual(len(history.get_all()), 1)
+        finally:
+            stack.close()
+
+    def test_history_disabled_records_nothing(self) -> None:
+        stack, text_cb, state_cb, history, _ = self._boot(
+            extra_settings={"history": {"enabled": False}}
+        )
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("hello")
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), [])
+        finally:
+            stack.close()
+
+    def test_invalid_history_max_items_uses_default(self) -> None:
+        """A corrupted saved limit must not prevent startup."""
+        stack, _, _, history, _ = self._boot(extra_settings={"history": {"max_items": "abc"}})
+        try:
+            self.assertEqual(history.max_items, 10)
+        finally:
+            stack.close()
+
+    def test_session_duration_covers_whole_session(self) -> None:
+        """Per-segment LISTENING transitions must not restart the clock."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            ticks = iter([1000.0, 1040.0])
+            with patch("time.monotonic", side_effect=lambda: next(ticks)):
+                state_cb(RecognitionState.LISTENING)
+                text_cb("one")
+                state_cb(RecognitionState.PROCESSING)
+                state_cb(RecognitionState.LISTENING)  # mid-session, not a restart
+                text_cb("two")
+                state_cb(RecognitionState.IDLE)
+            entry = history.get_all()[0]
+            self.assertEqual(entry.text, "one two")
+            self.assertEqual(entry.duration_seconds, 40.0)
+        finally:
+            stack.close()
+
+    def test_late_segment_after_clear_does_not_reappear(self) -> None:
+        """A straggler from an ended session must not resurrect cleared history."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("before clear")
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), ["before clear"])
+
+            history.clear()
+            text_cb("late tail")
+            self.assertEqual(self._texts(history), [])
+        finally:
+            stack.close()
+
+    def test_late_orphan_segment_after_clear_does_not_reappear(self) -> None:
+        """Late-only output of an empty session is refused after a clear too."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            state_cb(RecognitionState.IDLE)  # empty session: no entry
+            history.clear()
+            text_cb("orphan")
+            self.assertEqual(self._texts(history), [])
+        finally:
+            stack.close()
+
+    def test_clear_during_session_drops_its_entry(self) -> None:
+        """A clear issued while a session runs keeps its whole entry out."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("dictated")
+            history.clear()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), [])
+        finally:
+            stack.close()
+
+    def test_disable_reenable_mid_session_drops_pre_optout_text(self) -> None:
+        """Segments buffered before an opt-out must not be saved on re-enable."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            text_cb("before opt-out")
+            history.set_enabled(False)
+            history.set_enabled(True)
+            text_cb("after re-enable")
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(self._texts(history), [])
         finally:
             stack.close()
 

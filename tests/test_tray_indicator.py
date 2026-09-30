@@ -244,6 +244,26 @@ class TestTrayIndicator(unittest.TestCase):
             self.mock_ksm.stop.assert_called_once()
             patched_gtk.main_quit.assert_called_once()
 
+    def test_quit_runs_before_quit_hook(self):
+        """The quit path flushes the in-flight dictation session via the hook."""
+        hook = MagicMock()
+        self.tray_indicator._before_quit = hook
+
+        with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
+            self.tray_indicator._quit()
+            hook.assert_called_once()
+            patched_gtk.main_quit.assert_called_once()
+
+    def test_quit_survives_before_quit_failure(self):
+        """A failing hook must not block shutdown."""
+        hook = MagicMock(side_effect=RuntimeError("flush failed"))
+        self.tray_indicator._before_quit = hook
+
+        with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
+            self.tray_indicator._quit()
+            hook.assert_called_once()
+            patched_gtk.main_quit.assert_called_once()
+
     def test_signal_handler(self):
         """Test signal handler calls GLib.idle_add with _quit."""
         with patch.object(self.tray_indicator, "_quit") as mock_quit:
@@ -1054,6 +1074,28 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertIn("3.2s", tooltip)
         self.assertIn("a &amp; &lt;b&gt;", tooltip)
         self.assertEqual(plain, "just text")
+
+    def test_history_entry_tooltip_escapes_metadata(self):
+        """Markup-hostile engine/model/language values cannot break tooltips."""
+        from vocalinux.ui.transcription_history import TranscriptEntry
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        entry = TranscriptEntry(
+            text="plain",
+            timestamp=1700000000.0,
+            engine="a & <engine>",
+            model="m<odel",
+            language='en "x" & <us>',
+            duration_seconds=1.0,
+        )
+        with patch("vocalinux.ui.tray_indicator.GLib") as glib:
+            glib.markup_escape_text.side_effect = (
+                lambda t: t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            tooltip = TrayIndicator._history_entry_tooltip(entry)
+        self.assertIn("a &amp; &lt;engine&gt; m&lt;odel", tooltip)
+        self.assertNotIn("<engine>", tooltip)
+        self.assertNotIn("<odel", tooltip)
 
     def test_refresh_history_menu_populated(self):
         history = self._make_history()

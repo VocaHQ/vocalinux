@@ -80,6 +80,10 @@ class TextInjectorProtocol(Protocol):
         """Inject text into the active application."""
         ...
 
+    def stop(self) -> None:
+        """Stop the injector, restoring any previous input state."""
+        ...
+
 
 class _EvdevCaptureDevice(Protocol):
     """Minimal evdev InputDevice surface used by the shortcut recorder."""

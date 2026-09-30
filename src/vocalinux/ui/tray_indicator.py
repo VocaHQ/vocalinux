@@ -124,7 +124,8 @@ class TrayIndicator:
         speech_engine: SpeechRecognitionManagerProtocol,
         text_injector: TextInjectorProtocol,
         transcription_history: Optional[TranscriptionHistory] = None,
-    ):
+        before_quit: Optional[Callable[[], None]] = None,
+    ) -> None:
         """
         Initialize the system tray indicator.
 
@@ -135,10 +136,14 @@ class TrayIndicator:
                 transcripts. When provided, a "Recent Transcripts" submenu is
                 shown; entries persist on disk so text survives restarts and
                 failed injections.
+            before_quit: Optional hook run at the start of _quit(). The quit
+                path skips stop_recognition(), so main() uses this to commit
+                an in-flight dictation session to the history.
         """
         self.speech_engine = speech_engine
         self.text_injector = text_injector
         self.transcription_history = transcription_history
+        self._before_quit = before_quit
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
@@ -205,7 +210,9 @@ class TrayIndicator:
         # Lazy import keeps tray import light for tests that mock gi.
         from .dictation_overlay import DictationOverlay
 
-        self.overlay = DictationOverlay(enabled=self.config_manager.is_overlay_enabled())
+        self.overlay: Optional[DictationOverlay] = DictationOverlay(
+            enabled=self.config_manager.is_overlay_enabled()
+        )
 
         # Initialize the icon files and validate resources
         self._init_icons()
@@ -883,20 +890,22 @@ class TrayIndicator:
 
     def _update_overlay(self, state: RecognitionState):
         """Show/hide the floating dictation overlay for the given state."""
-        if getattr(self, "overlay", None) is None:
+        overlay = getattr(self, "overlay", None)
+        if overlay is None:
             return
         # Re-read config so Settings toggles apply without restart.
-        self.overlay.set_enabled(self.config_manager.is_overlay_enabled())
-        self.overlay.on_recognition_state(state)
+        overlay.set_enabled(self.config_manager.is_overlay_enabled())
+        overlay.on_recognition_state(state)
 
     def set_overlay_enabled(self, enabled: bool) -> None:
         """Live-update overlay enabled state (called from Settings)."""
         self.config_manager.set_overlay_enabled(enabled)
-        if getattr(self, "overlay", None) is None:
+        overlay = getattr(self, "overlay", None)
+        if overlay is None:
             return
-        self.overlay.set_enabled(enabled)
+        overlay.set_enabled(enabled)
         # Re-apply current recognition state so hide/show is immediate.
-        self.overlay.on_recognition_state(self.speech_engine.state)
+        overlay.on_recognition_state(self.speech_engine.state)
 
     def _set_menu_item_enabled(self, label: str, enabled: bool):
         """
@@ -924,7 +933,7 @@ class TrayIndicator:
         logger.debug("Stop Voice Typing clicked")
         self.speech_engine.stop_recognition()
 
-    def _refresh_history_menu(self):
+    def _refresh_history_menu(self) -> bool:
         """Rebuild the Recent Transcripts submenu from the current history."""
         if self._history_menu_item is None or self.transcription_history is None:
             return False  # Remove idle callback
@@ -984,7 +993,11 @@ class TrayIndicator:
             meta.append(f"{entry.duration_seconds:.1f}s")
         if not meta:
             return text
-        return f"<span size='small'>{' · '.join(meta)}</span>\n{text}"
+        # Metadata is config/engine supplied, not dictation output, but goes
+        # into the same markup string — escape it too so a & or < in an
+        # engine/model/language name cannot break the tooltip.
+        meta_markup = GLib.markup_escape_text(" · ".join(meta))
+        return f"<span size='small'>{meta_markup}</span>\n{text}"
 
     @staticmethod
     def _truncate_label(text: str) -> str:
@@ -994,14 +1007,14 @@ class TrayIndicator:
             return single_line[: _HISTORY_LABEL_MAX_CHARS - 1].rstrip() + "…"
         return single_line
 
-    def _on_history_item_clicked(self, widget, text: str):
+    def _on_history_item_clicked(self, widget: Gtk.MenuItem, text: str) -> None:
         """Copy the selected transcript back to the clipboard."""
         logger.debug("History transcript clicked, copying to clipboard")
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(text, -1)
         clipboard.store()
 
-    def _on_clear_history_clicked(self, widget):
+    def _on_clear_history_clicked(self, widget: Gtk.MenuItem) -> None:
         """Clear all stored transcripts."""
         logger.debug("Clear history clicked")
         if self.transcription_history is not None:
@@ -1400,9 +1413,19 @@ class TrayIndicator:
         logger.debug("Quit clicked")
         self._quit()
 
-    def _quit(self):
+    def _quit(self) -> None:
         """Quit the application."""
         logger.info("Quitting application")
+
+        # Quitting while a dictation session is open never reaches an IDLE
+        # transition, so the session's already-recognized text would be
+        # dropped; give main() a chance to commit it first.
+        before_quit = getattr(self, "_before_quit", None)
+        if before_quit is not None:
+            try:
+                before_quit()
+            except Exception:
+                logger.error("Pre-quit hook failed", exc_info=True)
 
         # stop_recognition is not called here (it would play the stop cue and
         # join the capture thread). Put the speakers back before the process
@@ -1435,8 +1458,9 @@ class TrayIndicator:
         # Stop the keyboard shortcut manager
         self.shortcut_manager.stop()
 
-        if getattr(self, "overlay", None) is not None:
-            self.overlay.destroy()
+        overlay = getattr(self, "overlay", None)
+        if overlay is not None:
+            overlay.destroy()
             self.overlay = None
 
         # Stop the text injector (restores previous IBus engine)

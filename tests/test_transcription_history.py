@@ -124,6 +124,65 @@ class TestTranscriptionHistory(unittest.TestCase):
         history.add("b")
         self.assertEqual([e.text for e in history.get_all()], ["b"])
 
+    def test_max_items_invalid_falls_back_to_default(self):
+        """A malformed saved limit (user-edited config) must not raise."""
+        self.assertEqual(self._history(max_items="abc").max_items, DEFAULT_MAX_ITEMS)
+        self.assertEqual(self._history(max_items=None).max_items, DEFAULT_MAX_ITEMS)
+        self.assertEqual(self._history(max_items=3.7).max_items, 3)
+
+    def test_extend_latest_appends_to_newest(self):
+        history = self._history()
+        history.add("hello")
+        history.add("second")
+        self.assertTrue(history.extend_latest("tail"))
+        self.assertEqual([e.text for e in history.get_all()], ["second tail", "hello"])
+
+    def test_extend_latest_without_entries_is_noop(self):
+        history = self._history()
+        self.assertFalse(history.extend_latest("orphan"))
+        self.assertEqual(history.get_all(), [])
+
+    def test_add_refused_when_epoch_stale(self):
+        """Text captured before a clear must not re-enter history afterwards."""
+        history = self._history()
+        epoch = history.epoch
+        history.add("one")
+        history.clear()
+        self.assertFalse(history.add("stale", expected_epoch=epoch))
+        self.assertEqual(history.get_all(), [])
+
+    def test_extend_latest_refused_when_epoch_stale(self):
+        history = self._history()
+        history.add("one")
+        epoch = history.epoch
+        history.clear()
+        self.assertFalse(history.extend_latest("tail", expected_epoch=epoch))
+        self.assertEqual(history.get_all(), [])
+
+    def test_clear_on_empty_still_bumps_epoch(self):
+        """Clear means "forget everything so far" even with nothing stored."""
+        history = self._history()
+        epoch = history.epoch
+        history.clear()
+        self.assertFalse(history.add("late", expected_epoch=epoch))
+
+    def test_disable_invalidates_pending_epoch(self):
+        """An opt-out refuses adds from sessions started before it, even
+        after history is switched back on."""
+        history = self._history()
+        epoch = history.epoch
+        history.set_enabled(False)
+        history.set_enabled(True)
+        self.assertFalse(history.add("before opt-out", expected_epoch=epoch))
+        self.assertEqual(history.get_all(), [])
+
+    def test_extend_latest_survives_across_sessions_same_epoch(self):
+        """Uncleared history still accepts late segments under a fresh epoch read."""
+        history = self._history()
+        history.add("one")
+        self.assertTrue(history.extend_latest("tail", expected_epoch=history.epoch))
+        self.assertEqual(history.get_all()[0].text, "one tail")
+
     def test_clear(self):
         history = self._history()
         history.add("a")
@@ -213,6 +272,35 @@ class TestTranscriptionHistory(unittest.TestCase):
         self.assertTrue(os.path.exists(self.path))
         history.clear()
         self.assertFalse(os.path.exists(self.path))
+
+    def test_clear_removes_quarantined_copy(self):
+        """The .corrupt sibling holds the same text; Clear must delete it too."""
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w") as f:
+            f.write("{not json")
+        history = self._history()  # load fails -> file quarantined
+        self.assertTrue(os.path.exists(self.path + ".corrupt"))
+
+        history.clear()
+        self.assertFalse(os.path.exists(self.path + ".corrupt"))
+
+    def test_disable_removes_quarantined_copy(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path, "w") as f:
+            f.write("{not json")
+        history = self._history()
+        self.assertTrue(os.path.exists(self.path + ".corrupt"))
+
+        history.set_enabled(False)
+        self.assertFalse(os.path.exists(self.path + ".corrupt"))
+
+    def test_disabled_constructor_removes_leftover_quarantine(self):
+        os.makedirs(os.path.dirname(self.path), exist_ok=True)
+        with open(self.path + ".corrupt", "w") as f:
+            f.write("recoverable text")
+
+        self._history(enabled=False)
+        self.assertFalse(os.path.exists(self.path + ".corrupt"))
 
     def test_disable_removes_file(self):
         history = self._history()

@@ -7,6 +7,7 @@ import argparse
 import atexit
 import logging
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -387,7 +388,11 @@ def main():
     from .ui.action_handler import ActionHandler
     from .ui.config_manager import get_shared_config_manager
     from .ui.logging_manager import initialize_logging
-    from .ui.transcription_history import TranscriptionHistory
+    from .ui.transcription_history import (
+        DEFAULT_MAX_ITEMS,
+        TranscriptionHistory,
+        sanitize_max_items,
+    )
 
     # Initialize logging manager early
     initialize_logging()
@@ -484,8 +489,9 @@ def main():
     advanced_settings = config_manager.get_settings().get("advanced", {})
 
     history_settings = config_manager.get_settings().get("history", {})
-    history_enabled = history_settings.get("enabled", True)
-    history_max_items = history_settings.get("max_items", 10)
+    history_enabled = bool(history_settings.get("enabled", True))
+    # config.json is user-editable; a malformed limit must not abort startup.
+    history_max_items = sanitize_max_items(history_settings.get("max_items", DEFAULT_MAX_ITEMS))
 
     logger.info(f"Final settings: engine={engine}, language={language}, model={model_size}")
     if audio_device_index is not None:
@@ -538,10 +544,34 @@ def main():
         transcription_history = TranscriptionHistory(
             max_items=history_max_items, enabled=history_enabled
         )
-        # Segments dictated during the current session, joined and committed to
-        # history when the session ends (state returns to IDLE).
+        # Segments dictated during the open session, joined and committed to
+        # history when the session ends (state returns to IDLE or ERROR).
+        #
+        # Session association: stop_recognition() emits IDLE after only a
+        # bounded wait on the recognition worker, so a slow final segment can
+        # still fire its text callback afterwards. Each segment must land in
+        # the session that produced it: while a session is open, segments
+        # accumulate in session_segments; a segment arriving on a worker that
+        # is not the open session's worker (or while no session is open) is a
+        # leftover of the just-ended session and is folded into its transcript
+        # instead of leaking into the next one.
+        session_lock = threading.Lock()
         session_segments: list[str] = []
+        session_open = False
         session_started_at: Optional[float] = None
+        # Worker thread that produced the open session's segments; used to
+        # detect callbacks from a previous session's still-running worker.
+        session_worker: Optional[threading.Thread] = None
+        # True when the newest history entry is the just-closed session's
+        # transcript, so late segments can still merge into it.
+        latest_transcript_extendable = False
+        # Clear epochs the open and most-recently-ended sessions run under.
+        # A history.clear() bumps the epoch, so text produced beforehand
+        # must not re-enter history afterwards; the two are kept separate
+        # because a new session can open while a previous worker is still
+        # delivering its final segment.
+        session_epoch = transcription_history.epoch
+        ended_session_epoch = session_epoch
 
         # --- Callback wiring ---------------------------------------------------
         # The speech engine emits three kinds of events, each handled by a
@@ -594,7 +624,7 @@ def main():
             # primary reason to keep a history. Stored clean, without the
             # inter-segment space added below.
             if transcription_history.enabled:
-                session_segments.append(text_to_inject)
+                record_history_segment(text_to_inject)
 
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
@@ -616,33 +646,122 @@ def main():
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
 
+        def record_history_segment(segment: str) -> None:
+            """File a recognized segment under the dictation session it came from.
+
+            Runs on the recognition worker thread. While a session is open,
+            segments accumulate into that session's pending transcript. A
+            segment delivered after the session was finalized — the worker
+            can outlive the manager's bounded stop wait and emit text after
+            IDLE — is folded into its own session's transcript rather than
+            the next one.
+            """
+            nonlocal session_worker, latest_transcript_extendable
+            worker = threading.current_thread()
+            # The engine's live worker, when it exposes one: a segment from
+            # any other thread is a leftover from an older session.
+            current_worker = getattr(speech_engine, "recognition_thread", None)
+            with session_lock:
+                if session_open and (
+                    worker is session_worker
+                    or worker is current_worker
+                    # When the engine exposes no worker (tests, mocks), the
+                    # first segment of a session tags it.
+                    or (session_worker is None and not isinstance(current_worker, threading.Thread))
+                ):
+                    session_worker = worker
+                    session_segments.append(segment)
+                    return
+                # Late segment from a session that already ended: merge into
+                # its committed transcript when there is one. Both writes are
+                # guarded by the ended session's epoch, so text dictated
+                # before a clear() cannot re-enter history afterwards.
+                if latest_transcript_extendable and transcription_history.extend_latest(
+                    segment, expected_epoch=ended_session_epoch
+                ):
+                    return
+                # Otherwise the late segments are the session's only output
+                # and form their own transcript.
+                if transcription_history.add(segment, expected_epoch=ended_session_epoch):
+                    latest_transcript_extendable = True
+
+        def commit_pending_session() -> None:
+            """Commit the open session's buffered segments to history.
+
+            Shared by the IDLE/ERROR state path and the tray quit path:
+            quitting mid-dictation never reaches a closing state, so without
+            this the text already recognized in the session would be dropped.
+            """
+            nonlocal session_open, session_worker, session_started_at
+            nonlocal latest_transcript_extendable, ended_session_epoch
+            with session_lock:
+                session_open = False
+                session_worker = None
+                # The epoch this session opened under; late segments from
+                # its worker are still judged against it.
+                ended_session_epoch = session_epoch
+                joined = " ".join(session_segments)
+                session_segments.clear()
+                duration = (
+                    time.monotonic() - session_started_at if session_started_at is not None else 0.0
+                )
+                session_started_at = None
+                # Guarded by the session's epoch: a clear() issued while the
+                # session ran drops its transcript rather than letting the
+                # cleared text back in. The committed transcript stays open
+                # to late segments still trickling out of the worker; a
+                # session that produced no text leaves no entry to merge into.
+                latest_transcript_extendable = transcription_history.add(
+                    joined,
+                    engine=speech_engine.engine,
+                    model=speech_engine.model_size,
+                    language=speech_engine.language,
+                    duration_seconds=duration,
+                    expected_epoch=ended_session_epoch,
+                )
+
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.
 
             Also commits the just-finished dictation session to the
             transcript history as a single entry, with its duration and the
-            engine/model/language that produced it.
+            engine/model/language that produced it. A session opens on the
+            first non-idle state and stays open across the per-segment
+            LISTENING transitions, so the recorded duration covers the whole
+            dictation rather than only the last segment.
             """
-            nonlocal session_started_at
-            if state == RecognitionState.LISTENING:
-                session_started_at = time.monotonic()
-            elif state == RecognitionState.IDLE:
-                action_handler.set_last_injected_text("")
-                if session_segments:
-                    duration = (
-                        time.monotonic() - session_started_at
-                        if session_started_at is not None
-                        else 0.0
-                    )
-                    transcription_history.add(
-                        " ".join(session_segments),
-                        engine=speech_engine.engine,
-                        model=speech_engine.model_size,
-                        language=speech_engine.language,
-                        duration_seconds=duration,
-                    )
-                    session_segments.clear()
-                session_started_at = None
+            nonlocal session_open, session_worker, session_started_at
+            nonlocal session_epoch, latest_transcript_extendable
+            if state in (RecognitionState.IDLE, RecognitionState.ERROR):
+                if state == RecognitionState.IDLE:
+                    action_handler.set_last_injected_text("")
+                commit_pending_session()
+            else:
+                with session_lock:
+                    if not session_open:
+                        # Segments left over by a session that ended without a
+                        # closing state commit as their own entry rather than
+                        # leaking into the new session's — filed under the
+                        # epoch that produced them, so a clear() between the
+                        # sessions keeps them out.
+                        if session_segments:
+                            latest_transcript_extendable = transcription_history.add(
+                                " ".join(session_segments),
+                                engine=speech_engine.engine,
+                                model=speech_engine.model_size,
+                                language=speech_engine.language,
+                                duration_seconds=(
+                                    time.monotonic() - session_started_at
+                                    if session_started_at is not None
+                                    else 0.0
+                                ),
+                                expected_epoch=session_epoch,
+                            )
+                            session_segments.clear()
+                        session_open = True
+                        session_worker = None
+                        session_started_at = time.monotonic()
+                        session_epoch = transcription_history.epoch
 
         # Connect speech recognition to text injection and action handling
         speech_engine.register_text_callback(text_callback_wrapper)
@@ -654,6 +773,9 @@ def main():
             speech_engine=speech_engine,
             text_injector=text_system,
             transcription_history=transcription_history,
+            # Quitting mid-dictation skips stop_recognition() and therefore
+            # never emits IDLE; flush the open session's segments first.
+            before_quit=commit_pending_session,
         )
 
         # Start the GTK main loop
