@@ -1678,6 +1678,8 @@ class TextInjector:
         except _PartiallyTyped as e:
             # A prefix is already on screen; the clipboard fallback must hold
             # only the untyped remainder or a manual paste duplicates it.
+            # Reporting success would mark the whole transcription injected,
+            # so "delete that" could erase text before the typed prefix.
             logger.error(f"Text injection failed after a prefix was typed: {e}")
             remaining = text[e.typed :]
             try:
@@ -1686,7 +1688,6 @@ class TextInjector:
                         "Remaining text copied to clipboard as fallback - user can paste manually"
                     )
                     self._show_clipboard_fallback_notification()
-                    return True
             except Exception as clipboard_error:
                 logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
 
