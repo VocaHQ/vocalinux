@@ -95,6 +95,18 @@ class _InjectionAborted(Exception):
     """Raised inside injection helpers when shutdown cuts an injection short."""
 
 
+class _PartiallyTyped(subprocess.CalledProcessError):
+    """A chunked type call delivered a prefix of the text before failing.
+
+    ``typed`` counts the characters already on screen so a fallback can
+    continue from the remainder instead of typing them a second time.
+    """
+
+    def __init__(self, typed: int, cause: subprocess.CalledProcessError) -> None:
+        super().__init__(cause.returncode, cause.cmd, output=cause.output, stderr=cause.stderr)
+        self.typed = typed
+
+
 class TextInjector:
     """
     Class for injecting text into the active application.
@@ -1615,6 +1627,11 @@ class TextInjector:
                 try:
                     self._inject_with_wayland_tool(text)
                 except subprocess.CalledProcessError as e:
+                    # A chunked type call may have delivered a prefix; the
+                    # fallback continues from the untyped remainder so text
+                    # already on screen is never sent a second time.
+                    typed = e.typed if isinstance(e, _PartiallyTyped) else 0
+                    remaining = text[typed:]
                     stderr_msg = e.stderr.strip() if e.stderr else "No stderr output"
                     unsupported_wayland = (
                         "compositor does not support" in str(e).lower()
@@ -1638,7 +1655,11 @@ class TextInjector:
                         )
                         with self._state_lock:
                             self.environment = DesktopEnvironment.WAYLAND_XDOTOOL
-                        self._inject_with_xdotool(text)
+                        try:
+                            self._inject_with_xdotool(remaining)
+                        except _PartiallyTyped as nested:
+                            # Keep the count relative to the original text.
+                            raise _PartiallyTyped(typed + nested.typed, nested) from nested
                     else:
                         raise
             logger.info("Text injection completed successfully")
@@ -1653,6 +1674,28 @@ class TextInjector:
             return True
         except _InjectionAborted:
             logger.info("Injection aborted by shutdown")
+            return False
+        except _PartiallyTyped as e:
+            # A prefix is already on screen; the clipboard fallback must hold
+            # only the untyped remainder or a manual paste duplicates it.
+            logger.error(f"Text injection failed after a prefix was typed: {e}")
+            remaining = text[e.typed :]
+            try:
+                if self._copy_to_clipboard(remaining):
+                    logger.info(
+                        "Remaining text copied to clipboard as fallback - user can paste manually"
+                    )
+                    self._show_clipboard_fallback_notification()
+                    return True
+            except Exception as clipboard_error:
+                logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
+
+            try:
+                from ..ui.audio_feedback import play_error_sound
+
+                play_error_sound()
+            except ImportError:
+                logger.warning("Could not import audio feedback module")
             return False
         except subprocess.TimeoutExpired as e:
             # A type call that ran past its bound may have delivered only part
@@ -1744,6 +1787,9 @@ class TextInjector:
             max_retries = 2
             logger.debug(f"Starting xdotool injection with {max_retries} max retries")
 
+            # Retries resume at the first untyped chunk: restarting from the
+            # top would duplicate the chunks a failed attempt already sent.
+            typed = 0
             for retry in range(max_retries + 1):
                 try:
                     # Inject in smaller chunks to avoid issues with very long text
@@ -1753,7 +1799,7 @@ class TextInjector:
                         f"Splitting text into {total_chunks} chunks of max {chunk_size} chars"
                     )
 
-                    for i in range(0, len(text), chunk_size):
+                    for i in range(typed, len(text), chunk_size):
                         if self._abort_injections.is_set():
                             raise _InjectionAborted
                         chunk = text[i : i + chunk_size]
@@ -1771,6 +1817,7 @@ class TextInjector:
                             text=True,
                             timeout=5,
                         )
+                        typed = min(i + chunk_size, len(text))
 
                         # Add a larger delay between chunks
                         if i + chunk_size < len(text):
@@ -1789,7 +1836,9 @@ class TextInjector:
                         time.sleep(0.5)  # Wait before retry
                     else:
                         logger.error(f"Final attempt failed: {chunk_error.stderr}")
-                        raise  # Re-raise on final attempt
+                        # typed counts only completed chunks, so the
+                        # clipboard fallback gets the untyped remainder.
+                        raise _PartiallyTyped(typed, chunk_error) from chunk_error
                 except subprocess.TimeoutExpired:
                     if retry < max_retries:
                         logger.warning(
@@ -2562,6 +2611,10 @@ class TextInjector:
                 logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
                 raise
             except subprocess.CalledProcessError as e:
+                if i > 0:
+                    # Earlier chunks are already on screen; let the caller
+                    # continue from the untyped remainder.
+                    raise _PartiallyTyped(i, e) from e
                 # Re-raise with stderr preserved for better diagnostics
                 raise subprocess.CalledProcessError(
                     e.returncode, e.cmd, output=e.output, stderr=e.stderr
