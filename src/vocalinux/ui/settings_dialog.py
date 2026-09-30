@@ -24,7 +24,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional, cast
 
 import gi
 
@@ -2617,6 +2617,7 @@ class SettingsDialog(Gtk.Dialog):
         # Deferred text edits stashed when the dialog closes mid-apply; persisted
         # by _finish_auto_apply once the running apply releases the guard.
         self._pending_text_edits: Optional[dict] = None
+        self._pending_text_edit_baseline: Optional[dict] = None
         self._pending_apply_generation = 0
         self._about_release_url = ""
         self._update_check_in_progress = False
@@ -6148,6 +6149,11 @@ class SettingsDialog(Gtk.Dialog):
             # The apply holding the guard cannot see these edits; stash them so
             # _finish_auto_apply can re-apply (dialog open) or persist (closed).
             self._pending_text_edits = self._deferred_text_edit_settings()
+            # Pre-edit values: lets a later persist keep keys a newer apply
+            # never touched instead of dropping the whole snapshot.
+            self._pending_text_edit_baseline = {
+                key: self.config_manager.get("advanced", key) for key in self._pending_text_edits
+            }
             self._pending_apply_generation = _apply_settings_generation
             return
         self._auto_apply_settings()
@@ -6155,7 +6161,9 @@ class SettingsDialog(Gtk.Dialog):
     def _persist_pending_text_edits(self) -> None:
         """Persist deferred edits captured when the dialog closed mid-apply."""
         pending = self._pending_text_edits
+        baseline = self._pending_text_edit_baseline or {}
         self._pending_text_edits = None
+        self._pending_text_edit_baseline = None
         if not pending:
             return
 
@@ -6164,17 +6172,26 @@ class SettingsDialog(Gtk.Dialog):
                 with _apply_settings_lock:
                     if _apply_settings_generation != self._pending_apply_generation:
                         # A newer apply already reconfigured the shared engine
-                        # and saved over these fields; the deferred snapshot is
-                        # stale and must not reach either again.
+                        # and saved newer values. Keep only the keys it left
+                        # untouched — the rest of the snapshot is stale and
+                        # must not reach the engine or the config again.
+                        surviving = {
+                            key: value
+                            for key, value in pending.items()
+                            if self.config_manager.get("advanced", key) == baseline.get(key)
+                        }
+                    else:
+                        surviving = dict(pending)
+                    if not surviving:
                         return
                     if all(
                         self.config_manager.get("advanced", key) == value
-                        for key, value in pending.items()
+                        for key, value in surviving.items()
                     ):
                         # The apply that was running already landed these values.
                         return
-                    self.speech_engine.reconfigure(**pending)
-                    for key, value in pending.items():
+                    self.speech_engine.reconfigure(**surviving)
+                    for key, value in surviving.items():
                         self.config_manager.set("advanced", key, value)
                     self.config_manager.save_settings()
             except Exception as e:
@@ -7787,6 +7804,7 @@ class SettingsDialog(Gtk.Dialog):
             self._advanced_prompt_dirty = False
             self._language_candidates_dirty = False
             self._pending_text_edits = None
+            self._pending_text_edit_baseline = None
             engine = settings.get("engine", "vosk")
             model_name = settings.get("model_size", "small")
 
@@ -8389,6 +8407,7 @@ For now, the engine has been reverted to VOSK."""
         self._advanced_prompt_dirty = False
         self._language_candidates_dirty = False
         self._pending_text_edits = None
+        self._pending_text_edit_baseline = None
         logger.info(f"Applying settings: {settings}")
 
         engine = settings.get("engine", "vosk")
