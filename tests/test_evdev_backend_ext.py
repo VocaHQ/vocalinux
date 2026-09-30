@@ -1513,6 +1513,41 @@ class TestEvdevGrabAndForwarding:
         forwarder.write.assert_not_called()
         assert backend._forwarded_held[10] == {30, 56}
 
+    def test_resync_prunes_swallowed_combo_when_clone_held_nothing(self) -> None:
+        """A dropped combo release is reconciled even when the clone holds no keys.
+
+        The swallowed press was never forwarded, so ``_forwarded_held`` is
+        empty — but its dropped release still needs the pairing pruned or
+        the next ordinary press of that key is consumed too.
+        """
+        backend = EvdevKeyboardBackend()
+        backend._combo_main_code = 30
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.active_keys.return_value = []  # combo key physically up
+        forwarder = MagicMock()
+        backend._forwarders = {10: forwarder}
+        backend._forwarded_held = {10: set()}
+        backend._combo_swallowed = {10}
+
+        backend._resync_clone_key_state(10, device)
+
+        assert backend._combo_swallowed == set()
+        forwarder.write.assert_not_called()
+
+    def test_resync_keeps_swallowed_combo_while_key_still_held(self) -> None:
+        """A swallowed combo press stays paired while the key is physically down."""
+        backend = EvdevKeyboardBackend()
+        backend._combo_main_code = 30
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.active_keys.return_value = [30]
+        backend._combo_swallowed = {10}
+
+        backend._resync_clone_key_state(10, device)
+
+        assert backend._combo_swallowed == {10}
+
     def test_monitor_exit_releases_grabs_on_select_failure(self) -> None:
         """An unexpected monitor exit closes devices, releasing every grab."""
         backend = EvdevKeyboardBackend()

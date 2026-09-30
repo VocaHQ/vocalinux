@@ -598,13 +598,13 @@ class EvdevKeyboardBackend(KeyboardBackend):
         for device in devices:
             try:
                 device.close()
-            except Exception:
-                pass
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring device close failure during cleanup: {e}")
         for forwarder in forwarders:
             try:
                 forwarder.close()
-            except Exception:
-                pass
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring clone close failure during cleanup: {e}")
 
     def _open_keyboard_device(self, device_path: str) -> bool:
         """Open a keyboard device if it is not already monitored."""
@@ -632,8 +632,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
             logger.debug(f"Skipping Vocalinux clone device: {device_path} ({device_name})")
             try:
                 device.close()
-            except Exception:
-                pass
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring close failure for clone {device_path}: {e}")
             return False
 
         # Exclusive grab hides the device from the compositor; the paired
@@ -649,21 +649,23 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 )
                 try:
                     forwarder.close()
-                except Exception:
-                    pass
+                except (OSError, IOError, RuntimeError) as e:
+                    logger.debug(f"Ignoring clone close failure for {device_path}: {e}")
                 forwarder = None
 
         with self._devices_lock:
             if device_path in self.device_paths or fd in self.device_fds:
                 try:
                     device.close()
-                except Exception:
-                    pass
+                except (OSError, IOError, RuntimeError) as e:
+                    logger.debug(f"Ignoring close failure for duplicate {device_path}: {e}")
                 if forwarder is not None:
                     try:
                         forwarder.close()
-                    except Exception:
-                        pass
+                    except (OSError, IOError, RuntimeError) as e:
+                        logger.debug(
+                            f"Ignoring clone close failure for duplicate {device_path}: {e}"
+                        )
                 return False
 
             self.devices.append(device)
@@ -747,8 +749,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if forwarder is not None:
             try:
                 forwarder.close()
-            except Exception:
-                pass
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring clone close failure for fd {fd}: {e}")
         if device is None:
             return
         try:
@@ -863,8 +865,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         """Close and forget a disconnected keyboard device."""
         try:
             device.close()
-        except Exception:
-            pass
+        except (OSError, IOError, RuntimeError) as e:
+            logger.debug(f"Ignoring close failure for disconnected fd {fd}: {e}")
 
         with self._devices_lock:
             try:
@@ -892,8 +894,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if forwarder is not None:
             try:
                 forwarder.close()
-            except Exception:
-                pass
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring clone close failure for disconnected fd {fd}: {e}")
         # A disconnect can swallow the modifier release (e.g. a wireless
         # split half dropping mid-hold); don't leave the combo logically held.
         self._reset_combo_state()
@@ -904,30 +906,35 @@ class EvdevKeyboardBackend(KeyboardBackend):
         The kernel's dropped-event burst may have skipped release events,
         but the paired clone only saw what we forwarded — a forwarded press
         whose release was dropped leaves the key held on the clone forever,
-        and no later event supplies the missing release. Compare what the
-        clone believes (``_forwarded_held``) against the device's live
+        and no later event supplies the missing release. The burst can also
+        eat the release of a swallowed combo press, which the clone never
+        saw at all. Compare what the clone believes (``_forwarded_held``)
+        and what we paired (``_combo_swallowed``) against the device's live
         kernel key state and emit releases for the phantom keys.
         """
         forwarder = self._forwarders.get(fd)
         held = self._forwarded_held.get(fd)
-        if forwarder is None or not held:
+        if (forwarder is None or not held) and fd not in self._combo_swallowed:
             return
         try:
             actually_held = set(device.active_keys())
         except (OSError, IOError) as e:
             logger.warning(f"Cannot resync key state for fd {fd}: {e}")
             return
-        for code in sorted(held - actually_held):
-            try:
-                forwarder.write(ecodes.EV_KEY, code, 0)
-            except (OSError, IOError) as e:
-                logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
-                self._release_failed_forwarder(fd)
-                return
-            held.discard(code)
+        if forwarder is not None and held:
+            for code in sorted(held - actually_held):
+                try:
+                    forwarder.write(ecodes.EV_KEY, code, 0)
+                except (OSError, IOError) as e:
+                    logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
+                    self._release_failed_forwarder(fd)
+                    return
+                held.discard(code)
         if self._combo_main_code is not None and self._combo_main_code not in actually_held:
-            # The dropped burst may have eaten the release of a swallowed
-            # combo press; if the key is physically up, the pairing is over.
+            # A dropped burst can also eat the release of a swallowed combo
+            # press — a key the clone never saw, so ``held`` cannot reflect
+            # it. Without this prune the next ordinary press of that key
+            # would be consumed too, eating a keystroke.
             self._combo_swallowed.discard(fd)
 
     def _monitor_devices(self) -> None:
