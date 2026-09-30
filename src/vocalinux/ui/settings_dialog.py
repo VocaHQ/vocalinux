@@ -6194,8 +6194,13 @@ class SettingsDialog(Gtk.Dialog):
                     for key, value in surviving.items():
                         self.config_manager.set("advanced", key, value)
                     self.config_manager.save_settings()
-            except Exception as e:
-                logger.warning(f"Could not persist deferred settings edits: {e}")
+            except (OSError, ValueError, TypeError, RuntimeError) as e:
+                logger.warning(
+                    "Could not persist deferred settings edits for keys %s: %s",
+                    sorted(pending),
+                    e,
+                    exc_info=True,
+                )
 
         # reconfigure() restarts the model; like the normal apply path it runs
         # on a worker so the model load never blocks the GTK main loop.
