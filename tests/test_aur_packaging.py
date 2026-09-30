@@ -437,6 +437,9 @@ def test_bin_pkgbuild_tracks_the_release_tag_like_the_source_one() -> None:
     assert re.search(
         r"publish-aur-bin:[\s\S]*?needs:\s*\[[^\]]*build-appimage-arm64", release
     ), "publish-aur-bin must need build-appimage-arm64 so the aarch64 asset exists"
+    # The -bin PKGBUILD names local sources; a lone-PKGBUILD publish leaves
+    # users unable to build. asset_dir mirrors the whole directory to AUR.
+    assert "asset_dir: packaging/aur/vocalinux-bin" in release
 
 
 def test_the_gate_builds_the_bin_package_too() -> None:

@@ -546,7 +546,10 @@ jobs:
         uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         with:
           pkgname: vocalinux-bin
-          pkgbuild: packaging/aur/vocalinux-bin/PKGBUILD
+          # The -bin PKGBUILD names local sources (vocalinux.desktop,
+          # vocalinux.svg, LICENSE); publishing the whole directory mirrors
+          # them into the AUR repo instead of shipping a lone PKGBUILD.
+          asset_dir: packaging/aur/vocalinux-bin
           # Sums are pinned in the step above for BOTH arches; regenerating
           # here would only refresh the x86_64 array.
           updpkgsums: 'false'
