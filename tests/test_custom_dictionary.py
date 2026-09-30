@@ -1026,6 +1026,7 @@ def test_corrections_run_before_voice_commands() -> None:
     )()
     recognition_manager.text_callbacks = [received.append]
     recognition_manager.action_callbacks = []
+    recognition_manager.segment_callbacks = []
 
     recognition_manager._process_audio_buffer([b"audio"])
 
