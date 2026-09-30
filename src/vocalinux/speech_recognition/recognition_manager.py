@@ -2346,7 +2346,7 @@ class SpeechRecognitionManager:
                 os.remove(temp_file)
             raise
 
-    def _download_whispercpp_model(self, model_name: Optional[str] = None):
+    def _download_whispercpp_model(self, model_name: Optional[str] = None) -> None:
         """Download a whisper.cpp model with progress tracking."""
         import requests
 
@@ -2357,7 +2357,7 @@ class SpeechRecognitionManager:
         if not model_info:
             raise ValueError(f"Unknown whisper.cpp model size: {model_name}")
 
-        url = model_info["url"]
+        url = str(model_info["url"])
         # Prefer explicit download=true (some HF edges serve HTML without it).
         if "huggingface.co" in url and "download=" not in url:
             url = url + ("&" if "?" in url else "?") + "download=true"
