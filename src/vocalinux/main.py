@@ -725,7 +725,6 @@ def main():
             across a clear is still recoverable.
             """
             nonlocal session_worker, latest_snippet_id, ended_session_worker
-            nonlocal session_workers_seen
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
