@@ -1419,6 +1419,7 @@ class TestPadRoutingCallbacks(unittest.TestCase):
     def test_capture_routes_delete_that_to_pad(self) -> None:
         boot = _boot_main_callbacks(dictate_to_pad=True)
         try:
+            boot.pad.last_segment = "hello "
             boot.text_cb("hello")
             boot.action_cb("delete_last")
             boot.pad.delete_last_chars.assert_called_once_with(len("hello "))
@@ -1464,6 +1465,7 @@ class TestPadRoutingCallbacks(unittest.TestCase):
             # Dictated into the pad; capture switched off afterwards: the
             # pad's copy is still the one removed.
             boot.config.is_dictate_to_pad_enabled.return_value = True
+            boot.pad.last_segment = "into pad "
             boot.pad.delete_last_chars.return_value = len("into pad ")
             boot.text_cb("into pad")
             boot.config.is_dictate_to_pad_enabled.return_value = False
@@ -1502,6 +1504,40 @@ class TestPadRoutingCallbacks(unittest.TestCase):
             boot.text_cb("pad text")
             boot.state_cb(RecognitionState.IDLE)
             boot.action_cb("delete_last")
+            boot.pad.delete_last_chars.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_undo_retargets_delete_that(self) -> None:
+        """Undoing the last pad segment must not leave a stale delete length."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("hello")
+            boot.text_cb("world")
+            # The pad reports the surviving segment after its own undo pops
+            # "world "; the next delete targets it, not the stale segment.
+            boot.pad.last_segment = "hello "
+            boot.pad.handle_action.return_value = True
+            self.assertTrue(boot.action_cb("undo"))
+            boot.pad.handle_action.assert_called_once_with("undo")
+
+            boot.action_cb("delete_last")
+            boot.pad.delete_last_chars.assert_called_once_with(len("hello "))
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_undo_to_empty_clears_delete_target(self) -> None:
+        """When pad undo removes the last segment, "delete that" is a no-op."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("only")
+            boot.pad.last_segment = None
+            boot.pad.handle_action.return_value = True
+            self.assertTrue(boot.action_cb("undo"))
+
+            self.assertTrue(boot.action_cb("delete_last"))
             boot.pad.delete_last_chars.assert_not_called()
             boot.text_system.press_backspace.assert_not_called()
         finally:

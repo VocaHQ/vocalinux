@@ -17,7 +17,7 @@ from vocalinux.ui.config_manager import DEFAULT_CONFIG, ConfigManager
 from vocalinux.ui.dictation_pad import DictationPad, DictationPadController
 
 
-def _ensure_test_config_dir(path: str):
+def _ensure_test_config_dir(path: str) -> None:
     parent_dir = os.path.dirname(path)
     if not os.path.exists(parent_dir):
         os.mkdir(parent_dir)
@@ -43,37 +43,37 @@ def _pad_without_gtk(enabled: bool = False) -> DictationPad:
 class TestDictationPadController(unittest.TestCase):
     """Unit tests for the pure buffer controller."""
 
-    def test_default_disabled_and_empty(self):
+    def test_default_disabled_and_empty(self) -> None:
         ctrl = DictationPadController()
         self.assertFalse(ctrl.enabled)
         self.assertEqual(ctrl.text, "")
 
-    def test_append_accumulates_segments(self):
+    def test_append_accumulates_segments(self) -> None:
         ctrl = DictationPadController(enabled=True)
         ctrl.append("Hello ")
         ctrl.append("world.")
         self.assertEqual(ctrl.text, "Hello world.")
 
-    def test_append_newlines_preserved(self):
+    def test_append_newlines_preserved(self) -> None:
         ctrl = DictationPadController()
         ctrl.append("first line")
         ctrl.append("\n")
         ctrl.append("second")
         self.assertEqual(ctrl.text, "first line\nsecond")
 
-    def test_delete_last_removes_tail_chars(self):
+    def test_delete_last_removes_tail_chars(self) -> None:
         ctrl = DictationPadController()
         ctrl.append("Hello world")
         self.assertEqual(ctrl.delete_last(6), 6)
         self.assertEqual(ctrl.text, "Hello")
 
-    def test_delete_last_clamps_to_buffer_length(self):
+    def test_delete_last_clamps_to_buffer_length(self) -> None:
         ctrl = DictationPadController()
         ctrl.append("hi")
         self.assertEqual(ctrl.delete_last(10), 2)
         self.assertEqual(ctrl.text, "")
 
-    def test_delete_last_on_empty_returns_zero(self):
+    def test_delete_last_on_empty_returns_zero(self) -> None:
         ctrl = DictationPadController()
         self.assertEqual(ctrl.delete_last(5), 0)
         ctrl.append("x")
@@ -81,7 +81,7 @@ class TestDictationPadController(unittest.TestCase):
         self.assertEqual(ctrl.delete_last(-3), 0)
         self.assertEqual(ctrl.text, "x")
 
-    def test_clear_empties_buffer(self):
+    def test_clear_empties_buffer(self) -> None:
         ctrl = DictationPadController()
         ctrl.append("some dictation")
         ctrl.clear()
@@ -132,18 +132,60 @@ class TestDictationPadController(unittest.TestCase):
         self.assertTrue(ctrl.undo())
         self.assertEqual(ctrl.text, "hello world")
 
-    def test_set_enabled_does_not_touch_buffer(self):
+    def test_set_enabled_does_not_touch_buffer(self) -> None:
         ctrl = DictationPadController()
         ctrl.append("keep me")
         ctrl.set_enabled(True)
         ctrl.set_enabled(False)
         self.assertEqual(ctrl.text, "keep me")
 
+    def test_last_segment_tracks_appends(self) -> None:
+        ctrl = DictationPadController()
+        self.assertIsNone(ctrl.last_segment)
+        ctrl.append("hello ")
+        ctrl.append("world ")
+        self.assertEqual(ctrl.last_segment, "world ")
+
+    def test_last_segment_tracks_undo_and_redo(self) -> None:
+        """Undo pops the deletion target with the text it removed."""
+        ctrl = DictationPadController()
+        ctrl.append("hello ")
+        ctrl.append("world ")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.last_segment, "hello ")
+        self.assertTrue(ctrl.undo())
+        self.assertIsNone(ctrl.last_segment)
+        self.assertTrue(ctrl.redo())
+        self.assertEqual(ctrl.last_segment, "hello ")
+        self.assertTrue(ctrl.redo())
+        self.assertEqual(ctrl.last_segment, "world ")
+
+    def test_last_segment_survives_delete_and_drops_on_set_text(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("hello ")
+        ctrl.append("world ")
+        ctrl.delete_last(2)
+        self.assertEqual(ctrl.last_segment, "worl")
+        ctrl.delete_last(10)
+        self.assertIsNone(ctrl.last_segment)
+        ctrl.append("again ")
+        ctrl.set_text("manual rewrite")
+        self.assertIsNone(ctrl.last_segment)
+        # Undo restores the boundaries the manual rewrite blurred.
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.last_segment, "again ")
+
+    def test_clear_drops_segment_tracking(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("gone ")
+        ctrl.clear()
+        self.assertIsNone(ctrl.last_segment)
+
 
 class TestDictationPadConfig(unittest.TestCase):
     """ConfigManager helpers for the dictate_to_pad preference."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.temp_config_dir = os.path.join(self.temp_dir.name, ".config/vocalinux")
         _ensure_test_config_dir(self.temp_config_dir)
@@ -164,18 +206,18 @@ class TestDictationPadConfig(unittest.TestCase):
         self.makedirs_patcher.start()
         _ensure_test_config_dir(self.temp_config_dir)
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.config_dir_patcher.stop()
         self.config_file_patcher.stop()
         self.makedirs_patcher.stop()
         self.temp_dir.cleanup()
 
-    def test_default_dictate_to_pad_disabled(self):
+    def test_default_dictate_to_pad_disabled(self) -> None:
         self.assertFalse(DEFAULT_CONFIG["text_injection"]["dictate_to_pad"])
         cm = ConfigManager()
         self.assertFalse(cm.is_dictate_to_pad_enabled())
 
-    def test_set_dictate_to_pad_persists(self):
+    def test_set_dictate_to_pad_persists(self) -> None:
         cm = ConfigManager()
         cm.set_dictate_to_pad(True)
         self.assertTrue(cm.is_dictate_to_pad_enabled())
@@ -184,7 +226,7 @@ class TestDictationPadConfig(unittest.TestCase):
         cm2 = ConfigManager()
         self.assertTrue(cm2.is_dictate_to_pad_enabled())
 
-    def test_set_dictate_to_pad_false(self):
+    def test_set_dictate_to_pad_false(self) -> None:
         cm = ConfigManager()
         cm.set_dictate_to_pad(True)
         cm.set_dictate_to_pad(False)
@@ -215,7 +257,7 @@ class TestDictationPadFacade(unittest.TestCase):
     controller must still capture text so nothing is silently dropped.
     """
 
-    def test_gtk_init_failure_keeps_buffer_usable(self):
+    def test_gtk_init_failure_keeps_buffer_usable(self) -> None:
         pad = _pad_without_gtk(enabled=True)
         self.assertFalse(pad._gtk_ready)
         pad.append_text("dictated words ")
@@ -223,7 +265,7 @@ class TestDictationPadFacade(unittest.TestCase):
         self.assertEqual(pad.controller.text, "dictated words more")
         pad.destroy()
 
-    def test_delete_last_chars_headless(self):
+    def test_delete_last_chars_headless(self) -> None:
         pad = _pad_without_gtk()
         try:
             pad.append_text("hello ")
@@ -232,14 +274,14 @@ class TestDictationPadFacade(unittest.TestCase):
         finally:
             pad.destroy()
 
-    def test_show_pad_is_safe_headless(self):
+    def test_show_pad_is_safe_headless(self) -> None:
         pad = _pad_without_gtk()
         try:
             pad.show_pad()  # must not raise
         finally:
             pad.destroy()
 
-    def test_set_capture_enabled_updates_controller(self):
+    def test_set_capture_enabled_updates_controller(self) -> None:
         pad = _pad_without_gtk()
         try:
             pad.set_capture_enabled(True)
@@ -249,7 +291,7 @@ class TestDictationPadFacade(unittest.TestCase):
         finally:
             pad.destroy()
 
-    def test_capture_checkbox_persists_config(self):
+    def test_capture_checkbox_persists_config(self) -> None:
         """The pad checkbox writes dictate_to_pad via the config manager."""
         config_manager = MagicMock()
         with patch.object(
@@ -268,7 +310,7 @@ class TestDictationPadFacade(unittest.TestCase):
         finally:
             pad.destroy()
 
-    def test_apply_append_inserts_at_end_and_shows(self):
+    def test_apply_append_inserts_at_end_and_shows(self) -> None:
         """Widget path: append inserts at buffer end; enabled capture shows."""
         pad = _pad_without_gtk(enabled=True)
         try:
@@ -290,7 +332,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
-    def test_apply_append_does_not_show_when_disabled(self):
+    def test_apply_append_does_not_show_when_disabled(self) -> None:
         pad = _pad_without_gtk(enabled=False)
         try:
             pad._gtk_ready = True
@@ -307,7 +349,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
-    def test_apply_append_reveals_when_enabled_via_settings(self):
+    def test_apply_append_reveals_when_enabled_via_settings(self) -> None:
         """Regression: capture toggled in Settings must reveal the pad too.
 
         The reveal gate consults live config, not just the controller flag,
@@ -340,7 +382,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
-    def test_apply_append_stays_hidden_when_settings_off(self):
+    def test_apply_append_stays_hidden_when_settings_off(self) -> None:
         """A stale controller flag must not override live config."""
         config_manager = MagicMock()
         config_manager.get_bool.return_value = False
@@ -366,7 +408,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
-    def test_copy_all_prefers_widget_text(self):
+    def test_copy_all_prefers_widget_text(self) -> None:
         """Copy All copies the widget contents (dictation + in-pad edits)."""
         pad = _pad_without_gtk()
         try:
@@ -386,7 +428,7 @@ class TestDictationPadFacade(unittest.TestCase):
         finally:
             pad.destroy()
 
-    def test_show_pad_does_not_clobber_widget_edits(self):
+    def test_show_pad_does_not_clobber_widget_edits(self) -> None:
         """Re-showing the pad must not overwrite in-pad manual edits."""
         pad = _pad_without_gtk()
         try:
@@ -405,7 +447,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
-    def test_apply_delete_removes_tail_from_widget(self):
+    def test_apply_delete_removes_tail_from_widget(self) -> None:
         pad = _pad_without_gtk()
         try:
             pad._gtk_ready = True
@@ -494,6 +536,67 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._syncing_widget = True
             pad._on_buffer_changed(MagicMock())
             self.assertEqual(pad.controller.text, "dictated")
+        finally:
+            pad.destroy()
+
+    def test_widget_edit_flushes_queued_ops_before_sync(self) -> None:
+        """A manual edit must not overwrite queued dictation in the controller.
+
+        Input events outrank idle callbacks, so a keystroke can land before a
+        queued append. The changed handler replays the queue first, keeping
+        the view — and the controller sync — in delivery order.
+        """
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("queued dictation ")
+            # The user edits before the idle callback runs; the queued op must
+            # be flushed into the widget before the view is read back.
+            pad._buffer.get_text.return_value = "user queued dictation "
+            pad._on_buffer_changed(pad._buffer)
+
+            calls = [c[0] for c in pad._buffer.mock_calls]
+            self.assertLess(calls.index("insert"), calls.index("get_text"))
+            self.assertEqual(pad.controller.text, "user queued dictation ")
+            self.assertEqual(pad._pending_idle, [])
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_copy_all_flushes_queued_appends(self) -> None:
+        """Copy All sees segments still waiting in the idle queue."""
+        pad = _pad_without_gtk()
+        try:
+            pad._gtk_ready = True
+            pad._Gtk = MagicMock()
+            pad._Gdk = MagicMock()
+            pad._GLib = MagicMock()
+            pad._copy_button = MagicMock()
+            pad._buffer = MagicMock()
+            pad._buffer.get_text.return_value = "whole pad "
+
+            pad.append_text("queued ")
+            pad._on_copy_all_clicked()
+
+            calls = [c[0] for c in pad._buffer.mock_calls]
+            self.assertLess(calls.index("insert"), calls.index("get_text"))
+            clipboard = pad._Gtk.Clipboard.get.return_value
+            clipboard.set_text.assert_called_once_with("whole pad ", -1)
+        finally:
+            pad.destroy()
+
+    def test_last_segment_passthrough_to_controller(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            self.assertIsNone(pad.last_segment)
+            pad.append_text("dictated ")
+            self.assertEqual(pad.last_segment, "dictated ")
         finally:
             pad.destroy()
 

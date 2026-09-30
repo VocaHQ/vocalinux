@@ -27,6 +27,36 @@ _PAD_HEIGHT = 360
 _COPIED_FEEDBACK_MS = 1200
 _UNDO_LIMIT = 200
 
+
+def _ui_errors() -> tuple[type[BaseException], ...]:
+    """Exception types tolerated by the pad's UI glue.
+
+    GTK and config calls fail with a bounded set of runtime exceptions —
+    naming them (instead of ``Exception``) keeps real bugs visible while
+    the pad still degrades gracefully on systems without a usable display.
+    ``GLib.Error`` joins only when gi is importable, so the module stays
+    GTK-free for tests.
+    """
+    errors: tuple[type[BaseException], ...] = (
+        ImportError,
+        RuntimeError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        OSError,
+    )
+    try:
+        from gi.repository import GLib
+    except (ImportError, ValueError):
+        return errors
+    # Under gi-mocked test runs GLib.Error is a MagicMock, not a class —
+    # only real exception types may join the tuple.
+    glib_error = getattr(GLib, "Error", None)
+    if isinstance(glib_error, type) and issubclass(glib_error, BaseException):
+        return errors + (glib_error,)
+    return errors
+
+
 # Voice commands the pad performs itself while capture mode is on. They are
 # the same actions ActionHandler would otherwise send as keystrokes into
 # whichever application happens to hold focus.
@@ -48,8 +78,12 @@ class DictationPadController:
     def __init__(self, enabled: bool = False) -> None:
         self._enabled = bool(enabled)
         self._text = ""
-        self._undo_stack: list[str] = []
-        self._redo_stack: list[str] = []
+        # Dictated segments still present in the buffer, oldest first. Manual
+        # widget edits blur the boundaries (the list clears); undo snapshots
+        # restore them, so "delete that" can retarget after history moves.
+        self._segments: list[str] = []
+        self._undo_stack: list[tuple[str, list[str]]] = []
+        self._redo_stack: list[tuple[str, list[str]]] = []
 
     @property
     def enabled(self) -> bool:
@@ -65,12 +99,23 @@ class DictationPadController:
         """The full contents of the pad."""
         return self._text
 
+    @property
+    def last_segment(self) -> Optional[str]:
+        """The last dictated segment still in the buffer.
+
+        ``None`` when the buffer holds no tracked dictation — empty, cleared,
+        or rewritten by a manual edit. Undo/redo restore the tracked tail
+        along with the text snapshot.
+        """
+        return self._segments[-1] if self._segments else None
+
     def append(self, text: str) -> None:
         """Append a transcription segment to the end of the buffer."""
         if not text:
             return
         self._record_undo()
         self._text += text
+        self._segments.append(text)
 
     def set_text(self, text: str) -> None:
         """Replace the buffer (e.g. edits made directly in the widget)."""
@@ -78,6 +123,9 @@ class DictationPadController:
             return
         self._record_undo()
         self._text = text
+        # An arbitrary replacement blurs segment boundaries; undo restores
+        # them from the snapshot.
+        self._segments = []
 
     def delete_last(self, count: int) -> int:
         """
@@ -90,6 +138,7 @@ class DictationPadController:
         deleted = min(count, len(self._text))
         self._record_undo()
         self._text = self._text[:-deleted]
+        self._trim_segments(deleted)
         return deleted
 
     def clear(self) -> None:
@@ -98,26 +147,39 @@ class DictationPadController:
             return
         self._record_undo()
         self._text = ""
+        self._segments = []
 
     def undo(self) -> bool:
         """Revert the last buffer mutation. Returns False with empty history."""
         if not self._undo_stack:
             return False
-        self._redo_stack.append(self._text)
-        self._text = self._undo_stack.pop()
+        self._redo_stack.append((self._text, list(self._segments)))
+        self._text, self._segments = self._undo_stack.pop()
         return True
 
     def redo(self) -> bool:
         """Re-apply the last undone mutation. Returns False with no redo lane."""
         if not self._redo_stack:
             return False
-        self._undo_stack.append(self._text)
-        self._text = self._redo_stack.pop()
+        self._undo_stack.append((self._text, list(self._segments)))
+        self._text, self._segments = self._redo_stack.pop()
         return True
+
+    def _trim_segments(self, count: int) -> None:
+        """Drop ``count`` characters from the tracked segment tail."""
+        remaining = count
+        while remaining > 0 and self._segments:
+            tail = self._segments[-1]
+            if len(tail) <= remaining:
+                self._segments.pop()
+                remaining -= len(tail)
+            else:
+                self._segments[-1] = tail[:-remaining]
+                remaining = 0
 
     def _record_undo(self) -> None:
         """Snapshot the buffer before a mutation; new edits drop the redo lane."""
-        self._undo_stack.append(self._text)
+        self._undo_stack.append((self._text, list(self._segments)))
         if len(self._undo_stack) > _UNDO_LIMIT:
             del self._undo_stack[0]
         self._redo_stack.clear()
@@ -151,12 +213,17 @@ class DictationPad:
         # refresh) bumps it, so appends still waiting in the GTK idle queue
         # can tell they are stale and must not resurrect removed text.
         self._generation = 0
+        # Widget ops waiting in the GTK idle queue, in queue order. GTK input
+        # events outrank idle callbacks, so a manual edit can land before a
+        # queued append — _flush_idle_ops replays this list to keep the view
+        # in the order the controller already applied.
+        self._pending_idle: list[Callable[[], bool]] = []
         self._copied_feedback_id: Optional[int] = None
 
         try:
             self._init_gtk_window()
             self._gtk_ready = True
-        except Exception as e:
+        except _ui_errors() as e:
             # Headless / missing display: keep the controller usable for tests.
             logger.warning("Dictation pad window unavailable: %s", e)
 
@@ -258,6 +325,11 @@ class DictationPad:
             self._idle_add(self._apply_delete, deleted, self._generation)
         return deleted
 
+    @property
+    def last_segment(self) -> Optional[str]:
+        """The last dictated segment still in the pad (None if untracked)."""
+        return self.controller.last_segment
+
     def show_pad(self) -> None:
         """Show the pad window, resyncing capture state from live config."""
         if not self._gtk_ready or self._window is None:
@@ -267,7 +339,7 @@ class DictationPad:
             self._window.show_all()
         try:
             self._window.present_with_time(self._Gtk.get_current_event_time())
-        except Exception:
+        except _ui_errors():
             pass
 
     def set_capture_enabled(self, enabled: bool) -> None:
@@ -277,19 +349,19 @@ class DictationPad:
 
     def destroy(self) -> None:
         """Tear down the window and any pending feedback timer."""
-        self._generation += 1
+        self._bump_generation()
         self._buffer = None
         self._textview = None
         if self._copied_feedback_id is not None:
             try:
                 self._GLib.source_remove(self._copied_feedback_id)
-            except Exception:
+            except _ui_errors():
                 pass
             self._copied_feedback_id = None
         if self._window is not None:
             try:
                 self._window.destroy()
-            except Exception:
+            except _ui_errors():
                 pass
             self._window = None
 
@@ -302,10 +374,36 @@ class DictationPad:
             return
 
         def _call() -> bool:
+            if _call in self._pending_idle:
+                self._pending_idle.remove(_call)
             func(*args)
             return False
 
+        self._pending_idle.append(_call)
         glib.idle_add(_call)
+
+    def _bump_generation(self) -> None:
+        """Invalidate queued widget ops and forget them.
+
+        Stale ops still in the GLib queue drop themselves by generation;
+        clearing the list keeps a later flush from replaying them first.
+        """
+        self._generation += 1
+        self._pending_idle = []
+
+    def _flush_idle_ops(self) -> None:
+        """Replay queued widget ops so the view catches up with the controller.
+
+        GTK input events outrank idle callbacks: a keystroke can land in the
+        buffer before appends queued earlier, and the "changed" handler would
+        then write the pre-append view back over the controller — losing the
+        queued dictation. Running the queue first keeps the view (and the
+        controller sync) in the order the controller already applied.
+        """
+        pending = self._pending_idle
+        self._pending_idle = []
+        for call in pending:
+            call()
 
     def _apply_append(self, text: str, generation: int) -> None:
         """Insert a segment at the end of the widget and keep the tail visible."""
@@ -318,7 +416,7 @@ class DictationPad:
             # Scroll to the end without place_cursor: moving the caret would
             # collapse a selection the user is making for copy-out.
             self._textview.scroll_to_iter(self._buffer.get_end_iter(), 0.0, True, 0.0, 1.0)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not append text to dictation pad: %s", e)
         finally:
             self._syncing_widget = False
@@ -337,7 +435,7 @@ class DictationPad:
             start = end.copy()
             start.backward_chars(deleted)
             self._buffer.delete(start, end)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not delete text in dictation pad: %s", e)
         finally:
             self._syncing_widget = False
@@ -349,7 +447,7 @@ class DictationPad:
         try:
             self._syncing_widget = True
             self._buffer.set_text(text)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not update dictation pad view: %s", e)
         finally:
             self._syncing_widget = False
@@ -369,7 +467,7 @@ class DictationPad:
                 start, end = self._selection_bounds(action)
                 if start is not None:
                     self._buffer.select_range(start, end)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not perform %s in dictation pad: %s", action, e)
 
     def _clipboard(self) -> Any:
@@ -408,16 +506,20 @@ class DictationPad:
 
     def _sync_widget_from_controller(self) -> None:
         """Queue a full widget refresh, dropping appends queued before it."""
-        self._generation += 1
+        self._bump_generation()
         self._idle_add(self._apply_set_text, self.controller.text, self._generation)
 
     def _on_buffer_changed(self, buffer: Any) -> None:
         """Mirror edits made directly in the widget back into the controller."""
         if self._syncing_widget:
             return
+        # A keystroke may land while dictation appends still sit in the idle
+        # queue; replay them first so the read below includes them and the
+        # controller is not overwritten with a stale view.
+        self._flush_idle_ops()
         try:
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not sync dictation pad edits: %s", e)
             return
         self.controller.set_text(text)
@@ -433,7 +535,7 @@ class DictationPad:
             return self.controller.enabled
         try:
             enabled = bool(self._config_manager.get_bool("text_injection", "dictate_to_pad", False))
-        except Exception:
+        except (AttributeError, TypeError, KeyError):
             return self.controller.enabled
         self.controller.set_enabled(enabled)
         return enabled
@@ -446,7 +548,7 @@ class DictationPad:
             enabled = self._capture_enabled()
             self._syncing_capture_check = True
             self._capture_check.set_active(enabled)
-        except Exception as e:
+        except _ui_errors() as e:
             logger.debug("Could not sync dictation pad toggle: %s", e)
         finally:
             self._syncing_capture_check = False
@@ -467,7 +569,7 @@ class DictationPad:
             try:
                 self._config_manager.set("text_injection", "dictate_to_pad", enabled)
                 self._config_manager.save_settings()
-            except Exception as e:
+            except (AttributeError, TypeError) as e:
                 logger.warning("Could not save dictation pad setting: %s", e)
         logger.info("Dictation pad capture %s", "enabled" if enabled else "disabled")
 
@@ -477,17 +579,20 @@ class DictationPad:
         # to the dictated buffer when there is no widget (headless).
         text = self.controller.text
         if self._buffer is not None:
+            # Land queued appends first so Copy All never misses the latest
+            # dictated segment still sitting in the idle queue.
+            self._flush_idle_ops()
             try:
                 text = self._buffer.get_text(
                     self._buffer.get_start_iter(), self._buffer.get_end_iter(), False
                 )
-            except Exception:
+            except _ui_errors():
                 pass
         try:
             clipboard = self._clipboard()
             clipboard.set_text(text, -1)
             clipboard.store()
-        except Exception as e:
+        except _ui_errors() as e:
             logger.warning("Could not copy dictation pad contents: %s", e)
             return
         if self._copy_button is None or self._copied_feedback_id is not None:
@@ -508,13 +613,13 @@ class DictationPad:
         """Erase the buffer and drop appends still queued for the widget."""
         # Bump the generation first: any append or delete already sitting in
         # the GTK idle queue becomes stale and cannot resurrect cleared text.
-        self._generation += 1
+        self._bump_generation()
         self.controller.clear()
         if self._buffer is not None:
             try:
                 self._syncing_widget = True
                 self._buffer.set_text("")
-            except Exception as e:
+            except _ui_errors() as e:
                 logger.debug("Could not clear dictation pad view: %s", e)
             finally:
                 self._syncing_widget = False

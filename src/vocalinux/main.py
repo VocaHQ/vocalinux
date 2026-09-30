@@ -856,16 +856,25 @@ def main():
                 if not action_handler.last_injected_text:
                     return True
                 if last_injected["to_pad"]:
-                    deleted = dictation_pad.delete_last_chars(
-                        len(action_handler.last_injected_text)
-                    )
+                    # The pad's own segment bookkeeping wins over the recorded
+                    # text: a pad "undo" may have popped that segment, leaving
+                    # its length stale.
+                    target = dictation_pad.last_segment or action_handler.last_injected_text
+                    deleted = dictation_pad.delete_last_chars(len(target))
                     if deleted:
                         action_handler.set_last_injected_text("")
                         last_injected["to_pad"] = False
                     return True
                 return bool(action_handler.handle_action(action))
             if dictate_to_pad_enabled():
-                return bool(dictation_pad.handle_action(action))
+                handled = bool(dictation_pad.handle_action(action))
+                if handled and action in ("undo", "redo") and last_injected["to_pad"]:
+                    # Pad history moved: retarget "delete that" at the segment
+                    # now at the pad's tail ("" when no dictation survives).
+                    segment = dictation_pad.last_segment
+                    action_handler.set_last_injected_text(segment or "")
+                    last_injected["to_pad"] = bool(segment)
+                return handled
             return bool(action_handler.handle_action(action))
 
         speech_engine.register_text_callback(text_callback_wrapper)
