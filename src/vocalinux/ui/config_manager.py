@@ -16,6 +16,7 @@ from ..utils.vosk_model_info import SUPPORTED_LANGUAGES
 from ..utils.whispercpp_model_info import MODEL_SIZES as WHISPERCPP_MODEL_SIZES
 from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, default_variant_for_size
 from ..utils.whispercpp_model_info import get_model_size as get_whispercpp_model_size
+from ..utils.whispercpp_model_info import is_dictation_model
 from ..utils.whispercpp_model_info import is_english_only_model as is_english_only_whispercpp_model
 
 logger = logging.getLogger(__name__)
@@ -257,7 +258,7 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
     language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
 
     pinned = pinned_variant.lower() if isinstance(pinned_variant, str) else ""
-    if pinned in WHISPERCPP_MODEL_INFO:
+    if pinned in WHISPERCPP_MODEL_INFO and is_dictation_model(pinned):
         if not language_is_english and is_english_only_whispercpp_model(pinned):
             return _multilingual_sibling(pinned)
         return pinned
@@ -270,6 +271,7 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
     # Honour true leftover specializations, but not a plain English-only id.
     if (
         saved in WHISPERCPP_MODEL_INFO
+        and is_dictation_model(saved)
         and saved not in WHISPERCPP_MODEL_SIZES
         and saved != f"{size}.en"
     ):
@@ -280,7 +282,7 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
     derived = default_variant_for_size(size, language_is_english)
     if derived in WHISPERCPP_MODEL_INFO:
         return derived
-    return saved if saved in WHISPERCPP_MODEL_INFO else "tiny"
+    return saved if saved in WHISPERCPP_MODEL_INFO and is_dictation_model(saved) else "tiny"
 
 
 class ConfigManager:

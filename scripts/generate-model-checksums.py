@@ -114,13 +114,12 @@ def _model_names() -> tuple[list[str], list[str]]:
     """Model names the application can actually download, straight from the package."""
     sys.path.insert(0, str(SRC))
     from vocalinux.utils.vosk_model_info import VOSK_MODEL_INFO
-    from vocalinux.utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, whispercpp_model_file
+    from vocalinux.utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO
 
     vosk = {
         name for info in VOSK_MODEL_INFO.values() for name in info["languages"].values() if name
     }
-    whispercpp = {whispercpp_model_file(name) for name in WHISPERCPP_MODEL_INFO}
-    return sorted(whispercpp), sorted(vosk)
+    return sorted(WHISPERCPP_MODEL_INFO), sorted(vosk)
 
 
 def _parakeet_entries() -> list[Entry]:
@@ -205,7 +204,27 @@ def _faster_whisper_entries() -> list[Entry]:
     return entries
 
 
+def _hf_lfs_digests(repo: str, revision: str) -> dict[str, tuple[str, int]]:
+    """sha256/size per LFS file in ``repo`` at ``revision``, from the HF API."""
+    payload = _fetch_json(
+        f"https://huggingface.co/api/models/{repo}/revision/{revision}?blobs=true"
+    )
+    published = {}
+    for sibling in payload.get("siblings", []):
+        lfs = sibling.get("lfs") or {}
+        digest = lfs.get("sha256") or lfs.get("oid")
+        if digest:
+            published[sibling["rfilename"]] = (digest, int(lfs.get("size", 0)))
+    return published
+
+
 def _whispercpp_entries(wanted: Iterable[str]) -> tuple[list[Entry], str]:
+    sys.path.insert(0, str(SRC))
+    from vocalinux.utils.whispercpp_model_info import (
+        whispercpp_model_file,
+        whispercpp_model_source,
+    )
+
     payload = _fetch_json(HF_API)
     revision = payload.get("sha")
     if not revision:
@@ -218,20 +237,36 @@ def _whispercpp_entries(wanted: Iterable[str]) -> tuple[list[Entry], str]:
         if digest:
             by_name[sibling["rfilename"]] = (digest, int(lfs.get("size", 0)))
 
+    # Catalog entries hosted outside the main repository pin their own commit
+    # in whispercpp_model_info.py (same contract parakeet bundles follow).
+    side_repo_digests: dict[str, dict[str, tuple[str, int]]] = {}
+
     entries, missing = [], []
-    for filename in wanted:
-        if filename not in by_name:
+    for model_name in wanted:
+        filename = whispercpp_model_file(model_name)
+        repo, pinned_revision = whispercpp_model_source(model_name)
+        if repo != HF_REPO:
+            if repo not in side_repo_digests:
+                side_repo_digests[repo] = _hf_lfs_digests(repo, pinned_revision)
+            found = side_repo_digests[repo].get(filename)
+            if found is None:
+                missing.append(f"{filename} ({repo})")
+                continue
+            digest, size = found
+        elif filename not in by_name:
             missing.append(filename)
             continue
-        digest, size = by_name[filename]
+        else:
+            digest, size = by_name[filename]
         entries.append(Entry(filename, "sha256", digest, size))
 
     if missing:
         raise SystemExit(
-            f"Hugging Face {HF_REPO}@{revision} publishes no sha256 for: {', '.join(missing)}.\n"
+            f"Hugging Face publishes no sha256 for: {', '.join(missing)}.\n"
             "Either the model was renamed upstream or whispercpp_model_info.py lists "
             "a file that does not exist."
         )
+    entries.sort(key=lambda entry: entry.filename)
     return entries, revision
 
 

@@ -45,6 +45,7 @@ ggml-small-q5_1.bin                               sha256  ae85e4a935d7a567bd102f
 ggml-small-q8_0.bin                               sha256  49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f  264464607
 ggml-small.bin                                    sha256  1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b  487601967
 ggml-small.en-q5_1.bin                            sha256  bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30  190098681
+ggml-small.en-tdrz.bin                            sha256  ceac3ec06d1d98ef71aec665283564631055fd6129b79d8e1be4f9cc33cc54b4  487614184
 ggml-small.en.bin                                 sha256  c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d  487614201
 ggml-tiny-q5_1.bin                                sha256  818710568da3ca15689e31a743197b520007872ff9576237bda97bd1b469c3d7  32152673
 ggml-tiny-q8_0.bin                                sha256  c2085835d3f50733e2ff6e4b41ae8a2b8d8110461e18821b09a15c40c42d1cca  43537433

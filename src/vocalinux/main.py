@@ -110,6 +110,15 @@ def parse_arguments():
         action="store_true",
         help="Stop voice typing on a running instance (via D-Bus) and exit",
     )
+    parser.add_argument(
+        "--transcribe-file",
+        type=str,
+        metavar="PATH",
+        help=(
+            "Transcribe an audio file with speaker attribution using the "
+            "TinyDiarize model, print the transcript, and exit"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -143,6 +152,21 @@ def _dispatch_trigger(command: str) -> int:
         command,
     )
     return 1
+
+
+def _run_file_transcription(path: str) -> int:
+    """Headless ``--transcribe-file`` path: transcribe and print, no GTK."""
+    from .speech_recognition.diarization import format_transcript, transcribe_audio_file
+
+    try:
+        blocks = transcribe_audio_file(path)
+    except (OSError, RuntimeError, ValueError) as error:
+        print(f"vocalinux: {error}", file=sys.stderr)
+        return 1
+
+    transcript = format_transcript(blocks)
+    print(transcript if transcript else "vocalinux: no speech detected")
+    return 0
 
 
 def check_dependencies():
@@ -313,6 +337,11 @@ def main():
     trigger = _selected_trigger(args)
     if trigger is not None:
         sys.exit(_dispatch_trigger(trigger))
+
+    # Headless file transcription exits before the instance lock and GTK, so
+    # it works alongside a running tray app and on a displayless shell.
+    if isinstance(args.transcribe_file, str):
+        sys.exit(_run_file_transcription(args.transcribe_file))
 
     # Check for single instance BEFORE any initialization
     from . import single_instance

@@ -63,6 +63,7 @@ from ..utils.whisper_model_info import (
     whisper_model_url,
 )
 from ..utils.whispercpp_model_info import (
+    NON_DICTATION_MODELS,
     WHISPERCPP_MODEL_INFO,
     get_model_path,
     is_english_only_model,
@@ -1266,8 +1267,12 @@ class SpeechRecognitionManager:
             _preload_pywhispercpp_shared_libraries()
             from pywhispercpp.model import Model  # noqa: F401 — fail fast if missing
 
-            # Validate model size for whisper.cpp
-            valid_models = list(WHISPERCPP_MODEL_INFO.keys())
+            # Validate model size for whisper.cpp. Non-dictation entries in the
+            # catalog (e.g. TinyDiarize) stay selectable for their own surfaces
+            # but emit markup that would inject noise into the focused window.
+            valid_models = [
+                name for name in WHISPERCPP_MODEL_INFO if name not in NON_DICTATION_MODELS
+            ]
             if self.model_size not in valid_models:
                 logger.warning(
                     f"Model size '{self.model_size}' not valid for whisper.cpp. "
@@ -2451,26 +2456,27 @@ class SpeechRecognitionManager:
                 os.remove(temp_file)
             raise
 
-    def _download_whispercpp_model(self):
+    def _download_whispercpp_model(self, model_name: Optional[str] = None):
         """Download a whisper.cpp model with progress tracking."""
         import requests
 
         self._download_cancelled = False
 
-        model_info = WHISPERCPP_MODEL_INFO.get(self.model_size)
+        model_name = model_name or self.model_size
+        model_info = WHISPERCPP_MODEL_INFO.get(model_name)
         if not model_info:
-            raise ValueError(f"Unknown whisper.cpp model size: {self.model_size}")
+            raise ValueError(f"Unknown whisper.cpp model size: {model_name}")
 
         url = model_info["url"]
         # Prefer explicit download=true (some HF edges serve HTML without it).
         if "huggingface.co" in url and "download=" not in url:
             url = url + ("&" if "?" in url else "?") + "download=true"
-        model_path = get_model_path(self.model_size)
+        model_path = get_model_path(model_name)
         temp_file = model_path + ".tmp"
 
         os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-        logger.info(f"Downloading whisper.cpp {self.model_size} model to {model_path}")
+        logger.info(f"Downloading whisper.cpp {model_name} model to {model_path}")
 
         try:
             self._stream_model_download(url, temp_file)
@@ -2508,6 +2514,16 @@ class SpeechRecognitionManager:
             if os.path.exists(temp_file):
                 os.remove(temp_file)
             raise
+
+    def download_whispercpp_model(self, model_name: str) -> None:
+        """Download a catalog whisper.cpp model without changing engine config.
+
+        Used by surfaces that need a model the dictation engine does not load
+        (e.g. the TinyDiarize file-transcription flow). The engine's cancel
+        flag and progress callback apply, so the existing
+        try_begin_download/end_download coordination keeps working.
+        """
+        self._download_whispercpp_model(model_name)
 
     def _get_vosk_model_path(self) -> str:
         """Get the path to the VOSK model based on the selected size and language."""

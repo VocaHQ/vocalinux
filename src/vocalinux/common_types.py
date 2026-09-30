@@ -76,6 +76,45 @@ class SpeechRecognitionManagerProtocol(Protocol):
         """Register a callback for recognized text with its audio-capture start time."""
         ...
 
+    @property
+    def model_ready(self) -> bool:
+        """Whether the engine has a model loaded and can recognize speech."""
+        ...
+
+    def reconfigure(
+        self,
+        engine: Optional[str] = None,
+        model_size: Optional[str] = None,
+        language: Optional[str] = None,
+        force_download: bool = True,
+        force_reinit: bool = False,
+        **kwargs: Any,
+    ) -> None:
+        """Reconfigure the engine on the fly."""
+        ...
+
+    def try_begin_download(self) -> bool:
+        """Claim the engine for a model download. False if one is running."""
+        ...
+
+    def end_download(self) -> None:
+        """Release the claim taken by try_begin_download()."""
+        ...
+
+    def cancel_download(self) -> None:
+        """Request cancellation of the current download."""
+        ...
+
+    def set_download_progress_callback(
+        self, callback: Optional[Callable[[float, float, str], None]]
+    ) -> None:
+        """Register a callback for download progress (fraction, mbps, status)."""
+        ...
+
+    def download_whispercpp_model(self, model_name: str) -> None:
+        """Download a catalog whisper.cpp model without changing engine config."""
+        ...
+
 
 class TextInjectorProtocol(Protocol):
     """Protocol defining the interface for TextInjector."""
