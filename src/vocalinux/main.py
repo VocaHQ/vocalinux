@@ -609,7 +609,7 @@ def main():
         session_worker: Optional[threading.Thread] = None
         # True when the newest history entry is the just-closed session's
         # snippet, so late segments can still merge into it.
-        latest_snippet_extendable = False
+        latest_committed_snippet: Optional[str] = None
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
@@ -670,7 +670,7 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_snippet_extendable
+            nonlocal session_worker, latest_committed_snippet
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -702,18 +702,23 @@ def main():
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
-                # its committed snippet when there is one. Both writes are
-                # guarded by the ended session's epoch, so a clear() landing
-                # between that session's commit and this delivery still
-                # refuses the text.
-                if latest_snippet_extendable and transcription_history.extend_latest(
-                    segment, expected_epoch=ended_session_epoch
+                # its committed snippet when that snippet is still the newest
+                # entry. Both writes are guarded by the ended session's epoch,
+                # so a clear() landing between that session's commit and this
+                # delivery still refuses the text; the newest-entry compare
+                # refuses when a later session has committed since, so this
+                # session's text cannot leak into the next session's snippet.
+                if latest_committed_snippet is not None and transcription_history.extend_latest(
+                    segment,
+                    expected_epoch=ended_session_epoch,
+                    expected_latest=latest_committed_snippet,
                 ):
+                    latest_committed_snippet = f"{latest_committed_snippet} {segment.strip()}"
                     return
                 # Otherwise the late segments are the session's only output
                 # and form their own snippet.
                 if transcription_history.add(segment, expected_epoch=ended_session_epoch):
-                    latest_snippet_extendable = True
+                    latest_committed_snippet = segment
 
         def inject_transcription(text_to_inject: str) -> None:
             """Apply the separator rules and inject one finalised segment.
@@ -948,12 +953,13 @@ def main():
             Clearing the flag makes queued or in-flight jobs drop their
             results, and pending submissions are cancelled without waiting on
             a running script — quit must not freeze the tray on the script's
-            own timeout.  Only an injection already in progress is waited out,
-            so the injector is never stopped mid-inject; every inject-path
-            subprocess is individually bounded, so the wait always ends with
-            the injection and is never interrupted partway through.
+            own timeout.  An injection already in progress is asked to abort
+            so the lock wait stays bounded by a single chunk's subprocess
+            timeout instead of a long transcription's whole budget, and the
+            injector is never stopped mid-inject.
             """
             accepting_injections.clear()
+            text_system.abort_injections()
             with injection_lock:
                 pass
             post_processing_executor.shutdown(wait=False, cancel_futures=True)
@@ -1014,7 +1020,7 @@ def main():
             recognised just before the session ended still sees the text it
             refers to.
             """
-            nonlocal session_open, session_worker, latest_snippet_extendable
+            nonlocal session_open, session_worker, latest_committed_snippet
             nonlocal ended_session_epoch
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
@@ -1044,9 +1050,10 @@ def main():
                     # snippet. The committed snippet stays open to late
                     # segments still trickling out of the worker; a session
                     # that produced no text leaves no entry to merge into.
-                    latest_snippet_extendable = transcription_history.add(
+                    committed = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
+                    latest_committed_snippet = joined if committed else None
             else:
                 with session_lock:
                     if not session_open:
@@ -1058,14 +1065,16 @@ def main():
                         # those captured after the last clear().
                         if session_segments:
                             cleared_at = transcription_history.cleared_at
-                            latest_snippet_extendable = transcription_history.add(
-                                " ".join(
-                                    text
-                                    for text, started_at in session_segments
-                                    if started_at > cleared_at
-                                ),
+                            joined = " ".join(
+                                text
+                                for text, started_at in session_segments
+                                if started_at > cleared_at
+                            )
+                            committed = transcription_history.add(
+                                joined,
                                 expected_epoch=transcription_history.epoch,
                             )
+                            latest_committed_snippet = joined if committed else None
                             session_segments.clear()
 
         # Connect speech recognition to text injection and action handling.

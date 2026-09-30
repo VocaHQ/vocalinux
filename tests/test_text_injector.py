@@ -290,6 +290,8 @@ class TestTextInjector(unittest.TestCase):
             # Initialize injector
             injector = TextInjector()
             self.assertEqual(injector.wayland_tool, "ydotool")
+            # _ensure_ydotoold spawns a real Popen, which patch("subprocess.run") misses.
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             # Inject text
             injector.inject_text("Hello world")
@@ -649,6 +651,7 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "ydotool"
             injector.environment = DesktopEnvironment.WAYLAND
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             # Reset call list so init calls don't interfere
             mock_run.reset_mock()
@@ -688,6 +691,7 @@ class TestTextInjector(unittest.TestCase):
             injector = TextInjector()
             injector.wayland_tool = "ydotool"
             injector.environment = DesktopEnvironment.WAYLAND
+            injector._ensure_ydotoold = MagicMock(return_value=True)
 
             mock_run.reset_mock()
             injector._inject_with_wayland_tool("Hello world")

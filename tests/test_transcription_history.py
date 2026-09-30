@@ -119,6 +119,21 @@ class TestTranscriptionHistory(unittest.TestCase):
         history.extend_latest("b")
         self.assertEqual(calls, [1])
 
+    def test_extend_latest_expected_latest_matches(self) -> None:
+        """The CAS guard extends the entry the caller believes is newest."""
+        history = TranscriptionHistory()
+        history.add("session one")
+        self.assertTrue(history.extend_latest("tail", expected_latest="session one"))
+        self.assertEqual(history.get_all(), ["session one tail"])
+
+    def test_extend_latest_expected_latest_mismatch_refuses(self) -> None:
+        """A newer entry arriving since the read keeps the late text out."""
+        history = TranscriptionHistory()
+        history.add("session one")
+        history.add("session two")
+        self.assertFalse(history.extend_latest("tail", expected_latest="session one"))
+        self.assertEqual(history.get_all(), ["session two", "session one"])
+
     def test_clear(self) -> None:
         history = TranscriptionHistory()
         history.add("a")

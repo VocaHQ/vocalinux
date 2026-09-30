@@ -1641,3 +1641,58 @@ class TestEvdevGrabAndForwarding:
 
         backend._handle_key_event.assert_not_called()
         forwarder.write_event.assert_called_once_with(other_event)
+
+    def test_pure_modifier_press_stays_consumed(self) -> None:
+        """A real PTT hold never reaches the application."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        backend._forwarders[fd] = MagicMock()
+        backend._forwarded_held[fd] = set()
+        backend._withheld_modifier[fd] = {}
+
+        assert backend._event_is_shortcut(fd, self._key_event(100, 1)) is True
+        assert backend._event_is_shortcut(fd, self._key_event(100, 0)) is True
+        backend._forwarders[fd].write_event.assert_not_called()
+
+    def test_altgr_chord_replays_withheld_press(self) -> None:
+        """RightAlt held for composition replays its press and release."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        forwarder = MagicMock()
+        backend._forwarders[fd] = forwarder
+        backend._forwarded_held[fd] = set()
+        backend._withheld_modifier[fd] = {}
+
+        press = self._key_event(100, 1)  # KEY_RIGHTALT down
+        key_e = self._key_event(18, 1)  # KEY_E down (AltGr+e)
+        release = self._key_event(100, 0)  # KEY_RIGHTALT up
+
+        assert backend._event_is_shortcut(fd, press) is True
+        forwarder.write_event.assert_not_called()
+
+        assert backend._event_is_shortcut(fd, key_e) is False
+        forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[fd]
+
+        assert backend._event_is_shortcut(fd, release) is True
+        # The replayed modifier's release passes through so the clone's key
+        # state matches the physical keyboard.
+        assert forwarder.write_event.call_count == 2
+        forwarder.write_event.assert_called_with(release)
+
+    def test_withheld_state_drops_on_device_removal(self) -> None:
+        """Disconnecting a keyboard forgets its withheld modifier presses."""
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        device = MagicMock()
+        device.fileno.return_value = 10
+        forwarder = MagicMock()
+        backend.devices = [device]
+        backend.device_fds = [10]
+        backend.device_paths = {"/dev/input/event0"}
+        backend._device_paths_by_fd = {10: "/dev/input/event0"}
+        backend._forwarders = {10: forwarder}
+        backend._withheld_modifier[10] = {100: [self._key_event(100, 1), False]}
+
+        backend._remove_keyboard_device(10, device)
+
+        assert backend._withheld_modifier == {}

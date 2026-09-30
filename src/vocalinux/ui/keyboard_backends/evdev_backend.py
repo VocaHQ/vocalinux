@@ -355,6 +355,10 @@ class EvdevKeyboardBackend(KeyboardBackend):
         # Grabbed fd -> key codes the clone currently believes are held.
         # Needed to reconcile after SYN_DROPPED eats release events.
         self._forwarded_held: dict[int, set[int]] = {}
+        # Grabbed fd -> consumed pure-modifier presses withheld for AltGr
+        # replay, as {code: [press_event, replayed]}. A press replayed once
+        # stays listed so its release can be forwarded too.
+        self._withheld_modifier: dict[int, dict[int, list]] = {}
         self._uinput_warned = False
 
         if not EVDEV_AVAILABLE:
@@ -532,6 +536,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self.device_paths = set()
         self.key_pressed_devices = set()
         self._dropped_devices = set()
+        self._withheld_modifier = {}
         self._device_paths_by_fd = {}
         self._forwarders = {}
         self._forwarder_paths = {}
@@ -588,6 +593,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self.device_fds = []
             self.device_paths = set()
             self._dropped_devices = set()
+            self._withheld_modifier = {}
             self._device_paths_by_fd = {}
             self._forwarders = {}
             self._forwarder_paths = {}
@@ -679,6 +685,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
                     self._forwarder_paths[fd] = clone_path
                     self._clone_paths.add(clone_path)
                 self._forwarded_held[fd] = set()
+            self._withheld_modifier[fd] = {}
 
         logger.debug(
             f"Opened keyboard device: {device_path} ({device.name})"
@@ -794,6 +801,21 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 else:
                     held.add(event.code)
 
+    def _replay_withheld_modifiers(self, fd: int) -> None:
+        """Emit withheld modifier presses ahead of a non-target key.
+
+        A pure-modifier trigger press that turns out to be AltGr (another
+        key arrives while it is held) was consumed for the shortcut; re-emit
+        it so the focused application sees the composition's modifier down.
+        """
+        withheld = self._withheld_modifier.get(fd)
+        if not withheld:
+            return
+        for entry in withheld.values():
+            if not entry[1]:
+                self._forward_event(fd, entry[0])
+                entry[1] = True
+
     def _event_is_shortcut(self, fd: int, event: InputEvent) -> bool:
         """Return True if an EV_KEY event belongs to the dictation shortcut.
 
@@ -823,7 +845,28 @@ class EvdevKeyboardBackend(KeyboardBackend):
             return False
 
         if not spec.is_combo:
-            return event.code in self._get_target_key_codes()
+            if event.code not in self._get_target_key_codes():
+                # A press of any other key while a modifier press is withheld
+                # means the modifier was AltGr composition, not the gesture:
+                # replay the withheld press first so the app sees it down.
+                if event.value == 1:
+                    self._replay_withheld_modifiers(fd)
+                return False
+            # Pure-modifier gesture: every event of the configured modifier
+            # side(s) is consumed. RightAlt doubles as AltGr on many layouts,
+            # so a press is withheld rather than dropped outright — a later
+            # non-target press replays it (composition), while a release
+            # after a real gesture stays consumed (the clone never saw it).
+            withheld = self._withheld_modifier.get(fd)
+            if event.value == 1 and withheld is not None:
+                withheld[event.code] = [event, False]
+            elif event.value == 0 and withheld is not None:
+                entry = withheld.pop(event.code, None)
+                if entry is not None and entry[1]:
+                    # Replayed as composition — the clone believes the
+                    # modifier is still down; pass the release through.
+                    self._forward_event(fd, event)
+            return True
 
         main_code = self._combo_main_code
         if event.code != main_code or main_code is None:
@@ -887,6 +930,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             if clone_path is not None:
                 self._clone_paths.discard(clone_path)
             self._forwarded_held.pop(fd, None)
+            self._withheld_modifier.pop(fd, None)
             # The fd can be recycled for a newly plugged device; a stale
             # swallowed press would then eat that device's first release.
             self._combo_swallowed.discard(fd)
@@ -930,6 +974,11 @@ class EvdevKeyboardBackend(KeyboardBackend):
                     self._release_failed_forwarder(fd)
                     return
                 held.discard(code)
+        withheld = self._withheld_modifier.get(fd)
+        if withheld:
+            for code in list(withheld):
+                if code not in actually_held:
+                    withheld.pop(code)
         if self._combo_main_code is not None and self._combo_main_code not in actually_held:
             # A dropped burst can also eat the release of a swallowed combo
             # press — a key the clone never saw, so ``held`` cannot reflect

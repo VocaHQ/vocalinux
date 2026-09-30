@@ -25,7 +25,13 @@ from .ibus_engine import (
     is_ibus_available,
     is_ibus_daemon_running,
 )
-from .remote_desktop_portal import KEYSYM_BACKSPACE, RemoteDesktopPortal, RemoteDesktopPortalError
+from .remote_desktop_portal import (
+    KEYSYM_BACKSPACE,
+    RemoteDesktopPortal,
+    RemoteDesktopPortalError,
+)
+
+_PORTAL_SUBMIT_TIMEOUT_S = 195.0  # portal's _START_TIMEOUT_S + _REQUEST_TIMEOUT_S
 
 logger = logging.getLogger(__name__)
 
@@ -1056,13 +1062,15 @@ class TextInjector:
             self.environment = DesktopEnvironment.WAYLAND
         logger.info(log_message, *args)
 
-    def _try_inject_with_portal(self, text: str) -> Tuple[bool, str]:
+    def _try_inject_with_portal(self, text: str) -> Tuple[bool, Optional[str]]:
         """Send text through the RemoteDesktop portal.
 
         Returns ``(True, "")`` on success. On failure the second element is
         the part of ``text`` the portal had not typed yet -- the whole string
         when it never got started, the tail when it failed mid-string -- so
-        the fallback backend does not duplicate delivered characters.
+        the fallback backend does not duplicate delivered characters. It is
+        ``None`` when the job timed out without reporting its count: whatever
+        reached the compositor is then unknowable and nothing may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1071,16 +1079,20 @@ class TextInjector:
             return bool(portal.inject_text(text)), ""
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal injection failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, text[e.delivered :]
         except Exception as e:
             logger.warning(f"RemoteDesktop portal injection failed: {e}")
             return False, text
 
-    def _try_portal_keypress(self, keysym: int, count: int = 1) -> Tuple[bool, int]:
+    def _try_portal_keypress(self, keysym: int, count: int = 1) -> Tuple[bool, Optional[int]]:
         """Tap one keysym ``count`` times through the portal.
 
         Returns ``(True, 0)`` on success; on failure the taps still owed, so
         the fallback does not re-send presses the portal already delivered.
+        ``None`` means a timed-out job never reported its count, so no part
+        of the request may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1090,6 +1102,8 @@ class TextInjector:
             return True, 0
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal key event failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, max(0, count - e.delivered)
         except Exception as e:
             logger.warning(f"RemoteDesktop portal key event failed: {e}")
@@ -1097,11 +1111,13 @@ class TextInjector:
 
     def _try_portal_shortcut(
         self, steps: List[Tuple[List[str], str]]
-    ) -> Tuple[bool, List[Tuple[List[str], str]]]:
+    ) -> Tuple[bool, Optional[List[Tuple[List[str], str]]]]:
         """Send parsed shortcut steps through the portal.
 
         Returns ``(True, [])`` on success; on failure the steps still to
         send, so the fallback does not re-run steps that already fired.
+        ``None`` means a timed-out job never reported its count, so no step
+        may be replayed.
         """
         portal = getattr(self, "_portal", None)
         if portal is None:
@@ -1111,6 +1127,8 @@ class TextInjector:
             return True, []
         except RemoteDesktopPortalError as e:
             logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
+            if e.delivered is None:
+                return False, None
             return False, list(steps[e.delivered :])
         except Exception as e:
             logger.warning(f"RemoteDesktop portal shortcut failed: {e}")
@@ -2555,6 +2573,11 @@ class TextInjector:
         # still-held physical modifier, so the wait stays ahead of every tool.
         self._wait_for_modifiers_released()
 
+        # Characters the portal confirmed before a demote: partial-type counts
+        # raised later are relative to the shortened text and must be rebased
+        # by this prefix or the caller replays delivered input.
+        typed_prefix = 0
+
         if self.wayland_tool == "portal":
             portal_ok, remaining_text = self._try_inject_with_portal(text)
             if portal_ok:
@@ -2563,10 +2586,21 @@ class TextInjector:
                 raise RuntimeError(
                     "RemoteDesktop portal injection failed and no Wayland fallback is available"
                 )
+            if remaining_text is None:
+                # The timed-out job never reported its delivered count, so
+                # retyping any part could duplicate what already arrived.
+                # Surface as a timeout: the caller drops the injection rather
+                # than offering a clipboard copy of the full text.
+                raise subprocess.TimeoutExpired(cmd="portal", timeout=_PORTAL_SUBMIT_TIMEOUT_S)
             if not remaining_text:
                 return
+            typed_prefix = len(text) - len(remaining_text)
             if self.environment == DesktopEnvironment.WAYLAND_XDOTOOL:
-                self._inject_with_xdotool(remaining_text)
+                try:
+                    self._inject_with_xdotool(remaining_text)
+                except _PartiallyTyped as nested:
+                    # Keep the count relative to the original text.
+                    raise _PartiallyTyped(typed_prefix + nested.typed, nested) from nested
                 return
             text = remaining_text
 
@@ -2628,7 +2662,7 @@ class TextInjector:
                 if i > 0:
                     # Earlier chunks are already on screen; let the caller
                     # continue from the untyped remainder.
-                    raise _PartiallyTyped(i, e) from e
+                    raise _PartiallyTyped(typed_prefix + i, e) from e
                 # Re-raise with stderr preserved for better diagnostics
                 raise subprocess.CalledProcessError(
                     e.returncode, e.cmd, output=e.output, stderr=e.stderr
@@ -2732,11 +2766,20 @@ class TextInjector:
         # wait it out first -- same reason and placement as _inject_with_wayland_tool.
         self._wait_for_modifiers_released()
 
+        # Characters the portal confirmed before a demote: partial-type counts
+        # raised later are relative to the shortened text and must be rebased
+        # by this prefix or the caller replays delivered input.
+        typed_prefix = 0
+
         if self.wayland_tool == "portal":
             portal_ok, remaining_steps = self._try_portal_shortcut(steps)
             if portal_ok:
                 return True
             if not self._demote_portal_backend():
+                return False
+            if remaining_steps is None:
+                # Untracked delivery: replaying the shortcut could trigger
+                # actions the timed-out job already sent.
                 return False
             if not remaining_steps:
                 return True
@@ -3014,6 +3057,10 @@ class TextInjector:
             if portal_ok:
                 return True
             if not self._demote_portal_backend():
+                return False
+            if remaining is None:
+                # Untracked delivery: replaying presses could delete text the
+                # timed-out job already removed.
                 return False
             if remaining <= 0:
                 return True

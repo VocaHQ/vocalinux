@@ -152,7 +152,13 @@ class TranscriptionHistory:
         self._notify()
         return True
 
-    def extend_latest(self, text: str, *, expected_epoch: Optional[int] = None) -> bool:
+    def extend_latest(
+        self,
+        text: str,
+        *,
+        expected_epoch: Optional[int] = None,
+        expected_latest: Optional[str] = None,
+    ) -> bool:
         """Append a late-arriving segment to the most recent snippet.
 
         The recognition worker can emit a final segment after its session
@@ -160,6 +166,10 @@ class TranscriptionHistory:
         timeout and reports IDLE anyway). That text belongs to the just-ended
         session's snippet, so it is merged into the newest entry instead of
         becoming a snippet of its own or leaking into the next session.
+
+        With ``expected_latest`` the extend is refused unless the newest
+        entry still equals it — when a newer session has already committed
+        its own snippet, a stale worker's text must not join that entry.
 
         Returns False when there is nothing to extend (empty or disabled
         history, or empty text) or when ``expected_epoch`` no longer matches
@@ -172,6 +182,8 @@ class TranscriptionHistory:
             if not self._enabled or not self._entries:
                 return False
             if expected_epoch is not None and expected_epoch != self._epoch:
+                return False
+            if expected_latest is not None and self._entries[-1] != expected_latest:
                 return False
             self._entries[-1] = f"{self._entries[-1]} {text.strip()}"
         self._notify()
