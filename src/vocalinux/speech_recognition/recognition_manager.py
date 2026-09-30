@@ -1154,6 +1154,10 @@ class SpeechRecognitionManager:
         # dialog both download in the background, and there is only one progress
         # callback and one engine configuration between them.
         self._download_claim = threading.Lock()
+        # Opener threads _stream_model_download leaves running past a cancel;
+        # each is bounded by the network timeout but tracked so repeated
+        # cancel-and-retry cannot stack unaccounted request threads.
+        self._download_openers: set[threading.Thread] = set()
         self._defer_download = defer_download
         self._model_initialized = False
         # True while auto-pause has unloaded the model for a configured app/game
@@ -2857,25 +2861,48 @@ class SpeechRecognitionManager:
         # cannot see the cancel flag, and Cancel used to wait out the timeout.
         # The attempt itself stays bounded by _MODEL_DOWNLOAD_TIMEOUT.
         outcome: dict = {}
+        # Per-attempt stop signal: _download_cancelled is shared state that a
+        # retry resets, so the opener needs its own marker to notice the cancel
+        # that landed while it was still blocked in requests.get().
+        stop_open = threading.Event()
 
         def _open() -> None:
             try:
-                outcome["response"] = requests.get(
+                response = requests.get(
                     url,
                     stream=True,
                     timeout=self._MODEL_DOWNLOAD_TIMEOUT,
                     headers={"User-Agent": f"vocalinux/{__version__}"},
                 )
-            except Exception as e:  # surfaced on the calling thread below
+            except requests.exceptions.RequestException as e:
+                # Surfaced on the calling thread below.
                 outcome["error"] = e
+                return
+            outcome["response"] = response
+            if stop_open.is_set():
+                # Cancel raced the response landing: the caller has already
+                # given up, so take the late response back and close it rather
+                # than leak an unconsumed socket.
+                outcome.pop("response", None)
+                response.close()
 
+        self._download_openers = {t for t in self._download_openers if t.is_alive()}
         opener = threading.Thread(target=_open, daemon=True)
+        self._download_openers.add(opener)
         opener.start()
         while opener.is_alive():
             if self._download_cancelled:
+                stop_open.set()
+                # If the response slipped through just as the cancel landed,
+                # the opener's own check may not have run yet; close whatever
+                # arrived late so the socket does not leak either way.
+                late = outcome.pop("response", None)
+                if late is not None:
+                    late.close()
                 logger.info("Download cancelled by user")
                 raise RuntimeError("Download cancelled")
             opener.join(self._DOWNLOAD_CANCEL_POLL_SECONDS)
+        self._download_openers.discard(opener)
 
         if "error" in outcome:
             raise outcome["error"]
@@ -2903,6 +2930,7 @@ class SpeechRecognitionManager:
             for data in response.iter_content(chunk_size=chunk_size):
                 if self._download_cancelled:
                     logger.info("Download cancelled by user")
+                    response.close()
                     f.close()
                     if os.path.exists(dest_path):
                         os.remove(dest_path)

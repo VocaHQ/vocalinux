@@ -335,7 +335,7 @@ class TestDownloadWhispercppModel:
 
         assert not os.path.exists(dest)
 
-    def test_stream_model_download_cancelled_while_connecting(self, tmp_path):
+    def test_stream_model_download_cancelled_while_connecting(self, tmp_path) -> None:
         """Cancel must not wait out a blocked request open.
 
         requests offers no way to abort a request stuck resolving, connecting,
@@ -347,14 +347,15 @@ class TestDownloadWhispercppModel:
         dest = str(tmp_path / "never.bin")
 
         mock_requests = MagicMock()
+        release_opener = threading.Event()
 
-        def blocked_get(*args, **kwargs):
-            time.sleep(60)  # a server that never answers
+        def blocked_get(*args, **kwargs) -> MagicMock:
+            release_opener.wait(60)  # a server that never answers
             return MagicMock()
 
         mock_requests.get.side_effect = blocked_get
 
-        def cancel_soon():
+        def cancel_soon() -> None:
             time.sleep(0.3)
             manager._download_cancelled = True
 
@@ -365,15 +366,49 @@ class TestDownloadWhispercppModel:
                 manager._stream_model_download("https://example.com/model.bin", dest)
             assert time.monotonic() - started < 10
 
+        # The opener the cancel abandoned must be released and reaped, not left
+        # sleeping inside later tests.
+        release_opener.set()
+        for opener in manager._download_openers:
+            opener.join(timeout=5)
+        assert not any(t.is_alive() for t in manager._download_openers)
+
         assert not os.path.exists(dest)
 
-    def test_stream_model_download_propagates_request_errors(self, tmp_path):
+    def test_stream_model_download_closes_late_response(self, tmp_path) -> None:
+        """A response landing after the cancel is closed, not left streaming."""
+        manager = _make_manager(engine="whisper_cpp")
+        dest = str(tmp_path / "late.bin")
+
+        mock_requests = MagicMock()
+        mock_response = MagicMock()
+        release_opener = threading.Event()
+
+        def slow_get(*args, **kwargs) -> MagicMock:
+            release_opener.wait(60)
+            return mock_response
+
+        mock_requests.get.side_effect = slow_get
+        manager._download_cancelled = True
+
+        with patch.dict("sys.modules", {"requests": mock_requests}):
+            with pytest.raises(RuntimeError, match="cancelled"):
+                manager._stream_model_download("https://example.com/model.bin", dest)
+            release_opener.set()
+            for opener in manager._download_openers:
+                opener.join(timeout=5)
+
+        mock_response.close.assert_called_once()
+        assert not os.path.exists(dest)
+
+    def test_stream_model_download_propagates_request_errors(self, tmp_path) -> None:
         """A failed open re-raises the original error for callers to classify."""
         manager = _make_manager(engine="whisper_cpp")
         dest = str(tmp_path / "err.bin")
 
         mock_requests = MagicMock()
         mock_requests.get.side_effect = FakeRequestError("Connection refused")
+        mock_requests.exceptions.RequestException = FakeRequestError
 
         with patch.dict("sys.modules", {"requests": mock_requests}):
             with pytest.raises(FakeRequestError, match="Connection refused"):
@@ -381,7 +416,7 @@ class TestDownloadWhispercppModel:
 
         assert not os.path.exists(dest)
 
-    def test_stream_model_download_no_response(self, tmp_path):
+    def test_stream_model_download_no_response(self, tmp_path) -> None:
         """A helper that produced neither a response nor an error still fails."""
         manager = _make_manager(engine="whisper_cpp")
         dest = str(tmp_path / "none.bin")

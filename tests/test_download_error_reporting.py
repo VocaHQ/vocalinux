@@ -98,24 +98,51 @@ def test_success_still_returns_true():
     )
 
 
-def test_both_download_threads_ask_for_the_failure():
+def test_both_download_threads_ask_for_the_failure() -> None:
     """Source guard: every _apply_settings_internal call made off the main loop
     passes raise_errors=True, so a regression cannot silently reintroduce the
     swallowed-error path on a worker thread. The two download workers must
     also force the engine re-init — their apply exists because a model is
     missing, and a no-op reconfigure would report the green "Model ready to
-    use" for a download that never ran."""
+    use" for a download that never ran. Each call site is checked on its own
+    worker: a bare count would still pass if the flag moved between call
+    sites, and the already-downloaded worker must never force it."""
+    import ast
     import inspect
-    import re
 
-    source = inspect.getsource(settings_dialog)
-    calls = re.findall(r"_apply_settings_internal\(([^)]*)\)", source)
-    worker_calls = [args for args in calls if "raise_errors=True" in args]
-    assert len(worker_calls) == 3
-    assert sum("force_reinit=True" in args for args in worker_calls) == 2
+    def worker_kwargs(worker: ast.FunctionDef) -> dict:
+        calls = [
+            node
+            for node in ast.walk(worker)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "_apply_settings_internal"
+        ]
+        assert len(calls) == 1, "each worker applies settings exactly once"
+        return {
+            kw.arg: kw.value.value if isinstance(kw.value, ast.Constant) else None
+            for kw in calls[0].keywords
+            if kw.arg is not None
+        }
+
+    tree = ast.parse(inspect.getsource(settings_dialog))
+    functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
+
+    download_workers = [node for node in functions if node.name == "download_and_apply"]
+    assert len(download_workers) == 2
+    for worker in download_workers:
+        kwargs = worker_kwargs(worker)
+        assert kwargs.get("raise_errors") is True
+        assert kwargs.get("force_reinit") is True
+
+    already_downloaded = [node for node in functions if node.name == "apply_already_downloaded"]
+    assert len(already_downloaded) == 1
+    kwargs = worker_kwargs(already_downloaded[0])
+    assert kwargs.get("raise_errors") is True
+    assert "force_reinit" not in kwargs
 
 
-def test_force_reinit_reaches_reconfigure():
+def test_force_reinit_reaches_reconfigure() -> None:
     """The flag exists so a needed download cannot no-op its way to green."""
     dialog = _dialog_stub()
 
