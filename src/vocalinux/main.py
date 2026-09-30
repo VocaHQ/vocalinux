@@ -8,6 +8,7 @@ import atexit
 import logging
 import sys
 import threading
+import time
 from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -352,8 +353,6 @@ def main():
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
         try:
-            import time
-
             from gi.repository import Notify
 
             Notify.init("Vocalinux")
@@ -601,12 +600,16 @@ def main():
         session_lock = threading.Lock()
         session_segments: list[tuple[str, float]] = []
         session_open = False
+        # Monotonic time the open session started; a segment delivered on the
+        # live worker whose capture predates it belongs to an earlier session.
+        session_started_floor = 0.0
         # Worker thread that produced the open session's segments; used to
         # detect callbacks from a previous session's still-running worker.
         session_worker: Optional[threading.Thread] = None
-        # True when the newest history entry is the just-closed session's
-        # snippet, so late segments can still merge into it.
-        latest_snippet_extendable = False
+        # Id of the just-closed session's snippet (from
+        # TranscriptionHistory.add), so late segments extend that entry
+        # rather than whichever snippet happens to be newest.
+        latest_snippet_id: Optional[int] = None
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
@@ -692,7 +695,7 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_snippet_extendable
+            nonlocal session_worker, latest_snippet_id
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -707,35 +710,49 @@ def main():
                     # Captured before the last clear — must not re-enter.
                     return
                 # Segments captured while the Settings mic test runs are test
-                # speech, not dictation; the floor is stamped before the test
-                # starts recognition, so leftovers from an earlier session —
-                # whose capture began before it — still file normally.
+                # speech, not dictation. The [floor, ceiling) window survives
+                # the test's end, so segments still decoding after it cannot
+                # leak into history.
                 test_floor = getattr(speech_engine, "test_capture_floor", None)
-                if isinstance(test_floor, (int, float)) and started_at >= test_floor:
+                test_ceiling = getattr(speech_engine, "test_capture_ceiling", None)
+                if (
+                    isinstance(test_floor, (int, float))
+                    and started_at >= test_floor
+                    and (not isinstance(test_ceiling, (int, float)) or started_at < test_ceiling)
+                ):
                     return
-                if session_open and (
-                    worker is session_worker
-                    or worker is current_worker
-                    # When the engine exposes no worker (tests, mocks), the
-                    # first segment of a session tags it.
-                    or (session_worker is None and not isinstance(current_worker, threading.Thread))
+                if (
+                    session_open
+                    and started_at >= session_started_floor
+                    and (
+                        worker is session_worker
+                        or worker is current_worker
+                        # When the engine exposes no worker (tests, mocks), the
+                        # first segment of a session tags it.
+                        or (
+                            session_worker is None
+                            and not isinstance(current_worker, threading.Thread)
+                        )
+                    )
                 ):
                     session_worker = worker
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
-                # its committed snippet when there is one. Both writes are
-                # guarded by the ended session's epoch, so a clear() landing
-                # between that session's commit and this delivery still
-                # refuses the text.
-                if latest_snippet_extendable and transcription_history.extend_latest(
-                    segment, expected_epoch=ended_session_epoch
+                # its own snippet by id — a newer session may already have
+                # committed on top, so the newest entry is not the target.
+                # Both writes are guarded by the ended session's epoch, so a
+                # clear() landing between that commit and this delivery
+                # still refuses the text.
+                if latest_snippet_id is not None and transcription_history.extend_entry(
+                    latest_snippet_id, segment, expected_epoch=ended_session_epoch
                 ):
                     return
                 # Otherwise the late segments are the session's only output
                 # and form their own snippet.
-                if transcription_history.add(segment, expected_epoch=ended_session_epoch):
-                    latest_snippet_extendable = True
+                snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
+                if snippet_id is not None:
+                    latest_snippet_id = snippet_id
 
         def text_callback_wrapper(text: str) -> None:
             """Bridge between speech engine text events and the text injector.
@@ -789,8 +806,8 @@ def main():
             Also commits the just-finished dictation session to the
             transcription history as a single snippet.
             """
-            nonlocal session_open, session_worker, latest_snippet_extendable
-            nonlocal ended_session_epoch
+            nonlocal session_open, session_worker, latest_snippet_id
+            nonlocal ended_session_epoch, session_started_floor
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     action_handler.set_last_injected_text("")
@@ -809,10 +826,10 @@ def main():
                     session_segments.clear()
                     # Guarded by the epoch observed here: a clear() landing
                     # between this read and the add still refuses the
-                    # snippet. The committed snippet stays open to late
+                    # snippet. The committed snippet's id stays open to late
                     # segments still trickling out of the worker; a session
                     # that produced no text leaves no entry to merge into.
-                    latest_snippet_extendable = transcription_history.add(
+                    latest_snippet_id = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
             else:
@@ -820,13 +837,14 @@ def main():
                     if not session_open:
                         session_open = True
                         session_worker = None
+                        session_started_floor = time.monotonic()
                         # Segments left over by a session that ended without a
                         # closing state commit as their own snippet rather
                         # than leaking into the new session's — still only
                         # those captured after the last clear().
                         if session_segments:
                             cleared_at = transcription_history.cleared_at
-                            latest_snippet_extendable = transcription_history.add(
+                            latest_snippet_id = transcription_history.add(
                                 " ".join(
                                     text
                                     for text, started_at in session_segments

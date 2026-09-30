@@ -1607,6 +1607,10 @@ class TestSessionHistoryRecording(unittest.TestCase):
         mock_speech = MagicMock()
         mock_speech.engine = "whisper_cpp"
         mock_speech_cls.return_value = mock_speech
+        # Stashed so tests can drive engine-side attributes (capture floors,
+        # the live recognition thread) through the same instance the
+        # callbacks close over.
+        self._engine = mock_speech
 
         mock_text_cls = stack.enter_context(
             patch("vocalinux.text_injection.text_injector.TextInjector")
@@ -1815,6 +1819,64 @@ class TestSessionHistoryRecording(unittest.TestCase):
             segment_cb("after clear", time.monotonic())
             state_cb(RecognitionState.IDLE)
             self.assertEqual(history.get_all(), ["after clear"])
+        finally:
+            stack.close()
+
+    def test_straggler_extends_its_own_snippet_during_next_session(self) -> None:
+        """A late segment lands in its session's entry, not the newest one."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            w1 = threading.Thread(target=segment_cb, args=("one", time.monotonic()))
+            self._engine.recognition_thread = w1
+            w1.start()
+            w1.join()
+            state_cb(RecognitionState.IDLE)
+
+            state_cb(RecognitionState.LISTENING)
+            # Session one's leftover worker finally delivers while session
+            # two is open — it must grow "one", never the pending "two".
+            straggler = threading.Thread(target=segment_cb, args=("tail", time.monotonic()))
+            straggler.start()
+            straggler.join()
+            # Session two's own segment arrives on its live worker.
+            w2 = threading.Thread(target=segment_cb, args=("two", time.monotonic()))
+            self._engine.recognition_thread = w2
+            w2.start()
+            w2.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["two", "one tail"])
+        finally:
+            stack.close()
+
+    def test_pre_session_capture_is_not_attributed_to_open_session(self) -> None:
+        """Audio captured before a session opened cannot join its snippet."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            session_start = time.monotonic()
+            segment_cb("new", time.monotonic())
+            # A queued leftover captured before this session began, delivered
+            # on the session's worker, still belongs to what came before.
+            segment_cb("old", session_start - 10.0)
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["new", "old"])
+        finally:
+            stack.close()
+
+    def test_mic_test_window_drops_segments_after_test_ends(self) -> None:
+        """Test speech still decoding after restore stays out of history."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            floor = time.monotonic()
+            self._engine.test_capture_floor = floor
+            self._engine.test_capture_ceiling = floor + 60.0
+
+            state_cb(RecognitionState.LISTENING)
+            segment_cb("test speech", floor + 5.0)
+            segment_cb("real dictation", floor + 120.0)
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["real dictation"])
         finally:
             stack.close()
 

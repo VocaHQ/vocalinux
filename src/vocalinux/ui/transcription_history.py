@@ -58,9 +58,12 @@ class TranscriptionHistory:
     def __init__(self, max_items: int = DEFAULT_MAX_ITEMS, enabled: bool = True) -> None:
         self._max_items = sanitize_max_items(max_items)
         self._enabled = bool(enabled)
-        self._entries: deque = deque(maxlen=self._max_items)
+        self._entries: deque[tuple[int, str]] = deque(maxlen=self._max_items)
         self._lock = threading.Lock()
         self._change_callback: Optional[Callable[[], None]] = None
+        # Monotonic id stamped on each snippet so late segments can extend
+        # the session they belong to even after newer snippets arrive.
+        self._next_id = 0
         # Bumped every time the entries are wiped; lets callers refuse text
         # produced before a clear so it cannot reappear afterwards.
         self._epoch = 0
@@ -130,8 +133,8 @@ class TranscriptionHistory:
                 self._cleared_at = time.monotonic()
         self._notify()
 
-    def add(self, text: str, *, expected_epoch: Optional[int] = None) -> bool:
-        """Add a snippet, returning True when it was recorded.
+    def add(self, text: str, *, expected_epoch: Optional[int] = None) -> Optional[int]:
+        """Add a snippet, returning its id when recorded (``None`` on refusal).
 
         No-op when disabled or when text is empty. With ``expected_epoch``
         the add is also refused once the epoch has advanced — i.e. the
@@ -139,16 +142,42 @@ class TranscriptionHistory:
         produced before the clear cannot reappear as a new entry.
         """
         if not text:
-            return False
+            return None
         text = text.strip()
         if not text:
-            return False
+            return None
         with self._lock:
             if not self._enabled:
+                return None
+            if expected_epoch is not None and expected_epoch != self._epoch:
+                return None
+            self._next_id += 1
+            self._entries.append((self._next_id, text))
+        self._notify()
+        return self._next_id
+
+    def extend_entry(
+        self, snippet_id: int, text: str, *, expected_epoch: Optional[int] = None
+    ) -> bool:
+        """Append a late-arriving segment to the snippet with ``snippet_id``.
+
+        Unlike ``extend_latest`` the target is the entry's own id, so a
+        straggler still lands in the session that produced it even when a
+        newer session has since committed its snippet on top.
+        """
+        if not text or not text.strip():
+            return False
+        with self._lock:
+            if not self._enabled or not self._entries:
                 return False
             if expected_epoch is not None and expected_epoch != self._epoch:
                 return False
-            self._entries.append(text)
+            for index, (entry_id, existing) in enumerate(self._entries):
+                if entry_id == snippet_id:
+                    self._entries[index] = (entry_id, f"{existing} {text.strip()}")
+                    break
+            else:
+                return False
         self._notify()
         return True
 
@@ -173,14 +202,15 @@ class TranscriptionHistory:
                 return False
             if expected_epoch is not None and expected_epoch != self._epoch:
                 return False
-            self._entries[-1] = f"{self._entries[-1]} {text.strip()}"
+            entry_id, existing = self._entries[-1]
+            self._entries[-1] = (entry_id, f"{existing} {text.strip()}")
         self._notify()
         return True
 
     def get_all(self) -> List[str]:
         """Return all snippets, newest first."""
         with self._lock:
-            return list(reversed(self._entries))
+            return [text for _, text in reversed(self._entries)]
 
     def clear(self) -> None:
         """Remove all snippets.

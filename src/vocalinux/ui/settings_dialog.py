@@ -8466,13 +8466,15 @@ class SettingsDialog(Gtk.Dialog):
         self._saved_text_callbacks = self.speech_engine.get_text_callbacks()
         self.speech_engine.set_text_callbacks([self._test_text_callback])
         # History recording runs on segment callbacks keyed by capture time:
-        # stamp the floor so test speech stays out of Recent Snippets while
+        # stamp the window so test speech stays out of Recent Snippets while
         # leftover segments from a dictation still file normally.
+        self.speech_engine.test_capture_ceiling = None
         self.speech_engine.test_capture_floor = time.monotonic()
 
         if not self.speech_engine.start_recognition():
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
             self.speech_engine.test_capture_floor = None
+            self.speech_engine.test_capture_ceiling = None
             del self._saved_text_callbacks
             self.test_output_revealer.set_reveal_child(True)
             if getattr(self.speech_engine, "is_auto_paused", False):
@@ -8678,7 +8680,10 @@ class SettingsDialog(Gtk.Dialog):
         if hasattr(self, "_saved_text_callbacks"):
             self.speech_engine.set_text_callbacks(self._saved_text_callbacks)
             del self._saved_text_callbacks
-        self.speech_engine.test_capture_floor = None
+        # Close the test-capture window rather than reopening history for
+        # everything after the floor: segments captured during the test but
+        # still decoding must keep failing the window check.
+        self.speech_engine.test_capture_ceiling = time.monotonic()
 
         # Check result after giving time for final callbacks to complete
         GLib.timeout_add(300, self._check_test_result)
