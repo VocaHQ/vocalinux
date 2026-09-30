@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+# Promotions serialize: a second dispatch queues instead of racing the first.
+concurrency:
+  group: snap-promote-stable
+  cancel-in-progress: false
+
 jobs:
   promote:
     name: Promote latest/candidate to latest/stable
@@ -71,7 +76,8 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           /snap/bin/snapcraft status vocalinux | tee /tmp/snap-status.txt
-          row=$(awk '/^\S/ { track = $1 }
+          # POSIX: mawk has no \S — use a literal non-space class.
+          row=$(awk '/^[^ \t]/ { track = $1 }
                     track == "latest" && $1 == "candidate" { print $2, $3; exit }' \
                     /tmp/snap-status.txt)
           read -r seen_version revision <<<"$row"
@@ -87,6 +93,25 @@ jobs:
             exit 1
           fi
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      # Re-resolve right before releasing: if a newer release published a
+      # different candidate after the first check, stable would downgrade.
+      - name: Re-verify the candidate did not move
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          TAG: ${{ inputs.tag }}
+          REVISION: ${{ steps.candidate.outputs.revision }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          row=$(awk '/^[^ \t]/ { track = $1 }
+                    track == "latest" && $1 == "candidate" { print $2, $3; exit }' \
+                    <(/snap/bin/snapcraft status vocalinux))
+          read -r seen_version revision <<<"$row"
+          if [ "${revision:-}" != "$REVISION" ] || [ "$seen_version" != "$VERSION" ]; then
+            echo "latest/candidate moved on (now version=${seen_version:-none} revision=${revision:-none}); aborting instead of promoting the stale revision" >&2
+            exit 1
+          fi
 
       - name: Release the resolved revision to latest/stable
         env:
