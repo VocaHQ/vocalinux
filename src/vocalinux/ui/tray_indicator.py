@@ -927,6 +927,9 @@ class TrayIndicator:
         dialog = ModelDownloadDialog(
             None, TDRZ_MODEL, cast(int, info["size_mb"]), engine="whisper_cpp"
         )
+        # The dialog's post-complete OK button emits a response but destroys
+        # nothing on its own.
+        dialog.connect("response", lambda *_args: dialog.destroy())
 
         def run() -> None:
             def on_progress(fraction, speed_mbps, status):
