@@ -160,8 +160,11 @@ def _run_file_transcription(path: str) -> int:
 
     try:
         blocks = transcribe_audio_file(path)
-    except Exception as error:
-        print(f"vocalinux: {error}", file=sys.stderr)
+    except (OSError, ValueError, RuntimeError) as error:
+        print(
+            f"vocalinux: could not transcribe {path}: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
         return 1
 
     transcript = format_transcript(blocks)
