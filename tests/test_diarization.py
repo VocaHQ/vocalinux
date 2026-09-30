@@ -297,9 +297,7 @@ class TestTranscribeAudioFile(unittest.TestCase):
             with patch.dict("sys.modules", {"pywhispercpp.model": fake_module}):
                 blocks = diarization.transcribe_audio_file("/tmp/in.wav")
 
-        model_cls.assert_called_once_with(
-            "/models/ggml-small.en-tdrz.bin", params={"tdrz_enable": True}
-        )
+        model_cls.assert_called_once_with("/models/ggml-small.en-tdrz.bin", tdrz_enable=True)
         self.assertEqual(len(blocks), 2)
         self.assertEqual(blocks[1].speaker, 2)
 

@@ -189,6 +189,6 @@ def transcribe_audio_file(audio_path: str, model_name: str = TDRZ_MODEL) -> list
     if audio.size == 0:
         raise ValueError(f"{audio_path} contains no audio")
 
-    model = Model(get_model_path(model_name), params={"tdrz_enable": True})
+    model = Model(get_model_path(model_name), tdrz_enable=True)
     segments = model.transcribe(audio)
     return speaker_turn_blocks(segments)
