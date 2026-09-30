@@ -35,7 +35,6 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition import recognition_manager as rm
-from vocalinux.utils import pywhispercpp_loader
 from vocalinux.speech_recognition.recognition_manager import (
     SpeechRecognitionManager,
     _filter_non_speech,
@@ -48,6 +47,7 @@ from vocalinux.speech_recognition.recognition_manager import (
 from vocalinux.speech_recognition.recognition_manager import (  # noqa: E402
     test_audio_input as _test_audio_input,
 )
+from vocalinux.utils import pywhispercpp_loader
 
 # Restore immediately
 for _k, _v in _ORIG.items():

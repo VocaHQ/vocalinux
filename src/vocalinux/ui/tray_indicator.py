@@ -879,7 +879,7 @@ class TrayIndicator:
             try:
                 blocks = transcribe_audio_file(path)
             except Exception as error:
-                logger.error("File transcription failed for %s: %s", path, error)
+                logger.error("File transcription failed for %s: %s", path, error, exc_info=True)
                 _idle_once(notifications.close, progress)
                 _idle_once(
                     notifications.notify,
@@ -956,7 +956,7 @@ class TrayIndicator:
                 self.speech_engine.set_download_progress_callback(on_progress)
                 self.speech_engine.download_whispercpp_model(TDRZ_MODEL)
             except Exception as error:
-                logger.error("TinyDiarize download failed: %s", error)
+                logger.error("TinyDiarize download failed: %s", error, exc_info=True)
                 message = (
                     "Download cancelled" if "cancelled" in str(error).lower() else str(error)[:100]
                 )

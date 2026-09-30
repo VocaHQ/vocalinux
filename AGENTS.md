@@ -147,6 +147,7 @@ src/vocalinux/
 ├── speech_recognition/
 │   ├── recognition_manager.py  # whisper.cpp / Whisper / Vosk / remote
 │   ├── command_processor.py    # voice commands
+│   ├── diarization.py          # TinyDiarize per-speaker file transcription
 │   ├── diarization.py          # --transcribe-file / tray "Transcribe audio file"
 │   ├── silero_vad.py
 │   └── data/                   # bundled silero_vad.onnx
@@ -155,6 +156,7 @@ src/vocalinux/
 │   └── ibus_engine.py          # Wayland IBus injection
 ├── ui/
 │   ├── tray_indicator.py, settings_dialog.py, first_run_dialog.py
+│   ├── transcript_dialog.py    # speaker-tagged transcript viewer
 │   ├── transcript_dialog.py    # speaker-attributed transcript viewer/export
 │   ├── config_manager.py, action_handler.py, audio_feedback.py
 │   ├── autostart_manager.py, keyboard_shortcuts.py
