@@ -1444,6 +1444,7 @@ def test_superseded_apply_skips_the_stale_snapshot(
 ) -> None:
     """A worker whose snapshot a newer apply predates must not write at all."""
     dialog = _dialog_stub()
+    dialog.speech_engine.state = RecognitionState.LISTENING
     stale_generation = settings_dialog._apply_settings_generation
     # A newer apply began after this snapshot was collected.
     settings_dialog._apply_settings_generation += 1
@@ -1455,6 +1456,8 @@ def test_superseded_apply_skips_the_stale_snapshot(
     )
 
     assert result is True
+    # Dictation must keep running: the staleness check precedes the stop.
+    dialog.speech_engine.stop_recognition.assert_not_called()
     dialog.speech_engine.reconfigure.assert_not_called()
     dialog.config_manager.set.assert_not_called()
     dialog.config_manager.save_settings.assert_not_called()

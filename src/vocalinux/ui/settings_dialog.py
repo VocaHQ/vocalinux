@@ -8873,21 +8873,23 @@ For now, the engine has been reverted to VOSK."""
                 collection order, would decide which snapshot wins.
         """
         try:
-            was_running = self.speech_engine.state != RecognitionState.IDLE
-            if was_running:
-                self.speech_engine.stop_recognition()
-                time.sleep(0.5)
-
             # Persist only once the engine really runs these settings: this call
             # downloads missing models, and a config saved up front would keep
             # pointing at a model that never made it to disk. The lock orders
-            # this snapshot against _persist_pending_text_edits' deferred one.
+            # this snapshot against _persist_pending_text_edits' deferred one —
+            # and the staleness check must precede stop_recognition, or a
+            # superseded apply would still interrupt a live dictation session.
             with _apply_settings_lock:
                 if apply_generation is not None and _apply_settings_generation != apply_generation:
                     logger.info(
                         "Settings apply superseded by a newer one; " "skipping the stale snapshot"
                     )
                     return True
+                was_running = self.speech_engine.state != RecognitionState.IDLE
+                if was_running:
+                    self.speech_engine.stop_recognition()
+                    time.sleep(0.5)
+
                 self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
                 self._save_selected_settings(settings)
                 written_gen = (
