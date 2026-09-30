@@ -74,7 +74,7 @@ def _setup_css() -> None:
 class TranscriptDialog(Gtk.Dialog):
     """Dialog that shows a diarized transcript with copy and export actions."""
 
-    def __init__(self, parent: Optional[Gtk.Window], source_name: str):
+    def __init__(self, parent: Optional[Gtk.Window], source_name: str) -> None:
         super().__init__(
             title=f"Transcript — {source_name}",
             transient_for=parent,
