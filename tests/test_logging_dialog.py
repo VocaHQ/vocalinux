@@ -94,6 +94,10 @@ class TestLoggingDialogClass(unittest.TestCase):
         """Test that dialog unregisters callback on destroy."""
         self.assertIn("unregister_callback(self._on_new_log_record)", self.source_code)
 
+    def test_response_handler_closes_on_delete_event(self):
+        """Test that titlebar-X (DELETE_EVENT) also destroys the dialog."""
+        self.assertIn("Gtk.ResponseType.DELETE_EVENT", self.source_code)
+
 
 class TestLoggingDialogFilterBar(unittest.TestCase):
     """Test cases for LoggingDialog filter bar."""
