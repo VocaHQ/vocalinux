@@ -396,7 +396,7 @@ class TestResolveValidInputDevice:
         audio.get_device_count.side_effect = OSError("driver dead")
         assert _resolve_valid_input_device(audio, preferred_index=3) == 3
 
-    def test_zero_device_count_returns_none(self):
+    def test_zero_device_count_returns_none(self) -> None:
         audio = MagicMock()
         audio.get_default_input_device_info.side_effect = IOError("nope")
         audio.get_device_count.return_value = 0
@@ -404,7 +404,7 @@ class TestResolveValidInputDevice:
         # fall back to the system default rather than open an explicit index.
         assert _resolve_valid_input_device(audio, preferred_index=7) is None
 
-    def test_negative_device_count_returns_preferred(self):
+    def test_negative_device_count_returns_preferred(self) -> None:
         audio = MagicMock()
         audio.get_default_input_device_info.side_effect = IOError("nope")
         audio.get_device_count.return_value = -1
