@@ -52,28 +52,6 @@ def _should_append_trailing_space() -> bool:
     return True
 
 
-def _should_dictate_to_pad() -> bool:
-    """Return whether dictation should be captured in the in-app pad.
-
-    Reads config.json from disk on each call so the Settings toggle takes
-    effect immediately (same pattern as _should_append_trailing_space).
-    """
-    try:
-        import json
-        import os
-
-        from .utils.paths import config_dir
-
-        config_path = os.path.join(config_dir(), "config.json")
-        if os.path.exists(config_path):
-            with open(config_path, "r") as f:
-                config = json.load(f)
-            return bool(config.get("text_injection", {}).get("dictate_to_pad", False))
-    except Exception as e:
-        logger.debug(f"Could not read dictate_to_pad setting: {e}")
-    return False
-
-
 def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(prog="vocalinux", description="Vocalinux")
@@ -639,9 +617,24 @@ def main():
         from .ui.dictation_pad import DictationPad
 
         dictation_pad = DictationPad(
-            enabled=_should_dictate_to_pad(),
+            enabled=config_manager.is_dictate_to_pad_enabled(),
             config_manager=config_manager,
         )
+
+        def dictate_to_pad_enabled() -> bool:
+            """Read the live capture toggle from the shared config manager.
+
+            The shared manager's in-memory cache is updated by Settings and
+            the pad checkbox before save_config rewrites config.json, so this
+            can never flip on a torn mid-write disk read and send dictated
+            text to whichever application holds focus.
+            """
+            return bool(config_manager.is_dictate_to_pad_enabled())
+
+        # Where the last delivered segment went. "delete that" follows the
+        # text, not the current toggle: the capture setting may have flipped
+        # since the segment was delivered.
+        last_injected = {"to_pad": False}
 
         # --- Callback wiring ---------------------------------------------------
         # The speech engine emits four kinds of events, each handled by a
@@ -778,7 +771,8 @@ def main():
                 text_to_inject = " " + text_to_inject
                 logger.debug("Added space separator before new segment")
 
-            if _should_dictate_to_pad():
+            captured = dictate_to_pad_enabled()
+            if captured:
                 # In-app capture: skip cross-application injection entirely
                 # and land the text in the pad instead (#726).
                 dictation_pad.append_text(text_to_inject)
@@ -787,6 +781,7 @@ def main():
                 success = text_system.inject_text(text_to_inject)
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
+                last_injected["to_pad"] = captured
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.
@@ -799,6 +794,7 @@ def main():
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     action_handler.set_last_injected_text("")
+                    last_injected["to_pad"] = False
                 with session_lock:
                     session_open = False
                     session_worker = None
@@ -847,18 +843,29 @@ def main():
         speech_engine.register_segment_callback(record_history_segment)
 
         def action_callback_wrapper(action: str) -> bool:
-            """Route 'delete that' into the pad while capture mode is on.
+            """Route editing voice commands to the pad while capture is on.
 
-            All other voice commands still go through the injector-driven
-            ActionHandler unchanged.
+            "delete that" follows the segment it removes: the pad when the
+            last delivered text went there (even if capture was toggled off
+            since) and the focused application when it was injected (even if
+            capture was toggled on). Every other editing command is handled
+            pad-side while capturing so its shortcuts never leak into
+            whichever application holds focus.
             """
-            if action == "delete_last" and _should_dictate_to_pad():
+            if action == "delete_last":
                 if not action_handler.last_injected_text:
                     return True
-                deleted = dictation_pad.delete_last_chars(len(action_handler.last_injected_text))
-                if deleted:
-                    action_handler.set_last_injected_text("")
-                return True
+                if last_injected["to_pad"]:
+                    deleted = dictation_pad.delete_last_chars(
+                        len(action_handler.last_injected_text)
+                    )
+                    if deleted:
+                        action_handler.set_last_injected_text("")
+                        last_injected["to_pad"] = False
+                    return True
+                return bool(action_handler.handle_action(action))
+            if dictate_to_pad_enabled():
+                return bool(dictation_pad.handle_action(action))
             return bool(action_handler.handle_action(action))
 
         speech_engine.register_text_callback(text_callback_wrapper)

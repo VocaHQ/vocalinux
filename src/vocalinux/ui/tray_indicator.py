@@ -1331,7 +1331,7 @@ class TrayIndicator:
         if self.transcription_history is not None:
             self.transcription_history.clear()
 
-    def _on_dictation_pad_clicked(self, widget):
+    def _on_dictation_pad_clicked(self, widget: Gtk.MenuItem) -> None:
         """Handle click on the Dictation Pad menu item."""
         logger.debug("Dictation Pad clicked")
         if self.dictation_pad is not None:

@@ -15,7 +15,7 @@ headless no-op when GTK is unavailable.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 if TYPE_CHECKING:
     from .config_manager import ConfigManager
@@ -25,11 +25,21 @@ logger = logging.getLogger(__name__)
 _PAD_WIDTH = 480
 _PAD_HEIGHT = 360
 _COPIED_FEEDBACK_MS = 1200
+_UNDO_LIMIT = 200
+
+# Voice commands the pad performs itself while capture mode is on. They are
+# the same actions ActionHandler would otherwise send as keystrokes into
+# whichever application happens to hold focus.
+_HISTORY_ACTIONS = frozenset({"undo", "redo"})
+_WIDGET_ACTIONS = frozenset(
+    {"select_all", "select_line", "select_word", "select_paragraph", "cut", "copy", "paste"}
+)
 
 
 class DictationPadController:
     """
-    Pure buffer state for the dictation pad: the accumulated text.
+    Pure buffer state for the dictation pad: the accumulated text plus a
+    bounded undo history.
 
     Separated from GTK so unit tests can exercise append/delete semantics
     without a display.
@@ -38,6 +48,8 @@ class DictationPadController:
     def __init__(self, enabled: bool = False) -> None:
         self._enabled = bool(enabled)
         self._text = ""
+        self._undo_stack: list[str] = []
+        self._redo_stack: list[str] = []
 
     @property
     def enabled(self) -> bool:
@@ -55,7 +67,17 @@ class DictationPadController:
 
     def append(self, text: str) -> None:
         """Append a transcription segment to the end of the buffer."""
+        if not text:
+            return
+        self._record_undo()
         self._text += text
+
+    def set_text(self, text: str) -> None:
+        """Replace the buffer (e.g. edits made directly in the widget)."""
+        if text == self._text:
+            return
+        self._record_undo()
+        self._text = text
 
     def delete_last(self, count: int) -> int:
         """
@@ -66,12 +88,39 @@ class DictationPadController:
         if count <= 0 or not self._text:
             return 0
         deleted = min(count, len(self._text))
+        self._record_undo()
         self._text = self._text[:-deleted]
         return deleted
 
     def clear(self) -> None:
         """Drop everything in the pad."""
+        if not self._text:
+            return
+        self._record_undo()
         self._text = ""
+
+    def undo(self) -> bool:
+        """Revert the last buffer mutation. Returns False with empty history."""
+        if not self._undo_stack:
+            return False
+        self._redo_stack.append(self._text)
+        self._text = self._undo_stack.pop()
+        return True
+
+    def redo(self) -> bool:
+        """Re-apply the last undone mutation. Returns False with no redo lane."""
+        if not self._redo_stack:
+            return False
+        self._undo_stack.append(self._text)
+        self._text = self._redo_stack.pop()
+        return True
+
+    def _record_undo(self) -> None:
+        """Snapshot the buffer before a mutation; new edits drop the redo lane."""
+        self._undo_stack.append(self._text)
+        if len(self._undo_stack) > _UNDO_LIMIT:
+            del self._undo_stack[0]
+        self._redo_stack.clear()
 
 
 class DictationPad:
@@ -97,6 +146,11 @@ class DictationPad:
         self._copy_button: Any = None
         self._gtk_ready = False
         self._syncing_capture_check = False
+        self._syncing_widget = False
+        # Monotonic tag stamped on every queued widget op. A Clear (or a full
+        # refresh) bumps it, so appends still waiting in the GTK idle queue
+        # can tell they are stale and must not resurrect removed text.
+        self._generation = 0
         self._copied_feedback_id: Optional[int] = None
 
         try:
@@ -158,6 +212,9 @@ class DictationPad:
         self._textview.set_margin_top(8)
         self._textview.set_margin_bottom(8)
         self._buffer = self._textview.get_buffer()
+        # Manual edits in the widget feed back into the controller so
+        # deletion history never computes against stale dictated text.
+        self._buffer.connect("changed", self._on_buffer_changed)
         scrolled.add(self._textview)
 
         button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -183,10 +240,11 @@ class DictationPad:
         Append a transcription segment (safe to call from any thread).
 
         The buffer is updated immediately so a headless pad still captures
-        text; the widget refresh and auto-show happen on the GTK main loop.
+        text; the widget refresh and auto-show happen on the GTK main loop,
+        tagged with the current generation so a later Clear can drop it.
         """
         self.controller.append(text)
-        self._idle_add(self._apply_append, text)
+        self._idle_add(self._apply_append, text, self._generation)
 
     def delete_last_chars(self, count: int) -> int:
         """
@@ -197,7 +255,7 @@ class DictationPad:
         """
         deleted = self.controller.delete_last(count)
         if deleted:
-            self._idle_add(self._apply_delete, deleted)
+            self._idle_add(self._apply_delete, deleted, self._generation)
         return deleted
 
     def show_pad(self) -> None:
@@ -219,6 +277,9 @@ class DictationPad:
 
     def destroy(self) -> None:
         """Tear down the window and any pending feedback timer."""
+        self._generation += 1
+        self._buffer = None
+        self._textview = None
         if self._copied_feedback_id is not None:
             try:
                 self._GLib.source_remove(self._copied_feedback_id)
@@ -234,7 +295,7 @@ class DictationPad:
 
     # -- internals ----------------------------------------------------------
 
-    def _idle_add(self, func, *args) -> None:
+    def _idle_add(self, func: Callable[..., None], *args: Any) -> None:
         """Schedule ``func`` on the GTK main loop when GTK is available."""
         glib = getattr(self, "_GLib", None)
         if glib is None:
@@ -246,33 +307,120 @@ class DictationPad:
 
         glib.idle_add(_call)
 
-    def _apply_append(self, text: str) -> None:
+    def _apply_append(self, text: str, generation: int) -> None:
         """Insert a segment at the end of the widget and keep the tail visible."""
-        if self._buffer is None:
+        if self._buffer is None or generation != self._generation:
+            # Cleared or refreshed while this insert sat in the idle queue.
             return
         try:
+            self._syncing_widget = True
             self._buffer.insert(self._buffer.get_end_iter(), text)
             # Scroll to the end without place_cursor: moving the caret would
             # collapse a selection the user is making for copy-out.
             self._textview.scroll_to_iter(self._buffer.get_end_iter(), 0.0, True, 0.0, 1.0)
         except Exception as e:
             logger.debug("Could not append text to dictation pad: %s", e)
+        finally:
+            self._syncing_widget = False
         # Reveal the pad on the first incoming segment; once visible, further
         # appends update silently so the window never re-raises mid-selection.
         if self._capture_enabled() and self._window is not None and not self._window.get_visible():
             self.show_pad()
 
-    def _apply_delete(self, deleted: int) -> None:
+    def _apply_delete(self, deleted: int, generation: int) -> None:
         """Remove ``deleted`` characters from the end of the widget."""
-        if self._buffer is None:
+        if self._buffer is None or generation != self._generation:
             return
         try:
+            self._syncing_widget = True
             end = self._buffer.get_end_iter()
             start = end.copy()
             start.backward_chars(deleted)
             self._buffer.delete(start, end)
         except Exception as e:
             logger.debug("Could not delete text in dictation pad: %s", e)
+        finally:
+            self._syncing_widget = False
+
+    def _apply_set_text(self, text: str, generation: int) -> None:
+        """Replace the widget contents with ``text``."""
+        if self._buffer is None or generation != self._generation:
+            return
+        try:
+            self._syncing_widget = True
+            self._buffer.set_text(text)
+        except Exception as e:
+            logger.debug("Could not update dictation pad view: %s", e)
+        finally:
+            self._syncing_widget = False
+
+    def _apply_action(self, action: str, generation: int) -> None:
+        """Execute a selection or clipboard command on the GTK main loop."""
+        if self._buffer is None or generation != self._generation:
+            return
+        try:
+            if action == "cut":
+                self._buffer.cut_clipboard(self._clipboard(), True)
+            elif action == "copy":
+                self._buffer.copy_clipboard(self._clipboard())
+            elif action == "paste":
+                self._buffer.paste_clipboard(self._clipboard(), None, True)
+            else:
+                start, end = self._selection_bounds(action)
+                if start is not None:
+                    self._buffer.select_range(start, end)
+        except Exception as e:
+            logger.debug("Could not perform %s in dictation pad: %s", action, e)
+
+    def _clipboard(self) -> Any:
+        """Return the shared CLIPBOARD selection."""
+        return self._Gtk.Clipboard.get(self._Gdk.SELECTION_CLIPBOARD)
+
+    def _selection_bounds(self, action: str) -> tuple[Optional[Any], Optional[Any]]:
+        """Iter pair for a selection ``action`` taken at the insert mark.
+
+        Mirrors the shortcuts ActionHandler would inject: select_line is
+        Home+Shift+End, select_word is Ctrl+Shift+Right, and
+        select_paragraph extends to the next blank line (``\\n\\n`` delimits
+        paragraphs, matching the "new paragraph" voice command).
+        """
+        if action == "select_all":
+            return self._buffer.get_start_iter(), self._buffer.get_end_iter()
+        it = self._buffer.get_iter_at_mark(self._buffer.get_insert())
+        start = it.copy()
+        end = it.copy()
+        if action == "select_line":
+            start.set_line_offset(0)
+            if not end.ends_line():
+                end.forward_to_line_end()
+            return start, end
+        if action == "select_word":
+            end.forward_word_end()
+            return start, end
+        if action == "select_paragraph":
+            text = self._buffer.get_text(
+                self._buffer.get_start_iter(), self._buffer.get_end_iter(), False
+            )
+            boundary = text.find("\n\n", it.get_offset())
+            end = self._buffer.get_iter_at_offset(len(text) if boundary < 0 else boundary)
+            return start, end
+        return None, None
+
+    def _sync_widget_from_controller(self) -> None:
+        """Queue a full widget refresh, dropping appends queued before it."""
+        self._generation += 1
+        self._idle_add(self._apply_set_text, self.controller.text, self._generation)
+
+    def _on_buffer_changed(self, buffer: Any) -> None:
+        """Mirror edits made directly in the widget back into the controller."""
+        if self._syncing_widget:
+            return
+        try:
+            text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
+        except Exception as e:
+            logger.debug("Could not sync dictation pad edits: %s", e)
+            return
+        self.controller.set_text(text)
 
     def _capture_enabled(self) -> bool:
         """Return whether dictation is currently routed into the pad.
@@ -336,7 +484,7 @@ class DictationPad:
             except Exception:
                 pass
         try:
-            clipboard = self._Gtk.Clipboard.get(self._Gdk.SELECTION_CLIPBOARD)
+            clipboard = self._clipboard()
             clipboard.set_text(text, -1)
             clipboard.store()
         except Exception as e:
@@ -357,10 +505,39 @@ class DictationPad:
         return False
 
     def _on_clear_clicked(self, *_args: Any) -> None:
-        """Erase the buffer and the widget contents."""
+        """Erase the buffer and drop appends still queued for the widget."""
+        # Bump the generation first: any append or delete already sitting in
+        # the GTK idle queue becomes stale and cannot resurrect cleared text.
+        self._generation += 1
         self.controller.clear()
         if self._buffer is not None:
             try:
+                self._syncing_widget = True
                 self._buffer.set_text("")
             except Exception as e:
                 logger.debug("Could not clear dictation pad view: %s", e)
+            finally:
+                self._syncing_widget = False
+
+    def handle_action(self, action: str) -> bool:
+        """
+        Perform an editing voice command on the pad (any thread).
+
+        While capture mode is on, the pad owns every editing action — they
+        must never reach the application that happens to hold keyboard
+        focus. History commands run on the controller; selection and
+        clipboard commands are marshalled onto the GTK main loop.
+        """
+        if action in _HISTORY_ACTIONS:
+            changed = self.controller.undo() if action == "undo" else self.controller.redo()
+            if changed:
+                self._sync_widget_from_controller()
+            return changed
+        if action in _WIDGET_ACTIONS:
+            if self._buffer is None:
+                logger.debug("Dictation pad cannot %s without a text view", action)
+                return False
+            self._idle_add(self._apply_action, action, self._generation)
+            return True
+        logger.warning("Dictation pad does not handle action: %s", action)
+        return False

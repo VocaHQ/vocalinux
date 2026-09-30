@@ -3735,7 +3735,7 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Copy to clipboard {'enabled' if enabled else 'disabled'}")
         return False
 
-    def _on_dictation_pad_toggled(self, widget, state):
+    def _on_dictation_pad_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
         """Handle toggle of the in-app dictation pad switch."""
         if _handlers_suppressed(self):
             return False

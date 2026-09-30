@@ -87,6 +87,51 @@ class TestDictationPadController(unittest.TestCase):
         ctrl.clear()
         self.assertEqual(ctrl.text, "")
 
+    def test_set_text_replaces_buffer(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("dictated")
+        ctrl.set_text("dictated plus edits")
+        self.assertEqual(ctrl.text, "dictated plus edits")
+        # Identical content is a no-op, not a mutation: the first undo goes
+        # straight back to the pre-edit text.
+        ctrl.set_text("dictated plus edits")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.text, "dictated")
+
+    def test_undo_restores_last_mutation_and_redo_replays(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("one ")
+        ctrl.append("two ")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.text, "one ")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.text, "")
+        self.assertFalse(ctrl.undo())
+        self.assertTrue(ctrl.redo())
+        self.assertEqual(ctrl.text, "one ")
+        self.assertTrue(ctrl.redo())
+        self.assertEqual(ctrl.text, "one two ")
+        self.assertFalse(ctrl.redo())
+
+    def test_new_edit_clears_redo_lane(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("a")
+        ctrl.undo()
+        ctrl.append("b")
+        self.assertFalse(ctrl.redo())
+
+    def test_delete_last_and_clear_are_undoable(self) -> None:
+        ctrl = DictationPadController()
+        ctrl.append("hello world")
+        ctrl.delete_last(6)
+        self.assertEqual(ctrl.text, "hello")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.text, "hello world")
+        ctrl.clear()
+        self.assertEqual(ctrl.text, "")
+        self.assertTrue(ctrl.undo())
+        self.assertEqual(ctrl.text, "hello world")
+
     def test_set_enabled_does_not_touch_buffer(self):
         ctrl = DictationPadController()
         ctrl.append("keep me")
@@ -144,6 +189,22 @@ class TestDictationPadConfig(unittest.TestCase):
         cm.set_dictate_to_pad(True)
         cm.set_dictate_to_pad(False)
         self.assertFalse(cm.is_dictate_to_pad_enabled())
+
+    def test_corrupt_config_file_keeps_in_memory_capture_state(self) -> None:
+        """A torn config.json write must not flip a running session's routing.
+
+        The live toggle is read from the shared manager's in-memory cache,
+        never re-parsed per segment: a partial save on disk cannot misroute
+        dictation back into whichever application holds focus.
+        """
+        cm = ConfigManager()
+        cm.set_dictate_to_pad(True)
+        # Simulate a torn mid-write file.
+        with open(self.temp_config_file, "w") as f:
+            f.write('{"text_injection": {"dictate_to_pad": tr')
+        self.assertTrue(cm.is_dictate_to_pad_enabled())
+        # A fresh manager loading the torn file fails closed to the default.
+        self.assertFalse(ConfigManager().is_dictate_to_pad_enabled())
 
 
 class TestDictationPadFacade(unittest.TestCase):
@@ -219,7 +280,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._Gtk = MagicMock()
 
             pad.controller.append("segment ")
-            pad._apply_append("segment ")
+            pad._apply_append("segment ", pad._generation)
 
             pad._buffer.insert.assert_called_once()
             args = pad._buffer.insert.call_args[0]
@@ -239,7 +300,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._buffer = MagicMock()
 
             pad.controller.append("segment ")
-            pad._apply_append("segment ")
+            pad._apply_append("segment ", pad._generation)
 
             pad._window.show_all.assert_not_called()
         finally:
@@ -270,7 +331,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._Gtk = MagicMock()
 
             pad.controller.append("segment ")
-            pad._apply_append("segment ")
+            pad._apply_append("segment ", pad._generation)
 
             config_manager.get_bool.assert_called_with("text_injection", "dictate_to_pad", False)
             self.assertTrue(pad.controller.enabled)
@@ -297,7 +358,7 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._buffer = MagicMock()
 
             pad.controller.append("segment ")
-            pad._apply_append("segment ")
+            pad._apply_append("segment ", pad._generation)
 
             pad._window.show_all.assert_not_called()
             self.assertFalse(pad.controller.enabled)
@@ -354,11 +415,180 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._buffer.get_end_iter.return_value = end_iter
 
             pad.controller.append("hello")
-            pad._apply_delete(5)
+            pad._apply_delete(5, pad._generation)
 
             pad._buffer.delete.assert_called_once()
             start_iter = pad._buffer.delete.call_args[0][0]
             start_iter.backward_chars.assert_called_once_with(5)
+        finally:
+            pad.destroy()
+
+    def test_clear_drops_appends_still_queued_for_widget(self) -> None:
+        """A Clear between append_text and its idle callback must win."""
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("stale segment ")
+            pad._on_clear_clicked()
+            self.assertEqual(pad.controller.text, "")
+
+            # Run the queued idle callback — the stale generation skips it.
+            queued = pad._GLib.idle_add.call_args.args[0]
+            queued()
+            pad._buffer.insert.assert_not_called()
+            pad._buffer.set_text.assert_called_once_with("")
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_queued_append_before_clear_still_applies(self) -> None:
+        """Appends queued before the bump run normally; only stale ones die."""
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("kept ")
+            queued = pad._GLib.idle_add.call_args.args[0]
+            queued()
+            pad._buffer.insert.assert_called_once()
+
+            pad.append_text("post clear ")
+            pad._on_clear_clicked()
+            stale = pad._GLib.idle_add.call_args.args[0]
+            stale()
+            self.assertEqual(pad._buffer.insert.call_count, 1)
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_widget_edits_sync_back_to_controller(self) -> None:
+        """Manual edits in the text view update the controller's buffer."""
+        pad = _pad_without_gtk()
+        try:
+            pad._buffer = MagicMock()
+            pad._buffer.get_text.return_value = "user edited text"
+            pad._on_buffer_changed(pad._buffer)
+            self.assertEqual(pad.controller.text, "user edited text")
+            # delete_last now computes against the edited content.
+            self.assertEqual(pad.delete_last_chars(4), 4)
+            self.assertEqual(pad.controller.text, "user edited ")
+        finally:
+            pad.destroy()
+
+    def test_buffer_changed_skips_programmatic_sync(self) -> None:
+        """The pad's own widget writes must not feed back into the controller."""
+        pad = _pad_without_gtk()
+        try:
+            pad.controller.append("dictated")
+            pad._syncing_widget = True
+            pad._on_buffer_changed(MagicMock())
+            self.assertEqual(pad.controller.text, "dictated")
+        finally:
+            pad.destroy()
+
+    def test_apply_append_stale_generation_is_dropped(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            pad._buffer = MagicMock()
+            pad._apply_append("old", pad._generation - 1)
+            pad._buffer.insert.assert_not_called()
+        finally:
+            pad.destroy()
+
+    def test_handle_action_undo_redo_sync_widget(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad.controller.append("segment ")
+
+            self.assertTrue(pad.handle_action("undo"))
+            self.assertEqual(pad.controller.text, "")
+            pad._GLib.idle_add.call_args.args[0]()
+            pad._buffer.set_text.assert_called_once_with("")
+
+            self.assertTrue(pad.handle_action("redo"))
+            self.assertEqual(pad.controller.text, "segment ")
+        finally:
+            pad.destroy()
+
+    def test_handle_action_with_empty_history_returns_false(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            self.assertFalse(pad.handle_action("undo"))
+            self.assertFalse(pad.handle_action("redo"))
+        finally:
+            pad.destroy()
+
+    def test_handle_action_selection_commands(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            it = MagicMock()
+            it.get_offset.return_value = 0
+            pad._buffer.get_iter_at_mark.return_value = it
+            pad._buffer.get_text.return_value = "para one\n\npara two"
+
+            for action in (
+                "select_all",
+                "select_line",
+                "select_word",
+                "select_paragraph",
+            ):
+                self.assertTrue(pad.handle_action(action))
+            self.assertEqual(pad._GLib.idle_add.call_count, 4)
+
+            # Run the queued select_all and select_line applies.
+            pad._GLib.idle_add.call_args_list[0].args[0]()
+            pad._buffer.select_range.assert_called_once_with(
+                pad._buffer.get_start_iter.return_value,
+                pad._buffer.get_end_iter.return_value,
+            )
+            pad._GLib.idle_add.call_args_list[1].args[0]()
+            it.copy.return_value.set_line_offset.assert_called_once_with(0)
+            pad._GLib.idle_add.call_args_list[3].args[0]()
+            # "para one\n\npara two" — next blank line after offset 0 is at 8.
+            pad._buffer.get_iter_at_offset.assert_called_with(8)
+        finally:
+            pad.destroy()
+
+    def test_handle_action_clipboard_commands(self) -> None:
+        pad = _pad_without_gtk()
+        try:
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._Gtk = MagicMock()
+            pad._Gdk = MagicMock()
+
+            for action in ("cut", "copy", "paste"):
+                self.assertTrue(pad.handle_action(action))
+                pad._GLib.idle_add.call_args.args[0]()
+
+            clipboard = pad._Gtk.Clipboard.get.return_value
+            pad._buffer.cut_clipboard.assert_called_once_with(clipboard, True)
+            pad._buffer.copy_clipboard.assert_called_once_with(clipboard)
+            pad._buffer.paste_clipboard.assert_called_once_with(clipboard, None, True)
+        finally:
+            pad.destroy()
+
+    def test_handle_action_rejects_unknown_and_headless(self) -> None:
+        """Unknown actions and widget commands without a view are refused."""
+        pad = _pad_without_gtk()
+        try:
+            self.assertFalse(pad.handle_action("select_all"))
+            self.assertFalse(pad.handle_action("nonexistent"))
         finally:
             pad.destroy()
 
