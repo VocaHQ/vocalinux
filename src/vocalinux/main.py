@@ -7,6 +7,7 @@ import argparse
 import atexit
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
@@ -492,37 +493,12 @@ def main():
         #       listening session ends.
         # ------------------------------------------------------------------
 
-        def text_callback_wrapper(text: str) -> None:
-            """Bridge between speech engine text events and the text injector.
-
-            Called on the recognition thread with each finalised transcription
-            segment.  Strips leading whitespace and trailing spaces/tabs (but
-            preserves trailing newlines from voice commands), optionally pipes
-            the result through the configured post-processing script, then
-            either appends a trailing space (default) or uses the legacy
-            in-session leading-space separator, and injects via TextInjector.
+        def inject_transcription(text_to_inject: str) -> None:
+            """Apply the separator rules and inject one finalised segment.
 
             Args:
-                text: Raw transcription segment from the speech engine.
+                text_to_inject: Post-processed text ready for the text injector.
             """
-            # Preserve trailing newlines ("new line" / "new paragraph"); only
-            # strip spaces/tabs that whisper sometimes wraps around tokens.
-            text_to_inject = text.lstrip().rstrip(" \t")
-            if not text_to_inject:
-                return
-
-            # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
-            auto_capitalize = config_manager.get("text_injection", "auto_capitalize")
-            if auto_capitalize and speech_engine.engine == "vosk":
-                from vocalinux.speech_recognition.command_processor import capitalize_sentences
-
-                text_to_inject = capitalize_sentences(text_to_inject)
-
-            processed_text = apply_post_processing(text_to_inject, config_manager)
-            if processed_text is None:
-                return
-            text_to_inject = processed_text
-
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
 
@@ -542,6 +518,64 @@ def main():
             success = text_system.inject_text(text_to_inject)
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
+
+        # Post-processing runs a user executable that may take seconds per
+        # segment.  Running it on the recognition thread would stall the
+        # consumer of the bounded audio-segment queue, and once that fills,
+        # queued dictation is dropped.  A dedicated worker applies the script
+        # and injects in order; its unbounded backlog waits instead of losing
+        # speech, and a timed-out script falls back to the original text.
+        post_processing_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="vocalinux-post-processing"
+        )
+
+        def post_process_and_inject(text_to_inject: str) -> None:
+            """Apply the configured post-processing script, then inject.
+
+            Runs on the post-processing worker, never the recognition thread.
+            An unexpected failure falls back to the unprocessed segment so
+            dictation is never lost inside the worker.
+            """
+            try:
+                processed_text = apply_post_processing(text_to_inject, config_manager)
+            except Exception:
+                logger.exception("Post-processing raised unexpectedly; injecting original text")
+                processed_text = text_to_inject
+            if processed_text is None:
+                return
+            inject_transcription(processed_text)
+
+        def text_callback_wrapper(text: str) -> None:
+            """Bridge between speech engine text events and the text injector.
+
+            Called on the recognition thread with each finalised transcription
+            segment.  Strips leading whitespace and trailing spaces/tabs (but
+            preserves trailing newlines from voice commands), optionally pipes
+            the result through the configured post-processing script — on a
+            dedicated worker so a slow script cannot stall transcription —
+            then either appends a trailing space (default) or uses the legacy
+            in-session leading-space separator, and injects via TextInjector.
+
+            Args:
+                text: Raw transcription segment from the speech engine.
+            """
+            # Preserve trailing newlines ("new line" / "new paragraph"); only
+            # strip spaces/tabs that whisper sometimes wraps around tokens.
+            text_to_inject = text.lstrip().rstrip(" \t")
+            if not text_to_inject:
+                return
+
+            # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
+            auto_capitalize = config_manager.get("text_injection", "auto_capitalize")
+            if auto_capitalize and speech_engine.engine == "vosk":
+                from vocalinux.speech_recognition.command_processor import capitalize_sentences
+
+                text_to_inject = capitalize_sentences(text_to_inject)
+
+            if config_manager.get_str("post_processing", "script_path", ""):
+                post_processing_executor.submit(post_process_and_inject, text_to_inject)
+            else:
+                inject_transcription(text_to_inject)
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends."""

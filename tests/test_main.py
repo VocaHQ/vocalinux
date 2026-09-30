@@ -4,6 +4,7 @@ Tests for the main module functionality.
 
 import argparse
 import sys
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -186,6 +187,7 @@ class TestMainModule(unittest.TestCase):
             "general": {"first_run": False},
         }
         mock_config_instance.get_model_size_for_engine.return_value = "medium"
+        mock_config_instance.get_str.return_value = ""  # no post-processing script
         mock_config_manager.return_value = mock_config_instance
 
         # Mock objects
@@ -278,6 +280,7 @@ class TestMainModule(unittest.TestCase):
             "speech_recognition": {},
             "general": {"first_run": False},
         }
+        mock_config_instance.get_str.return_value = ""  # no post-processing script
         mock_config_manager.return_value = mock_config_instance
 
         mock_speech_instance = MagicMock()
@@ -341,6 +344,7 @@ class TestMainModule(unittest.TestCase):
         mock_config_instance.get.side_effect = lambda section, key, default=None: (
             auto_capitalize if section == "text_injection" and key == "auto_capitalize" else default
         )
+        mock_config_instance.get_str.return_value = ""  # no post-processing script
         mock_config_manager.return_value = mock_config_instance
 
         mock_speech_instance = MagicMock()
@@ -1247,7 +1251,13 @@ class TestShouldAppendTrailingSpace(unittest.TestCase):
 class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
     """Exercise trailing-space edge paths through the real main() callback."""
 
-    def _boot_under_patches(self, *, append_trailing_space: bool = True, inject_ok: bool = True):
+    def _boot_under_patches(
+        self,
+        *,
+        append_trailing_space: bool = True,
+        inject_ok: bool = True,
+        post_script: str = "",
+    ):
         """Return (exit_stack, text_cb, mock_text) with patches still active."""
         from contextlib import ExitStack
 
@@ -1262,6 +1272,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             "general": {"first_run": False},
         }
         mock_config.get.return_value = False  # auto_capitalize off
+        mock_config.get_str.return_value = post_script
         mock_config_cls.return_value = mock_config
 
         mock_speech_cls = stack.enter_context(
@@ -1347,6 +1358,54 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             text_cb("World")
             # Failure means last_injected stays empty; next segment has no leading space
             mock_text.inject_text.assert_called_once_with("World")
+        finally:
+            stack.close()
+
+    @staticmethod
+    def _await_inject_text(mock_text, timeout: float = 5.0) -> None:
+        """Wait for the post-processing worker to reach inject_text."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if mock_text.inject_text.call_count:
+                return
+            time.sleep(0.01)
+
+    def test_post_processing_transform_reaches_injector(self):
+        """Configured script output is what gets injected, spacing rules included."""
+        stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
+        try:
+            run_result = MagicMock()
+            run_result.returncode = 0
+            run_result.stderr = ""
+            run_result.stdout = "TRANSFORMED"
+            with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
+                text_cb("hello")
+                self._await_inject_text(mock_text)
+                mock_text.inject_text.assert_called_once_with("TRANSFORMED ")
+
+                # A transformed paragraph break keeps its newlines (and so
+                # skips the appended trailing space like any "\n" ending).
+                mock_text.inject_text.reset_mock()
+                run_result.stdout = "PARA ONE.\n\n"
+                text_cb("para one.\n\n")
+                self._await_inject_text(mock_text)
+                mock_text.inject_text.assert_called_once_with("PARA ONE.\n\n")
+        finally:
+            stack.close()
+
+    def test_post_processing_empty_output_skips_injection(self):
+        """A script that emits nothing swallows the segment — nothing injected."""
+        stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
+        try:
+            run_result = MagicMock()
+            run_result.returncode = 0
+            run_result.stderr = ""
+            run_result.stdout = ""
+            with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
+                text_cb("hello")
+                # Give the worker a moment in case it (incorrectly) injects.
+                time.sleep(0.2)
+                mock_text.inject_text.assert_not_called()
         finally:
             stack.close()
 
