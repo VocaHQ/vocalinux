@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     import numpy as np
+    import requests
 
 from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     _STICKY_LOCK_MIN_MEAN_SQUARE,
@@ -90,9 +91,18 @@ class _AudioSegment(list):
     from speech captured after it, however late the decode finishes.
     """
 
-    def __init__(self, chunks: list[bytes], started_at: Optional[float]) -> None:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        started_at: Optional[float],
+        language: Optional[str] = None,
+    ) -> None:
         super().__init__(chunks)
         self.started_at = started_at
+        # The language this utterance was dictated under (#805): a worker that
+        # outlives its session must not transcribe a stale segment in a newer
+        # session's language.
+        self.language = language
 
 
 def _pywhispercpp_distribution_version() -> Optional[tuple[int, ...]]:
@@ -380,6 +390,14 @@ class SpeechRecognitionManager:
         # start of every dictation while the sentinel is in force (#821).
         self.language_preference = language
         self.language = normalize_language_for_engine(engine, resolve_language_preference(language))
+        # One-shot language override set by a per-language shortcut (#805):
+        # consumed by the next start attempt, restored when dictation ends.
+        self._pending_language_override: Optional[str] = None
+        self._oneshot_language_restore: Optional[str] = None
+        # The language the in-flight dictation session resolves to. Workers
+        # read this so a one-shot restore during a lingering transcribe cannot
+        # change a queued segment's language (#805).
+        self._session_language: Optional[str] = None
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
         self.state = RecognitionState.IDLE
         self.audio_thread = None
@@ -397,8 +415,12 @@ class SpeechRecognitionManager:
         self.segment_callbacks: list[Callable[[str, float], None]] = []
         # While the Settings microphone test runs, segments whose capture
         # began at or after this monotonic time are test speech; consumers
-        # (e.g. history) read the floor to skip them.
+        # (e.g. history) read the floor to skip them. When the test ends the
+        # ceiling closes the window — segments captured during it but still
+        # decoding must keep failing the check, so the floor alone is never
+        # lifted back to None.
         self.test_capture_floor: Optional[float] = None
+        self.test_capture_ceiling: Optional[float] = None
         self.state_callbacks: list[Callable[[RecognitionState], None]] = []
         self.action_callbacks: list[Callable[[str], None]] = []
 
@@ -574,9 +596,17 @@ class SpeechRecognitionManager:
     #: "not following the layout" instead of raising on the dictation path.
     language_preference: str = "auto"
 
+    #: Same for the one-shot override state (#805): __new__-built stubs in tests
+    #: must not raise on the dictation path either.
+    language: str = "auto"
+    _pending_language_override: Optional[str] = None
+    _oneshot_language_restore: Optional[str] = None
+    _session_language: Optional[str] = None
+
     #: Logged once rather than per dictation, so an unsupported pairing does not
     #: spam the log on every hotkey press.
     _warned_follow_layout_unsupported: bool = False
+    _warned_language_override_unsupported: bool = False
 
     # Every live field ``reconfigure()`` can write. A failed engine switch
     # restores this set so dictation matches the persisted config, not the
@@ -586,6 +616,7 @@ class SpeechRecognitionManager:
         "model_size",
         "language",
         "language_preference",
+        "_oneshot_language_restore",
         "vad_sensitivity",
         "silence_timeout",
         "audio_device_index",
@@ -703,6 +734,107 @@ class SpeechRecognitionManager:
                 f"{self.model_size!r} model cannot transcribe it. Pick a "
                 "multilingual model in Settings to use this mode."
             )
+
+    def _dictation_language(self, segment_language: Optional[str] = None) -> str:
+        """The language a queued audio segment was recorded under (#805).
+
+        A transcription worker can outlive ``stop_recognition``'s timed joins,
+        so ``self.language`` may already be restored to the configured value
+        while a queued segment still needs the one-shot override — and a newer
+        dictation may already have overwritten ``_session_language`` by the
+        time a stale worker reads it. Queued segments therefore carry a
+        ``segment_language`` snapshot stamped at enqueue time; calls without
+        one (tests and direct transcribe calls) fall back to the session
+        binding, then the configured language.
+        """
+        if segment_language is not None:
+            return segment_language
+        return self._session_language or self.language
+
+    def _refuse_language_override(self, language: str) -> None:
+        """Play the refusal cue for a per-language shortcut the model can't serve."""
+        if not self._warned_language_override_unsupported:
+            self._warned_language_override_unsupported = True
+            logger.warning(
+                f"Cannot dictate in {language!r}: the loaded "
+                f"{self.engine}/{self.model_size!r} model cannot transcribe "
+                "it without a reload. Pick a multilingual model in Settings "
+                "or switch the dictation language instead."
+            )
+        play_error_sound()
+        _show_notification(
+            "Language Shortcut Unavailable",
+            f"Vocalinux cannot dictate in {language} with the loaded model. "
+            "Choose a multilingual model in Settings to use this shortcut.",
+            "dialog-warning",
+        )
+
+    def _serving_model_supports_language_switch(self) -> bool:
+        """Whether the model that will serve this utterance can switch language.
+
+        ``start_recognition`` refreshes the layout before a shortcut's override
+        applies, and on follow-keyboard-layout that refresh can swap an
+        English-only whisper.cpp model for a downloaded multilingual sibling.
+        Judge the model the refresh leaves loaded, not the one in memory now.
+        """
+        if self._can_relanguage_without_reload():
+            return True
+        if self.engine == "whisper_cpp" and self.language_preference == LANGUAGE_FOLLOWS_LAYOUT:
+            sibling = _multilingual_sibling(self.model_size)
+            if sibling != self.model_size and is_model_downloaded(sibling):
+                return True
+        return False
+
+    def _apply_pending_language_override(self) -> bool:
+        """Point this utterance at a per-language shortcut's language (#805).
+
+        Consumed once, right after the layout refresh, so the explicit shortcut
+        wins over the follow-mode resolution *and* the capability check runs
+        against the model that will actually transcribe. The previous effective
+        language is kept in ``_oneshot_language_restore`` and put back by
+        ``_restore_language_after_oneshot`` once dictation ends.
+
+        Returns False — refusing to start — when the engine drops the request
+        (Parakeet normalizes every catalog language to ``auto``, so a labeled
+        shortcut could never select it) or the loaded model cannot transcribe
+        it without a reload; dictating silently in the wrong language would be
+        worse than playing the refusal cue.
+        """
+        requested = self._pending_language_override
+        if requested is None:
+            return True
+        target = normalize_language_for_engine(self.engine, requested)
+        if target != requested:
+            self._refuse_language_override(requested)
+            return False
+        if target == self.language:
+            return True
+        if not self._can_relanguage_without_reload():
+            self._refuse_language_override(requested)
+            return False
+        self._oneshot_language_restore = self.language
+        self.language = target
+        self.command_processor.set_language(target)
+        if self._faster_whisper_engine is not None:
+            self._faster_whisper_engine.language = target
+        logger.debug(f"Dictating in {target} via per-language shortcut")
+        return True
+
+    def _restore_language_after_oneshot(self) -> None:
+        """Undo a per-language shortcut's one-shot override (#805).
+
+        Runs when dictation drops to IDLE or ERROR, so the next plain hotkey
+        dictation resolves the configured language again.
+        """
+        previous = self._oneshot_language_restore
+        if previous is None:
+            return
+        self._oneshot_language_restore = None
+        self.language = previous
+        self.command_processor.set_language(previous)
+        if self._faster_whisper_engine is not None:
+            self._faster_whisper_engine.language = previous
+        logger.debug(f"Restored dictation language {previous} after one-shot")
 
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
@@ -879,12 +1011,16 @@ class SpeechRecognitionManager:
             self.state = RecognitionState.ERROR
             raise
 
-    def _transcribe_with_whisper(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_whisper(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using Whisper.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -919,7 +1055,7 @@ class SpeechRecognitionManager:
                     import torch
                 use_fp16 = self.model.device != torch.device("cpu")
 
-                lang = resolve_whisper_language(self.language)
+                lang = resolve_whisper_language(self._dictation_language(language))
 
                 # Transcribe with Whisper (handles variable length audio automatically)
                 result = self.model.transcribe(
@@ -1131,12 +1267,16 @@ class SpeechRecognitionManager:
             self.state = RecognitionState.ERROR
             raise
 
-    def _transcribe_with_faster_whisper(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_faster_whisper(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using faster-whisper.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -1146,7 +1286,9 @@ class SpeechRecognitionManager:
                 logger.warning("faster-whisper engine not ready during transcription")
                 return ""
 
-            return self._faster_whisper_engine.transcribe(audio_buffer)
+            return self._faster_whisper_engine.transcribe(
+                audio_buffer, language=self._dictation_language(language)
+            )
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
             return ""
@@ -1552,7 +1694,9 @@ class SpeechRecognitionManager:
         logger.info("Successfully loaded model with CPU backend")
         return cpu_backend
 
-    def _transcribe_with_whispercpp(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_whispercpp(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using whisper.cpp.
 
@@ -1583,7 +1727,7 @@ class SpeechRecognitionManager:
             )
 
             # Prepare language parameter
-            lang = resolve_whisper_language(self.language)
+            lang = resolve_whisper_language(self._dictation_language(language))
 
             logger.debug(f"whisper.cpp using language: {lang or 'auto-detect'}")
 
@@ -1953,7 +2097,12 @@ class SpeechRecognitionManager:
         self._model_initialized = True
         logger.info("Remote API engine setup complete.")
 
-    def _transcribe_with_remote_api(self, audio_buffer: list[bytes], session) -> str:
+    def _transcribe_with_remote_api(
+        self,
+        audio_buffer: list[bytes],
+        session: Optional["requests.Session"],
+        language: Optional[str] = None,
+    ) -> str:
         """Transcribe audio via remote API.
 
         Package audio buffer into WAV format and send to remote server via HTTP POST.
@@ -1963,6 +2112,8 @@ class SpeechRecognitionManager:
         Args:
             audio_buffer: Audio data chunk list (16-bit PCM at 16kHz)
             session: A requests.Session snapshot (obtained under _model_lock)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -1998,7 +2149,7 @@ class SpeechRecognitionManager:
             )
 
             # Prepare language parameters
-            lang = resolve_whisper_language(self.language)
+            lang = resolve_whisper_language(self._dictation_language(language))
 
             # Prepare HTTP request headers
             headers = {}
@@ -2749,6 +2900,11 @@ class SpeechRecognitionManager:
             new_state: The new recognition state
         """
         self.state = new_state
+        if new_state in (RecognitionState.IDLE, RecognitionState.ERROR):
+            # A per-language shortcut's override lasts for exactly one
+            # dictation (#805); restore the configured language here so every
+            # exit path — normal stop, error, quit — unwinds it.
+            self._restore_language_after_oneshot()
         for callback in self.state_callbacks:
             callback(new_state)
 
@@ -2919,6 +3075,17 @@ class SpeechRecognitionManager:
         # user is typing in right now rather than the one they had at startup.
         self._refresh_language_from_layout()
 
+        # A per-language shortcut's override runs after the layout refresh so
+        # the explicit key press still wins over follow-mode resolution, and
+        # so its capability check sees the model the refresh will serve (#805).
+        if not self._apply_pending_language_override():
+            return False
+
+        # Bind this session's language for the transcription workers: they can
+        # outlive stop_recognition's joins, and the one-shot restore must not
+        # rewrite the language of a segment still in the queue (#805).
+        self._session_language = self.language
+
         logger.info("Starting speech recognition")
         self._update_state(RecognitionState.LISTENING)
 
@@ -3077,6 +3244,43 @@ class SpeechRecognitionManager:
         """
         if getattr(self, "_buffered_reload_session", False) and self._buffered_capture_failed:
             self._capture_finished.set()
+
+    def start_recognition_with_language(self, language: str, mode: str = "toggle") -> bool:
+        """Start dictation in ``language`` for this utterance only (#805).
+
+        The configured preference is untouched: when this dictation ends the
+        engine's language is restored, so the next plain hotkey behaves as
+        before. When the loaded engine/model cannot transcribe ``language``
+        without a reload (VOSK, Parakeet, an English-only whisper.cpp model),
+        starting is refused with the usual error cue rather than dictating in
+        the wrong language.
+
+        Args:
+            language: A catalog id (e.g. "de", "auto") as stored by
+                ``shortcuts.language_shortcuts``.
+            mode: "toggle" or "push_to_talk", same as start_recognition.
+
+        Returns:
+            True if recognition actually started, False otherwise.
+        """
+        target = normalize_language_for_engine(self.engine, language)
+        if target != language:
+            # The engine drops the requested language entirely: Parakeet maps
+            # every catalog id to auto, so a labeled shortcut could never
+            # select it.
+            self._refuse_language_override(language)
+            return False
+        if target != self.language and not self._serving_model_supports_language_switch():
+            self._refuse_language_override(language)
+            return False
+
+        self._pending_language_override = language
+        try:
+            return self.start_recognition(mode=mode)
+        finally:
+            # The override only ever feeds the next start attempt, whether it
+            # ran or was refused by the guards inside start_recognition.
+            self._pending_language_override = None
 
     def _record_audio(self):
         """Record audio from the microphone with reconnection logic."""
@@ -3370,10 +3574,20 @@ class SpeechRecognitionManager:
 
         self._process_audio_buffer(audio_buffer)
 
-    def _process_audio_buffer(self, audio_buffer: list[bytes]):
-        """Process an immutable audio segment for transcription and commands."""
+    def _process_audio_buffer(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> None:
+        """Process an immutable audio segment for transcription and commands.
+
+        ``language`` is the per-utterance snapshot stamped on the segment when
+        it was queued (#805); None falls back to the segment's own stamp and
+        then to the live session language.
+        """
         if not audio_buffer:
             return
+        if language is None:
+            language = getattr(audio_buffer, "language", None)
+        dictation_language = self._dictation_language(language)
 
         if self.engine == "vosk":
             # Lock recognizer access to prevent race condition with reconfigure
@@ -3389,16 +3603,16 @@ class SpeechRecognitionManager:
                 text = result.get("text", "")
 
         elif self.engine == "whisper":
-            text = self._transcribe_with_whisper(audio_buffer)
+            text = self._transcribe_with_whisper(audio_buffer, dictation_language)
 
         elif self.engine == "whisper_cpp":
-            text = self._transcribe_with_whispercpp(audio_buffer)
+            text = self._transcribe_with_whispercpp(audio_buffer, dictation_language)
 
         elif self.engine == "parakeet":
             text = self._transcribe_with_parakeet(audio_buffer)
 
         elif self.engine == "faster_whisper":
-            text = self._transcribe_with_faster_whisper(audio_buffer)
+            text = self._transcribe_with_faster_whisper(audio_buffer, dictation_language)
 
         elif self.engine == "remote_api":
             # Snapshot the HTTP session under lock to prevent race with
@@ -3412,7 +3626,7 @@ class SpeechRecognitionManager:
             if session is None:
                 logger.error("Remote API HTTP session not initialized")
                 return
-            text = self._transcribe_with_remote_api(audio_buffer, session)
+            text = self._transcribe_with_remote_api(audio_buffer, session, dictation_language)
 
         else:
             logger.error(f"Unknown engine: {self.engine}")
@@ -3459,7 +3673,7 @@ class SpeechRecognitionManager:
                     f"Recognition loop - should_record={self.should_record}, queue_empty={self._segment_queue.empty()}"
                 )
                 try:
-                    segment = self._segment_queue.get(timeout=0.1)
+                    queued = self._segment_queue.get(timeout=0.1)
                 except queue.Empty:
                     # Only exit if we're not recording AND queue is empty
                     if not self.should_record and self._segment_queue.empty():
@@ -3468,7 +3682,7 @@ class SpeechRecognitionManager:
                         )
                         # Give a brief moment for any final items to be enqueued
                         try:
-                            segment = self._segment_queue.get(timeout=0.5)
+                            queued = self._segment_queue.get(timeout=0.5)
                         except queue.Empty:
                             logger.debug("Recognition loop - no more items, exiting")
                             break
@@ -3476,28 +3690,30 @@ class SpeechRecognitionManager:
                         logger.debug("Recognition loop - queue timeout, continuing")
                         continue
 
-                if segment is None:
+                if queued is None:
                     logger.debug("Recognition loop - got None signal, draining remaining items...")
                     # Drain any remaining items before exiting
                     while not self._segment_queue.empty():
                         try:
                             remaining = self._segment_queue.get_nowait()
                             if remaining is not None:
+                                remaining_segment, remaining_language = remaining
                                 logger.debug(
-                                    f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
+                                    f"Recognition loop - processing remaining segment with {len(remaining_segment)} chunks"
                                 )
                                 if self.should_record:
                                     self._update_state(RecognitionState.PROCESSING)
-                                self._process_audio_buffer(remaining)
+                                self._process_audio_buffer(remaining_segment, remaining_language)
                         except queue.Empty:
                             break
                     logger.debug("Recognition loop - exiting after None signal")
                     break
 
+                segment, segment_language = queued
                 logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
                 if self.should_record:
                     self._update_state(RecognitionState.PROCESSING)
-                self._process_audio_buffer(segment)
+                self._process_audio_buffer(segment, segment_language)
                 if self.should_record:
                     self._update_state(RecognitionState.LISTENING)
         finally:
@@ -3517,14 +3733,20 @@ class SpeechRecognitionManager:
 
         logger.debug(f"_enqueue_audio_segment called with {len(segment)} chunks")
 
+        # Stamp this utterance's language on the segment: a worker that
+        # outlives its dictation (or drains another session's queue) must
+        # transcribe each segment in the language it was recorded under, not
+        # whatever a newer session stored in _session_language (#805).
+        segment.language = self._dictation_language()
+        stamped = (segment, segment.language)
         try:
-            self._segment_queue.put_nowait(segment)
+            self._segment_queue.put_nowait(stamped)
             logger.debug("Enqueued segment successfully")
         except queue.Full:
             logger.warning("Transcription queue is full, dropping oldest pending segment")
             try:
                 self._segment_queue.get_nowait()
-                self._segment_queue.put_nowait(segment)
+                self._segment_queue.put_nowait(stamped)
             except queue.Empty:
                 logger.warning("Could not recover queue space for transcription segment")
 
@@ -3596,6 +3818,10 @@ class SpeechRecognitionManager:
         # VOSK needs to load a different model for the new language
         language_changed = False
         if language is not None:
+            # A new configured language replaces any pending one-shot restore:
+            # if this reconfigure stops an in-flight per-language dictation,
+            # the restore must not undo what was just set here (#805).
+            self._oneshot_language_restore = None
             # Settings hands over the preference, which may be the sentinel. Keep
             # it so the follow mode survives, and resolve what the engine gets.
             self.language_preference = language
@@ -3708,6 +3934,11 @@ class SpeechRecognitionManager:
                     # with unsaved VAD/device/API knobs while the UI shows the
                     # previous configuration.
                     self._restore_reconfigure_state(previous)
+                    # The snapshot can revive a one-shot language restore
+                    # whose dictation was already stopped above; settle it
+                    # now so the shortcut language does not leak into the
+                    # next ordinary dictation (#805).
+                    self._restore_language_after_oneshot()
                     self._defer_download = True
                     try:
                         self._init_selected_engine()

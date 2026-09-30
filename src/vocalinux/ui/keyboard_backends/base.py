@@ -126,6 +126,29 @@ MODIFIER_NAMES = {
     "right_shift",
 }
 
+# The physical modifier keys each token can satisfy. The side-agnostic family
+# name covers both hands ("ctrl" fires on either Ctrl key), while left_/right_
+# tokens cover one side only. Two gestures are the same to a backend whenever
+# the key sets they can fire on overlap (#880).
+MODIFIER_KEY_SIDES: dict[str, frozenset] = {
+    "ctrl": frozenset({"left_ctrl", "right_ctrl"}),
+    "alt": frozenset({"left_alt", "right_alt"}),
+    "shift": frozenset({"left_shift", "right_shift"}),
+    "super": frozenset({"left_super", "right_super"}),
+    "left_ctrl": frozenset({"left_ctrl"}),
+    "right_ctrl": frozenset({"right_ctrl"}),
+    "left_alt": frozenset({"left_alt"}),
+    "right_alt": frozenset({"right_alt"}),
+    "left_shift": frozenset({"left_shift"}),
+    "right_shift": frozenset({"right_shift"}),
+}
+
+# Shortcut tokens that resolve to the same physical main key.
+_MAIN_KEY_ALIASES = {
+    "return": "enter",
+    "escape": "esc",
+}
+
 # Named (non-alphanumeric) main keys accepted in a combo. Single letters/digits
 # and function keys (f1-f24) are accepted by rule and need not be listed here.
 _NAMED_MAIN_KEYS = {
@@ -313,6 +336,45 @@ def is_valid_shortcut(shortcut_string: str) -> bool:
         return True
     except (ValueError, AttributeError):
         return False
+
+
+def shortcut_gesture(shortcut_string: str) -> Optional[Tuple[str, frozenset]]:
+    """The physical gesture a shortcut string describes, as backends match it.
+
+    A pure-modifier hold normalizes to ``("hold", sides)``: the set of
+    physical keys whose press fires it, so "ctrl+ctrl" and
+    "left_ctrl+left_ctrl" overlap on the left Ctrl key. A combo normalizes to
+    ``("combo", {main key})`` because backends fire on the main key while
+    every required modifier is held — extra held keys do not block a combo,
+    so any two combos on the same key can both fire. Tokens that alias to the
+    same physical key ("return"/"enter", "escape"/"esc") normalize together.
+
+    Returns None when the string does not parse.
+    """
+    try:
+        spec = parse_shortcut_spec(shortcut_string)
+    except (ValueError, AttributeError):
+        return None
+    if spec.key is None:
+        return ("hold", MODIFIER_KEY_SIDES[spec.modifiers[0]])
+    return ("combo", frozenset({_MAIN_KEY_ALIASES.get(spec.key, spec.key)}))
+
+
+def shortcut_gestures_collide(first: str, second: str) -> bool:
+    """Whether two shortcut strings can be triggered by the same gesture (#805).
+
+    String comparison alone misses gestures the backends treat as identical,
+    like "ctrl+alt+r" vs "alt+ctrl+r" or "ctrl+ctrl" vs
+    "left_ctrl+left_ctrl".
+    """
+    first_gesture = shortcut_gesture(first)
+    second_gesture = shortcut_gesture(second)
+    if first_gesture is None or second_gesture is None:
+        return False
+    if first_gesture[0] != second_gesture[0]:
+        # A modifier press and a main-key press are different trigger events.
+        return False
+    return bool(first_gesture[1] & second_gesture[1])
 
 
 def _main_key_label(token: str) -> str:

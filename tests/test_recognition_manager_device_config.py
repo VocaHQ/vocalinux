@@ -2175,15 +2175,16 @@ class TestEnqueueAudioSegment(unittest.TestCase):
         buf = [b"\x00\x01", b"\x02\x03"]
         manager._enqueue_audio_segment(buf)
         assert not manager._segment_queue.empty()
-        assert manager._segment_queue.get_nowait() == buf
+        # Segments carry the session language they were recorded under (#805).
+        assert manager._segment_queue.get_nowait() == (buf, "en-us")
 
     def test_enqueue_drops_oldest_when_queue_full(self):
         """When queue is full, oldest item is dropped and new one inserted."""
         manager = _make_manager()
         manager._segment_queue = queue.Queue(maxsize=1)
-        manager._segment_queue.put_nowait([b"old"])
+        manager._segment_queue.put_nowait(([b"old"], "en-us"))
         manager._enqueue_audio_segment([b"new"])
-        assert manager._segment_queue.get_nowait() == [b"new"]
+        assert manager._segment_queue.get_nowait() == ([b"new"], "en-us")
 
 
 class TestPerformRecognition(unittest.TestCase):
@@ -2206,7 +2207,7 @@ class TestPerformRecognition(unittest.TestCase):
         with patch.object(manager, "_process_audio_buffer") as mock_proc:
             with patch.object(manager, "_update_state"):
                 t = self._run_recognition(manager)
-                manager._segment_queue.put([b"\x00\x01"])
+                manager._segment_queue.put(([b"\x00\x01"], "en-us"))
                 manager.should_record = False
                 manager._segment_queue.put(None)
                 t.join(timeout=2)
@@ -2222,8 +2223,8 @@ class TestPerformRecognition(unittest.TestCase):
         with patch.object(manager, "_process_audio_buffer") as mock_proc:
             with patch.object(manager, "_update_state"):
                 t = self._run_recognition(manager)
-                manager._segment_queue.put([b"first"])
-                manager._segment_queue.put([b"second"])
+                manager._segment_queue.put(([b"first"], "en-us"))
+                manager._segment_queue.put(([b"second"], "en-us"))
                 manager.should_record = False
                 manager._segment_queue.put(None)
                 t.join(timeout=2)
@@ -2285,13 +2286,13 @@ class TestPerformRecognition(unittest.TestCase):
         states = self._track_states(manager)
 
         with patch.object(manager, "_process_audio_buffer") as mock_proc:
-            manager._segment_queue.put([b"leftover"])
+            manager._segment_queue.put(([b"leftover"], "en-us"))
             manager._segment_queue.put(None)
             t = threading.Thread(target=manager._perform_recognition)
             t.start()
             t.join(timeout=2)
             assert not t.is_alive()
-            mock_proc.assert_called_once_with([b"leftover"])
+            mock_proc.assert_called_once_with([b"leftover"], "en-us")
 
         assert RecognitionState.PROCESSING not in states
         assert RecognitionState.LISTENING not in states
@@ -2308,12 +2309,12 @@ class TestPerformRecognition(unittest.TestCase):
         with patch.object(manager, "_process_audio_buffer") as mock_proc:
             # None is consumed first; leftover is drained from the remaining queue.
             manager._segment_queue.put(None)
-            manager._segment_queue.put([b"leftover"])
+            manager._segment_queue.put(([b"leftover"], "en-us"))
             t = threading.Thread(target=manager._perform_recognition)
             t.start()
             t.join(timeout=2)
             assert not t.is_alive()
-            mock_proc.assert_called_once_with([b"leftover"])
+            mock_proc.assert_called_once_with([b"leftover"], "en-us")
 
         assert RecognitionState.PROCESSING not in states
         assert manager.state == RecognitionState.IDLE
@@ -2327,13 +2328,13 @@ class TestPerformRecognition(unittest.TestCase):
         states = self._track_states(manager)
         processed = threading.Event()
 
-        def _after_process(_segment):
+        def _after_process(_segment, _language):
             processed.set()
 
         with patch.object(manager, "_process_audio_buffer", side_effect=_after_process):
             t = threading.Thread(target=manager._perform_recognition)
             t.start()
-            manager._segment_queue.put([b"live"])
+            manager._segment_queue.put(([b"live"], "en-us"))
             assert processed.wait(timeout=2)
             deadline = time.time() + 1
             while RecognitionState.LISTENING not in states and time.time() < deadline:
@@ -2361,11 +2362,11 @@ class TestPerformRecognition(unittest.TestCase):
         manager.state = RecognitionState.IDLE
         states = self._track_states(manager)
 
-        def _start_new_session(_segment):
+        def _start_new_session(_segment, _language):
             manager.state = RecognitionState.LISTENING
 
         with patch.object(manager, "_process_audio_buffer", side_effect=_start_new_session):
-            manager._segment_queue.put([b"leftover"])
+            manager._segment_queue.put(([b"leftover"], "en-us"))
             manager._segment_queue.put(None)
             t = threading.Thread(target=manager._perform_recognition)
             t.start()

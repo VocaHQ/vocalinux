@@ -9,6 +9,7 @@ import logging
 import queue
 import sys
 import threading
+import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
@@ -355,8 +356,6 @@ def main():
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
         try:
-            import time
-
             from gi.repository import Notify
 
             Notify.init("Vocalinux")
@@ -604,15 +603,44 @@ def main():
         session_lock = threading.Lock()
         session_segments: list[tuple[str, float]] = []
         session_open = False
+        # Monotonic time the open session started; a segment delivered on the
+        # live worker whose capture predates it belongs to an earlier session.
+        session_started_floor = 0.0
         # Worker thread that produced the open session's segments; used to
         # detect callbacks from a previous session's still-running worker.
         session_worker: Optional[threading.Thread] = None
-        # True when the newest history entry is the just-closed session's
-        # snippet, so late segments can still merge into it.
-        latest_committed_snippet: Optional[str] = None
+        # Id of the just-closed session's snippet (from
+        # TranscriptionHistory.add), so late segments extend that entry
+        # rather than whichever snippet happens to be newest.
+        latest_snippet_id: Optional[int] = None
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
+
+        # In-app dictation pad: the Wayland-proof fallback target that
+        # receives dictated text when "dictate to pad" capture is enabled
+        # (#726). Constructed before the tray so the tray menu can open it.
+        from .ui.dictation_pad import DictationPad
+
+        dictation_pad = DictationPad(
+            enabled=config_manager.is_dictate_to_pad_enabled(),
+            config_manager=config_manager,
+        )
+
+        def dictate_to_pad_enabled() -> bool:
+            """Read the live capture toggle from the shared config manager.
+
+            The shared manager's in-memory cache is updated by Settings and
+            the pad checkbox before save_config rewrites config.json, so this
+            can never flip on a torn mid-write disk read and send dictated
+            text to whichever application holds focus.
+            """
+            return bool(config_manager.is_dictate_to_pad_enabled())
+
+        # Where the last delivered segment went. "delete that" follows the
+        # text, not the current toggle: the capture setting may have flipped
+        # since the segment was delivered.
+        last_injected = {"to_pad": False}
 
         # --- Callback wiring ---------------------------------------------------
         # The speech engine emits four kinds of events, each handled by a
@@ -670,7 +698,7 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_committed_snippet
+            nonlocal session_worker, latest_snippet_id
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -685,40 +713,49 @@ def main():
                     # Captured before the last clear — must not re-enter.
                     return
                 # Segments captured while the Settings mic test runs are test
-                # speech, not dictation; the floor is stamped before the test
-                # starts recognition, so leftovers from an earlier session —
-                # whose capture began before it — still file normally.
+                # speech, not dictation. The [floor, ceiling) window survives
+                # the test's end, so segments still decoding after it cannot
+                # leak into history.
                 test_floor = getattr(speech_engine, "test_capture_floor", None)
-                if isinstance(test_floor, (int, float)) and started_at >= test_floor:
+                test_ceiling = getattr(speech_engine, "test_capture_ceiling", None)
+                if (
+                    isinstance(test_floor, (int, float))
+                    and started_at >= test_floor
+                    and (not isinstance(test_ceiling, (int, float)) or started_at < test_ceiling)
+                ):
                     return
-                if session_open and (
-                    worker is session_worker
-                    or worker is current_worker
-                    # When the engine exposes no worker (tests, mocks), the
-                    # first segment of a session tags it.
-                    or (session_worker is None and not isinstance(current_worker, threading.Thread))
+                if (
+                    session_open
+                    and started_at >= session_started_floor
+                    and (
+                        worker is session_worker
+                        or worker is current_worker
+                        # When the engine exposes no worker (tests, mocks), the
+                        # first segment of a session tags it.
+                        or (
+                            session_worker is None
+                            and not isinstance(current_worker, threading.Thread)
+                        )
+                    )
                 ):
                     session_worker = worker
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
-                # its committed snippet when that snippet is still the newest
-                # entry. Both writes are guarded by the ended session's epoch,
-                # so a clear() landing between that session's commit and this
-                # delivery still refuses the text; the newest-entry compare
-                # refuses when a later session has committed since, so this
-                # session's text cannot leak into the next session's snippet.
-                if latest_committed_snippet is not None and transcription_history.extend_latest(
-                    segment,
-                    expected_epoch=ended_session_epoch,
-                    expected_latest=latest_committed_snippet,
+                # its own snippet by id — a newer session may already have
+                # committed on top, so the newest entry is not the target.
+                # Both writes are guarded by the ended session's epoch, so a
+                # clear() landing between that commit and this delivery
+                # still refuses the text.
+                if latest_snippet_id is not None and transcription_history.extend_entry(
+                    latest_snippet_id, segment, expected_epoch=ended_session_epoch
                 ):
-                    latest_committed_snippet = f"{latest_committed_snippet} {segment.strip()}"
                     return
                 # Otherwise the late segments are the session's only output
                 # and form their own snippet.
-                if transcription_history.add(segment, expected_epoch=ended_session_epoch):
-                    latest_committed_snippet = segment
+                snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
+                if snippet_id is not None:
+                    latest_snippet_id = snippet_id
 
         def inject_transcription(text_to_inject: str) -> None:
             """Apply the separator rules and inject one finalised segment.
@@ -742,9 +779,17 @@ def main():
                 text_to_inject = " " + text_to_inject
                 logger.debug("Added space separator before new segment")
 
-            success = text_system.inject_text(text_to_inject)
+            captured = dictate_to_pad_enabled()
+            if captured:
+                # In-app capture: skip cross-application injection entirely
+                # and land the text in the pad instead (#726).
+                dictation_pad.append_text(text_to_inject)
+                success = True
+            else:
+                success = text_system.inject_text(text_to_inject)
             if success:
                 action_handler.set_last_injected_text(text_to_inject)
+                last_injected["to_pad"] = captured
             else:
                 # Deletion state must match what reached the app: a partial
                 # failure counts the confirmed prefix, an unknowable count
@@ -901,8 +946,39 @@ def main():
                 with injection_lock:
                     if not accepting_injections.is_set():
                         return False
-                    handled: bool = action_handler.handle_action(action)
-                    return handled
+                    # "delete that" follows the segment it removes: the pad
+                    # when the last delivered text went there (even if capture
+                    # was toggled off since) and the focused application when
+                    # it was injected (even if capture was toggled on). Every
+                    # other editing command is handled pad-side while capturing
+                    # so its shortcuts never leak into whichever application
+                    # holds focus.
+                    if action == "delete_last":
+                        if not action_handler.last_injected_text:
+                            return True
+                        if last_injected["to_pad"]:
+                            # The pad's own segment bookkeeping wins over the
+                            # recorded text: a pad "undo" may have popped that
+                            # segment, leaving its length stale.
+                            target = dictation_pad.last_segment or action_handler.last_injected_text
+                            deleted = dictation_pad.delete_last_chars(len(target))
+                            if deleted:
+                                action_handler.set_last_injected_text("")
+                                last_injected["to_pad"] = False
+                            return True
+                        handled_app: bool = action_handler.handle_action(action)
+                        return handled_app
+                    if dictate_to_pad_enabled():
+                        handled = bool(dictation_pad.handle_action(action))
+                        if handled and action in ("undo", "redo") and last_injected["to_pad"]:
+                            # Pad history moved: retarget "delete that" at the
+                            # segment now at the pad's tail. Keep the pad
+                            # destination even when the tail is empty — a
+                            # redo can restore it.
+                            action_handler.set_last_injected_text(dictation_pad.last_segment or "")
+                        return handled
+                    handled_app = action_handler.handle_action(action)
+                    return handled_app
             finally:
                 with pending_jobs_lock:
                     pending_jobs -= 1
@@ -946,6 +1022,7 @@ def main():
         def _reset_last_injected() -> None:
             """Clear the last-injected buffer on the post-processing worker."""
             action_handler.set_last_injected_text("")
+            last_injected["to_pad"] = False
 
         def _shutdown_post_processing() -> None:
             """Stop the post-processing worker for application quit.
@@ -1020,8 +1097,8 @@ def main():
             recognised just before the session ended still sees the text it
             refers to.
             """
-            nonlocal session_open, session_worker, latest_committed_snippet
-            nonlocal ended_session_epoch
+            nonlocal session_open, session_worker, latest_snippet_id
+            nonlocal ended_session_epoch, session_started_floor
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     with pending_jobs_lock:
@@ -1031,8 +1108,10 @@ def main():
                             post_processing_executor.submit(_reset_last_injected)
                         except RuntimeError:
                             action_handler.set_last_injected_text("")
+                            last_injected["to_pad"] = False
                     else:
                         action_handler.set_last_injected_text("")
+                        last_injected["to_pad"] = False
                 with session_lock:
                     session_open = False
                     session_worker = None
@@ -1047,34 +1126,32 @@ def main():
                     session_segments.clear()
                     # Guarded by the epoch observed here: a clear() landing
                     # between this read and the add still refuses the
-                    # snippet. The committed snippet stays open to late
+                    # snippet. The committed snippet's id stays open to late
                     # segments still trickling out of the worker; a session
                     # that produced no text leaves no entry to merge into.
-                    committed = transcription_history.add(
+                    latest_snippet_id = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
-                    latest_committed_snippet = joined if committed else None
             else:
                 with session_lock:
                     if not session_open:
                         session_open = True
                         session_worker = None
+                        session_started_floor = time.monotonic()
                         # Segments left over by a session that ended without a
                         # closing state commit as their own snippet rather
                         # than leaking into the new session's — still only
                         # those captured after the last clear().
                         if session_segments:
                             cleared_at = transcription_history.cleared_at
-                            joined = " ".join(
-                                text
-                                for text, started_at in session_segments
-                                if started_at > cleared_at
-                            )
-                            committed = transcription_history.add(
-                                joined,
+                            latest_snippet_id = transcription_history.add(
+                                " ".join(
+                                    text
+                                    for text, started_at in session_segments
+                                    if started_at > cleared_at
+                                ),
                                 expected_epoch=transcription_history.epoch,
                             )
-                            latest_committed_snippet = joined if committed else None
                             session_segments.clear()
 
         # Connect speech recognition to text injection and action handling.
@@ -1082,6 +1159,7 @@ def main():
         # session clear() can separate pre-clear speech from new dictation;
         # injection keeps the plain text callback.
         speech_engine.register_segment_callback(record_history_segment)
+
         speech_engine.register_text_callback(text_callback_wrapper)
         speech_engine.register_action_callback(action_callback_wrapper)
         speech_engine.register_state_callback(on_state_change)
@@ -1092,6 +1170,7 @@ def main():
             text_injector=text_system,
             transcription_history=transcription_history,
             on_quit=_shutdown_post_processing,
+            dictation_pad=dictation_pad,
         )
 
         # Start the GTK main loop

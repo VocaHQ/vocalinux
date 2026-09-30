@@ -163,6 +163,7 @@ class TestMainModule(unittest.TestCase):
                 mock_exit.assert_called_once_with(1)
 
     @patch("vocalinux.main.check_dependencies")
+    @patch("vocalinux.ui.dictation_pad.DictationPad")
     @patch("vocalinux.ui.action_handler.ActionHandler")
     @patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
     @patch("vocalinux.text_injection.text_injector.TextInjector")
@@ -179,6 +180,7 @@ class TestMainModule(unittest.TestCase):
         mock_text,
         mock_speech,
         mock_action_handler,
+        mock_dictation_pad,
         mock_check_deps,
     ):
         """Test that main initializes all the required components."""
@@ -194,6 +196,7 @@ class TestMainModule(unittest.TestCase):
         }
         mock_config_instance.get_model_size_for_engine.return_value = "medium"
         mock_config_instance.get_str.return_value = ""  # no post-processing script
+        mock_config_instance.is_dictate_to_pad_enabled.return_value = False
         mock_config_manager.return_value = mock_config_instance
 
         # Mock objects
@@ -201,12 +204,14 @@ class TestMainModule(unittest.TestCase):
         mock_text_instance = MagicMock()
         mock_tray_instance = MagicMock()
         mock_action_instance = MagicMock()
+        mock_pad_instance = MagicMock()
 
         # Setup return values
         mock_speech.return_value = mock_speech_instance
         mock_text.return_value = mock_text_instance
         mock_tray.return_value = mock_tray_instance
         mock_action_handler.return_value = mock_action_instance
+        mock_dictation_pad.return_value = mock_pad_instance
 
         # Mock the arguments
         with patch("vocalinux.main.parse_arguments") as mock_parse:
@@ -256,6 +261,11 @@ class TestMainModule(unittest.TestCase):
                 text_injector=mock_text_instance,
                 transcription_history=ANY,
                 on_quit=ANY,
+                dictation_pad=mock_pad_instance,
+            )
+            # The pad starts from the shared manager's live capture flag.
+            mock_dictation_pad.assert_called_once_with(
+                enabled=False, config_manager=mock_config_instance
             )
 
             # Verify callbacks were registered
@@ -296,6 +306,7 @@ class TestMainModule(unittest.TestCase):
             "general": {"first_run": False},
         }
         mock_config_instance.get_str.return_value = ""  # no post-processing script
+        mock_config_instance.is_dictate_to_pad_enabled.return_value = False
         mock_config_manager.return_value = mock_config_instance
 
         mock_speech_instance = MagicMock()
@@ -362,6 +373,7 @@ class TestMainModule(unittest.TestCase):
             auto_capitalize if section == "text_injection" and key == "auto_capitalize" else default
         )
         mock_config_instance.get_str.return_value = ""  # no post-processing script
+        mock_config_instance.is_dictate_to_pad_enabled.return_value = False
         mock_config_manager.return_value = mock_config_instance
 
         mock_speech_instance = MagicMock()
@@ -1265,6 +1277,109 @@ class TestShouldAppendTrailingSpace(unittest.TestCase):
             self.assertTrue(_should_append_trailing_space())
 
 
+def _boot_main_callbacks(
+    *,
+    append_trailing_space: bool = True,
+    inject_ok: bool = True,
+    dictate_to_pad: bool = False,
+    post_script: str = "",
+) -> SimpleNamespace:
+    """Boot main() with mocked deps; return the registered callbacks and mocks.
+
+    The patch stack stays open — the caller owns ``stack`` and must close it
+    in a finally block so no patch leaks into later tests.
+    """
+    from contextlib import ExitStack
+
+    stack = ExitStack()
+    stack.enter_context(patch("vocalinux.main.check_dependencies", return_value=True))
+    mock_config_cls = stack.enter_context(
+        patch("vocalinux.ui.config_manager.get_shared_config_manager")
+    )
+    mock_config = MagicMock()
+    mock_config.get_settings.return_value = {
+        "speech_recognition": {},
+        "general": {"first_run": False},
+    }
+    mock_config.get.return_value = False  # auto_capitalize off
+    mock_config.get_str.return_value = post_script
+    mock_config.is_dictate_to_pad_enabled.return_value = dictate_to_pad
+    mock_config_cls.return_value = mock_config
+
+    mock_speech_cls = stack.enter_context(
+        patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
+    )
+    mock_speech = MagicMock()
+    mock_speech.engine = "whisper_cpp"
+    mock_speech_cls.return_value = mock_speech
+
+    mock_text_cls = stack.enter_context(
+        patch("vocalinux.text_injection.text_injector.TextInjector")
+    )
+    mock_text = MagicMock()
+    mock_text.inject_text.return_value = inject_ok
+    mock_text_cls.return_value = mock_text
+
+    mock_pad_cls = stack.enter_context(patch("vocalinux.ui.dictation_pad.DictationPad"))
+    mock_pad = mock_pad_cls.return_value
+
+    mock_tray_cls = stack.enter_context(patch("vocalinux.ui.tray_indicator.TrayIndicator"))
+    mock_tray_cls.return_value = MagicMock()
+
+    stack.enter_context(patch("vocalinux.ui.logging_manager.initialize_logging"))
+    stack.enter_context(
+        patch(
+            "vocalinux.main._should_append_trailing_space",
+            return_value=append_trailing_space,
+        )
+    )
+    # Probing the focused window shells out to compositor tools; keep the
+    # callback tests deterministic by making the probe report "unknown",
+    # which keeps the permissive injection path.
+    stack.enter_context(
+        patch(
+            "vocalinux.text_injection.focused_window.get_focused_window",
+            return_value=None,
+        )
+    )
+    mock_parse = stack.enter_context(patch("vocalinux.main.parse_arguments"))
+    stack.enter_context(patch("sys.argv", ["vocalinux"]))
+
+    mock_args = MagicMock()
+    mock_args.debug = False
+    mock_args.model = "tiny"
+    mock_args.engine = "whisper_cpp"
+    mock_args.language = "en-us"
+    mock_args.wayland = False
+    mock_args.start_minimized = False
+    mock_parse.return_value = mock_args
+    try:
+        main()
+        text_cb = mock_speech.register_text_callback.call_args.args[0]
+        action_cb = mock_speech.register_action_callback.call_args.args[0]
+        state_cb = mock_speech.register_state_callback.call_args.args[0]
+    except BaseException:
+        # The caller only closes the stack once it gets one back, so a
+        # failure here would leak these patches into every later test.
+        stack.close()
+        raise
+
+    return SimpleNamespace(
+        stack=stack,
+        text_cb=text_cb,
+        action_cb=action_cb,
+        state_cb=state_cb,
+        text_system=mock_text,
+        pad=mock_pad,
+        pad_cls=mock_pad_cls,
+        config=mock_config,
+        mock_text=mock_text,
+        mock_config=mock_config,
+        mock_speech=mock_speech,
+        mock_tray_cls=mock_tray_cls,
+    )
+
+
 class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
     """Exercise trailing-space edge paths through the real main() callback."""
 
@@ -1275,89 +1390,15 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         inject_ok: bool = True,
         post_script: str = "",
     ) -> SimpleNamespace:
-        """Boot main() under mocks; return namespace of stack, text_cb and mocks."""
-        from contextlib import ExitStack
-
-        stack = ExitStack()
-        stack.enter_context(patch("vocalinux.main.check_dependencies", return_value=True))
-        mock_config_cls = stack.enter_context(
-            patch("vocalinux.ui.config_manager.get_shared_config_manager")
-        )
-        mock_config = MagicMock()
-        mock_config.get_settings.return_value = {
-            "speech_recognition": {},
-            "general": {"first_run": False},
-        }
-        mock_config.get.return_value = False  # auto_capitalize off
-        mock_config.get_str.return_value = post_script
-        mock_config_cls.return_value = mock_config
-
-        mock_speech_cls = stack.enter_context(
-            patch("vocalinux.speech_recognition.recognition_manager.SpeechRecognitionManager")
-        )
-        mock_speech = MagicMock()
-        mock_speech.engine = "whisper_cpp"
-        mock_speech_cls.return_value = mock_speech
-
-        mock_text_cls = stack.enter_context(
-            patch("vocalinux.text_injection.text_injector.TextInjector")
-        )
-        mock_text = MagicMock()
-        mock_text.inject_text.return_value = inject_ok
-        mock_text_cls.return_value = mock_text
-
-        mock_tray_cls = stack.enter_context(patch("vocalinux.ui.tray_indicator.TrayIndicator"))
-        mock_tray_cls.return_value = MagicMock()
-
-        stack.enter_context(patch("vocalinux.ui.logging_manager.initialize_logging"))
-        stack.enter_context(
-            patch(
-                "vocalinux.main._should_append_trailing_space",
-                return_value=append_trailing_space,
-            )
-        )
-        # Probing the focused window shells out to compositor tools; keep the
-        # callback tests deterministic by making the probe report "unknown",
-        # which keeps the permissive injection path.
-        stack.enter_context(
-            patch(
-                "vocalinux.text_injection.focused_window.get_focused_window",
-                return_value=None,
-            )
-        )
-        mock_parse = stack.enter_context(patch("vocalinux.main.parse_arguments"))
-        stack.enter_context(patch("sys.argv", ["vocalinux"]))
-
-        mock_args = MagicMock()
-        mock_args.debug = False
-        mock_args.model = "tiny"
-        mock_args.engine = "whisper_cpp"
-        mock_args.language = "en-us"
-        mock_args.wayland = False
-        mock_args.start_minimized = False
-        mock_parse.return_value = mock_args
-        try:
-            main()
-            text_cb = mock_speech.register_text_callback.call_args.args[0]
-            action_cb = mock_speech.register_action_callback.call_args.args[0]
-            state_cb = mock_speech.register_state_callback.call_args.args[0]
-        except BaseException:
-            # The caller only closes the stack once it gets one back, so a
-            # failure here would leak these patches into every later test.
-            stack.close()
-            raise
-
-        return SimpleNamespace(
-            stack=stack,
-            text_cb=text_cb,
-            action_cb=action_cb,
-            state_cb=state_cb,
-            mock_text=mock_text,
-            mock_config=mock_config,
-            mock_tray_cls=mock_tray_cls,
+        """Boot main() under mocks; the shared helper does the wiring."""
+        return _boot_main_callbacks(
+            append_trailing_space=append_trailing_space,
+            inject_ok=inject_ok,
+            post_script=post_script,
         )
 
     def test_whitespace_only_is_skipped_through_main(self) -> None:
+        """Whitespace-only segments return without touching the injector."""
         boot = self._boot_under_patches()
         try:
             self.assertIsNone(boot.text_cb("   \t  "))
@@ -1369,7 +1410,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         boot = self._boot_under_patches()
         try:
             boot.text_cb("Hello.\n").result(timeout=10)
-            boot.mock_text.inject_text.assert_called_once_with("Hello.\n")
+            boot.text_system.inject_text.assert_called_once_with("Hello.\n")
         finally:
             boot.stack.close()
 
@@ -1378,7 +1419,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         try:
             boot.text_cb("Hello.").result(timeout=10)
             boot.text_cb("World").result(timeout=10)
-            calls = [c.args[0] for c in boot.mock_text.inject_text.call_args_list]
+            calls = [c.args[0] for c in boot.text_system.inject_text.call_args_list]
             self.assertEqual(calls, ["Hello.", " World"])
         finally:
             boot.stack.close()
@@ -1387,11 +1428,11 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         boot = self._boot_under_patches(append_trailing_space=False, inject_ok=False)
         try:
             boot.text_cb("Hello.").result(timeout=10)
-            boot.mock_text.inject_text.reset_mock()
-            boot.mock_text.inject_text.return_value = True
+            boot.text_system.inject_text.reset_mock()
+            boot.text_system.inject_text.return_value = True
             boot.text_cb("World").result(timeout=10)
             # Failure means last_injected stays empty; next segment has no leading space
-            boot.mock_text.inject_text.assert_called_once_with("World")
+            boot.text_system.inject_text.assert_called_once_with("World")
         finally:
             boot.stack.close()
 
@@ -1405,14 +1446,14 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             run_result.stdout = "TRANSFORMED"
             with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
                 boot.text_cb("hello").result(timeout=10)
-                boot.mock_text.inject_text.assert_called_once_with("TRANSFORMED ")
+                boot.text_system.inject_text.assert_called_once_with("TRANSFORMED ")
 
                 # A transformed paragraph break keeps its newlines (and so
                 # skips the appended trailing space like any "\n" ending).
-                boot.mock_text.inject_text.reset_mock()
+                boot.text_system.inject_text.reset_mock()
                 run_result.stdout = "PARA ONE.\n\n"
                 boot.text_cb("para one.\n\n").result(timeout=10)
-                boot.mock_text.inject_text.assert_called_once_with("PARA ONE.\n\n")
+                boot.text_system.inject_text.assert_called_once_with("PARA ONE.\n\n")
         finally:
             boot.stack.close()
 
@@ -1426,7 +1467,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             run_result.stdout = ""
             with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
                 boot.text_cb("hello").result(timeout=10)
-                boot.mock_text.inject_text.assert_not_called()
+                boot.text_system.inject_text.assert_not_called()
         finally:
             boot.stack.close()
 
@@ -1454,7 +1495,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 self.assertIsNotNone(second)
                 first.result(timeout=10)
                 second.result(timeout=10)
-            calls = [c.args[0] for c in boot.mock_text.inject_text.call_args_list]
+            calls = [c.args[0] for c in boot.text_system.inject_text.call_args_list]
             self.assertEqual(calls, ["PROCESSED FIRST ", "second "])
         finally:
             gate.set()
@@ -1479,7 +1520,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
             ):
                 boot.text_cb("hello").result(timeout=10)
-            boot.mock_text.inject_text.assert_not_called()
+            boot.text_system.inject_text.assert_not_called()
         finally:
             boot.stack.close()
 
@@ -1501,7 +1542,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
             ):
                 boot.text_cb("hello").result(timeout=10)
-            boot.mock_text.inject_text.assert_called_once_with("hello ")
+            boot.text_system.inject_text.assert_called_once_with("hello ")
         finally:
             boot.stack.close()
 
@@ -1526,7 +1567,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 gate.set()
                 text_future.result(timeout=10)
                 action_future.result(timeout=10)
-            call_names = [c[0] for c in boot.mock_text.mock_calls]
+            call_names = [c[0] for c in boot.text_system.mock_calls]
             self.assertEqual(call_names, ["inject_text", "_inject_keyboard_shortcut"])
         finally:
             gate.set()
@@ -1539,7 +1580,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             action_future = boot.action_cb("select_all")
             self.assertIsNotNone(action_future)
             action_future.result(timeout=10)
-            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
+            boot.text_system._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
         finally:
             boot.stack.close()
 
@@ -1565,7 +1606,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 gate.set()
                 text_future.result(timeout=10)
                 delete_future.result(timeout=10)
-            boot.mock_text.press_backspace.assert_called_once_with(len("HELLO "))
+            boot.text_system.press_backspace.assert_called_once_with(len("HELLO "))
         finally:
             gate.set()
             boot.stack.close()
@@ -1591,7 +1632,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 self.assertFalse(action_future.done())
                 stall.set()
                 action_future.result(timeout=10)
-            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
+            boot.text_system._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
         finally:
             stall.set()
             boot.stack.close()
@@ -1640,7 +1681,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 gate.set()
                 text_future.result(timeout=10)
                 action_future.result(timeout=10)
-            boot.mock_text._inject_keyboard_shortcut.assert_not_called()
+            boot.text_system._inject_keyboard_shortcut.assert_not_called()
         finally:
             gate.set()
             boot.stack.close()
@@ -1652,7 +1693,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             on_quit = boot.mock_tray_cls.call_args.kwargs["on_quit"]
             on_quit()
             self.assertIsNone(boot.text_cb("hello"))
-            boot.mock_text.inject_text.assert_not_called()
+            boot.text_system.inject_text.assert_not_called()
         finally:
             boot.stack.close()
 
@@ -1679,9 +1720,176 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 quit_thread.join(timeout=10)
                 self.assertFalse(quit_thread.is_alive())
                 future.result(timeout=10)
-            boot.mock_text.inject_text.assert_not_called()
+            boot.text_system.inject_text.assert_not_called()
         finally:
             gate.set()
+            boot.stack.close()
+
+
+class TestPadRoutingCallbacks(unittest.TestCase):
+    """Pad capture routing through the real main() callback wrappers (#726).
+
+    The pad path is the feature's main routing: these exercise the callbacks
+    actually registered on the speech engine rather than re-implementations.
+    """
+
+    def test_capture_routes_transcription_to_pad_not_injector(self) -> None:
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("hello").result(timeout=10)
+            boot.pad.append_text.assert_called_once_with("hello ")
+            boot.text_system.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_capture_routes_delete_that_to_pad(self) -> None:
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.pad.last_segment = "hello "
+            boot.text_cb("hello").result(timeout=10)
+            boot.action_cb("delete_last").result(timeout=10)
+            boot.pad.delete_last_chars.assert_called_once_with(len("hello "))
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_capture_routes_editing_commands_to_pad(self) -> None:
+        """undo/select/cut/copy/paste must never reach the focused app."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            for action in (
+                "undo",
+                "redo",
+                "select_all",
+                "select_line",
+                "select_word",
+                "select_paragraph",
+                "cut",
+                "copy",
+                "paste",
+            ):
+                boot.pad.handle_action.reset_mock()
+                self.assertTrue(boot.action_cb(action).result(timeout=10))
+                boot.pad.handle_action.assert_called_once_with(action)
+            boot.text_system._inject_keyboard_shortcut.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_delete_that_follows_destination_across_mode_change(self) -> None:
+        """Deletion targets where the last segment went, not the live toggle."""
+        boot = _boot_main_callbacks(dictate_to_pad=False)
+        try:
+            # Dictated into the app; capture switched on afterwards: the
+            # backspaces must still go to the app that received the text.
+            boot.text_cb("into app").result(timeout=10)
+            boot.config.is_dictate_to_pad_enabled.return_value = True
+            boot.action_cb("delete_last").result(timeout=10)
+            boot.text_system.press_backspace.assert_called_once_with(len("into app "))
+            boot.pad.delete_last_chars.assert_not_called()
+
+            # Dictated into the pad; capture switched off afterwards: the
+            # pad's copy is still the one removed.
+            boot.config.is_dictate_to_pad_enabled.return_value = True
+            boot.pad.last_segment = "into pad "
+            boot.pad.delete_last_chars.return_value = len("into pad ")
+            boot.text_cb("into pad").result(timeout=10)
+            boot.config.is_dictate_to_pad_enabled.return_value = False
+            boot.action_cb("delete_last").result(timeout=10)
+            boot.pad.delete_last_chars.assert_called_once_with(len("into pad "))
+            self.assertEqual(boot.text_system.press_backspace.call_count, 1)
+        finally:
+            boot.stack.close()
+
+    def test_capture_toggle_flips_routing_without_restart(self) -> None:
+        """Routing follows the shared manager's live value, not a snapshot."""
+        boot = _boot_main_callbacks(dictate_to_pad=False)
+        try:
+            boot.text_cb("to app").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("to app ")
+
+            boot.config.is_dictate_to_pad_enabled.return_value = True
+            boot.text_cb("to pad").result(timeout=10)
+            boot.pad.append_text.assert_called_once_with("to pad ")
+            self.assertEqual(boot.text_system.inject_text.call_count, 1)
+        finally:
+            boot.stack.close()
+
+    def test_delete_that_with_empty_history_is_swallowed(self) -> None:
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_idle_state_resets_delete_that_target(self) -> None:
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("pad text").result(timeout=10)
+            boot.state_cb(RecognitionState.IDLE)
+            boot.action_cb("delete_last").result(timeout=10)
+            boot.pad.delete_last_chars.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_undo_retargets_delete_that(self) -> None:
+        """Undoing the last pad segment must not leave a stale delete length."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("hello").result(timeout=10)
+            boot.text_cb("world").result(timeout=10)
+            # The pad reports the surviving segment after its own undo pops
+            # "world "; the next delete targets it, not the stale segment.
+            boot.pad.last_segment = "hello "
+            boot.pad.handle_action.return_value = True
+            self.assertTrue(boot.action_cb("undo").result(timeout=10))
+            boot.pad.handle_action.assert_called_once_with("undo")
+
+            boot.action_cb("delete_last").result(timeout=10)
+            boot.pad.delete_last_chars.assert_called_once_with(len("hello "))
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_undo_to_empty_clears_delete_target(self) -> None:
+        """When pad undo removes the last segment, "delete that" is a no-op."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("only").result(timeout=10)
+            boot.pad.last_segment = None
+            boot.pad.handle_action.return_value = True
+            self.assertTrue(boot.action_cb("undo").result(timeout=10))
+
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_redo_restores_delete_target(self) -> None:
+        """A redo that brings the segment back must re-arm "delete that"."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("only").result(timeout=10)
+            boot.pad.handle_action.return_value = True
+
+            # Undo to an empty pad clears the target but keeps the pad as the
+            # last dictation destination.
+            boot.pad.last_segment = None
+            self.assertTrue(boot.action_cb("undo").result(timeout=10))
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_not_called()
+
+            # Redo restores the segment; the next delete reaches the pad.
+            boot.pad.last_segment = "only"
+            self.assertTrue(boot.action_cb("redo").result(timeout=10))
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_called_once_with(len("only"))
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
             boot.stack.close()
 
 
@@ -1725,6 +1933,10 @@ class TestSessionHistoryRecording(unittest.TestCase):
         mock_speech = MagicMock()
         mock_speech.engine = "whisper_cpp"
         mock_speech_cls.return_value = mock_speech
+        # Stashed so tests can drive engine-side attributes (capture floors,
+        # the live recognition thread) through the same instance the
+        # callbacks close over.
+        self._engine = mock_speech
 
         mock_text_cls = stack.enter_context(
             patch("vocalinux.text_injection.text_injector.TextInjector")
@@ -1933,6 +2145,64 @@ class TestSessionHistoryRecording(unittest.TestCase):
             segment_cb("after clear", time.monotonic())
             state_cb(RecognitionState.IDLE)
             self.assertEqual(history.get_all(), ["after clear"])
+        finally:
+            stack.close()
+
+    def test_straggler_extends_its_own_snippet_during_next_session(self) -> None:
+        """A late segment lands in its session's entry, not the newest one."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            w1 = threading.Thread(target=segment_cb, args=("one", time.monotonic()))
+            self._engine.recognition_thread = w1
+            w1.start()
+            w1.join()
+            state_cb(RecognitionState.IDLE)
+
+            state_cb(RecognitionState.LISTENING)
+            # Session one's leftover worker finally delivers while session
+            # two is open — it must grow "one", never the pending "two".
+            straggler = threading.Thread(target=segment_cb, args=("tail", time.monotonic()))
+            straggler.start()
+            straggler.join()
+            # Session two's own segment arrives on its live worker.
+            w2 = threading.Thread(target=segment_cb, args=("two", time.monotonic()))
+            self._engine.recognition_thread = w2
+            w2.start()
+            w2.join()
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["two", "one tail"])
+        finally:
+            stack.close()
+
+    def test_pre_session_capture_is_not_attributed_to_open_session(self) -> None:
+        """Audio captured before a session opened cannot join its snippet."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            state_cb(RecognitionState.LISTENING)
+            session_start = time.monotonic()
+            segment_cb("new", time.monotonic())
+            # A queued leftover captured before this session began, delivered
+            # on the session's worker, still belongs to what came before.
+            segment_cb("old", session_start - 10.0)
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["new", "old"])
+        finally:
+            stack.close()
+
+    def test_mic_test_window_drops_segments_after_test_ends(self) -> None:
+        """Test speech still decoding after restore stays out of history."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        try:
+            floor = time.monotonic()
+            self._engine.test_capture_floor = floor
+            self._engine.test_capture_ceiling = floor + 60.0
+
+            state_cb(RecognitionState.LISTENING)
+            segment_cb("test speech", floor + 5.0)
+            segment_cb("real dictation", floor + 120.0)
+            state_cb(RecognitionState.IDLE)
+            self.assertEqual(history.get_all(), ["real dictation"])
         finally:
             stack.close()
 
