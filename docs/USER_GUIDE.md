@@ -188,13 +188,19 @@ Pin the backend explicitly in `~/.config/vocalinux/config.json`:
 |---|---|
 | `auto` | Autodetect (default; autodetection may select IBus) |
 | `ibus` | IBus input method; on Wayland, bypasses compositor checks and may silently do nothing in native Wayland apps |
+| `portal` | RemoteDesktop portal (Wayland; the sandboxed path, asks for permission once, works under Flatpak) |
 | `wtype` | wtype virtual keyboard (Wayland) |
 | `ydotool` | ydotool uinput (Wayland; needs `ydotoold`) |
 | `xdotool` | xdotool (X11). On Wayland it only turns IBus off -- the Wayland tool is still picked automatically |
 
 The setting takes effect on the next start. `auto` leaves normal autodetection
-in place and may select IBus. An explicit non-IBus pin (`wtype`, `ydotool`, or
-`xdotool`) skips IBus selection.
+in place and may select IBus. An explicit non-IBus pin (`portal`, `wtype`,
+`ydotool`, or `xdotool`) skips IBus selection.
+
+On Wayland, when IBus is not selected, autodetection tries the RemoteDesktop
+portal first -- it is the only injection path Wayland officially supports and
+it needs no uinput device or helper daemon -- then `ydotool`, `wtype`, and
+finally `xdotool` under XWayland.
 
 On X11 the injection tool is `xdotool` regardless of which non-`ibus` value you
 pin, so `xdotool` is the name to use there when IBus is unreliable in a
@@ -215,7 +221,9 @@ it does not prove the backend was available or that text reached the focused
 application. Later logs identify a fallback when a pin was not applied.
 
 If a pinned tool is unavailable, Vocalinux warns and continues with its normal
-fallback selection. `ydotool` also needs a usable `/dev/uinput` and a working
-`ydotoold` setup. `xdotool` types into X11/XWayland windows, not native Wayland
-windows. A live test in the target application is still the final confirmation
-that text is delivered.
+fallback selection. `portal` needs a desktop implementing the
+`org.freedesktop.portal.RemoteDesktop` interface (GNOME and KDE Plasma do;
+most wlroots compositors do not). `ydotool` also needs a usable `/dev/uinput`
+and a working `ydotoold` setup. `xdotool` types into X11/XWayland windows,
+not native Wayland windows. A live test in the target application is still the
+final confirmation that text is delivered.

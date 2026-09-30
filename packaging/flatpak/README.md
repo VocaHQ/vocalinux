@@ -29,12 +29,16 @@ the PyPI package is wheel-only (no sdist), so a Flathub-ready VOSK build would
 need to compile VOSK and its native deps from source.
 
 Global keyboard shortcuts use **evdev** (`/dev/input`).
-Text injection uses **wl-copy** + **ydotool Ctrl+V** (instant paste into native
-Wayland apps). Character-by-character `ydotool type` is only a fallback.
-`xdotool` remains for pure X11/XWayland clients.
+Text injection prefers the **RemoteDesktop portal**
+(`org.freedesktop.portal.RemoteDesktop` `NotifyKeyboardKeysym` — keysyms, so
+non-US layouts survive) and falls back to **wl-copy** + **ydotool Ctrl+V**
+(instant paste into native Wayland apps) when the portal is unavailable.
+Character-by-character `ydotool type` is only a fallback. `xdotool` remains
+for pure X11/XWayland clients.
 
 Permissions: `--socket=wayland` (clipboard), `--socket=x11` (xdotool fallback),
-`--device=all` (evdev hotkeys + uinput; Flatpak has no narrower uinput flag).
+`--device=all` (evdev hotkeys + uinput for the ydotool fallback; Flatpak has
+no narrower uinput flag).
 
 ## Local Build
 
@@ -123,8 +127,8 @@ supported paths.
 
 - Runtime / SDK: `org.gnome.Platform//50`, `org.gnome.Sdk//50`
 - Mic: `--socket=pulseaudio` · GPU: `--device=dri` · models: `--share=network`
-- Input: `--device=all` (evdev hotkeys + ydotool/`uinput`)
-- Injection: packaged `wl-copy`, `ydotool`/`ydotoold`, plus `xdotool`/`xsel` fallback
+- Input: `--device=all` (evdev hotkeys + ydotool/`uinput` fallback)
+- Injection: RemoteDesktop portal first; packaged `wl-copy`, `ydotool`/`ydotoold`, plus `xdotool`/`xsel` fallback
 - Display: `--socket=wayland` (clipboard) and `--socket=x11` (xdotool fallback)
 - IBus: `--talk-name=org.freedesktop.IBus`
 - Tray: `--talk-name=org.kde.StatusNotifierWatcher`
