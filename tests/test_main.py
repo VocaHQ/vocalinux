@@ -8,7 +8,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
@@ -18,6 +18,7 @@ sys.modules["gi.repository"] = MagicMock()
 # Update import to use the new package structure
 from vocalinux.common_types import RecognitionState
 from vocalinux.main import check_dependencies, main, parse_arguments
+from vocalinux.ui.transcription_history import TranscriptionHistory
 
 
 class _IsolatedHistoryDir:
@@ -27,7 +28,7 @@ class _IsolatedHistoryDir:
     would land in the developer's real XDG data dir.
     """
 
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self._history_tmpdir = tempfile.TemporaryDirectory()
         self.addCleanup(self._history_tmpdir.cleanup)
@@ -42,7 +43,7 @@ class _IsolatedHistoryDir:
 class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
     """Test cases for the main module."""
 
-    def test_parse_arguments_defaults(self):
+    def test_parse_arguments_defaults(self) -> None:
         """Test argument parsing with defaults."""
         # Test with no arguments (model/engine/language will be None without defaults)
         with patch("sys.argv", ["vocalinux"]):
@@ -54,7 +55,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
             self.assertFalse(args.wayland)
             self.assertFalse(args.start_minimized)
 
-    def test_parse_arguments_custom(self):
+    def test_parse_arguments_custom(self) -> None:
         """Test argument parsing with custom values."""
         # Test with custom arguments
         with patch(
@@ -80,7 +81,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
             self.assertTrue(args.wayland)
             self.assertTrue(args.start_minimized)
 
-    def test_parse_arguments_model_values(self):
+    def test_parse_arguments_model_values(self) -> None:
         """Test model parsing for base and exact whisper.cpp model IDs."""
         with patch("sys.argv", ["vocalinux", "--model", "small"]):
             args = parse_arguments()
@@ -102,7 +103,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
             args = parse_arguments()
             self.assertEqual(args.model, "large-v3-turbo")
 
-    def test_parse_arguments_engine_choices(self):
+    def test_parse_arguments_engine_choices(self) -> None:
         """Test that engine only accepts valid choices."""
         with patch("sys.argv", ["vocalinux", "--engine", "vosk"]):
             args = parse_arguments()
@@ -112,7 +113,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
             args = parse_arguments()
             self.assertEqual(args.engine, "whisper")
 
-    def test_parse_arguments_language_choices(self):
+    def test_parse_arguments_language_choices(self) -> None:
         """Test that language only accepts valid choices from the catalog."""
         from vocalinux.main import LANGUAGE_CHOICES
         from vocalinux.utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -128,7 +129,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
     @patch("vocalinux.main.sys.exit")
     @patch("vocalinux.main.check_dependencies")
     @patch("vocalinux.main.parse_arguments")
-    def test_main_exits_on_missing_deps(self, mock_parse, mock_check_deps, mock_exit):
+    def test_main_exits_on_missing_deps(self, mock_parse, mock_check_deps, mock_exit) -> None:
         """Test that main exits when dependencies are missing."""
         mock_check_deps.return_value = False
         mock_args = MagicMock()
@@ -666,7 +667,7 @@ class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
 class TestCheckDependencies(unittest.TestCase):
     """Test cases for check_dependencies function."""
 
-    def test_check_dependencies_all_available(self):
+    def test_check_dependencies_all_available(self) -> None:
         """Test when all dependencies are available."""
         # Mock all the imports that check_dependencies does
         mock_gi = MagicMock()
@@ -688,7 +689,7 @@ class TestCheckDependencies(unittest.TestCase):
             result = check_dependencies()
             self.assertTrue(result)
 
-    def test_check_dependencies_does_not_require_pynput(self):
+    def test_check_dependencies_does_not_require_pynput(self) -> None:
         """Test startup is allowed when the optional pynput backend is unavailable."""
         mock_gi = MagicMock()
         mock_gi.require_version = MagicMock()
@@ -707,7 +708,7 @@ class TestCheckDependencies(unittest.TestCase):
             result = check_dependencies()
             self.assertTrue(result)
 
-    def test_check_dependencies_missing_gtk(self):
+    def test_check_dependencies_missing_gtk(self) -> None:
         """Test when GTK is missing."""
 
         # Make gi.require_version raise ValueError for Gtk
@@ -732,7 +733,7 @@ class TestCheckDependencies(unittest.TestCase):
                 result = check_dependencies()
                 self.assertFalse(result)
 
-    def test_check_dependencies_missing_appindicator_with_ayatana_fallback(self):
+    def test_check_dependencies_missing_appindicator_with_ayatana_fallback(self) -> None:
         """Test when legacy AppIndicator3 is missing but Ayatana is available."""
 
         # Prefer Ayatana; legacy AppIndicator3 is only a fallback.
@@ -762,7 +763,7 @@ class TestCheckDependencies(unittest.TestCase):
                 # Should return True because AyatanaAppIndicator3 works
                 self.assertTrue(result)
 
-    def test_check_dependencies_falls_back_to_legacy_appindicator(self):
+    def test_check_dependencies_falls_back_to_legacy_appindicator(self) -> None:
         """Test when Ayatana is missing but legacy AppIndicator3 is available."""
 
         def require_version_side_effect(name, version):
@@ -789,7 +790,7 @@ class TestCheckDependencies(unittest.TestCase):
                 result = check_dependencies()
                 self.assertTrue(result)
 
-    def test_check_dependencies_falls_back_to_lowercase_ayatana(self):
+    def test_check_dependencies_falls_back_to_lowercase_ayatana(self) -> None:
         """Test rare lowercase AyatanaAppindicator3 typelib is accepted."""
 
         def require_version_side_effect(name, version):
@@ -816,7 +817,7 @@ class TestCheckDependencies(unittest.TestCase):
                 result = check_dependencies()
                 self.assertTrue(result)
 
-    def test_check_dependencies_missing_both_appindicators(self):
+    def test_check_dependencies_missing_both_appindicators(self) -> None:
         """Test when both AppIndicator3 and AyatanaAppIndicator3 are missing."""
 
         # Make gi.require_version raise ValueError for all AppIndicator variants
@@ -1166,19 +1167,19 @@ class TestTextCallbackSpacing(unittest.TestCase):
 
         return text_callback_wrapper, on_state_change, text_system, action_handler
 
-    def test_first_segment_has_trailing_space(self):
+    def test_first_segment_has_trailing_space(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("Hello world")
         text_system.inject_text.assert_called_once_with("Hello world ")
 
-    def test_subsequent_segment_has_trailing_space_not_leading(self):
+    def test_subsequent_segment_has_trailing_space_not_leading(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("Hello")
         cb("world")
         calls = [c.args[0] for c in text_system.inject_text.call_args_list]
         self.assertEqual(calls, ["Hello ", "world "])
 
-    def test_cross_session_keeps_trailing_space_without_leading_space(self):
+    def test_cross_session_keeps_trailing_space_without_leading_space(self) -> None:
         cb, on_state_change, text_system, _ = self._make_callback()
         cb("first session")
         on_state_change(RecognitionState.IDLE)
@@ -1187,17 +1188,17 @@ class TestTextCallbackSpacing(unittest.TestCase):
         # No leading space (empty-field safe); trailing space still appended.
         text_system.inject_text.assert_called_once_with("second session ")
 
-    def test_whitespace_only_input_is_skipped(self):
+    def test_whitespace_only_input_is_skipped(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("   ")
         text_system.inject_text.assert_not_called()
 
-    def test_input_with_leading_space_is_stripped(self):
+    def test_input_with_leading_space_is_stripped(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb(" Hello world")
         text_system.inject_text.assert_called_once_with("Hello world ")
 
-    def test_multiple_segments_all_get_trailing_spaces(self):
+    def test_multiple_segments_all_get_trailing_spaces(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("one")
         cb("two")
@@ -1205,19 +1206,19 @@ class TestTextCallbackSpacing(unittest.TestCase):
         calls = [c.args[0] for c in text_system.inject_text.call_args_list]
         self.assertEqual(calls, ["one ", "two ", "three "])
 
-    def test_space_after_punctuation_segment(self):
+    def test_space_after_punctuation_segment(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("Hello.")
         cb("World")
         calls = [c.args[0] for c in text_system.inject_text.call_args_list]
         self.assertEqual(calls, ["Hello. ", "World "])
 
-    def test_newline_segment_does_not_get_trailing_space(self):
+    def test_newline_segment_does_not_get_trailing_space(self) -> None:
         cb, _, text_system, _ = self._make_callback()
         cb("Hello.\n")
         text_system.inject_text.assert_called_once_with("Hello.\n")
 
-    def test_processing_to_listening_keeps_segment_spacing(self):
+    def test_processing_to_listening_keeps_segment_spacing(self) -> None:
         cb, on_state_change, text_system, _ = self._make_callback()
         cb("Hello.")
         on_state_change(RecognitionState.PROCESSING)
@@ -1226,14 +1227,14 @@ class TestTextCallbackSpacing(unittest.TestCase):
         calls = [c.args[0] for c in text_system.inject_text.call_args_list]
         self.assertEqual(calls, ["Hello. ", "World "])
 
-    def test_legacy_mode_uses_leading_space_in_session(self):
+    def test_legacy_mode_uses_leading_space_in_session(self) -> None:
         cb, _, text_system, _ = self._make_callback(append_trailing_space=False)
         cb("Hello.")
         cb("World")
         calls = [c.args[0] for c in text_system.inject_text.call_args_list]
         self.assertEqual(calls, ["Hello.", " World"])
 
-    def test_legacy_mode_clears_leading_space_across_sessions(self):
+    def test_legacy_mode_clears_leading_space_across_sessions(self) -> None:
         cb, on_state_change, text_system, _ = self._make_callback(append_trailing_space=False)
         cb("first session")
         on_state_change(RecognitionState.IDLE)
@@ -1245,7 +1246,7 @@ class TestTextCallbackSpacing(unittest.TestCase):
 class TestShouldAppendTrailingSpace(unittest.TestCase):
     """Test disk-backed trailing-space setting reader."""
 
-    def test_reads_setting_from_disk_with_true_default(self):
+    def test_reads_setting_from_disk_with_true_default(self) -> None:
         import json
         import os
         import tempfile
@@ -1270,7 +1271,7 @@ class TestShouldAppendTrailingSpace(unittest.TestCase):
                     json.dump({"text_injection": {"append_trailing_space": True}}, f)
                 self.assertTrue(_should_append_trailing_space())
 
-    def test_returns_true_when_config_read_fails(self):
+    def test_returns_true_when_config_read_fails(self) -> None:
         from vocalinux.main import _should_append_trailing_space
 
         with patch("vocalinux.utils.paths.config_dir", side_effect=OSError("boom")):
@@ -1343,7 +1344,7 @@ class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase)
 
         return stack, text_cb, mock_text
 
-    def test_whitespace_only_is_skipped_through_main(self):
+    def test_whitespace_only_is_skipped_through_main(self) -> None:
         stack, text_cb, mock_text = self._boot_under_patches()
         try:
             text_cb("   \t  ")
@@ -1351,7 +1352,7 @@ class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase)
         finally:
             stack.close()
 
-    def test_newline_segment_skips_trailing_space_through_main(self):
+    def test_newline_segment_skips_trailing_space_through_main(self) -> None:
         stack, text_cb, mock_text = self._boot_under_patches()
         try:
             text_cb("Hello.\n")
@@ -1359,7 +1360,7 @@ class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase)
         finally:
             stack.close()
 
-    def test_legacy_mode_adds_leading_space_in_session(self):
+    def test_legacy_mode_adds_leading_space_in_session(self) -> None:
         stack, text_cb, mock_text = self._boot_under_patches(append_trailing_space=False)
         try:
             text_cb("Hello.")
@@ -1369,7 +1370,7 @@ class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase)
         finally:
             stack.close()
 
-    def test_failed_inject_does_not_remember_text(self):
+    def test_failed_inject_does_not_remember_text(self) -> None:
         stack, text_cb, mock_text = self._boot_under_patches(
             append_trailing_space=False, inject_ok=False
         )
@@ -1459,7 +1460,7 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
 
         return stack, text_cb, state_cb, history, before_quit
 
-    def _texts(self, history) -> list:
+    def _texts(self, history: TranscriptionHistory) -> List[str]:
         return [e.text for e in history.get_all()]
 
     def test_session_segments_commit_as_single_entry(self) -> None:

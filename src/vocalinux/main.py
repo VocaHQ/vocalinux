@@ -9,7 +9,8 @@ import logging
 import sys
 import threading
 import time
-from typing import Optional
+from collections import deque
+from typing import Deque, Optional, Tuple
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
@@ -390,6 +391,7 @@ def main():
     from .ui.logging_manager import initialize_logging
     from .ui.transcription_history import (
         DEFAULT_MAX_ITEMS,
+        TranscriptEntry,
         TranscriptionHistory,
         sanitize_max_items,
     )
@@ -562,9 +564,15 @@ def main():
         # Worker thread that produced the open session's segments; used to
         # detect callbacks from a previous session's still-running worker.
         session_worker: Optional[threading.Thread] = None
+        # Worker thread -> the history entry its session committed, so a
+        # segment arriving late from an earlier session's worker merges into
+        # that session's transcript rather than the newest entry. Bounded:
+        # sessions past this many are treated as orphans.
+        ended_worker_entries: Deque[Tuple[threading.Thread, TranscriptEntry]] = deque(maxlen=8)
         # True when the newest history entry is the just-closed session's
         # transcript, so late segments can still merge into it.
-        latest_transcript_extendable = False
+        ended_session_entry: Optional[TranscriptEntry] = None
+        ended_session_worker: Optional[threading.Thread] = None
         # Clear epochs the open and most-recently-ended sessions run under.
         # A history.clear() bumps the epoch, so text produced beforehand
         # must not re-enter history afterwards; the two are kept separate
@@ -656,7 +664,7 @@ def main():
             IDLE — is folded into its own session's transcript rather than
             the next one.
             """
-            nonlocal session_worker, latest_transcript_extendable
+            nonlocal session_worker, ended_session_entry
             worker = threading.current_thread()
             # The engine's live worker, when it exposes one: a segment from
             # any other thread is a leftover from an older session.
@@ -673,17 +681,32 @@ def main():
                     session_segments.append(segment)
                     return
                 # Late segment from a session that already ended: merge into
-                # its committed transcript when there is one. Both writes are
-                # guarded by the ended session's epoch, so text dictated
-                # before a clear() cannot re-enter history afterwards.
-                if latest_transcript_extendable and transcription_history.extend_latest(
-                    segment, expected_epoch=ended_session_epoch
+                # that session's committed transcript. The worker→entry map
+                # binds it to the session that produced it — a straggler from
+                # an earlier worker must not extend the newest entry, which
+                # may belong to a different session. Workers not in the map
+                # (mocks, sessions that committed before tagging) fall back
+                # to the just-ended entry. Both writes are guarded by the
+                # ended session's epoch, so text dictated before a clear()
+                # cannot re-enter history afterwards.
+                mapped_entry = next(
+                    (
+                        entry
+                        for entry_worker, entry in ended_worker_entries
+                        if entry_worker is worker
+                    ),
+                    None,
+                )
+                target_entry = mapped_entry if mapped_entry is not None else ended_session_entry
+                if target_entry is not None and transcription_history.extend_entry(
+                    target_entry, segment, expected_epoch=ended_session_epoch
                 ):
                     return
                 # Otherwise the late segments are the session's only output
                 # and form their own transcript.
-                if transcription_history.add(segment, expected_epoch=ended_session_epoch):
-                    latest_transcript_extendable = True
+                new_entry = transcription_history.add(segment, expected_epoch=ended_session_epoch)
+                if new_entry is not None:
+                    ended_session_entry = new_entry
 
         def commit_pending_session() -> None:
             """Commit the open session's buffered segments to history.
@@ -693,9 +716,10 @@ def main():
             this the text already recognized in the session would be dropped.
             """
             nonlocal session_open, session_worker, session_started_at
-            nonlocal latest_transcript_extendable, ended_session_epoch
+            nonlocal ended_session_entry, ended_session_epoch, ended_session_worker
             with session_lock:
                 session_open = False
+                ended_session_worker = session_worker
                 session_worker = None
                 # The epoch this session opened under; late segments from
                 # its worker are still judged against it.
@@ -711,7 +735,7 @@ def main():
                 # cleared text back in. The committed transcript stays open
                 # to late segments still trickling out of the worker; a
                 # session that produced no text leaves no entry to merge into.
-                latest_transcript_extendable = transcription_history.add(
+                ended_session_entry = transcription_history.add(
                     joined,
                     engine=speech_engine.engine,
                     model=speech_engine.model_size,
@@ -719,6 +743,8 @@ def main():
                     duration_seconds=duration,
                     expected_epoch=ended_session_epoch,
                 )
+                if ended_session_entry is not None and ended_session_worker is not None:
+                    ended_worker_entries.append((ended_session_worker, ended_session_entry))
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.
@@ -731,7 +757,7 @@ def main():
             dictation rather than only the last segment.
             """
             nonlocal session_open, session_worker, session_started_at
-            nonlocal session_epoch, latest_transcript_extendable
+            nonlocal session_epoch, ended_session_entry
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     action_handler.set_last_injected_text("")
@@ -745,7 +771,7 @@ def main():
                         # epoch that produced them, so a clear() between the
                         # sessions keeps them out.
                         if session_segments:
-                            latest_transcript_extendable = transcription_history.add(
+                            ended_session_entry = transcription_history.add(
                                 " ".join(session_segments),
                                 engine=speech_engine.engine,
                                 model=speech_engine.model_size,
@@ -757,6 +783,10 @@ def main():
                                 ),
                                 expected_epoch=session_epoch,
                             )
+                            if ended_session_entry is not None and ended_session_worker is not None:
+                                ended_worker_entries.append(
+                                    (ended_session_worker, ended_session_entry)
+                                )
                             session_segments.clear()
                         session_open = True
                         session_worker = None

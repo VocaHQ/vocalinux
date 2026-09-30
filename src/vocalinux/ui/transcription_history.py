@@ -238,8 +238,8 @@ class TranscriptionHistory:
         language: str = "",
         duration_seconds: float = 0.0,
         expected_epoch: Optional[int] = None,
-    ) -> bool:
-        """Record a transcript, returning True when it was stored.
+    ) -> Optional[TranscriptEntry]:
+        """Record a transcript, returning the stored entry.
 
         No-op when disabled or when text is empty. With ``expected_epoch``
         the add is also refused once the epoch has advanced — i.e. the
@@ -247,10 +247,10 @@ class TranscriptionHistory:
         produced before the clear cannot reappear as a new entry.
         """
         if not text:
-            return False
+            return None
         text = text.strip()
         if not text:
-            return False
+            return None
         entry = TranscriptEntry(
             text=text,
             timestamp=time.time() if timestamp is None else float(timestamp),
@@ -261,13 +261,13 @@ class TranscriptionHistory:
         )
         with self._lock:
             if not self._enabled:
-                return False
+                return None
             if expected_epoch is not None and expected_epoch != self._epoch:
-                return False
+                return None
             self._entries.append(entry)
             self._persist()
         self._notify()
-        return True
+        return entry
 
     def extend_latest(self, text: str, *, expected_epoch: Optional[int] = None) -> bool:
         """Append a late-arriving segment to the most recent transcript.
@@ -293,6 +293,39 @@ class TranscriptionHistory:
                 return False
             latest = self._entries[-1]
             latest.text = f"{latest.text} {text.strip()}"
+            self._persist()
+        self._notify()
+        return True
+
+    def extend_entry(
+        self,
+        entry: TranscriptEntry,
+        text: str,
+        *,
+        expected_epoch: Optional[int] = None,
+    ) -> bool:
+        """Append a late-arriving segment to a specific stored transcript.
+
+        The recognition worker can emit a final segment after its session
+        already ended and after a newer session committed its own entry:
+        extending the newest entry would merge the old session's text into
+        the wrong transcript, so callers keep the entry ``add`` returned
+        for their session and extend it by identity.
+
+        Returns False when the entry is no longer stored (history cleared
+        or trimmed), when disabled, when the text is empty, or when
+        ``expected_epoch`` no longer matches.
+        """
+        if not text or not text.strip():
+            return False
+        with self._lock:
+            if not self._enabled or not self._entries:
+                return False
+            if expected_epoch is not None and expected_epoch != self._epoch:
+                return False
+            if not any(candidate is entry for candidate in self._entries):
+                return False
+            entry.text = f"{entry.text} {text.strip()}"
             self._persist()
         self._notify()
         return True
