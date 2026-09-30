@@ -199,7 +199,7 @@ Ships whisper.cpp with Vulkan. It is **not on Flathub** (submission [flathub#936
 
 ### Snap (Ubuntu Snap Store)
 
-Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). `stable` is still a manual promote after QA. Tagged releases also attach `vocalinux_<version>_amd64.snap` on GitHub.
+Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux). `stable` is promoted from `candidate` after QA. Tagged releases also attach `vocalinux_<version>_amd64.snap` on GitHub.
 
 ```bash
 sudo snap install vocalinux --edge

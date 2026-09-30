@@ -168,3 +168,28 @@ def test_snap_backfill_dispatch_input_never_reaches_the_shell() -> None:
         assert "${{" not in line, f"a run: step interpolates a template expression: {line.strip()}"
     assert "TAG: ${{ inputs.tag }}" in text
     assert 'gh release upload "$TAG"' in text
+
+
+def test_snap_promote_dispatch_gates_stable_on_candidate() -> None:
+    """stable is the gated option of #783: a manual dispatch releasing the candidate revision."""
+    text = (REPO_ROOT / ".github" / "workflows" / "snap-promote.yml").read_text(encoding="utf-8")
+    assert "workflow_dispatch:" in text
+    assert 'snapcraft release vocalinux "$REVISION" latest/stable' in text
+    assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot promote the snap" in text
+    assert "environment:" in text
+    # The promote must prove the candidate revision carries the tag's version.
+    assert "snapcraft status vocalinux" in text
+    assert 'if [ "$seen_version" != "$VERSION" ]' in text
+
+
+def test_snap_promote_dispatch_input_never_reaches_the_shell() -> None:
+    """Same rule as snap-backfill.yml: interpolating the tag into run: is injection."""
+    import re
+
+    text = (REPO_ROOT / ".github" / "workflows" / "snap-promote.yml").read_text(encoding="utf-8")
+    run_lines = [line for line in text.splitlines() if re.match(r"^\s*-?\s*run:", line)]
+    assert run_lines, "found no run: step, so this guard is scanning nothing"
+    for line in run_lines:
+        assert "${{" not in line, f"a run: step interpolates a template expression: {line.strip()}"
+    assert "TAG: ${{ inputs.tag }}" in text
+    assert "REVISION: ${{ steps.candidate.outputs.revision }}" in text

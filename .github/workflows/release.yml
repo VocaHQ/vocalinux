@@ -253,7 +253,8 @@ jobs:
 
             ### Snap
             Tagged releases also attach `vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap`
-            and try the Snap Store (`edge` and `candidate`). `stable` is a manual promote.
+            and try the Snap Store (`edge` and `candidate`). `stable` is promoted
+            from candidate after QA by the `snap-promote.yml` dispatch workflow.
             Super-privileged plugs such as `uinput` can hold the Store revision in human
             review; the GitHub `.snap` is the sideload in that case:
             ```bash
@@ -764,7 +765,7 @@ jobs:
   # GitHub Release first, Store second. uinput is super-privileged, so the
   # Store can queue a human review and refuse edge/candidate; the .snap still
   # has to land on the tag for sideload. grade: stable allows candidate; do
-  # not auto-release to stable — promote after QA.
+  # not auto-release to stable — promote after QA via snap-promote.yml (#783).
   # Secret: SNAPCRAFT_STORE_CREDENTIALS (snapcraft export-login).
   build-snap:
     name: Build Snap

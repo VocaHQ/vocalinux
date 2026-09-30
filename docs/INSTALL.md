@@ -134,7 +134,7 @@ Whisper.cpp + Vulkan. It is **not on Flathub** (submission [flathub#9368](https:
 
 ## Snap (Ubuntu Snap Store)
 
-Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases attach `vocalinux_<version>_amd64.snap` to the GitHub Release and try Snap Store `edge` and `candidate` when credentials are set. `stable` is still a manual promote after QA.
+Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases attach `vocalinux_<version>_amd64.snap` to the GitHub Release and try Snap Store `edge` and `candidate` when credentials are set. `stable` is promoted from `candidate` after QA.
 
 Store install, once Canonical lists the revision:
 
