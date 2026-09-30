@@ -2654,8 +2654,10 @@ class SettingsDialog(Gtk.Dialog):
         if row is None:
             return
 
-        def scroll() -> bool:
+        def scroll_to_row() -> bool:
             allocation = row.get_allocation()
+            if allocation.height <= 0:
+                return True  # not laid out yet — try again
             adjustment = self.sidebar_scroller.get_vadjustment()
             page_size = adjustment.get_page_size()
             value = adjustment.get_value()
@@ -2670,8 +2672,19 @@ class SettingsDialog(Gtk.Dialog):
                 )
             return False
 
-        # Allocations exist only once the row is mapped.
-        GLib.idle_add(scroll)
+        # Allocations exist only once the row is mapped, which may be after
+        # one idle turn; retry briefly instead of leaving the row hidden.
+        # A new selection aborts the retry for the previously chosen row.
+        retries_left = 20
+
+        def scroll_once() -> bool:
+            nonlocal retries_left
+            retries_left -= 1
+            if self.sidebar_listbox.get_selected_row() is not row:
+                return False
+            return scroll_to_row() and retries_left > 0
+
+        GLib.idle_add(scroll_once)
 
     def navigate_to_page(self, page_name: str) -> bool:
         """Select a settings page by its internal name (e.g. ``about``)."""
