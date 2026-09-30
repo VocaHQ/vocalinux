@@ -1577,6 +1577,21 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             gate.set()
             boot.stack.close()
 
+    def test_immediate_action_skips_focus_probe(self) -> None:
+        """With a free worker, an action injects without waiting on a probe."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        try:
+            with patch("vocalinux.text_injection.focused_window.get_focused_window") as mock_probe:
+                action_future = boot.action_cb("select_all")
+                self.assertIsNotNone(action_future)
+                action_future.result(timeout=10)
+            # No pending jobs means no queue delay to bind against: the action
+            # runs immediately and must not pay the probe's compositor calls.
+            mock_probe.assert_not_called()
+            boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
+        finally:
+            boot.stack.close()
+
     def test_queued_action_dropped_when_focus_moves(self) -> None:
         """A queued shortcut is dropped, not fired into the newly focused app."""
         from vocalinux.text_injection.focused_window import FocusedWindow

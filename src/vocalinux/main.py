@@ -899,21 +899,29 @@ def main():
             nonlocal pending_jobs
             if not accepting_injections.is_set():
                 return None
-            # Same binding rule as text: an action that may run late targets
-            # the app focused when it was issued.
-            script_configured = bool(config_manager.get_str("post_processing", "script_path", ""))
+            # An action only needs the submit-time focus binding when it can
+            # run late — i.e. when other jobs are ahead of it.  A free worker
+            # injects it right away, so there is no focus-change window to
+            # guard against and no probe wait to pay: an immediate "undo" or
+            # "select all" must stay immediate even when a script is
+            # configured.
+            # Probing and submitting happen inside the lock so queue order
+            # matches the order these callbacks ran in — a job that saw an
+            # empty queue cannot end up waiting behind one that arrived while
+            # its submission was still in flight.
             with pending_jobs_lock:
-                may_queue = pending_jobs > 0 or script_configured
+                queued_behind = pending_jobs > 0
                 pending_jobs += 1
-            target_probe = _start_focus_probe() if may_queue else None
-            try:
-                future: Future = post_processing_executor.submit(_run_action, action, target_probe)
-                return future
-            except RuntimeError:
-                # The quit path already shut the worker down.
-                with pending_jobs_lock:
+                target_probe = _start_focus_probe() if queued_behind else None
+                try:
+                    future: Future = post_processing_executor.submit(
+                        _run_action, action, target_probe
+                    )
+                except RuntimeError:
+                    # The quit path already shut the worker down.
                     pending_jobs -= 1
-                return None
+                    return None
+            return future
 
         def _reset_last_injected() -> None:
             """Clear the last-injected buffer on the post-processing worker."""
@@ -926,11 +934,15 @@ def main():
             results, and pending submissions are cancelled without waiting on
             a running script — quit must not freeze the tray on the script's
             own timeout.  Only an injection already in progress is waited out,
-            so the injector is never stopped mid-inject.
+            so the injector is never stopped mid-inject; the wait itself is
+            capped because every inject-path subprocess is individually
+            bounded, and even a pathological retry chain must not stall quit.
             """
             accepting_injections.clear()
-            with injection_lock:
-                pass
+            if injection_lock.acquire(timeout=10):
+                injection_lock.release()
+            else:
+                logger.warning("Proceeding with quit while an injection is still finishing")
             post_processing_executor.shutdown(wait=False, cancel_futures=True)
 
         def text_callback_wrapper(text: str) -> Optional[Future]:
@@ -969,17 +981,16 @@ def main():
             with pending_jobs_lock:
                 may_queue = pending_jobs > 0 or script_configured
                 pending_jobs += 1
-            target_probe = _start_focus_probe() if may_queue else None
-            try:
-                future: Future = post_processing_executor.submit(
-                    post_process_and_inject, text_to_inject, target_probe
-                )
-                return future
-            except RuntimeError:
-                # The quit path already shut the worker down.
-                with pending_jobs_lock:
+                target_probe = _start_focus_probe() if may_queue else None
+                try:
+                    future: Future = post_processing_executor.submit(
+                        post_process_and_inject, text_to_inject, target_probe
+                    )
+                except RuntimeError:
+                    # The quit path already shut the worker down.
                     pending_jobs -= 1
-                return None
+                    return None
+            return future
 
         def on_state_change(state: RecognitionState) -> None:
             """Reset the last-injected buffer when a listening session ends.

@@ -1687,6 +1687,7 @@ class TextInjector:
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=2,
                 )
 
                 if active_window.returncode == 0 and active_window.stdout.strip():
@@ -1698,6 +1699,7 @@ class TextInjector:
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                         check=False,
+                        timeout=5,
                     )
                     # Wait a moment for the focus to take effect
                     time.sleep(0.2)
@@ -1784,6 +1786,7 @@ class TextInjector:
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     check=False,
+                    timeout=2,
                 )
             except Exception:
                 pass  # Ignore any errors from this command
@@ -2497,7 +2500,17 @@ class TextInjector:
             cmd = ["ydotool", "type", "--key-delay", key_delay, text]
 
         try:
-            subprocess.run(cmd, check=True, stderr=subprocess.PIPE, text=True, env=host_env())
+            subprocess.run(
+                cmd,
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                # wtype/ydotool type the whole string in one call, so the
+                # budget scales with its length the way the xdotool chunks
+                # and backspace counts already do.
+                timeout=max(5, len(text) * 0.05),
+                env=host_env(),
+            )
         except subprocess.CalledProcessError as e:
             # Re-raise with stderr preserved for better diagnostics
             raise subprocess.CalledProcessError(
@@ -2562,11 +2575,21 @@ class TextInjector:
 
         try:
             cmd = ["xdotool", "key", "--clearmodifiers", shortcut]
-            subprocess.run(cmd, env=host_env(env), check=True, stderr=subprocess.PIPE, text=True)
+            subprocess.run(
+                cmd,
+                env=host_env(env),
+                check=True,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=5,
+            )
             logger.debug(f"Keyboard shortcut '{shortcut}' injected successfully")
             return True
         except subprocess.CalledProcessError as e:
             logger.error(f"xdotool shortcut error: {e.stderr}")
+            return False
+        except subprocess.TimeoutExpired:
+            logger.error(f"xdotool shortcut timed out: '{shortcut}'")
             return False
 
     def _inject_shortcut_with_wayland_tool(self, shortcut: str) -> bool:
