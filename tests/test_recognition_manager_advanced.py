@@ -279,7 +279,7 @@ class TestReconfigure(unittest.TestCase):
             mgr.reconfigure(engine="vosk")
         self.assertEqual(mgr.engine, "vosk")
 
-    def test_reconfigure_language_candidates(self):
+    def test_reconfigure_language_candidates(self) -> None:
         mgr = _make_manager()
         mgr.state = RecognitionState.IDLE
         with patch.object(mgr, "_init_whispercpp"):
@@ -317,7 +317,7 @@ class TestProcessFinalBuffer(unittest.TestCase):
 
 
 class TestTranscribeWhispercpp(unittest.TestCase):
-    def test_normalize_language_candidates(self):
+    def test_normalize_language_candidates(self) -> None:
         self.assertEqual(
             SpeechRecognitionManager._normalize_language_candidates(" en-US, es ; fr "),
             ["en", "es", "fr"],
@@ -404,7 +404,7 @@ class TestTranscribeWhispercpp(unittest.TestCase):
         mgr.model.transcribe.assert_called_once()
         self.assertIsNone(mgr.model.transcribe.call_args.kwargs["language"])
 
-    def test_transcribe_specific_language(self):
+    def test_transcribe_specific_language(self) -> None:
         mgr = _make_manager()
         mgr.language = "es"
         mock_segment = MagicMock()
@@ -425,7 +425,7 @@ class TestTranscribeWhispercpp(unittest.TestCase):
         mgr.model.transcribe.assert_called_once()
         self.assertEqual(mgr.model.transcribe.call_args.kwargs["language"], "es")
 
-    def test_transcribe_candidate_languages_restricts_to_english(self):
+    def test_transcribe_candidate_languages_restricts_to_english(self) -> None:
         mgr = _make_manager(whispercpp_language_candidates="en,es")
         mgr.language = "auto"
         mock_segment = MagicMock()
@@ -448,7 +448,7 @@ class TestTranscribeWhispercpp(unittest.TestCase):
         mgr.model.transcribe.assert_called_once()
         self.assertEqual(mgr.model.transcribe.call_args.kwargs["language"], "en")
 
-    def test_transcribe_candidate_languages_restricts_to_spanish(self):
+    def test_transcribe_candidate_languages_restricts_to_spanish(self) -> None:
         mgr = _make_manager(whispercpp_language_candidates=["en", "es", "fr"])
         mgr.language = "auto"
         mock_segment = MagicMock()

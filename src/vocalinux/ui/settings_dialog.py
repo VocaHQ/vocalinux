@@ -94,6 +94,7 @@ from ..utils.whispercpp_model_info import (
 )
 from ..version import __copyright__, __url__, __version__  # noqa: E402
 from .config_manager import (  # noqa: E402
+    CONFIG_FILE,
     DEFAULT_CONFIG,
     DEFAULT_PASTE_SHORTCUT,
     DEFAULT_SOUND_EFFECT_TONE,
@@ -5592,7 +5593,13 @@ class SettingsDialog(Gtk.Dialog):
 
         def persist() -> None:
             try:
+                mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else None
                 self.speech_engine.reconfigure(**pending)
+                current = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else None
+                if current != mtime:
+                    # A newer dialog applied settings while the model restarted;
+                    # this older snapshot must not overwrite them.
+                    return
                 for key, value in pending.items():
                     self.config_manager.set("advanced", key, value)
                 self.config_manager.save_settings()
