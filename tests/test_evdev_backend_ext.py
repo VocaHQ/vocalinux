@@ -1894,3 +1894,74 @@ class TestSharedEvdevDeviceLayer:
 
         active._handle_key_event.assert_called_once()
         idle._handle_key_event.assert_not_called()
+
+    def test_register_waits_for_in_flight_teardown(self) -> None:
+        """Devices opened after teardown starts are never closed by it.
+
+        Regression test for "keyboard listener can lose devices": the last
+        engine's unregister used to release the lock before closing, so a
+        new register could open keyboards in the gap only for the stale
+        teardown to close them — the new listener stayed active but dead.
+        """
+        hub = EvdevDeviceHub()
+        old_engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        new_engine = EvdevKeyboardBackend(shortcut="alt+d")
+        old_device = MagicMock()
+        hub.running = True
+        hub._engines.add(old_engine)
+        hub.devices = [old_device]
+
+        teardown_started = threading.Event()
+        finish_teardown = threading.Event()
+
+        def blocking_close() -> None:
+            teardown_started.set()
+            finish_teardown.wait(timeout=5.0)
+
+        hub._close_all_devices = blocking_close
+
+        unregister_done = threading.Event()
+
+        def run_unregister() -> None:
+            hub.unregister(old_engine)
+            unregister_done.set()
+
+        threading.Thread(target=run_unregister, daemon=True).start()
+        assert teardown_started.wait(timeout=5.0)
+
+        new_device = MagicMock()
+        new_device.fileno.return_value = 42
+        result: list[bool] = []
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices",
+                return_value=["/dev/input/event9"],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.InputDevice",
+                return_value=new_device,
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.UInput",
+                return_value=MagicMock(),
+            ),
+        ):
+            register_thread = threading.Thread(
+                target=lambda: result.append(hub.register(new_engine)),
+                daemon=True,
+            )
+            register_thread.start()
+            register_thread.join(timeout=0.5)
+            assert register_thread.is_alive()  # blocked while teardown runs
+
+            finish_teardown.set()
+            register_thread.join(timeout=5.0)
+            assert result == [True]
+            new_device.close.assert_not_called()
+            assert hub.running is True
+            assert hub.devices == [new_device]
+            assert new_engine in hub._engines
+            assert old_engine not in hub._engines
+
+        assert unregister_done.wait(timeout=5.0)
+        hub.reset()

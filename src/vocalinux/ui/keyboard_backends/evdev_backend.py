@@ -382,6 +382,12 @@ class EvdevDeviceHub:
         self._engines: weakref.WeakSet = weakref.WeakSet()
         self._known_engines: weakref.WeakSet = weakref.WeakSet()
         self._engines_lock = threading.Lock()
+        # Serializes the whole stop/start transition so a teardown can never
+        # close devices a newer generation just opened. The generation stamp
+        # additionally tells a monitor thread whose join() timed out that its
+        # incarnation is over, even when running has gone True again.
+        self._lifecycle_lock = threading.Lock()
+        self._generation = 0
         self._init_device_state()
 
     def _init_device_state(self) -> None:
@@ -415,25 +421,32 @@ class EvdevDeviceHub:
 
     def reset_if_idle(self) -> None:
         """Clear stale state only while no engine is registered or running."""
-        with self._engines_lock:
-            idle = not self._engines and not self.running
-        if idle:
-            self.reset()
+        with self._lifecycle_lock:
+            with self._engines_lock:
+                idle = not self._engines and not self.running
+            if idle:
+                self.reset()
 
     def register(self, engine: "EvdevKeyboardBackend") -> bool:
         """Attach an engine to the shared reader, cold-starting it if needed.
 
+        The lifecycle lock keeps a cold start atomic against teardown: the
+        previous generation must finish closing before this one opens, so a
+        fresh device's grab can always succeed and nothing in-flight gets
+        closed out from under the new listener.
+
         Returns True once the engine is registered and the device layer is
         running, False when no keyboard could be opened.
         """
-        with self._engines_lock:
-            if engine in self._engines:
-                return True
-            if self.running:
-                self._engines.add(engine)
-                logger.debug("Keyboard backend joined the shared evdev device layer")
-                return True
-            return self._start_locked(engine)
+        with self._lifecycle_lock:
+            with self._engines_lock:
+                if engine in self._engines:
+                    return True
+                if self.running:
+                    self._engines.add(engine)
+                    logger.debug("Keyboard backend joined the shared evdev device layer")
+                    return True
+                return self._start_locked(engine)
 
     def _start_locked(self, engine: "EvdevKeyboardBackend") -> bool:
         """Open keyboards and start the reader thread. Caller holds the lock."""
@@ -457,26 +470,40 @@ class EvdevDeviceHub:
 
         self._engines.add(engine)
         self.running = True
-        self.monitor_thread = threading.Thread(target=self._monitor_devices, daemon=True)
+        self._generation += 1
+        self.monitor_thread = threading.Thread(
+            target=self._monitor_devices,
+            kwargs={"generation": self._generation},
+            daemon=True,
+        )
         self.monitor_thread.start()
 
         logger.info("Shared evdev device layer started")
         return True
 
     def unregister(self, engine: "EvdevKeyboardBackend") -> None:
-        """Detach an engine; the last one out stops the shared reader."""
-        with self._engines_lock:
-            self._engines.discard(engine)
-            if self._engines or not self.running:
-                return
-            self.running = False
+        """Detach an engine; the last one out stops the shared reader.
 
-        # Wait for the monitor thread before closing fds it may select on.
-        if self.monitor_thread is not None:
-            self.monitor_thread.join(timeout=2.0)
-            self.monitor_thread = None
+        The lifecycle lock is held across the whole close: a concurrent
+        register must wait until the old devices and clones are gone, both
+        so its opens are never closed by this teardown and so its grabs
+        succeed instead of losing to a grab this thread still holds.
+        """
+        with self._lifecycle_lock:
+            with self._engines_lock:
+                self._engines.discard(engine)
+                if self._engines or not self.running:
+                    return
+                self.running = False
 
-        self._close_all_devices()
+            # Wait for the monitor thread before closing fds it may select
+            # on. The thread exits without taking the lifecycle lock, so the
+            # join cannot deadlock.
+            if self.monitor_thread is not None:
+                self.monitor_thread.join(timeout=2.0)
+                self.monitor_thread = None
+
+            self._close_all_devices()
 
     def _engine_snapshot(
         self,
@@ -557,13 +584,19 @@ class EvdevDeviceHub:
             else:
                 self._forward_event(fd, event)
 
-    def _monitor_devices(self, extra_engines: Sequence["EvdevKeyboardBackend"] = ()) -> None:
+    def _monitor_devices(
+        self,
+        extra_engines: Sequence["EvdevKeyboardBackend"] = (),
+        generation: Optional[int] = None,
+    ) -> None:
         """Monitor keyboard devices for events."""
         logger.debug("Starting device monitor thread")
         last_scan = time.monotonic()
+        if generation is None:
+            generation = self._generation
 
         try:
-            while self.running:
+            while self.running and self._generation == generation:
                 try:
                     now = time.monotonic()
                     if now - last_scan >= DEVICE_RESCAN_SECONDS:
@@ -613,7 +646,7 @@ class EvdevDeviceHub:
                         logger.error(f"Error monitoring devices: {e}")
                     break
         finally:
-            if self.running:
+            if self.running and self._generation == generation:
                 # Exiting while still "running" means the loop died
                 # unexpectedly — a failed select, an fd closed underneath
                 # it, or an error escaping the handler. Nothing will ever
@@ -625,12 +658,20 @@ class EvdevDeviceHub:
                     "Keyboard monitor exited unexpectedly; closing devices "
                     "to release grabs so keyboards keep working"
                 )
-                self.running = False
-                for engine in self._engine_snapshot(extra_engines):
-                    engine.active = False
-                with self._engines_lock:
-                    self._engines.clear()
-                self._close_all_devices()
+                # The lifecycle lock keeps this teardown atomic against a
+                # concurrent register, the same as unregister()'s teardown.
+                # The fast check above skips the lock entirely on a normal
+                # shutdown, so a join under the lock can never stall here;
+                # the generation stamp stops a thread that outlived join()
+                # from tearing down a newer incarnation.
+                with self._lifecycle_lock:
+                    if self.running and self._generation == generation:
+                        self.running = False
+                        for engine in self._engine_snapshot(extra_engines):
+                            engine.active = False
+                        with self._engines_lock:
+                            self._engines.clear()
+                        self._close_all_devices()
 
         logger.debug("Device monitor thread stopped")
 
