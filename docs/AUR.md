@@ -11,9 +11,9 @@ yay -S vocalinux-git      # community package; tracks main
 
 `packaging/aur/vocalinux-bin/` builds a `-bin` variant that installs the
 prebuilt AppImage from the release — no Python, engine, or GPU dependency
-builds, since the bundle carries them (#817). It is not yet published: the
-release workflow bumps its `pkgver`/`_tag` alongside the source package's,
-but pushing it to AUR needs a second `Publish AUR package` step.
+builds, since the bundle carries them (#817). The release workflow publishes
+it alongside the source package: it first pins the per-arch AppImage digests
+in the PKGBUILD, then pushes to AUR in the `Publish AUR -bin package` step.
 
 ## Maintainers (one-time setup)
 

@@ -490,13 +490,30 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: 'Release ${{ github.ref_name }}'
 
+      # The -bin PKGBUILD carries per-arch sum arrays, but updpkgsums inside
+      # the publish action only regenerates the x86_64 one — pin both here so
+      # the published PKGBUILD never ships a stale aarch64 digest.
+      - name: Pin per-arch AppImage digests in the -bin PKGBUILD
+        if: steps.aur.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          for arch in x86_64 aarch64; do
+            url="https://github.com/VocaHQ/vocalinux/releases/download/${GITHUB_REF_NAME}/Vocalinux-${tag}-${arch}.AppImage"
+            sum="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+            sed -i "s/^sha256sums_${arch}=('[0-9a-f]*')/sha256sums_${arch}=('${sum}')/" \
+              packaging/aur/vocalinux-bin/PKGBUILD
+          done
+
       - name: Publish AUR -bin package
         if: steps.aur.outputs.configured == 'true'
         uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         with:
           pkgname: vocalinux-bin
           pkgbuild: packaging/aur/vocalinux-bin/PKGBUILD
-          updpkgsums: 'true'
+          # Sums are pinned in the step above for BOTH arches; regenerating
+          # here would only refresh the x86_64 array.
+          updpkgsums: 'false'
           commit_username: ${{ secrets.AUR_USERNAME }}
           commit_email: ${{ secrets.AUR_EMAIL }}
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}

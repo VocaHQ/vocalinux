@@ -203,8 +203,10 @@ echo "   building ${pkgname} ${pkgver}-${pkgrel} (tagged _tag=${_tag})"
 
 pacman_retry -S --needed --noconfirm --asdeps "${depends[@]}" >/dev/null
 
+# WORKDIR was handed to `builder` before this stage, so create the bin
+# directory as that user — makepkg writes into it as `builder`.
 BINBUILD="$WORKDIR/binpkg"
-mkdir -p "$BINBUILD"
+runuser -u builder -- mkdir -p "$BINBUILD"
 cp "$BINPKGDIR/PKGBUILD" "$BINPKGDIR/vocalinux.desktop" \
   "$BINPKGDIR/vocalinux.svg" "$BINPKGDIR/LICENSE" "$BINBUILD/"
 CARCH="$(uname -m)"
