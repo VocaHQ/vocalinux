@@ -389,32 +389,49 @@ def test_bin_pkgbuild_bundled_files_match_the_repo_copies() -> None:
 def test_bin_package_asks_the_host_only_for_what_the_bundle_lacks() -> None:
     """The AppImage bundles CPython, GTK and the speech engines; what it
     cannot ship is the host's text-injection tools and Vulkan loader
-    (docs/INSTALL.md), so those make up the optdepends — and none of the
+    (docs/INSTALL.md). The required injection tools are hard depends — on
+    X11 without active IBus the injector needs xdotool and on Wayland a host
+    tool — while the optional fallbacks stay in optdepends. None of the
     source package's python-* depends belong here, or pacman would install a
     second Python stack next to the bundled one."""
     text = _bin_pkgbuild()
     depends = re.search(r"depends=\(\n([^)]*)\)", text)
     assert depends and "python-" not in depends.group(1)
+    assert "'xdotool'" in depends.group(1)
+    assert "'wtype'" in depends.group(1)
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("optdepends=(")), None)
     assert start is not None, "vocalinux-bin has no optdepends=()"
     end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == ")")
     optdepends = "\n".join(lines[start + 1 : end])
-    for tool in ("xdotool", "xclip", "wl-clipboard", "wtype", "ydotool"):
+    for tool in ("ibus", "xclip", "wl-clipboard", "ydotool"):
         assert f"'{tool}" in optdepends
     assert "vulkan-icd-loader" in optdepends
 
 
 def test_bin_pkgbuild_tracks_the_release_tag_like_the_source_one() -> None:
-    """Same pkgver/_tag split and SKIP digests as packaging/aur/vocalinux,
-    and the release workflow's bump step must rewrite both — a -bin left on
-    the last tag would serve the previous release's AppImage."""
+    """Same pkgver/_tag split as packaging/aur/vocalinux, real digests for
+    the published AppImages, and the release workflow must bump and publish
+    both — a -bin left on the last tag would serve the previous release's
+    AppImage."""
     text = _bin_pkgbuild()
     assert re.search(r"^pkgver=\d", text, re.M)
     assert re.search(r"^_tag=\d", text, re.M)
-    assert "'SKIP'" in text
+    # Local builds must verify payloads against real sums, not SKIP.
+    assert "'SKIP'" not in text
     release = RELEASE.read_text(encoding="utf-8")
     assert "packaging/aur/vocalinux-bin/PKGBUILD" in release, (
         "release.yml bumps the source PKGBUILD only; the -bin package would"
         " keep installing the previous release's AppImage"
     )
+    assert re.search(r"pkgname: vocalinux-bin[\s\S]*updpkgsums: 'true'", release), (
+        "release.yml must publish -bin with updpkgsums so its sums track" " the assets it installs"
+    )
+
+
+def test_the_gate_builds_the_bin_package_too() -> None:
+    """The -bin package needs build validation as much as the source one:
+    the gate stubs the release AppImage and runs makepkg on it."""
+    script = GATE_SH.read_text(encoding="utf-8")
+    assert "vocalinux-bin" in script
+    assert "--skipchecksums" in script

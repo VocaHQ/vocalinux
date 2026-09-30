@@ -490,6 +490,18 @@ jobs:
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: 'Release ${{ github.ref_name }}'
 
+      - name: Publish AUR -bin package
+        if: steps.aur.outputs.configured == 'true'
+        uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
+        with:
+          pkgname: vocalinux-bin
+          pkgbuild: packaging/aur/vocalinux-bin/PKGBUILD
+          updpkgsums: 'true'
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: 'Release ${{ github.ref_name }}'
+
   # GitHub Release first, Store second. uinput is super-privileged, so the
   # Store can queue a human review and refuse edge/candidate; the .snap still
   # has to land on the tag for sideload. grade: stable allows candidate; do
