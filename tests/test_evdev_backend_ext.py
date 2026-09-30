@@ -1965,3 +1965,34 @@ class TestSharedEvdevDeviceLayer:
 
         assert unregister_done.wait(timeout=5.0)
         hub.reset()
+
+    def test_unregister_joins_monitor_outside_the_lifecycle_lock(self) -> None:
+        """The monitor join must not hold the lock its cleanup queues on.
+
+        Regression test for "monitor cleanup delays shutdown": joining under
+        _lifecycle_lock stalled the full 2s timeout whenever the monitor's
+        unexpected-exit cleanup raced in for the same lock.
+        """
+        hub = EvdevDeviceHub()
+        engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        hub.running = True
+        hub._engines.add(engine)
+        monitor = MagicMock()
+        hub.monitor_thread = monitor
+
+        lock_was_free = threading.Event()
+
+        def join_and_probe(timeout: float) -> None:
+            if hub._lifecycle_lock.acquire(blocking=False):
+                lock_was_free.set()
+                hub._lifecycle_lock.release()
+
+        monitor.join = join_and_probe
+
+        hub.unregister(engine)
+
+        assert lock_was_free.is_set()
+        assert hub.running is False
+        assert hub.monitor_thread is None
+        assert engine not in hub._engines
+        hub.reset()

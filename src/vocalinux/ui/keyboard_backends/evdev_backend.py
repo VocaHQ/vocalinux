@@ -338,6 +338,8 @@ _HUB_OWNED_ATTRIBUTES = frozenset(
         "_release_failed_forwarder",
         "_forward_event",
         "_dispatch_events",
+        "_detach_devices",
+        "_close_detached",
         "_resync_clone_key_state",
     }
 )
@@ -357,6 +359,8 @@ _HUB_METHOD_ATTRIBUTES = frozenset(
         "_release_failed_forwarder",
         "_forward_event",
         "_dispatch_events",
+        "_detach_devices",
+        "_close_detached",
         "_resync_clone_key_state",
     }
 )
@@ -397,6 +401,9 @@ class EvdevDeviceHub:
         self.device_paths: set[str] = set()
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
+        # True once a teardown detached the containers; new opens are
+        # refused so a rescan can't leak a device nobody will close.
+        self._closed = False
 
         self._devices_lock = threading.Lock()
         self._dropped_devices: set[int] = set()  # fds with SYN_DROPPED pending
@@ -484,11 +491,14 @@ class EvdevDeviceHub:
     def unregister(self, engine: "EvdevKeyboardBackend") -> None:
         """Detach an engine; the last one out stops the shared reader.
 
-        The lifecycle lock is held across the whole close: a concurrent
-        register must wait until the old devices and clones are gone, both
-        so its opens are never closed by this teardown and so its grabs
-        succeed instead of losing to a grab this thread still holds.
+        The lifecycle lock covers the whole close: a concurrent register
+        must wait until the old devices and clones are gone, both so its
+        opens are never closed by this teardown and so its grabs succeed
+        instead of losing to a grab this thread still holds. The monitor
+        join waits after the lock is released — the monitor's own
+        unexpected-exit cleanup queues on that same lock.
         """
+        monitor: Optional[threading.Thread]
         with self._lifecycle_lock:
             with self._engines_lock:
                 self._engines.discard(engine)
@@ -496,14 +506,18 @@ class EvdevDeviceHub:
                     return
                 self.running = False
 
-            # Wait for the monitor thread before closing fds it may select
-            # on. The thread exits without taking the lifecycle lock, so the
-            # join cannot deadlock.
-            if self.monitor_thread is not None:
-                self.monitor_thread.join(timeout=2.0)
-                self.monitor_thread = None
-
+            # Close before joining: the monitor's read/select dies on the
+            # closed fds right away instead of riding out its timeout — and
+            # the join stays OUTSIDE the lock because the monitor's own
+            # unexpected-exit cleanup queues on it. Joining under the lock
+            # would stall shutdown for the full timeout whenever the two
+            # raced each other.
             self._close_all_devices()
+            monitor = self.monitor_thread
+            self.monitor_thread = None
+
+        if monitor is not None:
+            monitor.join(timeout=2.0)
 
     def _engine_snapshot(
         self,
@@ -682,7 +696,13 @@ class EvdevDeviceHub:
         uinput clone makes the kernel release any keys the clone still
         holds — together they hand input delivery back to applications.
         """
+        devices, forwarders = self._detach_devices()
+        self._close_detached(devices, forwarders)
+
+    def _detach_devices(self) -> tuple[list[InputDevice], list[UInput]]:
+        """Swap all device containers for empty ones and refuse new opens."""
         with self._devices_lock:
+            self._closed = True
             devices = list(self.devices)
             forwarders = list(self._forwarders.values())
             self.devices = []
@@ -694,7 +714,10 @@ class EvdevDeviceHub:
             self._forwarder_paths = {}
             self._clone_paths = set()
             self._forwarded_held = {}
+        return devices, forwarders
 
+    def _close_detached(self, devices: list[InputDevice], forwarders: list[UInput]) -> None:
+        """Close previously detached devices and clones, then drop fd state."""
         for device in devices:
             try:
                 device.close()
@@ -711,7 +734,7 @@ class EvdevDeviceHub:
     def _open_keyboard_device(self, device_path: str) -> bool:
         """Open a keyboard device if it is not already monitored."""
         with self._devices_lock:
-            if device_path in self.device_paths:
+            if device_path in self.device_paths or self._closed:
                 return False
 
         try:
@@ -756,7 +779,7 @@ class EvdevDeviceHub:
                 forwarder = None
 
         with self._devices_lock:
-            if device_path in self.device_paths or fd in self.device_fds:
+            if device_path in self.device_paths or fd in self.device_fds or self._closed:
                 try:
                     device.close()
                 except (OSError, IOError, RuntimeError) as e:
