@@ -81,6 +81,9 @@ from ..version import __version__
 from .command_processor import CommandProcessor
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
+if TYPE_CHECKING:
+    from ..custom_dictionary import CustomDictionaryManager
+
 
 class _AudioSegment(list):
     """A queued audio segment that knows when its capture began.
@@ -400,6 +403,10 @@ class SpeechRecognitionManager:
         # change a queued segment's language (#805).
         self._session_language: Optional[str] = None
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
+        self.dictionary_manager: Optional["CustomDictionaryManager"] = kwargs.get(
+            "dictionary_manager"
+        )
+        self._vosk_dictionary_warned = False
         self.state = RecognitionState.IDLE
         self.audio_thread = None
         self.recognition_thread = None
@@ -837,6 +844,36 @@ class SpeechRecognitionManager:
             self._faster_whisper_engine.language = previous
         logger.debug(f"Restored dictation language {previous} after one-shot")
 
+    def _get_dictionary_prompt(self) -> Optional[str]:
+        """Return a live custom-terms prompt without interrupting dictation on errors."""
+        if self.dictionary_manager is None:
+            return None
+        try:
+            return self.dictionary_manager.build_initial_prompt()
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not build custom terms prompt: %s", error)
+            return None
+
+    def _get_whispercpp_prompt(self) -> Optional[str]:
+        """Combine the Advanced prompt with the live custom terms prompt.
+
+        The explicit Advanced prompt remains first and custom terms are appended,
+        so enabling custom dictionary support never discards user configuration.
+        """
+        parts = [self.whispercpp_initial_prompt.strip(), self._get_dictionary_prompt() or ""]
+        prompt = " ".join(part for part in parts if part)
+        return prompt or None
+
+    def _apply_dictionary_corrections(self, text: str) -> str:
+        """Apply live corrections before voice-command interpretation."""
+        if self.dictionary_manager is None:
+            return text
+        try:
+            return self.dictionary_manager.apply_corrections(text)
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not apply custom dictionary corrections: %s", error)
+            return text
+
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
         # VOSK doesn't support auto-detect, so fall back to en-us for "auto"
@@ -884,6 +921,15 @@ class SpeechRecognitionManager:
             self.recognizer = KaldiRecognizer(self.model, 16000)
             self._model_initialized = True
             logger.info("VOSK engine initialized successfully.")
+            if (
+                self.dictionary_manager is not None
+                and self.dictionary_manager.terms_enabled()
+                and not self._vosk_dictionary_warned
+            ):
+                self._vosk_dictionary_warned = True
+                logger.warning(
+                    "Custom terms are ignored by VOSK; transcript corrections still apply."
+                )
 
         except ImportError:
             logger.error("Failed to import VOSK. Please install it with 'pip install vosk'")
@@ -1067,6 +1113,7 @@ class SpeechRecognitionManager:
                     temperature=0.0,  # Greedy decoding for consistency
                     no_speech_threshold=0.6,
                     fp16=use_fp16,  # Explicitly set to avoid warning on CPU
+                    initial_prompt=self._get_dictionary_prompt(),
                 )
 
             text = result.get("text", "").strip()
@@ -1288,7 +1335,9 @@ class SpeechRecognitionManager:
                 return ""
 
             return self._faster_whisper_engine.transcribe(
-                audio_buffer, language=self._dictation_language(language)
+                audio_buffer,
+                language=self._dictation_language(language),
+                initial_prompt=self._get_dictionary_prompt(),
             )
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
@@ -1787,7 +1836,11 @@ class SpeechRecognitionManager:
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
                 transcribe_start = time.time()
-                segments = self.model.transcribe(audio_float, language=lang)
+                transcribe_kwargs = {"language": lang}
+                # pywhispercpp reuses native parameter state.  Passing an empty
+                # value explicitly clears a prompt that was active last segment.
+                transcribe_kwargs["initial_prompt"] = self._get_whispercpp_prompt() or ""
+                segments = self.model.transcribe(audio_float, **transcribe_kwargs)
                 transcribe_duration = time.time() - transcribe_start
 
             # Extract text from segments, filtering non-speech tokens
@@ -3221,6 +3274,18 @@ class SpeechRecognitionManager:
             # stop_recognition owns the final buffer. Do not finish or allow a
             # new session until key release has completed that handoff.
             self._capture_finished.wait()
+            # The worker can exit during the bounded audio-thread join in
+            # stop_recognition, leaving the released key's final buffer — and
+            # any stragglers it never consumed — queued behind the stop
+            # sentinel. Transcribe what is still here before replacing the
+            # queue so the tail of the recording is not silently dropped.
+            # A failed capture or an explicit cancel still discards it.
+            if (
+                self.model_ready
+                and not self._buffered_capture_failed
+                and not self._cancel_buffered_session.is_set()
+            ):
+                self._transcribe_queued_segments()
             with self._buffer_lock:
                 self.audio_buffer = []
             self._segment_queue = queue.Queue(maxsize=32)
@@ -3656,6 +3721,9 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
+            # Corrections must precede command parsing: a safe replacement can
+            # stop a model mishearing from triggering a destructive action.
+            text = self._apply_dictionary_corrections(text)
             if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
@@ -3781,6 +3849,30 @@ class SpeechRecognitionManager:
                 self._segment_queue.put_nowait(None)
             except queue.Empty:
                 logger.debug("Recognition queue emptied before stop signal")
+
+    def _transcribe_queued_segments(self) -> None:
+        """Transcribe audio segments still queued after the worker exited.
+
+        Runs on the reload thread once key release has finished its handoff,
+        so segments that missed the worker's final drain — the released
+        key's tail buffer queued during its bounded join — are still
+        transcribed instead of being thrown away with the queue.
+        """
+        while True:
+            try:
+                queued = self._segment_queue.get_nowait()
+            except queue.Empty:
+                return
+            if queued is None:
+                continue
+            # Queue items are (segment, language) tuples stamped at enqueue
+            # time — the language must reach the decoder or the buffer is
+            # transcribed under the wrong language.
+            segment, segment_language = queued
+            try:
+                self._process_audio_buffer(segment, segment_language)
+            except (ChecksumError, ImportError, OSError, RuntimeError, ValueError):
+                logger.exception("Failed to transcribe a leftover buffered segment")
 
     def reconfigure(
         self,

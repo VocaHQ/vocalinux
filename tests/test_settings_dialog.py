@@ -1081,9 +1081,10 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("self.sidebar_listbox = Gtk.ListBox()", self.source_code)
         self.assertNotIn("Gtk.Notebook()", self.source_code)
 
-    def test_topic_pages_exist(self):
+    def test_topic_pages_exist(self) -> None:
         for name, title in [
             ("dictation", "Dictation"),
+            ("dictionary", "Custom Dictionary"),
             ("model", "Speech Model"),
             ("audio", "Audio"),
             ("performance", "Performance"),
@@ -1091,6 +1092,108 @@ class TestSettingsNavigation(unittest.TestCase):
             ("advanced", "Advanced"),
         ]:
             self.assertIn(f'SettingsPage("{name}", "{title}"', self.source_code)
+
+    def test_custom_dictionary_page_has_both_accessible_subsections(self) -> None:
+        """The dictionary page keeps terms and corrections distinct and accessible."""
+        body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
+        self.assertIn('title="Custom terms"', body)
+        self.assertIn('title="Transcript corrections"', body)
+        self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper", body)
+        self.assertIn("self.dictionary_management_switcher = Gtk.StackSwitcher()", body)
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)",
+            body,
+        )
+        self.assertIn('terms_scroller, "terms", "Custom terms"', body)
+        self.assertIn('corrections_scroller, "corrections", "Corrections"', body)
+        for accessible_name in [
+            "Custom terms file",
+            "Custom term",
+            "Heard phrase",
+            "Replacement text",
+            "Custom dictionary status",
+        ]:
+            self.assertIn(accessible_name, body)
+        # Shared status lives on the page, not only in the Corrections stack child.
+        self.assertIn(
+            "self.dictionary_tab.pack_start(self.dictionary_feedback_label, False, False, 0)",
+            body,
+        )
+        switcher_pack = body.find(
+            "self.dictionary_tab.pack_start(self.dictionary_management_switcher"
+        )
+        feedback_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_feedback_label")
+        stack_pack = body.find("self.dictionary_tab.pack_start(self.dictionary_management_stack")
+        self.assertLess(switcher_pack, feedback_pack)
+        self.assertLess(feedback_pack, stack_pack)
+        corrections_child = body[
+            body.find("corrections_group = PreferencesGroup") : body.find(
+                'corrections_scroller, "corrections"'
+            )
+        ]
+        self.assertNotIn("dictionary_feedback_label", corrections_child)
+
+    def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self) -> None:
+        """Transparent list backgrounds do not cover the card's lower radius."""
+        self.assertIn(".preferences-group-list", self.source_code)
+        self.assertIn('add_class("preferences-group-list")', self.source_code)
+        self.assertIn("border-radius: 0 0 11px 11px", self.source_code)
+
+    def test_custom_dictionary_path_and_persistence_handlers_are_present(self) -> None:
+        """Path chooser and failure feedback keep existing settings safe."""
+        self.assertIn('Gtk.FileChooserButton(title="Choose Terms File")', self.source_code)
+        self.assertIn("def _on_dictionary_terms_path_changed", self.source_code)
+        self.assertIn("set_terms_path", self.source_code)
+        self.assertIn("Could not save that custom terms path", self.source_code)
+        self.assertIn("add_term(term)", self.source_code)
+        self.assertIn("remove_term(term)", self.source_code)
+
+    def test_correction_add_validates_candidate_before_save(self) -> None:
+        """Invalid replacements must be rejected before the list is rewritten."""
+        body = self.source_code.split("def _on_dictionary_add_correction")[1].split("\n    def ")[0]
+        self.assertIn("normalize_corrections", body)
+        self.assertLess(body.find("normalize_corrections"), body.find("save_corrections"))
+        self.assertLess(body.find("normalize_corrections"), body.find("entries.append"))
+
+    def test_terms_list_builds_in_bounded_idle_slices_with_pinned_adds(self) -> None:
+        """Large term files never build all their GTK rows synchronously.
+
+        The stall finding requires two guards to hold together: the row
+        build is sliced through GLib idle callbacks, and a saved term that
+        lands past the display cap is pinned so success is never reported
+        for an invisible term.
+        """
+        self.assertIn("_TERMS_ROWS_PER_IDLE", self.source_code)
+        refresh_body = self.source_code.split("def _refresh_dictionary_ui")[1].split("\n    def ")[
+            0
+        ]
+        self.assertNotIn("for term in visible_terms:", refresh_body)
+        self.assertIn("self._build_term_rows(", refresh_body)
+        build_body = self.source_code.split("def _build_term_rows")[1].split("\n    def ")[0]
+        self.assertIn("GLib.idle_add", build_body)
+        self.assertIn("_TERMS_ROWS_PER_IDLE", build_body)
+        self.assertIn("self._terms_build_token", build_body)
+        add_body = self.source_code.split("def _on_dictionary_add_term")[1].split("\n    def ")[0]
+        self.assertIn("self._pinned_terms.append(term)", add_body)
+        self.assertIn("self._pinned_terms", self.source_code)
+
+    def test_show_all_add_scrolls_to_the_landed_term(self) -> None:
+        """Under "show all" the rebuild scrolls to the new term's own row.
+
+        Oversized or yield-capped files prepend the term, so scrolling to
+        the bottom would hide it; the target is the term's index in the
+        refreshed list and is verified against the row's label.
+        """
+        add_body = self.source_code.split("def _on_dictionary_add_term")[1].split("\n    def ")[0]
+        self.assertIn("self._show_all_terms", add_body)
+        self.assertIn("self._scroll_terms_to_row", add_body)
+        self.assertIn("terms_now[new_index]", add_body)
+        finish_body = self.source_code.split("def _finish_term_rows")[1].split("\n    def ")[0]
+        self.assertIn("self._scroll_terms_to_row", finish_body)
+        self.assertIn("get_row_at_index", finish_body)
+        self.assertIn("_term_row_text", finish_body)
+        self.assertIn("_scroll_terms_row_into_view", finish_body)
+        self.assertNotIn("_scroll_terms_to_end", self.source_code)
 
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)

@@ -65,8 +65,10 @@ jobs:
       - name: Install snapcraft
         run: sudo snap install snapcraft --classic
 
-      # `snapcraft status` prints the channel map grouped by track and arch;
-      # the candidate row is a continuation line, so column 1 is the channel.
+      # `snapcraft status` prints the channel map grouped by track and arch.
+      # The candidate row is normally a continuation line (column 1 is the
+      # channel), but if candidate ever leads the latest track block it rides
+      # the track line itself — column 3 is the channel then — so match both.
       - name: Resolve the candidate revision
         id: candidate
         env:
@@ -78,7 +80,8 @@ jobs:
           /snap/bin/snapcraft status vocalinux | tee /tmp/snap-status.txt
           # POSIX: mawk has no \S — use a literal non-space class.
           row=$(awk '/^[^ \t]/ { track = $1 }
-                    track == "latest" && $1 == "candidate" { print $2, $3; exit }' \
+                    track == "latest" && $1 == "candidate" { print $2, $3; exit }
+                    track == "latest" && $3 == "candidate" { print $4, $5; exit }' \
                     /tmp/snap-status.txt)
           read -r seen_version revision <<<"$row"
           echo "latest/candidate holds version=${seen_version:-none} revision=${revision:-none}"
@@ -105,7 +108,8 @@ jobs:
           set -euo pipefail
           VERSION="${TAG#v}"
           row=$(awk '/^[^ \t]/ { track = $1 }
-                    track == "latest" && $1 == "candidate" { print $2, $3; exit }' \
+                    track == "latest" && $1 == "candidate" { print $2, $3; exit }
+                    track == "latest" && $3 == "candidate" { print $4, $5; exit }' \
                     <(/snap/bin/snapcraft status vocalinux))
           read -r seen_version revision <<<"$row"
           if [ "${revision:-}" != "$REVISION" ] || [ "$seen_version" != "$VERSION" ]; then

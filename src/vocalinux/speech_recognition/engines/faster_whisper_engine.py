@@ -39,6 +39,7 @@ class _WhisperModel(Protocol):
         beam_size: int,
         best_of: int,
         condition_on_previous_text: bool,
+        initial_prompt: Optional[str],
     ) -> tuple[Iterable[_Segment], object]:
         """Transcribe audio and return segments with metadata."""
         ...
@@ -130,7 +131,12 @@ class FasterWhisperEngine:
             return "en"
         return language
 
-    def transcribe(self, audio_buffer: list[bytes], language: Optional[str] = None) -> str:
+    def transcribe(
+        self,
+        audio_buffer: list[bytes],
+        language: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
+    ) -> str:
         """Transcribe the provided audio buffer.
 
         Args:
@@ -139,6 +145,7 @@ class FasterWhisperEngine:
                 (#805): a one-shot dictation binds its session language here
                 so a later restore cannot rewrite it mid-flight. None uses
                 ``self.language``.
+            initial_prompt: Optional vocabulary prompt used to bias recognition.
 
         Returns:
             Recognized text.
@@ -162,6 +169,7 @@ class FasterWhisperEngine:
                 beam_size=5,
                 best_of=5,
                 condition_on_previous_text=False,
+                initial_prompt=initial_prompt,
             )
 
             text_parts = [segment.text.strip() for segment in segments if segment.text]

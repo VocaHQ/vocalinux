@@ -3,6 +3,7 @@ Tests for the main module functionality.
 """
 
 import argparse
+import queue
 import sys
 import threading
 import time
@@ -34,6 +35,7 @@ class TestMainModule(unittest.TestCase):
             self.assertIsNone(args.model)  # No default set, loaded from config instead
             self.assertIsNone(args.engine)
             self.assertIsNone(args.language)
+            self.assertIsNone(args.dictionary_file)
             self.assertFalse(args.wayland)
             self.assertFalse(args.start_minimized)
 
@@ -248,6 +250,7 @@ class TestMainModule(unittest.TestCase):
                 whispercpp_no_speech_thold=0.6,
                 whispercpp_n_threads=0,
                 whispercpp_gpu_device=None,
+                dictionary_manager=ANY,
                 remote_api_url="",
                 remote_api_key="",
                 remote_api_endpoint="/inference",
@@ -1694,25 +1697,91 @@ class TestSessionHistoryRecording(unittest.TestCase):
         finally:
             stack.close()
 
+    def _worker_deliverer(
+        self, segment_cb: Callable[[str, float], None]
+    ) -> Tuple[Callable[[str], None], Callable[[], None]]:
+        """Deliver segments from one persistent worker thread, like the real engine.
+
+        Returns (deliver, close): ``deliver(text)`` runs the segment callback
+        on the worker synchronously; ``close()`` stops it.
+        """
+        work: queue.Queue = queue.Queue()
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            while True:
+                job = work.get()
+                try:
+                    if job is not None:
+                        job()
+                except BaseException as error:
+                    errors.append(error)
+                finally:
+                    work.task_done()
+                if job is None:
+                    return
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+
+        def deliver(text: str) -> None:
+            work.put(lambda: segment_cb(text, time.monotonic()))
+            work.join()
+            if errors:
+                raise errors.pop(0)
+
+        def close() -> None:
+            work.put(None)
+            work.join()
+            thread.join()
+
+        return deliver, close
+
     def test_late_segment_from_old_worker_during_next_session(self) -> None:
         """A leftover worker delivering on its own thread stays out of the open session."""
         stack, _, segment_cb, state_cb, history = self._boot()
+        on_old_worker, close_old_worker = self._worker_deliverer(segment_cb)
         try:
             state_cb(RecognitionState.LISTENING)
-            segment_cb("one", time.monotonic())
+            on_old_worker("one")
             state_cb(RecognitionState.IDLE)
 
             state_cb(RecognitionState.LISTENING)
             segment_cb("two", time.monotonic())
             # The previous session's worker finally delivers on its own thread.
-            t = threading.Thread(target=segment_cb, args=("trailing", time.monotonic()))
-            t.start()
-            t.join()
+            on_old_worker("trailing")
             self.assertEqual(history.get_all(), ["one trailing"])
 
             state_cb(RecognitionState.IDLE)
             self.assertEqual(history.get_all(), ["two", "one trailing"])
         finally:
+            close_old_worker()
+            stack.close()
+
+    def test_straggler_after_newer_session_forms_own_snippet(self) -> None:
+        """An old worker finishing after the next session must not grow its entry."""
+        stack, _, segment_cb, state_cb, history = self._boot()
+        on_old_worker, close_old_worker = self._worker_deliverer(segment_cb)
+        try:
+            state_cb(RecognitionState.LISTENING)
+            on_old_worker("first")
+            state_cb(RecognitionState.IDLE)
+
+            state_cb(RecognitionState.LISTENING)
+            segment_cb("second", time.monotonic())
+            state_cb(RecognitionState.IDLE)
+
+            # The older session's worker decodes last: its text belongs to
+            # the first session, not to the currently-newest entry.
+            on_old_worker("late tail")
+            self.assertEqual(history.get_all(), ["late tail", "second", "first"])
+
+            # A later straggler on that same worker still extends the
+            # snippet it owns.
+            on_old_worker("more tail")
+            self.assertEqual(history.get_all(), ["late tail more tail", "second", "first"])
+        finally:
+            close_old_worker()
             stack.close()
 
     def test_session_without_segments_creates_no_snippet(self) -> None:

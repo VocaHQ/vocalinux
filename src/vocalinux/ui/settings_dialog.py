@@ -17,6 +17,7 @@ UX Design Notes:
 - Modal dialog for model downloads (explicit confirmation for large downloads)
 """
 
+import itertools
 import logging
 import math
 import os
@@ -35,6 +36,7 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..common_types import RecognitionState, _EvdevCaptureDevice  # noqa: E402
+from ..custom_dictionary import normalize_corrections  # noqa: E402
 from ..gateway_embed import GatewayStatus, get_gateway_embed_manager  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import parakeet_model_info as parakeet  # noqa: E402
@@ -480,6 +482,12 @@ _ACTION_WIDTH = 96
 _SPIN_WIDTH = 88
 _ICON_BUTTON_WIDTH = 36
 _PAIRED_COMBO_WIDTH = _CONTROL_WIDTH - _ICON_BUTTON_WIDTH - 8
+# Term rows are built on the UI thread, so a scanner-managed file with
+# thousands of entries is capped and the remainder summarized in one row.
+_MAX_TERMS_DISPLAYED = 500
+# Rows appended per GLib idle slice: building thousands at once stalls the
+# UI the same way an uncapped list would.
+_TERMS_ROWS_PER_IDLE = 150
 
 
 def _style_combo(combo: Gtk.ComboBox, width: int = _CONTROL_WIDTH) -> Gtk.ComboBox:
@@ -945,6 +953,21 @@ SETTINGS_CSS = """
     padding: 0;
     margin: 6px 0;
     border: 1px solid alpha(@borders, 0.5);
+}
+
+/* Keep child list backgrounds inside the card's rounded lower corners. */
+.preferences-group-list {
+    background-color: transparent;
+    border-radius: 0 0 11px 11px;
+}
+
+.preferences-group-list > row:last-child,
+.preferences-group-list > row:last-child:hover {
+    border-radius: 0 0 11px 11px;
+}
+
+.dictionary-entry-list {
+    background-color: transparent;
 }
 
 .preferences-group-title {
@@ -2121,6 +2144,7 @@ class PreferencesGroup(Gtk.Box):
 
         # Content area with listbox for rows
         self.listbox = Gtk.ListBox()
+        self.listbox.get_style_context().add_class("preferences-group-list")
         self.listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         self.listbox.set_activate_on_single_click(False)
         self.pack_start(self.listbox, False, False, 0)
@@ -2587,6 +2611,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.config_manager = config_manager
         self.speech_engine = speech_engine
+        self.dictionary_manager = getattr(speech_engine, "dictionary_manager", None)
         self.shortcut_update_callback = shortcut_update_callback
         self.update_status_callback = update_status_callback
         self.overlay_enabled_callback = overlay_enabled_callback
@@ -2675,6 +2700,7 @@ class SettingsDialog(Gtk.Dialog):
         # every distro (some system-monitor icons only ship with Yaru).
         self._pages = [
             SettingsPage("dictation", "Dictation", "input-keyboard-symbolic"),
+            SettingsPage("dictionary", "Custom Dictionary", "accessories-dictionary-symbolic"),
             SettingsPage("model", "Speech Model", "audio-input-microphone-symbolic"),
             SettingsPage("audio", "Audio", "audio-speakers-symbolic"),
             SettingsPage("performance", "Performance", "power-profile-performance-symbolic"),
@@ -2688,6 +2714,7 @@ class SettingsDialog(Gtk.Dialog):
         self.dictation_page = pages_by_name["dictation"]
         self.shortcuts_tab = self.dictation_page.box
         self.recognition_settings_tab = self.dictation_page.box
+        self.dictionary_tab = pages_by_name["dictionary"].box
         self.speech_engine_tab = pages_by_name["model"].box
         self.audio_tab = pages_by_name["audio"].box
         self.power_tab = pages_by_name["performance"].box
@@ -2711,7 +2738,10 @@ class SettingsDialog(Gtk.Dialog):
         self.settings_stack.set_transition_duration(120)
         self.settings_stack.set_hexpand(True)
         for page in self._pages:
-            self.settings_stack.add_titled(_scrollable(page.box), page.name, page.title)
+            # The dictionary page owns two independently scrollable management
+            # panes so its pane chooser stays visible above long term lists.
+            content = page.box if page.name == "dictionary" else _scrollable(page.box)
+            self.settings_stack.add_titled(content, page.name, page.title)
         self.settings_stack.add_named(self._build_search_empty_page(), "search-empty")
         self.settings_stack.connect("notify::visible-child", self._on_settings_page_changed)
 
@@ -2748,6 +2778,23 @@ class SettingsDialog(Gtk.Dialog):
         # Search state: baseline visibility snapshot while a query is active.
         self._search_baseline = None
         self._search_previous_page = None
+        self._search_previous_dictionary_pane = None
+        # Marks dictionary pane switches made by the search filter itself so a
+        # user-initiated switch can drop the saved pre-search pane.
+        self._search_pane_programmatic = False
+        # Custom-terms list stays capped for GTK row count until the user
+        # asks to render the whole file.
+        self._show_all_terms = False
+        # Bumps on every refresh so idle-sliced row builders left over from
+        # an older pass stop instead of re-adding cleared rows.
+        self._terms_build_token = 0
+        # Terms added in this dialog that land past the display cap; they are
+        # pinned to the top so a successful save is never invisible.
+        self._pinned_terms: list[str] = []
+        # A term saved under "show all" scrolls into view once the idle-sliced
+        # rebuild finishes: (row index, displayed term) so a stale target left
+        # by a superseded refresh can never jump to the wrong row.
+        self._scroll_terms_to_row: Optional[tuple[int, str]] = None
 
         # Set content_box to speech_engine_tab for backward compatibility
         self.content_box = self.speech_engine_tab
@@ -2757,6 +2804,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_language_shortcuts_section()
         self._build_recognition_section()
         self._build_simple_model_section()
+        self._build_dictionary_section()
         self._build_engine_section()
         self._build_remote_server_section()
         self._build_gateway_embed_section()
@@ -2964,6 +3012,9 @@ class SettingsDialog(Gtk.Dialog):
         visible_page = self.settings_stack.get_visible_child_name()
         page_names = {page.name for page in self._pages}
         self._search_previous_page = visible_page if visible_page in page_names else "dictation"
+        self._search_previous_dictionary_pane = (
+            self.dictionary_management_stack.get_visible_child_name()
+        )
 
         baseline = {"rows": {}, "groups": {}, "extras": {}, "islands": {}}
         for page in self._pages:
@@ -3018,6 +3069,27 @@ class SettingsDialog(Gtk.Dialog):
         self.settings_stack.set_visible_child_name(page.name)
         self._search_previous_page = None
 
+        if self._search_previous_dictionary_pane is not None:
+            # A search may have auto-switched the dictionary pane to reveal a
+            # match; clearing the query returns to the pane the user selected.
+            self.dictionary_management_stack.set_visible_child_name(
+                self._search_previous_dictionary_pane
+            )
+            self._search_previous_dictionary_pane = None
+
+    def _on_dictionary_pane_changed(self, *_args: Any) -> None:
+        """Keep a manual dictionary pane switch made during an active search.
+
+        The filter auto-switches panes to reveal a match and restores the
+        pre-search pane when the query clears. If the user clicks the pane
+        switcher themselves mid-search, that newer choice wins and clearing
+        the search must not roll it back.
+        """
+        if self._search_pane_programmatic:
+            return
+        if self._search_baseline is not None:
+            self._search_previous_dictionary_pane = None
+
     def _on_search_changed(self, entry):
         """Live-filter settings rows across all pages."""
         query = entry.get_text().strip()
@@ -3056,6 +3128,21 @@ class SettingsDialog(Gtk.Dialog):
                 page_matches += visible_rows
             for extra in page.extras:
                 extra.hide()
+
+            if page.name == "dictionary":
+                # A search can hide the selected management pane while the
+                # other pane contains the match. Keep matching controls visible.
+                current = self.dictionary_management_stack.get_visible_child_name()
+                terms_visible = self.dictionary_terms_group.get_visible()
+                corrections_visible = self.dictionary_corrections_group.get_visible()
+                self._search_pane_programmatic = True
+                try:
+                    if current == "terms" and not terms_visible and corrections_visible:
+                        self.dictionary_management_stack.set_visible_child_name("corrections")
+                    elif current == "corrections" and not corrections_visible and terms_visible:
+                        self.dictionary_management_stack.set_visible_child_name("terms")
+                finally:
+                    self._search_pane_programmatic = False
 
             if page_matches > 0:
                 if page.update_badge_label is not None:
@@ -3291,6 +3378,546 @@ class SettingsDialog(Gtk.Dialog):
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
         self.history_enabled_switch.connect("state-set", self._on_history_enabled_toggled)
         self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
+
+    def _build_dictionary_section(self) -> None:
+        """Build the Custom Dictionary page for terms and transcript corrections."""
+        self.dictionary_management_stack = Gtk.Stack()
+        self.dictionary_management_stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
+        self.dictionary_management_stack.set_transition_duration(120)
+        self.dictionary_management_stack.set_homogeneous(False)
+        self.dictionary_management_stack.set_hexpand(True)
+        self.dictionary_management_stack.set_vexpand(True)
+        self.dictionary_management_stack.connect(
+            "notify::visible-child-name", self._on_dictionary_pane_changed
+        )
+
+        self.dictionary_management_switcher = Gtk.StackSwitcher()
+        self.dictionary_management_switcher.set_stack(self.dictionary_management_stack)
+        self.dictionary_management_switcher.set_halign(Gtk.Align.CENTER)
+        self.dictionary_management_switcher.get_accessible().set_name("Custom dictionary section")
+        self.dictionary_tab.pack_start(self.dictionary_management_switcher, False, False, 0)
+
+        self.dictionary_feedback_label = Gtk.Label(xalign=0)
+        self.dictionary_feedback_label.set_line_wrap(True)
+        self.dictionary_feedback_label.get_accessible().set_name("Custom dictionary status")
+        self.dictionary_feedback_label.get_style_context().add_class("tip-label")
+        self.dictionary_tab.pack_start(self.dictionary_feedback_label, False, False, 0)
+
+        self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)
+
+        terms_group = PreferencesGroup(
+            title="Custom terms",
+            description=(
+                "Terms bias Whisper, whisper.cpp, and Faster Whisper recognition. The UTF-8 "
+                "terms file is live-reloaded and has one term per line, so accessibility tools "
+                "can edit it."
+            ),
+            keywords=("dictionary", "terms", "vocabulary", "whisper", "scanner"),
+        )
+        self.dictionary_terms_group = terms_group
+        self.dictionary_terms_enabled_switch = Gtk.Switch()
+        terms_group.add_row(
+            PreferenceRow(
+                title="Use custom terms",
+                subtitle=(
+                    "Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper; "
+                    "corrections work with every engine."
+                ),
+                widget=self.dictionary_terms_enabled_switch,
+            )
+        )
+        terms_path_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.dictionary_terms_path_entry = Gtk.Entry()
+        self.dictionary_terms_path_entry.set_hexpand(True)
+        self.dictionary_terms_path_entry.set_placeholder_text("~/.config/vocalinux/dictionary.txt")
+        self.dictionary_terms_path_entry.set_tooltip_text(
+            "UTF-8 line file used for custom terms and the accessibility scanner"
+        )
+        self.dictionary_terms_path_entry.get_accessible().set_name("Custom terms file")
+        terms_path_box.pack_start(self.dictionary_terms_path_entry, True, True, 0)
+        self.dictionary_terms_file_button = Gtk.FileChooserButton(title="Choose Terms File")
+        terms_path_box.pack_start(self.dictionary_terms_file_button, False, False, 0)
+        terms_group.add_row(
+            PreferenceRow(
+                title="Terms file",
+                subtitle="UTF-8, one term per line; # starts a comment",
+                widget=terms_path_box,
+            )
+        )
+        self.dictionary_terms_status_label = Gtk.Label(xalign=0)
+        self.dictionary_terms_status_label.set_line_wrap(True)
+        self.dictionary_terms_status_label.get_style_context().add_class("tip-label")
+        terms_group.add_row(
+            PreferenceRow(
+                title="Live status",
+                subtitle="The terms file is re-read before every transcription.",
+                widget=self.dictionary_terms_status_label,
+            )
+        )
+
+        terms_add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        terms_add_box.set_margin_top(8)
+        terms_add_box.set_margin_bottom(4)
+        terms_add_box.set_margin_start(16)
+        terms_add_box.set_margin_end(16)
+        self.dictionary_term_entry = Gtk.Entry()
+        self.dictionary_term_entry.set_placeholder_text("Add a term")
+        self.dictionary_term_entry.set_tooltip_text(
+            "Term to add to the scanner-friendly terms file"
+        )
+        self.dictionary_term_entry.get_accessible().set_name("Custom term")
+        self.dictionary_term_entry.set_hexpand(True)
+        terms_add_box.pack_start(self.dictionary_term_entry, True, True, 0)
+        self.dictionary_add_term_button = Gtk.Button(label="Add term")
+        self.dictionary_add_term_button.connect("clicked", self._on_dictionary_add_term)
+        self.dictionary_term_entry.connect("activate", self._on_dictionary_add_term)
+        terms_add_box.pack_start(self.dictionary_add_term_button, False, False, 0)
+        terms_add_row = Gtk.ListBoxRow()
+        terms_add_row.set_activatable(False)
+        terms_add_row.add(terms_add_box)
+        terms_group.add_row(terms_add_row)
+
+        self.dictionary_terms_listbox = Gtk.ListBox()
+        self.dictionary_terms_listbox.get_style_context().add_class("dictionary-entry-list")
+        self.dictionary_terms_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.dictionary_terms_listbox.set_placeholder(
+            Gtk.Label(label="No custom terms yet.", xalign=0.5)
+        )
+        terms_list_row = Gtk.ListBoxRow()
+        terms_list_row.set_activatable(False)
+        terms_list_row.add(self.dictionary_terms_listbox)
+        terms_group.add_row(terms_list_row)
+
+        self.dictionary_terms_scroller = Gtk.ScrolledWindow()
+        self.dictionary_terms_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.dictionary_terms_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        self.dictionary_terms_scroller.add(terms_group)
+        self.dictionary_management_stack.add_titled(
+            self.dictionary_terms_scroller, "terms", "Custom terms"
+        )
+
+        corrections_group = PreferencesGroup(
+            title="Transcript corrections",
+            description=(
+                "Corrections replace a misheard whole word or phrase in every completed "
+                "transcript. They run before voice commands, so avoid replacement text that "
+                "is itself a voice command."
+            ),
+            keywords=("dictionary", "correction", "replacement", "misheard", "transcript"),
+        )
+        self.dictionary_corrections_group = corrections_group
+        corrections_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        corrections_box.set_margin_top(8)
+        corrections_box.set_margin_bottom(4)
+        corrections_box.set_margin_start(16)
+        corrections_box.set_margin_end(16)
+        self.dictionary_heard_entry = Gtk.Entry()
+        self.dictionary_heard_entry.set_placeholder_text("Heard as, e.g. super base")
+        self.dictionary_heard_entry.set_tooltip_text("Misheard phrase, matched case-insensitively")
+        self.dictionary_heard_entry.get_accessible().set_name("Heard phrase")
+        self.dictionary_heard_entry.set_hexpand(True)
+        corrections_box.pack_start(self.dictionary_heard_entry, True, True, 0)
+        self.dictionary_replacement_entry = Gtk.Entry()
+        self.dictionary_replacement_entry.set_placeholder_text("Replace with, e.g. Supabase")
+        self.dictionary_replacement_entry.set_tooltip_text(
+            "Replacement inserted with exactly this spelling"
+        )
+        self.dictionary_replacement_entry.get_accessible().set_name("Replacement text")
+        self.dictionary_replacement_entry.set_hexpand(True)
+        corrections_box.pack_start(self.dictionary_replacement_entry, True, True, 0)
+        self.dictionary_add_correction_button = Gtk.Button(label="Add correction")
+        self.dictionary_add_correction_button.connect("clicked", self._on_dictionary_add_correction)
+        self.dictionary_heard_entry.connect("activate", self._on_dictionary_add_correction)
+        self.dictionary_replacement_entry.connect("activate", self._on_dictionary_add_correction)
+        corrections_box.pack_start(self.dictionary_add_correction_button, False, False, 0)
+        corrections_add_row = Gtk.ListBoxRow()
+        corrections_add_row.set_activatable(False)
+        corrections_add_row.add(corrections_box)
+        corrections_group.add_row(corrections_add_row)
+
+        self.dictionary_corrections_listbox = Gtk.ListBox()
+        self.dictionary_corrections_listbox.get_style_context().add_class("dictionary-entry-list")
+        self.dictionary_corrections_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.dictionary_corrections_listbox.set_placeholder(
+            Gtk.Label(label="No transcript corrections yet.", xalign=0.5)
+        )
+        corrections_list_row = Gtk.ListBoxRow()
+        corrections_list_row.set_activatable(False)
+        corrections_list_row.add(self.dictionary_corrections_listbox)
+        corrections_group.add_row(corrections_list_row)
+
+        corrections_scroller = Gtk.ScrolledWindow()
+        corrections_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        corrections_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        corrections_scroller.add(corrections_group)
+        self.dictionary_management_stack.add_titled(
+            corrections_scroller, "corrections", "Corrections"
+        )
+
+        self.dictionary_terms_enabled_switch.connect("state-set", self._on_dictionary_terms_enabled)
+        self.dictionary_terms_path_entry.connect("activate", self._on_dictionary_terms_path_changed)
+        self.dictionary_terms_path_entry.connect(
+            "focus-out-event", self._on_dictionary_terms_path_changed
+        )
+        self.dictionary_terms_file_button.connect("file-set", self._on_dictionary_terms_file_chosen)
+
+    def _on_dictionary_terms_enabled(self, widget: Any, state: bool) -> bool:
+        """Persist terms enablement and restore the control when persistence fails."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return False
+        if not self.dictionary_manager.set_terms_enabled(bool(state)):
+            self.dictionary_feedback_label.set_text("Could not save custom terms setting.")
+        self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_terms_path_changed(self, widget: Any, *args: Any) -> bool:
+        """Persist a validated custom terms path and restore it on failure."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return False
+        if self.dictionary_manager.set_terms_path(self.dictionary_terms_path_entry.get_text()):
+            self.dictionary_feedback_label.set_text("Custom terms path saved.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save that custom terms path; keeping the previous path."
+            )
+        self._refresh_dictionary_ui()
+        return False
+
+    def _on_dictionary_terms_file_chosen(self, widget: Any) -> None:
+        """Apply a terms path selected through the GTK file chooser."""
+        path = widget.get_filename()
+        if path:
+            self.dictionary_terms_path_entry.set_text(path)
+            self._on_dictionary_terms_path_changed(self.dictionary_terms_path_entry)
+
+    def _on_dictionary_add_term(self, widget: Any) -> None:
+        """Add a term to the fixed line file, reporting an observable result."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return
+        term = self.dictionary_term_entry.get_text().strip()
+        if not term:
+            self.dictionary_feedback_label.set_text("Enter a term before adding it.")
+            return
+        terms = self.dictionary_manager.get_terms()
+        if any(existing.casefold() == term.casefold() for existing in terms):
+            self.dictionary_feedback_label.set_text("That term is already in the terms file.")
+            return
+        if not self.dictionary_manager.add_term(term):
+            self.dictionary_feedback_label.set_text(
+                "Could not save the terms file; no term was added."
+            )
+            return
+        self.dictionary_term_entry.set_text("")
+        terms_now = self.dictionary_manager.get_terms()
+        if any(existing.casefold() == term.casefold() for existing in terms_now):
+            self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
+            if self._show_all_terms:
+                # Oversized or yield-capped files prepend the term, other
+                # files append it — scroll to wherever it landed once the
+                # idle-sliced rebuild finishes. Under "show all" the rebuilt
+                # rows match terms_now one to one.
+                new_index = next(
+                    index
+                    for index, existing in enumerate(terms_now)
+                    if existing.casefold() == term.casefold()
+                )
+                self._scroll_terms_to_row = (new_index, terms_now[new_index])
+            else:
+                # A term that lands past the display cap is pinned to the top
+                # of the capped list — a saved term is never invisible. The
+                # next refresh drops the pin if the term is already visible.
+                self._pinned_terms.append(term)
+        else:
+            self.dictionary_feedback_label.set_text("That term is not valid for the terms file.")
+        self._refresh_dictionary_ui()
+
+    def _on_terms_show_all(self, widget: Any) -> None:
+        """Render every term, including those past the display cap."""
+        self._show_all_terms = True
+        self._refresh_dictionary_ui()
+
+    def _on_terms_show_fewer(self, widget: Any) -> None:
+        """Collapse the terms list back to the display cap."""
+        self._show_all_terms = False
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_remove_term(self, widget: Any, term: str) -> None:
+        """Remove one term from the fixed line file."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return
+        if self.dictionary_manager.remove_term(term):
+            self.dictionary_feedback_label.set_text("Term removed from the live terms file.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save the terms file; the term was not removed."
+            )
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_add_correction(self, widget: Any) -> None:
+        """Add or update a phrase correction in the structured corrections file."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return
+        heard = self.dictionary_heard_entry.get_text().strip()
+        replacement = self.dictionary_replacement_entry.get_text().strip()
+        if not heard or not replacement:
+            self.dictionary_feedback_label.set_text(
+                "Enter both the heard phrase and its replacement."
+            )
+            return
+        entries = self.dictionary_manager.get_corrections_for_edit()
+        if entries is None:
+            self.dictionary_feedback_label.set_text(
+                "Could not edit corrections: fix or replace the malformed corrections file first."
+            )
+            return
+        candidate = {"heard": heard, "replacement": replacement}
+        normalized_entries = normalize_corrections([candidate])
+        if not normalized_entries:
+            self.dictionary_feedback_label.set_text("That correction is not valid for the file.")
+            return
+        candidate = normalized_entries[0]
+        heard_key = candidate["heard"].casefold()
+        existing = [entry for entry in entries if entry["heard"].casefold() == heard_key]
+        entries = [entry for entry in entries if entry["heard"].casefold() != heard_key]
+        entries.append(candidate)
+        if not self.dictionary_manager.save_corrections(entries):
+            self.dictionary_feedback_label.set_text(
+                "Could not save corrections; no correction was changed."
+            )
+            return
+        self.dictionary_heard_entry.set_text("")
+        self.dictionary_replacement_entry.set_text("")
+        if any(
+            entry["heard"].casefold() == heard_key
+            for entry in self.dictionary_manager.get_corrections()
+        ):
+            self.dictionary_feedback_label.set_text(
+                "Correction updated."
+                if existing
+                else "Correction saved to the live corrections file."
+            )
+        else:
+            self.dictionary_feedback_label.set_text("That correction is not valid for the file.")
+        self._refresh_dictionary_ui()
+
+    def _on_dictionary_remove_correction(self, widget: Any, heard: str) -> None:
+        """Remove one correction from the structured corrections file."""
+        if self._initializing or self._applying_settings or self.dictionary_manager is None:
+            return
+        editable_entries = self.dictionary_manager.get_corrections_for_edit()
+        if editable_entries is None:
+            self.dictionary_feedback_label.set_text(
+                "Could not edit corrections: fix or replace the malformed corrections file first."
+            )
+            return
+        entries = [
+            entry for entry in editable_entries if entry["heard"].casefold() != heard.casefold()
+        ]
+        if self.dictionary_manager.save_corrections(entries):
+            self.dictionary_feedback_label.set_text("Correction removed.")
+        else:
+            self.dictionary_feedback_label.set_text(
+                "Could not save corrections; nothing was removed."
+            )
+        self._refresh_dictionary_ui()
+
+    def _make_term_row(self, term: str, transient: bool) -> Gtk.ListBoxRow:
+        """Build one removable term row for the custom terms list."""
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        row_box.set_margin_top(6)
+        row_box.set_margin_bottom(6)
+        row_box.set_margin_start(16)
+        row_box.set_margin_end(16)
+        label = Gtk.Label(label=term, xalign=0)
+        label.set_hexpand(True)
+        row_box.pack_start(label, True, True, 0)
+        remove_button = Gtk.Button(label="Remove")
+        remove_button.set_tooltip_text(f"Remove term {term}")
+        remove_button.get_accessible().set_name(f"Remove term {term}")
+        remove_button.set_sensitive(not transient)
+        remove_button.connect("clicked", self._on_dictionary_remove_term, term)
+        row_box.pack_start(remove_button, False, False, 0)
+        row.add(row_box)
+        return row
+
+    def _build_term_rows(
+        self, terms: list[str], total_terms: int, transient: bool, token: int
+    ) -> None:
+        """Populate the terms listbox in idle slices of bounded size.
+
+        Building thousands of GTK rows synchronously stalls the whole
+        dialog, so each slice appends at most ``_TERMS_ROWS_PER_IDLE`` rows
+        and reschedules itself. Every refresh bumps the build token, which
+        retires pending slices from an older pass instead of letting them
+        re-add rows the refresh already cleared.
+        """
+        pending = iter(terms)
+
+        def build_chunk() -> bool:
+            if token != self._terms_build_token:
+                return False
+            batch = list(itertools.islice(pending, _TERMS_ROWS_PER_IDLE))
+            for term in batch:
+                self.dictionary_terms_listbox.add(self._make_term_row(term, transient))
+            self.dictionary_terms_listbox.show_all()
+            if len(batch) == _TERMS_ROWS_PER_IDLE:
+                return True
+            self._finish_term_rows(total_terms)
+            return False
+
+        # The first slice runs inline so small lists appear immediately;
+        # a slice never exceeds _TERMS_ROWS_PER_IDLE rows of work.
+        if build_chunk():
+            GLib.idle_add(build_chunk)
+
+    def _finish_term_rows(self, total_terms: int) -> None:
+        """Append the overflow summary row after the last term slice."""
+        if total_terms > _MAX_TERMS_DISPLAYED:
+            overflow_row = Gtk.ListBoxRow()
+            overflow_row.set_activatable(False)
+            overflow_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            overflow_box.set_margin_top(6)
+            overflow_box.set_margin_bottom(6)
+            overflow_box.set_margin_start(16)
+            overflow_box.set_margin_end(16)
+            if self._show_all_terms:
+                overflow_text = f"Showing all {total_terms} terms."
+                toggle_button = Gtk.Button(label=f"Show first {_MAX_TERMS_DISPLAYED}")
+                toggle_button.connect("clicked", self._on_terms_show_fewer)
+            else:
+                overflow_text = f"Showing the first {_MAX_TERMS_DISPLAYED} of {total_terms} terms."
+                toggle_button = Gtk.Button(label=f"Show all {total_terms}")
+                toggle_button.connect("clicked", self._on_terms_show_all)
+            overflow_label = Gtk.Label(label=overflow_text, xalign=0)
+            overflow_label.set_line_wrap(True)
+            overflow_label.set_hexpand(True)
+            overflow_label.get_style_context().add_class("tip-label")
+            overflow_box.pack_start(overflow_label, True, True, 0)
+            overflow_box.pack_start(toggle_button, False, False, 0)
+            overflow_row.add(overflow_box)
+            self.dictionary_terms_listbox.add(overflow_row)
+        self.dictionary_terms_listbox.show_all()
+        if self._scroll_terms_to_row is not None:
+            index, expected_term = self._scroll_terms_to_row
+            self._scroll_terms_to_row = None
+            row = self.dictionary_terms_listbox.get_row_at_index(index)
+            row_text = self._term_row_text(row) if row is not None else None
+            if row_text is not None and row_text.casefold() == expected_term.casefold():
+                self._scroll_terms_row_into_view(row)
+
+    @staticmethod
+    def _term_row_text(row: Gtk.ListBoxRow) -> Optional[str]:
+        """Return the term displayed by a row built by ``_make_term_row``."""
+        row_box = row.get_child()
+        if not isinstance(row_box, Gtk.Box) or not row_box.get_children():
+            return None
+        label = row_box.get_children()[0]
+        return label.get_label() if isinstance(label, Gtk.Label) else None
+
+    def _scroll_terms_row_into_view(self, row: Gtk.ListBoxRow) -> None:
+        """Bring a term row inside the terms scroller's viewport once laid out."""
+        retries_left = 20
+
+        def scroll_once() -> bool:
+            nonlocal retries_left
+            retries_left -= 1
+            if row.get_parent() is not self.dictionary_terms_listbox:
+                return False
+            allocation = row.get_allocation()
+            if allocation.height <= 0:
+                # Not laid out yet — retry briefly instead of never scrolling.
+                return retries_left > 0
+            # The row's y is relative to the terms listbox, but the scroller's
+            # adjustment addresses the whole card (header and controls above
+            # the list) — translate into that space or the scroll stops short.
+            viewport = self.dictionary_terms_scroller.get_child()
+            content = viewport.get_child() if isinstance(viewport, Gtk.Viewport) else None
+            position = row.translate_coordinates(content, 0, 0) if content else None
+            if position is None:
+                return False
+            _, row_y = position
+            adjustment = self.dictionary_terms_scroller.get_vadjustment()
+            page_size = adjustment.get_page_size()
+            value = adjustment.get_value()
+            if row_y < value:
+                adjustment.set_value(max(adjustment.get_lower(), row_y))
+            elif row_y + allocation.height > value + page_size:
+                adjustment.set_value(
+                    min(
+                        adjustment.get_upper() - page_size,
+                        row_y + allocation.height - page_size,
+                    )
+                )
+            return False
+
+        GLib.idle_add(scroll_once)
+
+    def _refresh_dictionary_ui(self) -> None:
+        """Rebuild custom dictionary controls from the live, file-backed state."""
+        if not hasattr(self, "dictionary_terms_enabled_switch"):
+            return
+        if self.dictionary_manager is None:
+            self.dictionary_terms_enabled_switch.set_sensitive(False)
+            self.dictionary_terms_status_label.set_text("Custom dictionary support is unavailable.")
+            return
+        transient = self.dictionary_manager.is_transient_terms
+        enabled = self.dictionary_manager.terms_enabled()
+        self.dictionary_terms_enabled_switch.set_active(enabled)
+        self.dictionary_terms_enabled_switch.set_sensitive(not transient)
+        self.dictionary_terms_path_entry.set_text(self.dictionary_manager.terms_path_text())
+        self.dictionary_terms_path_entry.set_sensitive(not transient)
+        self.dictionary_terms_file_button.set_sensitive(not transient)
+        self.dictionary_terms_status_label.set_text(
+            ("Session-only --dictionary-file override is active. " if transient else "")
+            + self.dictionary_manager.terms_status()
+        )
+        self.dictionary_term_entry.set_sensitive(not transient)
+        self.dictionary_add_term_button.set_sensitive(not transient)
+
+        for child in list(self.dictionary_terms_listbox.get_children()):
+            self.dictionary_terms_listbox.remove(child)
+        terms = self.dictionary_manager.get_terms()
+        visible_terms = terms if self._show_all_terms else terms[:_MAX_TERMS_DISPLAYED]
+        # Recently added terms that would fall outside the visible window
+        # stay pinned to the top while they remain unseen; a pin expires as
+        # soon as the term disappears or becomes visible on its own.
+        visible_keys = {term.casefold() for term in visible_terms}
+        term_keys = {term.casefold() for term in terms}
+        self._pinned_terms = [
+            pinned
+            for pinned in self._pinned_terms
+            if pinned.casefold() in term_keys and pinned.casefold() not in visible_keys
+        ]
+        self._terms_build_token += 1
+        self._build_term_rows(
+            [*self._pinned_terms, *visible_terms], len(terms), transient, self._terms_build_token
+        )
+
+        for child in list(self.dictionary_corrections_listbox.get_children()):
+            self.dictionary_corrections_listbox.remove(child)
+
+        for entry in self.dictionary_manager.get_corrections():
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            row_box.set_margin_top(6)
+            row_box.set_margin_bottom(6)
+            row_box.set_margin_start(16)
+            row_box.set_margin_end(16)
+            label = Gtk.Label(label=f"{entry['heard']} → {entry['replacement']}", xalign=0)
+            label.set_hexpand(True)
+            row_box.pack_start(label, True, True, 0)
+            remove_button = Gtk.Button(label="Remove")
+            remove_button.set_tooltip_text(f"Remove correction for {entry['heard']}")
+            remove_button.get_accessible().set_name(f"Remove correction for {entry['heard']}")
+            remove_button.connect("clicked", self._on_dictionary_remove_correction, entry["heard"])
+            row_box.pack_start(remove_button, False, False, 0)
+            row.add(row_box)
+            self.dictionary_corrections_listbox.add(row)
+        self.dictionary_terms_listbox.show_all()
+        self.dictionary_corrections_listbox.show_all()
 
     def _build_auto_pause_section(self):
         """Build Auto-Pause settings: enable toggle + process name list."""
@@ -6670,6 +7297,7 @@ class SettingsDialog(Gtk.Dialog):
         self.auto_pause_switch.set_active(auto_pause_enabled)
         self._update_auto_pause_sensitivity(auto_pause_enabled)
         self._refresh_auto_pause_list()
+        self._refresh_dictionary_ui()
 
         keepalive_settings = self.config_manager.get_settings().get("model_keepalive", {})
         keepalive_enabled = bool(keepalive_settings.get("enabled", False))
