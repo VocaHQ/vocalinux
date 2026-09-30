@@ -177,6 +177,7 @@ def _manager_stub(
     manager.command_processor = MagicMock()
     manager._pending_language_override = None
     manager._oneshot_language_restore = None
+    manager._segment_started_at = None
     return manager
 
 
