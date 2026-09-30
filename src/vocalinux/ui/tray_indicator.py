@@ -10,6 +10,7 @@ import os
 import signal
 import threading
 import time
+from functools import partial
 from typing import Any, Callable, Optional, Sequence, cast
 
 import gi
@@ -53,10 +54,15 @@ from ..utils.update_monitor import UpdateMonitor
 from ..utils.whispercpp_model_info import TDRZ_MODEL, WHISPERCPP_MODEL_INFO, is_model_downloaded
 from . import notifications
 from .config_manager import get_shared_config_manager
-from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
+from .keyboard_backends import (
+    DEFAULT_SHORTCUT,
+    DEFAULT_SHORTCUT_MODE,
+    SHORTCUT_MODES,
+    shortcut_gestures_collide,
+)
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import ModelDownloadDialog, SettingsDialog, recommended_model_for_engine
-from .transcription_history import TranscriptionHistory
+from .transcription_history import DEFAULT_MAX_ITEMS, TranscriptionHistory
 
 logger = logging.getLogger(__name__)
 
@@ -125,6 +131,19 @@ class TrayIndicator:
     the speech recognition process.
     """
 
+    # Tests build TrayIndicator stubs with __new__ that skip __init__; keep a
+    # class-level default so teardown paths like _quit() still find the list.
+    _language_shortcut_managers: list = []
+
+    #: Same for the push-to-talk owner slot: a __new__-built stub must answer
+    #: "no binding owns the live session" instead of raising on release paths.
+    _ptt_owner: Optional["KeyboardShortcutManager"] = None
+
+    #: Serializes push-to-talk press/release handling. Press and release
+    #: callbacks run on separate backend threads, so a release landing while
+    #: start_recognition is still running must not be lost (#805).
+    _ptt_lock = threading.RLock()
+
     def __init__(
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
@@ -168,6 +187,15 @@ class TrayIndicator:
 
         # Initialize keyboard shortcut manager with configured shortcut and mode
         self.shortcut_manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+        # One listener per bound language shortcut (#805); rebuilt by
+        # _setup_language_shortcuts alongside the main one.
+        self._language_shortcut_managers: list[KeyboardShortcutManager] = []
+        # The binding whose press started the live push-to-talk session, so an
+        # unrelated key's release cannot end it (#805).
+        self._ptt_owner: Optional[KeyboardShortcutManager] = None
+        # Serializes the press/release pair across backend threads, so a
+        # release landing while start_recognition runs cannot be lost.
+        self._ptt_lock = threading.RLock()
 
         # Ensure icon directory exists
         os.makedirs(ICON_DIR, exist_ok=True)
@@ -328,6 +356,9 @@ class TrayIndicator:
         # in over D-Bus (see VocalinuxDBusService).
         if self._external_activation_active():
             logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
+            # The whole internal listener family is off; per-language
+            # listeners must not keep firing either.
+            self._stop_language_shortcut_managers()
             return
 
         # Get configured mode from config
@@ -340,10 +371,108 @@ class TrayIndicator:
         elif mode == "push_to_talk":
             # Register press/release callbacks for push-to-talk mode
             self.shortcut_manager.register_press_callback(self._start_recognition)
-            self.shortcut_manager.register_release_callback(self._stop_recognition)
+            self.shortcut_manager.register_release_callback(self._release_main_push_to_talk)
 
         # Start the keyboard shortcut manager
         self.shortcut_manager.start()
+
+        self._setup_language_shortcuts()
+
+    def _setup_language_shortcuts(self) -> None:
+        """(Re)build a listener per configured language shortcut (#805).
+
+        Each entry gets its own KeyboardShortcutManager because the backends
+        open the input devices read-only and never grab them, so parallel
+        listeners do not interfere. A binding whose gesture collides with the
+        main shortcut or an earlier language binding is skipped: the same
+        gesture cannot fire both.
+        """
+        # Same stop-first protection as _setup_keyboard_shortcuts: rebuilding
+        # below removes the release callback a held push-to-talk key needs to
+        # end its session, so the hold must be ended before it can be lost.
+        if self.speech_engine.state != RecognitionState.IDLE:
+            logger.info("Stopping active recognition before rebuilding language shortcuts")
+            self._stop_recognition()
+
+        self._stop_language_shortcut_managers()
+
+        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
+        if mode not in SHORTCUT_MODES:
+            # A hand-edited mode must not take down the whole shortcut setup
+            # via a backend constructor's ValueError.
+            logger.warning(f"Unknown shortcut mode {mode!r} for language shortcuts")
+            mode = DEFAULT_SHORTCUT_MODE
+        main_shortcut = (
+            self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
+            .strip()
+            .lower()
+        )
+
+        # Collisions are judged on the gestures the backends match, not the
+        # strings: "ctrl+alt+r" and "alt+ctrl+r" name the same key press, and
+        # "left_ctrl+left_ctrl" fires inside "ctrl+ctrl"'s key set.
+        bound = [main_shortcut]
+        for entry in self.config_manager.get_language_shortcuts():
+            shortcut = entry["shortcut"]
+            language = entry["language"]
+            if any(shortcut_gestures_collide(shortcut, other) for other in bound):
+                logger.warning(
+                    f"Skipping language shortcut {shortcut!r} for {language}: "
+                    "it shares its gesture with another binding"
+                )
+                continue
+            bound.append(shortcut)
+
+            try:
+                manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+            except ValueError as exc:
+                logger.warning(f"Skipping language shortcut {shortcut!r} for {language}: {exc}")
+                continue
+            if mode == "toggle":
+                manager.register_toggle_callback(
+                    partial(self._toggle_recognition_in_language, language)
+                )
+            else:
+                manager.register_press_callback(
+                    partial(self._start_recognition_in_language, language, manager)
+                )
+                manager.register_release_callback(
+                    partial(self._release_language_push_to_talk, manager)
+                )
+            manager.start()
+            self._language_shortcut_managers.append(manager)
+            logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
+
+    def _apply_history_settings(self) -> None:
+        """Push the saved history preferences onto the live store (#805).
+
+        Toggling history off must stop retention immediately — not after a
+        restart — and the snippets-keep limit applies to what's already held.
+        """
+        if self.transcription_history is None:
+            return
+        enabled = self.config_manager.get_bool("history", "enabled", True)
+        max_items = self.config_manager.get_int("history", "max_items", DEFAULT_MAX_ITEMS)
+        self.transcription_history.set_max_items(max_items)
+        self.transcription_history.set_enabled(enabled)
+
+    def _stop_language_shortcut_managers(self) -> None:
+        """Stop every per-language listener and drop the managers."""
+        for manager in self._language_shortcut_managers:
+            try:
+                manager.stop()
+            except Exception:
+                logger.exception("Failed to stop a language shortcut manager")
+        self._language_shortcut_managers = []
+
+    def refresh_language_shortcuts(self) -> None:
+        """Rebuild the per-language listeners after a settings change (#805)."""
+        if self._external_activation_active():
+            # The internal listener family is off; a binding edit must not
+            # arm language listeners behind the external-activation setting.
+            self._stop_language_shortcut_managers()
+            return
+        self._setup_language_shortcuts()
 
     def _init_icons(self):
         """Initialize the icon files for the tray indicator."""
@@ -558,17 +687,79 @@ class TrayIndicator:
         dialog.show()
         return False
 
-    def _toggle_recognition(self):
+    def _toggle_recognition(self) -> None:
         """Toggle the recognition state between IDLE and LISTENING."""
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition()
-        else:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition()
+            else:
+                self.speech_engine.stop_recognition()
 
-    def _start_recognition(self):
+    def _start_recognition(self) -> None:
         """Start voice recognition (for push-to-talk mode)."""
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition(mode="push_to_talk")
+        self._push_to_talk_press(
+            self.shortcut_manager,
+            lambda: self.speech_engine.start_recognition(mode="push_to_talk"),
+        )
+
+    def _push_to_talk_press(
+        self, manager: Optional[KeyboardShortcutManager], start: Callable[[], bool]
+    ) -> None:
+        """Push-to-talk press shared by the main and per-language bindings (#805).
+
+        The release runs on another backend thread and used to be dropped when
+        it landed between LISTENING and the owner assignment, leaving
+        dictation running with the key already up. Holding the lock through
+        the whole start makes the release wait instead: it then finds the
+        owner and ends the session normally.
+        """
+        with self._ptt_lock:
+            if self.speech_engine.state == RecognitionState.IDLE and start():
+                self._ptt_owner = manager
+
+    def _push_to_talk_release(self, manager: KeyboardShortcutManager) -> None:
+        """Push-to-talk release: end the session only when this binding owns it."""
+        with self._ptt_lock:
+            if self._ptt_owner is manager:
+                self._stop_recognition()
+
+    def _release_main_push_to_talk(self) -> None:
+        """End a push-to-talk session only when the main binding started it (#805)."""
+        self._push_to_talk_release(self.shortcut_manager)
+
+    def _release_language_push_to_talk(self, manager: KeyboardShortcutManager) -> None:
+        """End a push-to-talk session only when this binding started it (#805).
+
+        Sharing one stop callback across listeners let an unrelated binding's
+        release end a session it never started.
+        """
+        self._push_to_talk_release(manager)
+
+    def _toggle_recognition_in_language(self, language: str) -> None:
+        """Toggle-style trigger for a per-language shortcut (#805).
+
+        While idle it starts a one-shot dictation in ``language``; while
+        dictating it stops, matching the main toggle's behaviour regardless
+        of which language the current utterance is in.
+        """
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition_with_language(language)
+            else:
+                self.speech_engine.stop_recognition()
+
+    def _start_recognition_in_language(
+        self, language: str, manager: Optional[KeyboardShortcutManager] = None
+    ) -> None:
+        """Push-to-talk start for a per-language shortcut (#805)."""
+        self._push_to_talk_press(
+            manager,
+            lambda: self.speech_engine.start_recognition_with_language(
+                language, mode="push_to_talk"
+            ),
+        )
 
     def _external_start(self) -> None:
         """Start recognition for an external (D-Bus) trigger.
@@ -577,18 +768,24 @@ class TrayIndicator:
         `vocalinux --start` transcribes immediately/with silence detection
         rather than deferring until a Stop.
         """
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition()
 
     def _external_stop(self) -> None:
         """Stop recognition for an external (D-Bus) trigger."""
-        if self.speech_engine.state != RecognitionState.IDLE:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state != RecognitionState.IDLE:
+                self.speech_engine.stop_recognition()
 
-    def _stop_recognition(self):
+    def _stop_recognition(self) -> None:
         """Stop voice recognition (for push-to-talk mode)."""
-        if self.speech_engine.state != RecognitionState.IDLE:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state != RecognitionState.IDLE:
+                self.speech_engine.stop_recognition()
 
     def _add_menu_item(self, label: str, callback: Callable):
         """
@@ -1159,6 +1356,8 @@ class TrayIndicator:
             ),
             overlay_enabled_callback=self.set_overlay_enabled,
             hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
+            language_shortcuts_update_callback=self.refresh_language_shortcuts,
+            history_update_callback=self._apply_history_settings,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)
@@ -1552,8 +1751,9 @@ class TrayIndicator:
 
         self._cleanup_input_monitor()
 
-        # Stop the keyboard shortcut manager
+        # Stop the keyboard shortcut managers
         self.shortcut_manager.stop()
+        self._stop_language_shortcut_managers()
 
         if getattr(self, "overlay", None) is not None:
             self.overlay.destroy()
