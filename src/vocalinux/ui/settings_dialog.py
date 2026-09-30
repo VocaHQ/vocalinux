@@ -23,7 +23,8 @@ import os
 import re
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional
 
 import gi
 
@@ -2190,6 +2191,137 @@ class PreferenceRow(Gtk.ListBoxRow):
         return _row_matches_query(query, self.title, self.subtitle, self.keywords)
 
 
+def _set_no_show_all_visible(widget: Gtk.Widget, visible: bool) -> None:
+    """Show or hide a widget flagged ``no_show_all``.
+
+    ``show_all()`` skips flagged widgets, so revealing one means clearing the
+    flag first; hiding re-arms it so the next dialog-level ``show_all()``
+    leaves it alone. The second-language and custom-shortcut rows use this
+    helper.
+    """
+    if visible:
+        widget.set_no_show_all(False)
+        widget.show_all()
+    else:
+        widget.hide()
+        widget.set_no_show_all(True)
+
+
+def _add_switch_row(
+    group: PreferencesGroup,
+    title: str,
+    subtitle: str = "",
+    keywords: tuple = (),
+    tooltip: Optional[str] = None,
+) -> Gtk.Switch:
+    """Append a titled on/off row to ``group`` and return its switch."""
+    switch = Gtk.Switch()
+    if tooltip is not None:
+        switch.set_tooltip_text(tooltip)
+    row = PreferenceRow(title=title, subtitle=subtitle, widget=switch, keywords=keywords)
+    group.add_row(row)
+    return switch
+
+
+def _combo_chrome(combo: Gtk.Widget, tooltip: Optional[str] = None) -> None:
+    """Attach the shared dropdown chrome: tooltip plus the scroll-wheel guard."""
+    if tooltip is not None:
+        combo.set_tooltip_text(tooltip)
+    _prevent_scroll_on_hover(combo)
+
+
+def _new_spin(
+    lower: float, upper: float, step: float, digits: int, tooltip: Optional[str] = None
+) -> Gtk.SpinButton:
+    """Create a SpinButton with digits, tooltip, and the wheel guard applied."""
+    spin = Gtk.SpinButton.new_with_range(lower, upper, step)
+    spin.set_digits(digits)
+    if tooltip is not None:
+        spin.set_tooltip_text(tooltip)
+    _prevent_scroll_on_hover(spin)
+    return spin
+
+
+def _connect_picker_entry(
+    picker: SearchablePicker, on_activate: Callable, on_focus_out: Callable
+) -> None:
+    """Wire a SearchablePicker's entry: Enter commits, focus-out restores."""
+    entry = picker.get_child()
+    if entry is not None:
+        entry.connect("activate", on_activate)
+        entry.connect("focus-out-event", on_focus_out)
+
+
+# Handler-suppression flags a block can hold via _suppressed().
+_HandlerFlag = Literal[
+    "_applying_settings",
+    "_populating_models",
+    "_processing_language_change",
+    "_simple_driving",
+    "_simple_syncing",
+]
+
+
+def _handlers_suppressed(dialog: "SettingsDialog") -> bool:
+    """Whether change handlers should ignore programmatic widget updates.
+
+    True while the dialog builds itself (``_initializing``) and while saved
+    settings are applied (``_applying_settings``) — the pair every handler
+    used to re-check on entry. The narrower guards (``_populating_models``,
+    ``_processing_language_change``, ``_simple_syncing``, ``_simple_driving``)
+    still apply on top for the controls they cover.
+    """
+    return dialog._initializing or dialog._applying_settings
+
+
+@contextmanager
+def _suppressed(dialog: "SettingsDialog", flag: _HandlerFlag) -> Iterator[None]:
+    """Raise a handler-suppression flag for the block, then clear it.
+
+    Every site that used to open-code ``flag = True / try / finally /
+    flag = False`` now goes through here. Blocks that must preserve a flag
+    already held by an outer frame (the apply-guard handoff and the engine
+    resync) keep their explicit save/restore instead.
+    """
+    setattr(dialog, flag, True)
+    try:
+        yield
+    finally:
+        setattr(dialog, flag, False)
+
+
+def _undownloaded_model_info(language: str, engine: str, model_name: str) -> Optional[dict]:
+    """Catalogue info for the selected model when it is not on disk yet.
+
+    Both apply paths gate the download prompt on this; the per-engine
+    branch lives here so a new engine means one edit.
+    """
+    if engine == "whisper" and not _is_whisper_model_downloaded(model_name):
+        return WHISPER_MODEL_INFO.get(model_name, {"size_mb": 500})
+    if engine == "whisper_cpp" and not is_whispercpp_model_downloaded(model_name):
+        return WHISPERCPP_MODEL_INFO.get(model_name, {"size_mb": 39})
+    if engine == "vosk" and not _is_vosk_model_downloaded(model_name, language):
+        return VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+    if engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
+        return parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
+    if engine == "faster_whisper" and not is_faster_whisper_model_downloaded(model_name):
+        return FASTER_WHISPER_MODEL_INFO.get(model_name, {"size_mb": 39})
+    return None
+
+
+def _make_download_dialog(
+    dialog: "SettingsDialog", model_name: str, size_mb: int, engine: str
+) -> "ModelDownloadDialog":
+    """Build the modal progress dialog for a pending model download."""
+    return ModelDownloadDialog(
+        dialog,
+        model_name,
+        size_mb,
+        engine=engine,
+        language=dialog.language,
+    )
+
+
 class SettingsPage:
     """One topic page in the settings dialog (sidebar entry + stack child).
 
@@ -2876,10 +3008,10 @@ class SettingsDialog(Gtk.Dialog):
 
         # Device selection row
         self.audio_device_combo = Gtk.ComboBoxText()
-        self.audio_device_combo.set_tooltip_text(
-            "Select the microphone to use for voice recognition"
+        _combo_chrome(
+            self.audio_device_combo,
+            tooltip="Select the microphone to use for voice recognition",
         )
-        _prevent_scroll_on_hover(self.audio_device_combo)
 
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
         refresh_btn.set_tooltip_text("Refresh device list")
@@ -2919,21 +3051,16 @@ class SettingsDialog(Gtk.Dialog):
                 "Turn the switch off to mute all of them."
             ),
         )
-        self.sound_effects_switch = Gtk.Switch()
-        self.sound_effects_switch.set_tooltip_text(
-            "Play sounds when recording starts, stops, or encounters errors"
-        )
-        sound_row = PreferenceRow(
+        self.sound_effects_switch = _add_switch_row(
+            sound_group,
             title="Enable Sound Effects",
             subtitle="Play audio feedback for recording events",
-            widget=self.sound_effects_switch,
             keywords=("tone", "chime", "cue", "feedback"),
+            tooltip="Play sounds when recording starts, stops, or encounters errors",
         )
-        sound_group.add_row(sound_row)
 
         self.sound_tone_combo = Gtk.ComboBoxText()
-        self.sound_tone_combo.set_tooltip_text("Start and stop sound used while dictating")
-        _prevent_scroll_on_hover(self.sound_tone_combo)
+        _combo_chrome(self.sound_tone_combo, tooltip="Start and stop sound used while dictating")
         for tone_id, label in SOUND_EFFECT_TONES:
             self.sound_tone_combo.append(tone_id, label)
 
@@ -2966,21 +3093,19 @@ class SettingsDialog(Gtk.Dialog):
             title="Other audio",
             keywords=("duck", "volume", "speakers", "music"),
         )
-        self.duck_playback_switch = Gtk.Switch()
-        self.duck_playback_switch.set_tooltip_text(
-            "Turn speakers and headphones down while the microphone is open, "
-            "then put the volume back"
-        )
-        duck_switch_row = PreferenceRow(
+        self.duck_playback_switch = _add_switch_row(
+            other_audio,
             title="Lower other audio while dictating",
             subtitle=(
                 "Turn speakers and headphones down while the microphone is open, "
                 "then put the volume back."
             ),
-            widget=self.duck_playback_switch,
             keywords=("duck", "volume", "speakers", "music", "headphones"),
+            tooltip=(
+                "Turn speakers and headphones down while the microphone is open, "
+                "then put the volume back"
+            ),
         )
-        other_audio.add_row(duck_switch_row)
 
         self.duck_level_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
         self.duck_level_scale.set_digits(0)
@@ -3013,23 +3138,19 @@ class SettingsDialog(Gtk.Dialog):
         """Build the Application page: general behavior."""
         group = PreferencesGroup(title="General")
 
-        self.autostart_switch = Gtk.Switch()
-        autostart_row = PreferenceRow(
+        self.autostart_switch = _add_switch_row(
+            group,
             title="Start on Login",
             subtitle="Automatically start Vocalinux when you log in",
-            widget=self.autostart_switch,
             keywords=("autostart", "boot", "startup"),
         )
-        group.add_row(autostart_row)
 
-        self.start_minimized_switch = Gtk.Switch()
-        start_minimized_row = PreferenceRow(
+        self.start_minimized_switch = _add_switch_row(
+            group,
             title="Start Minimized",
             subtitle="Start minimized to system tray instead of showing window",
-            widget=self.start_minimized_switch,
             keywords=("tray",),
         )
-        group.add_row(start_minimized_row)
 
         self.missing_tray_warning_switch = Gtk.Switch()
         missing_tray_warning_row = PreferenceRow(
@@ -3040,16 +3161,12 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(missing_tray_warning_row)
 
-        self.show_overlay_switch = Gtk.Switch()
-        self.show_overlay_switch.set_tooltip_text(
-            "Show a floating glowing indicator on screen while the microphone is active"
-        )
-        show_overlay_row = PreferenceRow(
+        self.show_overlay_switch = _add_switch_row(
+            group,
             title="Show Dictation Overlay",
             subtitle="Floating on-screen glow when listening or processing",
-            widget=self.show_overlay_switch,
+            tooltip=("Show a floating glowing indicator on screen while the microphone is active"),
         )
-        group.add_row(show_overlay_row)
 
         self.general_tab.pack_start(group, False, False, 0)
 
@@ -3069,16 +3186,12 @@ class SettingsDialog(Gtk.Dialog):
             keywords=("process", "program", "game"),
         )
 
-        self.auto_pause_switch = Gtk.Switch()
-        self.auto_pause_switch.set_tooltip_text(
-            "Pause dictation and unload the speech model while any listed app is running"
-        )
-        enable_row = PreferenceRow(
+        self.auto_pause_switch = _add_switch_row(
+            group,
             title="Pause for listed apps",
             subtitle="Unload the model while these apps are open",
-            widget=self.auto_pause_switch,
+            tooltip=("Pause dictation and unload the speech model while any listed app is running"),
         )
-        group.add_row(enable_row)
 
         # Add process name: entry + Add button
         add_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -3217,7 +3330,7 @@ class SettingsDialog(Gtk.Dialog):
     def _on_auto_pause_enabled_toggled(self, widget, state):
         enabled = bool(state)
         self._update_auto_pause_sensitivity(enabled)
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
         logger.info("Auto-pause enabled toggled: %s", enabled)
         self.config_manager.set("auto_pause", "enabled", enabled)
@@ -3225,7 +3338,7 @@ class SettingsDialog(Gtk.Dialog):
         return False
 
     def _on_auto_pause_add_clicked(self, widget):
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         name = self.auto_pause_entry.get_text().strip()
         if not name:
@@ -3244,7 +3357,7 @@ class SettingsDialog(Gtk.Dialog):
         logger.info("Added auto-pause app: %s", name)
 
     def _on_auto_pause_remove_clicked(self, widget, name: str):
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         apps = [a for a in self._get_auto_pause_apps() if a.lower() != name.lower()]
         self._save_auto_pause_apps(apps)
@@ -3252,7 +3365,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_auto_pause_pick_running(self, widget):
         """Show a simple dialog listing running process names to add."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         try:
@@ -3332,19 +3445,19 @@ class SettingsDialog(Gtk.Dialog):
             ),
         )
 
-        self.model_keepalive_switch = Gtk.Switch()
-        self.model_keepalive_switch.set_tooltip_text(
-            "Unload the speech model after the idle timeout to save memory and battery"
-        )
-        enable_row = PreferenceRow(
+        self.model_keepalive_switch = _add_switch_row(
+            group,
             title="Unload model when idle",
             subtitle="Free RAM and GPU after this much inactivity",
-            widget=self.model_keepalive_switch,
+            tooltip=("Unload the speech model after the idle timeout to save memory and battery"),
         )
-        group.add_row(enable_row)
 
         self.model_keepalive_timeout_combo = Gtk.ComboBoxText()
         _style_combo(self.model_keepalive_timeout_combo)
+        _combo_chrome(
+            self.model_keepalive_timeout_combo,
+            tooltip="How long to wait after the last dictation before unloading the model",
+        )
         # id = seconds as string
         for seconds, label in (
             (60, "1 minute"),
@@ -3354,10 +3467,6 @@ class SettingsDialog(Gtk.Dialog):
             (1800, "30 minutes"),
         ):
             self.model_keepalive_timeout_combo.append(str(seconds), label)
-        self.model_keepalive_timeout_combo.set_tooltip_text(
-            "How long to wait after the last dictation before unloading the model"
-        )
-        _prevent_scroll_on_hover(self.model_keepalive_timeout_combo)
         timeout_row = PreferenceRow(
             title="Idle Timeout",
             subtitle="How long to wait after the last dictation",
@@ -3400,7 +3509,7 @@ class SettingsDialog(Gtk.Dialog):
     def _on_model_keepalive_enabled_toggled(self, widget, state):
         enabled = bool(state)
         self._update_model_keepalive_sensitivity(enabled)
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
         logger.info("Model keep-alive enabled toggled: %s", enabled)
         self.config_manager.set("model_keepalive", "enabled", enabled)
@@ -3408,7 +3517,7 @@ class SettingsDialog(Gtk.Dialog):
         return False
 
     def _on_model_keepalive_timeout_changed(self, widget):
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         active_id = self.model_keepalive_timeout_combo.get_active_id()
         if not active_id:
@@ -3423,7 +3532,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_autostart_toggled(self, widget, state):
         """Handle toggle of the autostart switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3441,7 +3550,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_start_minimized_toggled(self, widget, state):
         """Handle toggle of the start minimized switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3453,7 +3562,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_missing_tray_warning_toggled(self, widget, state):
         """Handle toggle of the missing tray support warning switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3464,7 +3573,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_show_overlay_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
         """Handle toggle of the floating dictation overlay switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3480,7 +3589,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_copy_to_clipboard_toggled(self, widget, state):
         """Handle toggle of the copy to clipboard switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3492,7 +3601,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_auto_capitalize_toggled(self, widget, state):
         """Handle toggle of the auto-capitalize switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3504,7 +3613,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_append_trailing_space_toggled(self, widget, state):
         """Handle toggle of the trailing space after dictation switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -3515,7 +3624,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_paste_shortcut_changed(self, widget):
         """Handle clipboard paste-shortcut combo changes."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         shortcut_id = self.paste_shortcut_combo.get_active_id() or DEFAULT_PASTE_SHORTCUT
@@ -3531,7 +3640,7 @@ class SettingsDialog(Gtk.Dialog):
     def _on_sound_effects_toggled(self, widget, state):
         enabled = bool(state)
         self._update_sound_effects_sensitivity(enabled)
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         logger.info(f"Sound effects toggled: {enabled}")
@@ -3543,7 +3652,7 @@ class SettingsDialog(Gtk.Dialog):
     def _on_duck_playback_toggled(self, _widget: Gtk.Widget, state: bool) -> bool:
         enabled = bool(state)
         self.duck_level_scale.set_sensitive(enabled)
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
         logger.info("Lower other audio while dictating toggled: %s", enabled)
         self.config_manager.set_playback_duck_enabled(enabled)
@@ -3551,7 +3660,7 @@ class SettingsDialog(Gtk.Dialog):
         return False
 
     def _on_duck_level_changed(self, scale: Gtk.Scale) -> None:
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         percent = int(round(scale.get_value()))
         logger.info("Playback duck level set to %s%%", percent)
@@ -3587,7 +3696,7 @@ class SettingsDialog(Gtk.Dialog):
         tone_id = combo.get_active_id() or DEFAULT_SOUND_EFFECT_TONE
         self._tone_preview_kind = "start"
         self._sync_tone_preview_button(tone_id)
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         logger.info("Dictation tone selected: %s", tone_id)
         self.config_manager.set_sound_effects_tone(tone_id)
@@ -3611,18 +3720,17 @@ class SettingsDialog(Gtk.Dialog):
         # scroll, and a list you cannot type into is a step backwards.
         self.simple_language_combo = SearchablePicker()
         _style_combo(self.simple_language_combo)
-        _prevent_scroll_on_hover(self.simple_language_combo)
+        _combo_chrome(self.simple_language_combo)
         for language_id, info in SUPPORTED_LANGUAGES.items():
             # Auto-detect is the switch below, not a language you speak.
             if language_id != "auto":
                 self.simple_language_combo.append(language_id, info["name"])
         _attach_language_combo_search(self.simple_language_combo)
-        simple_language_entry = self.simple_language_combo.get_child()
-        if simple_language_entry is not None:
-            simple_language_entry.connect("activate", self._on_simple_language_entry_activate)
-            simple_language_entry.connect(
-                "focus-out-event", self._on_simple_language_entry_focus_out
-            )
+        _connect_picker_entry(
+            self.simple_language_combo,
+            self._on_simple_language_entry_activate,
+            self._on_simple_language_entry_focus_out,
+        )
         self.simple_language_row = PreferenceRow(
             title="Main language",
             subtitle="Search or pick from the list",
@@ -3633,19 +3741,16 @@ class SettingsDialog(Gtk.Dialog):
 
         # The engine takes one language or none, so this is the only other option
         # that exists. A second language field would promise something it cannot do.
-        self.simple_multi_switch = Gtk.Switch()
-        self.simple_multi_switch.set_valign(Gtk.Align.CENTER)
-        self.simple_multi_row = PreferenceRow(
+        self.simple_multi_switch = _add_switch_row(
+            self.simple_group,
             title="Other languages",
             subtitle="Guesses the language each time. Short clips can be wrong.",
-            widget=self.simple_multi_switch,
             keywords=("multilingual", "auto", "detect"),
         )
-        self.simple_group.add_row(self.simple_multi_row)
 
         self.simple_second_language_combo = SearchablePicker()
         _style_combo(self.simple_second_language_combo)
-        _prevent_scroll_on_hover(self.simple_second_language_combo)
+        _combo_chrome(self.simple_second_language_combo)
         # First entry is the multilingual answer: any language, detected per
         # utterance. Naming one specific second language means the same thing
         # to the engine, but lets the user say which one they had in mind.
@@ -3669,7 +3774,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.simple_priority_combo = Gtk.ComboBoxText()
         _style_combo(self.simple_priority_combo)
-        _prevent_scroll_on_hover(self.simple_priority_combo)
+        _combo_chrome(self.simple_priority_combo)
         for priority in PRIORITIES:
             self.simple_priority_combo.append(priority, PRIORITY_LABELS[priority])
         self.simple_priority_row = PreferenceRow(
@@ -3719,7 +3824,7 @@ class SettingsDialog(Gtk.Dialog):
         # Engine selection
         self.engine_combo = Gtk.ComboBoxText()
         _style_combo(self.engine_combo)
-        _prevent_scroll_on_hover(self.engine_combo)
+        _combo_chrome(self.engine_combo)
         engine_row = PreferenceRow(
             title="Engine",
             subtitle="Speech recognition backend",
@@ -3731,7 +3836,7 @@ class SettingsDialog(Gtk.Dialog):
         self.model_combo = Gtk.ComboBoxText()
         _style_combo(self.model_combo)
         self.model_combo.set_tooltip_text(MODEL_SIZE_TOOLTIP)
-        _prevent_scroll_on_hover(self.model_combo)
+        _combo_chrome(self.model_combo)
         self.model_row = PreferenceRow(
             title="Model size",
             subtitle="Larger models are more accurate but slower",
@@ -3743,8 +3848,7 @@ class SettingsDialog(Gtk.Dialog):
         # whisper.cpp specialization selection
         self.model_variant_combo = Gtk.ComboBoxText()
         _style_combo(self.model_variant_combo)
-        self.model_variant_combo.set_tooltip_text(MODEL_SPECIALIZATION_TOOLTIP)
-        _prevent_scroll_on_hover(self.model_variant_combo)
+        _combo_chrome(self.model_variant_combo, MODEL_SPECIALIZATION_TOOLTIP)
         self.model_variant_row = PreferenceRow(
             title="Specialization",
             subtitle="Variant for language, speed, or memory use",
@@ -3756,13 +3860,13 @@ class SettingsDialog(Gtk.Dialog):
         # Language selection (searchable: type to filter the 30+ language list)
         self.language_combo = SearchablePicker()
         _style_combo(self.language_combo)
-        self.language_combo.set_tooltip_text(LANGUAGE_TOOLTIP)
-        _prevent_scroll_on_hover(self.language_combo)
+        _combo_chrome(self.language_combo, LANGUAGE_TOOLTIP)
         _attach_language_combo_search(self.language_combo)
-        language_entry = self.language_combo.get_child()
-        if language_entry is not None:
-            language_entry.connect("activate", self._on_language_entry_activate)
-            language_entry.connect("focus-out-event", self._on_language_entry_focus_out)
+        _connect_picker_entry(
+            self.language_combo,
+            self._on_language_entry_activate,
+            self._on_language_entry_focus_out,
+        )
         self.language_row = PreferenceRow(
             title="Language",
             subtitle="Search or pick from the list",
@@ -3776,7 +3880,6 @@ class SettingsDialog(Gtk.Dialog):
         # disabled and shows what the layout currently resolves to; off, whatever
         # it shows becomes the pinned language again.
         self.follow_layout_switch = Gtk.Switch()
-        self.follow_layout_switch.set_valign(Gtk.Align.CENTER)
         self.follow_layout_switch.set_tooltip_text(FOLLOW_LAYOUT_TOOLTIP)
         self.follow_layout_row = PreferenceRow(
             title="Follow keyboard layout",
@@ -3886,7 +3989,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_remote_api_settings_changed(self, widget):
         """Handle remote API URL/Key/endpoint changes."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         url = self.remote_api_url_entry.get_text().strip()
@@ -3979,10 +4082,9 @@ class SettingsDialog(Gtk.Dialog):
         group = PreferencesGroup(title="Listening")
 
         # VAD Sensitivity
-        self.vad_spin = Gtk.SpinButton.new_with_range(1, 5, 1)
-        _style_spin(self.vad_spin)
-        self.vad_spin.set_tooltip_text("Higher = more sensitive to quiet speech")
-        _prevent_scroll_on_hover(self.vad_spin)
+        self.vad_spin = _style_spin(
+            _new_spin(1, 5, 1, 0, tooltip="Higher = more sensitive to quiet speech")
+        )
         silero_active = is_silero_available()
         vad_subtitle = (
             "Sensitivity to quiet speech (1-5) — Silero neural VAD"
@@ -3998,11 +4100,9 @@ class SettingsDialog(Gtk.Dialog):
         group.add_row(self.vad_row)
 
         # Silence Timeout
-        self.silence_spin = Gtk.SpinButton.new_with_range(0.5, 5.0, 0.1)
-        self.silence_spin.set_digits(1)
-        _style_spin(self.silence_spin)
-        self.silence_spin.set_tooltip_text("Wait time after silence before processing speech")
-        _prevent_scroll_on_hover(self.silence_spin)
+        self.silence_spin = _style_spin(
+            _new_spin(0.5, 5.0, 0.1, 1, tooltip="Wait time after silence before processing speech")
+        )
         silence_row = PreferenceRow(
             title="Stop After Silence",
             subtitle="Seconds of silence before processing what you said",
@@ -4016,70 +4116,65 @@ class SettingsDialog(Gtk.Dialog):
         # Output group: what happens with the recognized text
         output_group = PreferencesGroup(title="Output")
 
-        self.voice_commands_switch = Gtk.Switch()
-        self.voice_commands_switch.set_tooltip_text(
-            "Enable voice commands like 'new line', 'period', 'undo', etc.\n"
-            "Punctuation phrases also match the recognition language "
-            "(e.g. Italian 'virgola', French 'virgule').\n"
-            "Useful for VOSK engine. Whisper engines handle punctuation automatically."
-        )
-        voice_commands_row = PreferenceRow(
+        self.voice_commands_switch = _add_switch_row(
+            output_group,
             title="Voice Commands",
             subtitle="Say 'new line', 'period', 'undo' (localized punctuation too)",
-            widget=self.voice_commands_switch,
             keywords=("punctuation", "editing"),
+            tooltip=(
+                "Enable voice commands like 'new line', 'period', 'undo', etc.\n"
+                "Punctuation phrases also match the recognition language "
+                "(e.g. Italian 'virgola', French 'virgule').\n"
+                "Useful for VOSK engine. Whisper engines handle punctuation automatically."
+            ),
         )
-        output_group.add_row(voice_commands_row)
 
-        self.auto_capitalize_switch = Gtk.Switch()
-        self.auto_capitalize_switch.set_tooltip_text(
-            "Automatically capitalize the first letter of each sentence. "
-            "Works after sentence-ending punctuation (period, exclamation, question mark). "
-            "Only applies to Vosk engine - Whisper models output proper capitalization automatically."
-        )
-        auto_capitalize_row = PreferenceRow(
+        self.auto_capitalize_switch = _add_switch_row(
+            output_group,
             title="Auto-Capitalize Sentences",
             subtitle="Capitalize first letter after punctuation (Vosk only)",
-            widget=self.auto_capitalize_switch,
             keywords=("capitalization", "casing", "sentence"),
+            tooltip=(
+                "Automatically capitalize the first letter of each sentence. "
+                "Works after sentence-ending punctuation (period, exclamation, question mark). "
+                "Only applies to Vosk engine - Whisper models output proper capitalization "
+                "automatically."
+            ),
         )
-        output_group.add_row(auto_capitalize_row)
 
-        self.copy_to_clipboard_switch = Gtk.Switch()
-        self.copy_to_clipboard_switch.set_tooltip_text(
-            "Copy recognized text to clipboard after each transcription. "
-            "Useful if injection fails or you want to paste elsewhere."
-        )
-        copy_to_clipboard_row = PreferenceRow(
+        self.copy_to_clipboard_switch = _add_switch_row(
+            output_group,
             title="Copy to Clipboard",
             subtitle="Always copy recognized text to clipboard for easy pasting",
-            widget=self.copy_to_clipboard_switch,
             keywords=("paste",),
+            tooltip=(
+                "Copy recognized text to clipboard after each transcription. "
+                "Useful if injection fails or you want to paste elsewhere."
+            ),
         )
-        output_group.add_row(copy_to_clipboard_row)
 
-        self.append_trailing_space_switch = Gtk.Switch()
-        self.append_trailing_space_switch.set_tooltip_text(
-            "Append a space after each completed transcription so the next "
-            "dictation session continues without gluing onto the previous text "
-            '(e.g. "Hello. This" instead of "Hello.This").'
-        )
-        append_trailing_space_row = PreferenceRow(
+        self.append_trailing_space_switch = _add_switch_row(
+            output_group,
             title="Trailing Space After Dictation",
             subtitle="Insert a space after each completed transcription segment",
-            widget=self.append_trailing_space_switch,
             keywords=("space", "spacing", "punctuation", "push-to-talk"),
+            tooltip=(
+                "Append a space after each completed transcription so the next "
+                "dictation session continues without gluing onto the previous text "
+                '(e.g. "Hello. This" instead of "Hello.This").'
+            ),
         )
-        output_group.add_row(append_trailing_space_row)
 
         self.paste_shortcut_combo = Gtk.ComboBoxText()
         _style_combo(self.paste_shortcut_combo)
-        self.paste_shortcut_combo.set_tooltip_text(
-            "Clipboard injection uses Ctrl+V in ordinary fields and Ctrl+Shift+V "
-            "in terminal windows. Override this when a nested terminal panel "
-            "(for example in an IDE) is not detected."
+        _combo_chrome(
+            self.paste_shortcut_combo,
+            tooltip=(
+                "Clipboard injection uses Ctrl+V in ordinary fields and Ctrl+Shift+V "
+                "in terminal windows. Override this when a nested terminal panel "
+                "(for example in an IDE) is not detected."
+            ),
         )
-        _prevent_scroll_on_hover(self.paste_shortcut_combo)
         for shortcut_id, display_name in PASTE_SHORTCUTS:
             self.paste_shortcut_combo.append(shortcut_id, display_name)
         paste_shortcut_row = PreferenceRow(
@@ -4157,10 +4252,10 @@ class SettingsDialog(Gtk.Dialog):
         # Mode selection (Toggle vs Push-to-Talk)
         self.shortcut_mode_combo = Gtk.ComboBoxText()
         _style_combo(self.shortcut_mode_combo)
-        self.shortcut_mode_combo.set_tooltip_text(
-            "Choose between toggle (double-tap) or push-to-talk mode"
+        _combo_chrome(
+            self.shortcut_mode_combo,
+            tooltip="Choose between toggle (double-tap) or push-to-talk mode",
         )
-        _prevent_scroll_on_hover(self.shortcut_mode_combo)
 
         # Populate mode options
         for mode_id in SHORTCUT_MODES:
@@ -4324,17 +4419,11 @@ class SettingsDialog(Gtk.Dialog):
         """Show or hide the custom shortcut entry / Record / Set controls.
 
         The row uses ``no_show_all`` so a dialog-level ``show_all()`` does not
-        reveal it while a preset is selected. ``Gtk.Widget.show_all()`` is a
-        no-op when that flag is set, so clear it before showing (and restore it
-        when hiding). Matches the ``language_warning`` pattern of pairing
-        ``no_show_all`` with an explicit show path.
+        reveal it while a preset is selected. The shared dance —
+        ``set_no_show_all(False)`` then ``show_all()`` to show, ``hide()``
+        then re-arm to hide — lives in ``_set_no_show_all_visible``.
         """
-        if visible:
-            self.custom_shortcut_row.set_no_show_all(False)
-            self.custom_shortcut_row.show_all()
-        else:
-            self.custom_shortcut_row.hide()
-            self.custom_shortcut_row.set_no_show_all(True)
+        _set_no_show_all_visible(self.custom_shortcut_row, visible)
 
     def _set_shortcut_combo_active_id(self, active_id: str) -> None:
         """Select a combo item without firing the changed handler."""
@@ -4750,14 +4839,12 @@ class SettingsDialog(Gtk.Dialog):
 
         # Opt-in toggle at the top of the tab
         opt_in_group = PreferencesGroup(title="Advanced Access")
-        self.power_user_switch = Gtk.Switch()
-        self.power_user_switch.set_tooltip_text("Reveal advanced whisper.cpp tuning parameters")
-        power_user_row = PreferenceRow(
+        self.power_user_switch = _add_switch_row(
+            opt_in_group,
             title="Unlock Advanced Settings",
             subtitle="I know what I'm doing — show me the whisper.cpp tuning knobs",
-            widget=self.power_user_switch,
+            tooltip="Reveal advanced whisper.cpp tuning parameters",
         )
-        opt_in_group.add_row(power_user_row)
         self.advanced_tab.pack_start(opt_in_group, False, False, 0)
 
         # Revealer that hides/shows the actual advanced controls.
@@ -4769,34 +4856,23 @@ class SettingsDialog(Gtk.Dialog):
 
         group = PreferencesGroup(title="Whisper.cpp Decoding")
 
-        self.advanced_no_timestamps_switch = Gtk.Switch()
-        self.advanced_no_timestamps_switch.set_tooltip_text(
-            "Disable timestamp generation to reduce hallucinations"
-        )
-        no_timestamps_row = PreferenceRow(
+        self.advanced_no_timestamps_switch = _add_switch_row(
+            group,
             title="No Timestamps",
             subtitle="Disable timestamp tokens (reduces hallucinations)",
-            widget=self.advanced_no_timestamps_switch,
+            tooltip="Disable timestamp generation to reduce hallucinations",
         )
-        group.add_row(no_timestamps_row)
 
-        self.advanced_no_context_switch = Gtk.Switch()
-        self.advanced_no_context_switch.set_tooltip_text(
-            "Do not condition on previously transcribed text"
-        )
-        no_context_row = PreferenceRow(
+        self.advanced_no_context_switch = _add_switch_row(
+            group,
             title="No Context",
             subtitle="Prevent error loops from past text",
-            widget=self.advanced_no_context_switch,
+            tooltip="Do not condition on previously transcribed text",
         )
-        group.add_row(no_context_row)
 
-        self.advanced_temperature_spin = Gtk.SpinButton.new_with_range(0.0, 1.0, 0.1)
-        self.advanced_temperature_spin.set_digits(1)
-        self.advanced_temperature_spin.set_tooltip_text(
-            "0.0 = greedy decoding, higher = more random"
+        self.advanced_temperature_spin = _new_spin(
+            0.0, 1.0, 0.1, 1, tooltip="0.0 = greedy decoding, higher = more random"
         )
-        _prevent_scroll_on_hover(self.advanced_temperature_spin)
         temperature_row = PreferenceRow(
             title="Temperature",
             subtitle="Decoding randomness (0.0 = deterministic)",
@@ -4804,12 +4880,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(temperature_row)
 
-        self.advanced_temperature_inc_spin = Gtk.SpinButton.new_with_range(-1.0, 1.0, 0.1)
-        self.advanced_temperature_inc_spin.set_digits(1)
-        self.advanced_temperature_inc_spin.set_tooltip_text(
-            "-1.0 disables temperature fallback entirely"
+        self.advanced_temperature_inc_spin = _new_spin(
+            -1.0, 1.0, 0.1, 1, tooltip="-1.0 disables temperature fallback entirely"
         )
-        _prevent_scroll_on_hover(self.advanced_temperature_inc_spin)
         temperature_inc_row = PreferenceRow(
             title="Temperature Increment",
             subtitle="Fallback step (-1.0 = disabled)",
@@ -4817,12 +4890,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(temperature_inc_row)
 
-        self.advanced_entropy_thold_spin = Gtk.SpinButton.new_with_range(0.0, 5.0, 0.1)
-        self.advanced_entropy_thold_spin.set_digits(1)
-        self.advanced_entropy_thold_spin.set_tooltip_text(
-            "Higher values catch more repetition loops"
+        self.advanced_entropy_thold_spin = _new_spin(
+            0.0, 5.0, 0.1, 1, tooltip="Higher values catch more repetition loops"
         )
-        _prevent_scroll_on_hover(self.advanced_entropy_thold_spin)
         entropy_row = PreferenceRow(
             title="Entropy Threshold",
             subtitle="Repetition loop detection",
@@ -4830,12 +4900,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(entropy_row)
 
-        self.advanced_logprob_thold_spin = Gtk.SpinButton.new_with_range(-5.0, 0.0, 0.1)
-        self.advanced_logprob_thold_spin.set_digits(1)
-        self.advanced_logprob_thold_spin.set_tooltip_text(
-            "Average log-probability threshold for fallback"
+        self.advanced_logprob_thold_spin = _new_spin(
+            -5.0, 0.0, 0.1, 1, tooltip="Average log-probability threshold for fallback"
         )
-        _prevent_scroll_on_hover(self.advanced_logprob_thold_spin)
         logprob_row = PreferenceRow(
             title="Logprob Threshold",
             subtitle="Fallback trigger for low confidence",
@@ -4843,12 +4910,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(logprob_row)
 
-        self.advanced_no_speech_thold_spin = Gtk.SpinButton.new_with_range(0.0, 1.0, 0.05)
-        self.advanced_no_speech_thold_spin.set_digits(2)
-        self.advanced_no_speech_thold_spin.set_tooltip_text(
-            "Probability threshold for treating audio as silence"
+        self.advanced_no_speech_thold_spin = _new_spin(
+            0.0, 1.0, 0.05, 2, tooltip="Probability threshold for treating audio as silence"
         )
-        _prevent_scroll_on_hover(self.advanced_no_speech_thold_spin)
         no_speech_row = PreferenceRow(
             title="No-Speech Threshold",
             subtitle="Silence detection confidence",
@@ -5158,10 +5222,13 @@ class SettingsDialog(Gtk.Dialog):
         self.update_channel_combo = Gtk.ComboBoxText()
         self.update_channel_combo.append("stable", "Stable")
         self.update_channel_combo.append("nightly", "Nightly")
-        self.update_channel_combo.set_tooltip_text(
-            "Stable uses the latest numbered release. Nightly uses the newest nightly-YYYY-MM-DD build."
+        _combo_chrome(
+            self.update_channel_combo,
+            tooltip=(
+                "Stable uses the latest numbered release. Nightly uses the newest "
+                "nightly-YYYY-MM-DD build."
+            ),
         )
-        _prevent_scroll_on_hover(self.update_channel_combo)
         saved_channel = normalize_channel(
             self.config_manager.get_str("updates", "channel", DEFAULT_UPDATE_CHANNEL)
         )
@@ -5271,7 +5338,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_update_channel_changed(self, widget):
         """Persist channel choice and refresh the update check."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         channel = self._current_update_channel()
         self.config_manager.set("updates", "channel", channel)
@@ -5434,11 +5501,13 @@ class SettingsDialog(Gtk.Dialog):
         gpu_group = PreferencesGroup(title="Hardware Acceleration")
         self.gpu_device_combo = Gtk.ComboBoxText()
         _style_combo(self.gpu_device_combo)
-        self.gpu_device_combo.set_tooltip_text(
-            "Select which GPU to use for whisper.cpp Vulkan acceleration. "
-            "Has no effect when pywhispercpp was built without GPU libraries."
+        _combo_chrome(
+            self.gpu_device_combo,
+            tooltip=(
+                "Select which GPU to use for whisper.cpp Vulkan acceleration. "
+                "Has no effect when pywhispercpp was built without GPU libraries."
+            ),
         )
-        _prevent_scroll_on_hover(self.gpu_device_combo)
         self._populate_gpu_devices()
         gpu_row = PreferenceRow(
             title="Vulkan GPU",
@@ -5492,14 +5561,14 @@ class SettingsDialog(Gtk.Dialog):
         # API Endpoint
         self.remote_api_endpoint_combo = Gtk.ComboBoxText()
         _style_combo(self.remote_api_endpoint_combo)
-        self.remote_api_endpoint_combo.set_tooltip_text(
-            "Select the API format of the remote server (API Endpoint Format)"
+        _combo_chrome(
+            self.remote_api_endpoint_combo,
+            tooltip="Select the API format of the remote server (API Endpoint Format)",
         )
         self.remote_api_endpoint_combo.append(
             "/v1/audio/transcriptions", "OpenAI/FunASR (/v1/audio/transcriptions)"
         )
         self.remote_api_endpoint_combo.append("/inference", "Whisper.cpp (/inference)")
-        _prevent_scroll_on_hover(self.remote_api_endpoint_combo)
         remote_endpoint_row = PreferenceRow(
             title="API Endpoint",
             subtitle="API format for the remote server",
@@ -5868,7 +5937,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_power_user_toggled(self, widget, state):
         """Handle the power-user opt-in toggle."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
         if getattr(self, "_power_user_dialog_open", False):
             return True
@@ -5909,20 +5978,20 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_advanced_prompt_changed(self, buffer):
         """Track prompt edits without applying settings on every keystroke."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
         self._advanced_prompt_dirty = True
 
     def _flush_advanced_prompt_if_dirty(self):
         """Apply deferred initial prompt edits."""
-        if not self._advanced_prompt_dirty or self._initializing or self._applying_settings:
+        if not self._advanced_prompt_dirty or _handlers_suppressed(self):
             return
         self._auto_apply_settings()
         self._advanced_prompt_dirty = False
 
     def _on_advanced_param_changed(self, widget, *args):
         """Handle any advanced parameter change."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
         self._auto_apply_settings()
         self._advanced_prompt_dirty = False
@@ -5930,12 +5999,11 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_reset_advanced_clicked(self, widget):
         """Reset whisper.cpp advanced parameters to defaults."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         defaults = DEFAULT_CONFIG["advanced"]
-        self._applying_settings = True
-        try:
+        with _suppressed(self, "_applying_settings"):
             self.advanced_no_timestamps_switch.set_active(defaults["whispercpp_no_timestamps"])
             self.advanced_no_context_switch.set_active(defaults["whispercpp_no_context"])
             self.advanced_initial_prompt_buffer.set_text(defaults["whispercpp_initial_prompt"], -1)
@@ -5945,8 +6013,6 @@ class SettingsDialog(Gtk.Dialog):
             self.advanced_logprob_thold_spin.set_value(defaults["whispercpp_logprob_thold"])
             self.advanced_no_speech_thold_spin.set_value(defaults["whispercpp_no_speech_thold"])
             self.gpu_device_combo.set_active_id("-1")
-        finally:
-            self._applying_settings = False
 
         self._auto_apply_settings()
 
@@ -6229,14 +6295,11 @@ class SettingsDialog(Gtk.Dialog):
             return
 
         model_size = get_whispercpp_model_size(target)
-        self._populating_models = True
-        try:
+        with _suppressed(self, "_populating_models"):
             self.model_combo.set_active_id(model_size)
             self._populate_whispercpp_variant_options(model_size, target)
             self.model_variant_combo.set_active_id(target)
             self._sync_language_options_for_selected_model()
-        finally:
-            self._populating_models = False
 
         self._update_model_info()
         self._refresh_unused_downloads()
@@ -6298,8 +6361,7 @@ class SettingsDialog(Gtk.Dialog):
                 preferred_language or self.language_combo.get_active_id() or self.language
             )
 
-        self._processing_language_change = True
-        try:
+        with _suppressed(self, "_processing_language_change"):
             self._populate_language_options()
             if not self._set_combo_active_id_or_first(self.language_combo, language_to_keep):
                 return
@@ -6319,8 +6381,6 @@ class SettingsDialog(Gtk.Dialog):
                     engine, self.language, self._last_non_parakeet_language
                 ):
                     self._last_non_parakeet_language = self.language
-        finally:
-            self._processing_language_change = False
 
         self._sync_follow_layout_controls()
         self._update_language_warning()
@@ -6328,115 +6388,114 @@ class SettingsDialog(Gtk.Dialog):
 
     def _populate_model_options(self):
         """Populate model options based on the current engine selection."""
-        self._populating_models = True
         try:
-            self.model_combo.remove_all()
-            self.model_variant_combo.remove_all()
+            with _suppressed(self, "_populating_models"):
+                self.model_combo.remove_all()
+                self.model_variant_combo.remove_all()
 
-            engine_text = self.engine_combo.get_active_text()
-            if not engine_text:
-                logger.warning("No engine selected during model options population")
-                return
+                engine_text = self.engine_combo.get_active_text()
+                if not engine_text:
+                    logger.warning("No engine selected during model options population")
+                    return
 
-            engine = _engine_from_display(engine_text)
-            logger.info(f"Populating model options for engine: {engine}")
+                engine = _engine_from_display(engine_text)
+                logger.info(f"Populating model options for engine: {engine}")
 
-            # Remote API does not need model options
-            if engine == "remote_api":
-                logger.info("Remote API engine selected, no model options needed")
-                return
+                # Remote API does not need model options
+                if engine == "remote_api":
+                    logger.info("Remote API engine selected, no model options needed")
+                    return
 
-            saved_model_for_engine = self.config_manager.get_model_size_for_engine(engine)
-            logger.info(f"Saved model for {engine}: {saved_model_for_engine}")
+                saved_model_for_engine = self.config_manager.get_model_size_for_engine(engine)
+                logger.info(f"Saved model for {engine}: {saved_model_for_engine}")
 
-            if engine == "whisper_cpp":
-                self._populate_whispercpp_model_options(saved_model_for_engine)
-                return
+                if engine == "whisper_cpp":
+                    self._populate_whispercpp_model_options(saved_model_for_engine)
+                    return
 
-            downloaded_models = []
-            smallest_model = None
-            if engine == "whisper":
-                recommended_model, _ = _get_recommended_whisper_model()
-            elif engine == "parakeet":
-                recommended_model = parakeet.RECOMMENDED_MODEL
-            elif engine == "faster_whisper":
-                recommended_model, _ = get_recommended_faster_whisper_model()
-                recommended_model, _ = _recommended_faster_whisper_variant_for_language(
-                    recommended_model,
-                    "",
-                    self.language_combo.get_active_id() or self.language,
-                )
-            else:
-                recommended_model, _ = _get_recommended_vosk_model()
-
-            if engine in ENGINE_MODELS:
-                for size in ENGINE_MODELS[engine]:
-                    if engine == "whisper" and size in WHISPER_MODEL_INFO:
-                        info = WHISPER_MODEL_INFO[size]
-                        is_downloaded = _is_whisper_model_downloaded(size)
-                    elif engine == "faster_whisper" and size in FASTER_WHISPER_MODEL_INFO:
-                        info = FASTER_WHISPER_MODEL_INFO[size]
-                        is_downloaded = is_faster_whisper_model_downloaded(size)
-                    elif engine == "vosk" and size in VOSK_MODEL_INFO:
-                        info = VOSK_MODEL_INFO[size]
-                        is_downloaded = _is_vosk_model_downloaded(size, self.language)
-                    elif engine == "parakeet":
-                        info = parakeet.PARAKEET_MODEL_INFO[size]
-                        is_downloaded = parakeet.is_model_downloaded(size)
-                    else:
-                        is_downloaded = False
-                        info = {"size_mb": 0}
-
-                    model_display_name = _model_display_name(size)
-                    status = "✓" if is_downloaded else "↓"
-                    star = " ★" if size == recommended_model else ""
-                    display_text = (
-                        f"{model_display_name} ({_format_size(info.get('size_mb', 0))}) "
-                        f"{status}{star}"
+                downloaded_models = []
+                smallest_model = None
+                if engine == "whisper":
+                    recommended_model, _ = _get_recommended_whisper_model()
+                elif engine == "parakeet":
+                    recommended_model = parakeet.RECOMMENDED_MODEL
+                elif engine == "faster_whisper":
+                    recommended_model, _ = get_recommended_faster_whisper_model()
+                    recommended_model, _ = _recommended_faster_whisper_variant_for_language(
+                        recommended_model,
+                        "",
+                        self.language_combo.get_active_id() or self.language,
                     )
-
-                    if is_downloaded:
-                        downloaded_models.append(size)
-                    if smallest_model is None:
-                        smallest_model = size
-
-                    # whisper.cpp already appends the catalog id; Faster Whisper
-                    # ids include dots (`small.en`) which capitalize() mangles.
-                    combo_id = size if engine == "faster_whisper" else size.capitalize()
-                    self.model_combo.append(combo_id, display_text)
-
-            # Determine which model to select
-            saved_model = saved_model_for_engine.lower()
-            valid_models = [m.lower() for m in ENGINE_MODELS.get(engine, [])]
-
-            if saved_model in valid_models:
-                selected = saved_model
-            elif downloaded_models:
-                selected = downloaded_models[0]
-            else:
-                selected = smallest_model
-
-            if engine == "faster_whisper":
-                model_to_set = selected or "tiny"
-            else:
-                model_to_set = selected.capitalize() if selected else "Small"
-
-            logger.info(f"Setting active model to: {model_to_set}")
-
-            if not self.model_combo.set_active_id(model_to_set):
-                logger.warning(f"Could not set model by ID '{model_to_set}'")
-                model = self.model_combo.get_model()
-                for i, row in enumerate(model):
-                    if row[0].lower() == model_to_set.lower():
-                        self.model_combo.set_active(i)
-                        break
                 else:
-                    if len(ENGINE_MODELS.get(engine, [])) > 0:
-                        self.model_combo.set_active(0)
+                    recommended_model, _ = _get_recommended_vosk_model()
 
-            logger.info(f"Final selected model: {self.model_combo.get_active_text()}")
+                if engine in ENGINE_MODELS:
+                    for size in ENGINE_MODELS[engine]:
+                        if engine == "whisper" and size in WHISPER_MODEL_INFO:
+                            info = WHISPER_MODEL_INFO[size]
+                            is_downloaded = _is_whisper_model_downloaded(size)
+                        elif engine == "faster_whisper" and size in FASTER_WHISPER_MODEL_INFO:
+                            info = FASTER_WHISPER_MODEL_INFO[size]
+                            is_downloaded = is_faster_whisper_model_downloaded(size)
+                        elif engine == "vosk" and size in VOSK_MODEL_INFO:
+                            info = VOSK_MODEL_INFO[size]
+                            is_downloaded = _is_vosk_model_downloaded(size, self.language)
+                        elif engine == "parakeet":
+                            info = parakeet.PARAKEET_MODEL_INFO[size]
+                            is_downloaded = parakeet.is_model_downloaded(size)
+                        else:
+                            is_downloaded = False
+                            info = {"size_mb": 0}
+
+                        model_display_name = _model_display_name(size)
+                        status = "✓" if is_downloaded else "↓"
+                        star = " ★" if size == recommended_model else ""
+                        display_text = (
+                            f"{model_display_name} ({_format_size(info.get('size_mb', 0))}) "
+                            f"{status}{star}"
+                        )
+
+                        if is_downloaded:
+                            downloaded_models.append(size)
+                        if smallest_model is None:
+                            smallest_model = size
+
+                        # whisper.cpp already appends the catalog id; Faster Whisper
+                        # ids include dots (`small.en`) which capitalize() mangles.
+                        combo_id = size if engine == "faster_whisper" else size.capitalize()
+                        self.model_combo.append(combo_id, display_text)
+
+                # Determine which model to select
+                saved_model = saved_model_for_engine.lower()
+                valid_models = [m.lower() for m in ENGINE_MODELS.get(engine, [])]
+
+                if saved_model in valid_models:
+                    selected = saved_model
+                elif downloaded_models:
+                    selected = downloaded_models[0]
+                else:
+                    selected = smallest_model
+
+                if engine == "faster_whisper":
+                    model_to_set = selected or "tiny"
+                else:
+                    model_to_set = selected.capitalize() if selected else "Small"
+
+                logger.info(f"Setting active model to: {model_to_set}")
+
+                if not self.model_combo.set_active_id(model_to_set):
+                    logger.warning(f"Could not set model by ID '{model_to_set}'")
+                    model = self.model_combo.get_model()
+                    for i, row in enumerate(model):
+                        if row[0].lower() == model_to_set.lower():
+                            self.model_combo.set_active(i)
+                            break
+                    else:
+                        if len(ENGINE_MODELS.get(engine, [])) > 0:
+                            self.model_combo.set_active(0)
+
+                logger.info(f"Final selected model: {self.model_combo.get_active_text()}")
         finally:
-            self._populating_models = False
             self._refresh_unused_downloads()
 
     def _resolve_saved_whispercpp_variant(self, saved_model_for_engine: str) -> str:
@@ -6759,7 +6818,7 @@ class SettingsDialog(Gtk.Dialog):
         # picked, and must not cascade into another apply. Every other control on
         # this page checks these flags itself rather than leaning on
         # _auto_apply_settings to do it.
-        programmatic = self._initializing or self._applying_settings
+        programmatic = _handlers_suppressed(self)
 
         current_lang = None if self._applying_settings else self.language_combo.get_active_id()
         previous_engine = self._engine_for_language_memory
@@ -6859,17 +6918,14 @@ class SettingsDialog(Gtk.Dialog):
         """Handle changes in the selected model."""
         if self._populating_models:
             return
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         if self._get_selected_engine() == "whisper_cpp":
             model_size = self.model_combo.get_active_id()
             if model_size:
-                self._populating_models = True
-                try:
+                with _suppressed(self, "_populating_models"):
                     self._populate_whispercpp_variant_options(model_size)
-                finally:
-                    self._populating_models = False
                 self._sync_language_options_for_selected_model()
 
         self._update_model_info()
@@ -6880,7 +6936,7 @@ class SettingsDialog(Gtk.Dialog):
         """Handle changes in the selected whisper.cpp specialization."""
         if self._populating_models:
             return
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return
 
         self._sync_language_options_for_selected_model()
@@ -6898,7 +6954,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_voice_commands_toggled(self, widget, state):
         """Handle toggle of the voice commands switch."""
-        if self._initializing or self._applying_settings:
+        if _handlers_suppressed(self):
             return False
 
         enabled = bool(state)
@@ -6990,11 +7046,8 @@ class SettingsDialog(Gtk.Dialog):
 
         if not supported and self.follow_layout_switch.get_active():
             # An engine or model that cannot run the mode must not keep it on.
-            self._processing_language_change = True
-            try:
+            with _suppressed(self, "_processing_language_change"):
                 self.follow_layout_switch.set_active(False)
-            finally:
-                self._processing_language_change = False
 
         self._follow_layout_active = bool(self.follow_layout_switch.get_active()) and supported
         active = self._follow_layout_active
@@ -7005,18 +7058,15 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_follow_layout_toggled(self, *_args: Any) -> None:
         """Apply the follow mode, or pin whatever the picker shows when it goes off."""
-        if self._initializing or self._applying_settings or self._processing_language_change:
+        if _handlers_suppressed(self) or self._processing_language_change:
             return
 
         if self.follow_layout_switch.get_active():
             # Show what it resolves to, so the greyed-out picker stays meaningful.
             resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
             if resolved:
-                self._processing_language_change = True
-                try:
+                with _suppressed(self, "_processing_language_change"):
                     self._set_combo_active_id_or_first(self.language_combo, resolved)
-                finally:
-                    self._processing_language_change = False
 
         self._sync_follow_layout_controls()
         self._update_language_warning()
@@ -7032,7 +7082,7 @@ class SettingsDialog(Gtk.Dialog):
         """
         if self._processing_language_change:
             return
-        if self._initializing or self._applying_settings or self._simple_driving:
+        if _handlers_suppressed(self) or self._simple_driving:
             return
 
         lang_code = self.language_combo.get_active_id()
@@ -7043,8 +7093,7 @@ class SettingsDialog(Gtk.Dialog):
         if not engine:
             return
 
-        self._processing_language_change = True
-        try:
+        with _suppressed(self, "_processing_language_change"):
             self.language = lang_code
             if _engine_from_display(engine) != "parakeet":
                 self._last_non_parakeet_language = lang_code
@@ -7055,8 +7104,6 @@ class SettingsDialog(Gtk.Dialog):
             self._refresh_simple_readout()
             self._update_model_info()
             self._auto_apply_settings()
-        finally:
-            self._processing_language_change = False
 
     def _on_language_entry_activate(self, entry: Any) -> None:
         """Commit a unique typed match when Enter is pressed in the language entry."""
@@ -7081,11 +7128,8 @@ class SettingsDialog(Gtk.Dialog):
             self.language_combo.set_active_id(match_id)
             return False
         # Restoring the same language should not re-apply settings.
-        self._processing_language_change = True
-        try:
+        with _suppressed(self, "_processing_language_change"):
             self._set_combo_active_id_or_first(self.language_combo, self.language)
-        finally:
-            self._processing_language_change = False
         return False
 
     def _sync_simple_from_advanced(self) -> None:
@@ -7108,8 +7152,7 @@ class SettingsDialog(Gtk.Dialog):
             # answer here would let the next simple edit silently replace the mode
             # with whatever those two controls happen to read. Refresh only the
             # part that does not depend on the language and leave them alone.
-            self._simple_syncing = True
-            try:
+            with _suppressed(self, "_simple_syncing"):
                 recommended, _ = self._get_recommended_whispercpp_model_for_language()
                 current = self._get_selected_whispercpp_model()
                 self.simple_priority_combo.set_active_id(
@@ -7118,8 +7161,6 @@ class SettingsDialog(Gtk.Dialog):
                         get_whispercpp_model_size(current),
                     )
                 )
-            finally:
-                self._simple_syncing = False
             self._update_simple_visibility()
             return
 
@@ -7127,8 +7168,7 @@ class SettingsDialog(Gtk.Dialog):
 
         stored_second = self.config_manager.get("speech_recognition", "simple_second_language", "")
 
-        self._simple_syncing = True
-        try:
+        with _suppressed(self, "_simple_syncing"):
             if is_auto:
                 self.simple_multi_switch.set_active(True)
                 primary = self.simple_language_combo.get_active_id()
@@ -7161,8 +7201,6 @@ class SettingsDialog(Gtk.Dialog):
                 get_whispercpp_model_size(recommended), get_whispercpp_model_size(current)
             )
             self.simple_priority_combo.set_active_id(priority)
-        finally:
-            self._simple_syncing = False
         self._update_simple_visibility()
 
     def _simple_decoding_language(self) -> str:
@@ -7271,7 +7309,7 @@ class SettingsDialog(Gtk.Dialog):
         used to reconfigure the engine up to four times and freeze the window while
         each reload ran. Suppress those while steering, then apply exactly once.
         """
-        if self._initializing or self._simple_syncing or self._applying_settings:
+        if _handlers_suppressed(self) or self._simple_syncing:
             return
         if self._simple_driving:
             return
@@ -7282,17 +7320,11 @@ class SettingsDialog(Gtk.Dialog):
             self.simple_multi_switch.get_active()
             and not self.simple_second_language_combo.get_active_id()
         ):
-            self._simple_syncing = True
-            try:
+            with _suppressed(self, "_simple_syncing"):
                 self.simple_second_language_combo.set_active_id("auto")
-            finally:
-                self._simple_syncing = False
 
-        self._simple_driving = True
-        try:
+        with _suppressed(self, "_simple_driving"):
             self._apply_simple_choice()
-        finally:
-            self._simple_driving = False
 
         second = (
             self.simple_second_language_combo.get_active_id()
@@ -7318,12 +7350,9 @@ class SettingsDialog(Gtk.Dialog):
             return False
 
         # Restoring the same language must not re-apply settings.
-        self._simple_syncing = True
-        try:
+        with _suppressed(self, "_simple_syncing"):
             fallback = self.language if self.language != "auto" else "en-us"
             self._set_combo_active_id_or_first(self.simple_language_combo, fallback)
-        finally:
-            self._simple_syncing = False
         return False
 
     def _on_simple_language_entry_activate(self, _entry: Any) -> None:
@@ -7336,15 +7365,7 @@ class SettingsDialog(Gtk.Dialog):
         """Show the simple questions, with the second language only when asked for."""
         self.simple_group.show_all()
         wants_second = self.simple_multi_switch.get_active()
-        # show_all() is a no-op on a widget flagged no_show_all, so the flag has
-        # to be cleared before showing and restored after hiding — the same
-        # dance _set_custom_shortcut_row_visible does.
-        if wants_second:
-            self.simple_second_language_row.set_no_show_all(False)
-            self.simple_second_language_row.show_all()
-        else:
-            self.simple_second_language_row.hide()
-            self.simple_second_language_row.set_no_show_all(True)
+        _set_no_show_all_visible(self.simple_second_language_row, wants_second)
 
     def _update_engine_specific_ui(self):
         """Show/hide UI elements driven by the active engine."""
@@ -7521,10 +7542,7 @@ class SettingsDialog(Gtk.Dialog):
 
     def _auto_apply_settings(self):
         """Automatically apply settings when changed."""
-        if self._applying_settings:
-            return
-
-        if self._initializing:
+        if _handlers_suppressed(self):
             return
 
         if self._test_active:
@@ -7548,25 +7566,9 @@ class SettingsDialog(Gtk.Dialog):
             model_name = settings.get("model_size", "small")
 
             # Check if model needs to be downloaded
-            needs_download = False
-            model_info = {"size_mb": 100}  # Default
-            if engine == "whisper" and not _is_whisper_model_downloaded(model_name):
-                needs_download = True
-                model_info = WHISPER_MODEL_INFO.get(model_name, {"size_mb": 500})
-            elif engine == "whisper_cpp" and not is_whispercpp_model_downloaded(model_name):
-                needs_download = True
-                model_info = WHISPERCPP_MODEL_INFO.get(model_name, {"size_mb": 39})
-            elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
-                needs_download = True
-                model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
-            elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
-                needs_download = True
-                model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
-            elif engine == "faster_whisper" and not is_faster_whisper_model_downloaded(model_name):
-                needs_download = True
-                model_info = FASTER_WHISPER_MODEL_INFO.get(model_name, {"size_mb": 39})
+            missing_model = _undownloaded_model_info(self.language, engine, model_name)
 
-            if needs_download:
+            if missing_model is not None:
                 if not self.speech_engine.try_begin_download():
                     # The tray is already downloading a model; a second download
                     # would fight it over the engine's progress callback and
@@ -7575,12 +7577,8 @@ class SettingsDialog(Gtk.Dialog):
                     self._resync_model_ui_from_config()
                     return
                 logger.info(f"Model {model_name} needs download, showing progress dialog")
-                download_dialog = ModelDownloadDialog(
-                    self,
-                    model_name,
-                    model_info["size_mb"],
-                    engine=engine,
-                    language=self.language,
+                download_dialog = _make_download_dialog(
+                    self, model_name, missing_model["size_mb"], engine
                 )
 
                 def progress_callback(fraction, speed, status):
@@ -7706,7 +7704,9 @@ class SettingsDialog(Gtk.Dialog):
                 if self.engine_combo.get_active_text() != display:
                     # Hold the apply-suppression flag: restoring the combo fires
                     # _on_engine_changed(), which must repaint the pickers but
-                    # not cascade into another apply or download prompt.
+                    # not cascade into another apply or download prompt. The
+                    # outer frame may already hold the guard, so restore the
+                    # previous value rather than clearing it.
                     was_applying = self._applying_settings
                     self._applying_settings = True
                     try:
@@ -8147,36 +8147,16 @@ For now, the engine has been reverted to VOSK."""
         engine = settings.get("engine", "vosk")
         model_name = settings.get("model_size", "small")
 
-        needs_download = False
-        model_info = {"size_mb": 100}  # Default
-        if engine == "whisper" and not _is_whisper_model_downloaded(model_name):
-            needs_download = True
-            model_info = WHISPER_MODEL_INFO.get(model_name, {"size_mb": 500})
-        elif engine == "whisper_cpp" and not is_whispercpp_model_downloaded(model_name):
-            needs_download = True
-            model_info = WHISPERCPP_MODEL_INFO.get(model_name, {"size_mb": 39})
-        elif engine == "vosk" and not _is_vosk_model_downloaded(model_name, self.language):
-            needs_download = True
-            model_info = VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
-        elif engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
-            needs_download = True
-            model_info = parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
-        elif engine == "faster_whisper" and not is_faster_whisper_model_downloaded(model_name):
-            needs_download = True
-            model_info = FASTER_WHISPER_MODEL_INFO.get(model_name, {"size_mb": 39})
+        missing_model = _undownloaded_model_info(self.language, engine, model_name)
 
-        if needs_download:
+        if missing_model is not None:
             if not self.speech_engine.try_begin_download():
                 # Same guard as in _auto_apply_settings: one download at a time.
                 self._show_download_busy_dialog()
                 self._resync_model_ui_from_config()
                 return False
-            download_dialog = ModelDownloadDialog(
-                self,
-                model_name,
-                model_info["size_mb"],
-                engine=engine,
-                language=self.language,
+            download_dialog = _make_download_dialog(
+                self, model_name, missing_model["size_mb"], engine
             )
 
             def progress_callback(fraction, speed, status):

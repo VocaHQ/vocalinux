@@ -145,8 +145,13 @@ class TestSettingsDialogShortcutsSection(unittest.TestCase):
         helper_start = self.source_code.index("def _set_custom_shortcut_row_visible")
         helper_end = self.source_code.index("\n    def ", helper_start + 1)
         helper = self.source_code[helper_start:helper_end]
-        self.assertIn("set_no_show_all(False)", helper)
-        self.assertIn("show_all()", helper)
+        self.assertIn("_set_no_show_all_visible(self.custom_shortcut_row, visible)", helper)
+        # The shared helper itself must do the clear-then-show dance.
+        shared_start = self.source_code.index("def _set_no_show_all_visible")
+        shared_end = self.source_code.index("\ndef ", shared_start + 1)
+        shared = self.source_code[shared_start:shared_end]
+        self.assertIn("set_no_show_all(False)", shared)
+        self.assertIn("show_all()", shared)
         # Call sites must go through the helper, not bare show_all on the row.
         outside = self.source_code[:helper_start] + self.source_code[helper_end:]
         self.assertNotIn("self.custom_shortcut_row.show_all()", outside)
