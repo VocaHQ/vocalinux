@@ -18,18 +18,20 @@ import re
 import select
 import threading
 import time
-from typing import Optional, TextIO
+from typing import Optional, Sequence, TextIO
 
 # Try to import evdev
 try:
     import evdev
-    from evdev import InputDevice, UInput, ecodes
+    from evdev import InputDevice, InputEvent, UInput, UInputError, ecodes
 
     EVDEV_AVAILABLE = True
 except ImportError:
     evdev = None  # type: ignore
     InputDevice = None  # type: ignore
+    InputEvent = None  # type: ignore
     UInput = None  # type: ignore
+    UInputError = OSError  # type: ignore
     ecodes = None  # type: ignore
     EVDEV_AVAILABLE = False
 
@@ -335,7 +337,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._combo_all_codes: set[int] = set()
         self._combo_pressed: set[int] = set()  # currently-held combo-relevant codes
         self._combo_active = False  # True while a push-to-talk combo hold is live
-        self._combo_main_swallowed = False  # consumed main-key press not yet released
+        # fds whose combo main-key press was consumed but not yet released —
+        # per-device so one keyboard's release can't consume another's press.
+        self._combo_swallowed: set[int] = set()
         self._resolve_combo_targets()
 
         self._devices_lock = threading.Lock()
@@ -343,6 +347,14 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._device_paths_by_fd: dict[int, str] = {}
         # Grabbed fd -> uinput clone that re-emits events we do not consume.
         self._forwarders: dict[int, UInput] = {}
+        # Grabbed fd -> its clone's /dev/input/eventN path, and the live set
+        # of clone paths. Clones are never monitored: their events are the
+        # ones we forwarded, so reading them would loop input back in.
+        self._forwarder_paths: dict[int, str] = {}
+        self._clone_paths: set[str] = set()
+        # Grabbed fd -> key codes the clone currently believes are held.
+        # Needed to reconcile after SYN_DROPPED eats release events.
+        self._forwarded_held: dict[int, set[int]] = {}
         self._uinput_warned = False
 
         if not EVDEV_AVAILABLE:
@@ -364,7 +376,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._combo_all_codes = set()
         self._combo_pressed = set()
         self._combo_active = False
-        self._combo_main_swallowed = False
+        self._combo_swallowed = set()
 
         spec = getattr(self, "_spec", None)
         if spec is None or not spec.is_combo:
@@ -403,9 +415,14 @@ class EvdevKeyboardBackend(KeyboardBackend):
         push-to-talk hold could stay stuck on. Clearing the pressed set fails
         safe (the user simply re-presses the modifier), and ending any live hold
         prevents a stuck session.
+
+        ``_combo_swallowed`` is deliberately left alone: it records consumed
+        presses per device, so clearing it here would let the matching
+        release of a still-held key leak to the application without its
+        press. Stale entries are pruned per-device on removal and during
+        the SYN_DROPPED resync instead.
         """
         self._combo_pressed = set()
-        self._combo_main_swallowed = False
         # Ends an active push-to-talk hold (fires the release callback); no-op
         # for toggle mode or when no hold is active.
         self._combo_released()
@@ -517,6 +534,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._dropped_devices = set()
         self._device_paths_by_fd = {}
         self._forwarders = {}
+        self._forwarder_paths = {}
+        self._clone_paths = set()
+        self._forwarded_held = {}
         self._uinput_warned = False
 
         # Refresh combo targets and clear any stale held-key state.
@@ -552,7 +572,15 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self.monitor_thread.join(timeout=2.0)
             self.monitor_thread = None
 
-        # Close devices (closing also releases each EVIOCGRAB) and forwarders
+        self._close_all_devices()
+
+    def _close_all_devices(self) -> None:
+        """Close every monitored device and uinput clone.
+
+        Closing a grabbed device releases its EVIOCGRAB, and closing a
+        uinput clone makes the kernel release any keys the clone still
+        holds — together they hand input delivery back to applications.
+        """
         with self._devices_lock:
             devices = list(self.devices)
             forwarders = list(self._forwarders.values())
@@ -562,6 +590,10 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self._dropped_devices = set()
             self._device_paths_by_fd = {}
             self._forwarders = {}
+            self._forwarder_paths = {}
+            self._clone_paths = set()
+            self._forwarded_held = {}
+            self._combo_swallowed = set()
 
         for device in devices:
             try:
@@ -587,11 +619,17 @@ class EvdevKeyboardBackend(KeyboardBackend):
             logger.warning(f"Cannot open {device_path}: {e}")
             return False
 
-        # Userspace-created devices (our own uinput clones, ydotool, key
-        # remappers) are never monitored: grabbing them would loop forwarded
-        # events back in or swallow injected text.
-        if device.info.bustype == ecodes.BUS_VIRTUAL:
-            logger.debug(f"Skipping virtual input device: {device_path} ({device.name})")
+        # Only Vocalinux's own uinput clones are never monitored — reading
+        # them would loop the events we forwarded straight back in. Clones
+        # are matched by their registered device path; the " (vocalinux)"
+        # name suffix also covers clones of other Vocalinux processes whose
+        # paths we never registered. Other virtual devices (key remappers,
+        # accessibility keyboards) ARE monitored: users can bind shortcuts
+        # to them, and grabbing is what lets the shortcut reach us at all
+        # when a remapper has already grabbed the physical device.
+        device_name = str(getattr(device, "name", "") or "")
+        if device_path in self._clone_paths or device_name.endswith(" (vocalinux)"):
+            logger.debug(f"Skipping Vocalinux clone device: {device_path} ({device_name})")
             try:
                 device.close()
             except Exception:
@@ -634,6 +672,11 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self._device_paths_by_fd[fd] = device_path
             if forwarder is not None:
                 self._forwarders[fd] = forwarder
+                clone_path = self._forwarder_device_path(forwarder)
+                if clone_path is not None:
+                    self._forwarder_paths[fd] = clone_path
+                    self._clone_paths.add(clone_path)
+                self._forwarded_held[fd] = set()
 
         logger.debug(
             f"Opened keyboard device: {device_path} ({device.name})"
@@ -641,7 +684,21 @@ class EvdevKeyboardBackend(KeyboardBackend):
         )
         return True
 
-    def _create_forwarder(self, device) -> Optional[UInput]:
+    @staticmethod
+    def _forwarder_device_path(forwarder: UInput) -> Optional[str]:
+        """Return the clone's /dev/input/eventN path, or None if unknowable.
+
+        The path is what lets ``_open_keyboard_device`` recognize (and skip)
+        our clones even when the clone name was truncated to the uinput
+        80-byte limit.
+        """
+        try:
+            path = forwarder.device.path
+        except (AttributeError, OSError, IOError):
+            return None
+        return path if isinstance(path, str) else None
+
+    def _create_forwarder(self, device: InputDevice) -> Optional[UInput]:
         """Create a uinput clone of a keyboard for pass-through forwarding.
 
         EV_REP is filtered out so the clone never autorepeats: the physical
@@ -649,7 +706,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
         repeat rate without doubling repeats.
         """
         try:
-            capabilities = device.capabilities()
+            capabilities: dict[int, Sequence[int]] = {
+                k: v for k, v in device.capabilities().items()
+            }
             for event_type in (ecodes.EV_SYN, ecodes.EV_FF, ecodes.EV_REP):
                 capabilities.pop(event_type, None)
             return UInput(
@@ -657,7 +716,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 name=f"{device.name} (vocalinux)",
                 bustype=ecodes.BUS_VIRTUAL,
             )
-        except Exception as e:
+        except (OSError, IOError, TypeError, ValueError, UInputError) as e:
             if not self._uinput_warned:
                 self._uinput_warned = True
                 logger.warning(
@@ -667,8 +726,53 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 )
             return None
 
-    def _forward_event(self, fd: int, event) -> None:
-        """Re-emit an event on the uinput clone paired with a grabbed device."""
+    def _release_failed_forwarder(self, fd: int) -> None:
+        """Drop a dead uinput clone and release the source device's grab.
+
+        A keyboard that stays grabbed while its clone can no longer accept
+        events swallows all user input; releasing EVIOCGRAB hands delivery
+        back to the kernel so applications see keys again (the shortcut can
+        then no longer be suppressed, matching the ungrabbed fallback). If
+        the grab itself cannot be released, the device is removed outright
+        — a grabbed device with a dead clone is worse than no listener.
+        """
+        with self._devices_lock:
+            device = next((d for d in self.devices if d.fileno() == fd), None)
+            forwarder = self._forwarders.pop(fd, None)
+            clone_path = self._forwarder_paths.pop(fd, None)
+            if clone_path is not None:
+                self._clone_paths.discard(clone_path)
+            self._forwarded_held.pop(fd, None)
+
+        if forwarder is not None:
+            try:
+                forwarder.close()
+            except Exception:
+                pass
+        if device is None:
+            return
+        try:
+            device.ungrab()
+        except (OSError, IOError) as e:
+            logger.error(
+                f"Cannot release grab on fd {fd} ({e}); "
+                "removing the device so it stops swallowing input"
+            )
+            self._remove_keyboard_device(fd, device)
+            return
+        logger.warning(
+            f"Released grab on {getattr(device, 'name', 'device')} (fd={fd}) "
+            "after a forwarding failure; keys pass through to applications "
+            "but the dictation shortcut can no longer be suppressed"
+        )
+
+    def _forward_event(self, fd: int, event: InputEvent) -> None:
+        """Re-emit an event on the uinput clone paired with a grabbed device.
+
+        Successful EV_KEY writes also update ``_forwarded_held`` so
+        ``_resync_clone_key_state`` can tell which keys the clone still
+        believes are held after a SYN_DROPPED burst.
+        """
         if event.type != ecodes.EV_SYN and event.type not in _FORWARDED_EVENT_TYPES:
             return
         forwarder = self._forwarders.get(fd)
@@ -678,8 +782,17 @@ class EvdevKeyboardBackend(KeyboardBackend):
             forwarder.write_event(event)
         except (OSError, IOError) as e:
             logger.error(f"Failed to forward event on fd {fd}: {e}")
+            self._release_failed_forwarder(fd)
+            return
+        if event.type == ecodes.EV_KEY:
+            held = self._forwarded_held.get(fd)
+            if held is not None:
+                if event.value == 0:
+                    held.discard(event.code)
+                else:
+                    held.add(event.code)
 
-    def _event_is_shortcut(self, event) -> bool:
+    def _event_is_shortcut(self, fd: int, event: InputEvent) -> bool:
         """Return True if an EV_KEY event belongs to the dictation shortcut.
 
         Consumed events are handled locally and never re-emitted, so the
@@ -693,6 +806,13 @@ class EvdevKeyboardBackend(KeyboardBackend):
           while the combo owns it (press with all modifiers held, plus the
           matching repeat/release). Required modifiers and unrelated keys
           pass through, so typing and chords like Alt+Tab keep working.
+
+        Consumption of a combo main-key press is tracked per device fd:
+        when two keyboards both press the main key while the modifiers are
+        held, each device's release must still find its own consumed press
+        — a shared flag would let the first release expose the second
+        keyboard's release without its press. Stale entries are pruned on
+        device removal and by the post-SYN_DROPPED resync.
         """
         if event.type != ecodes.EV_KEY:
             return False
@@ -709,14 +829,16 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if not spec.modifiers:
             return True  # bare function key
         if event.value == 1 and self._required_modifiers_held():
-            self._combo_main_swallowed = True
-        elif event.value == 0:
-            # Consume the release of a swallowed press exactly once, so apps
-            # never see a press/release pair we only half-forwarded.
-            swallowed = self._combo_main_swallowed
-            self._combo_main_swallowed = False
-            return swallowed
-        return self._combo_main_swallowed
+            self._combo_swallowed.add(fd)
+            return True
+        if event.value == 0:
+            # Consume the release of a swallowed press on THIS device exactly
+            # once, so apps never see a press/release pair we half-forwarded.
+            if fd not in self._combo_swallowed:
+                return False
+            self._combo_swallowed.discard(fd)
+            return True
+        return fd in self._combo_swallowed
 
     def _scan_for_new_devices(self) -> int:
         """Find and open keyboard devices that appeared after startup."""
@@ -759,6 +881,13 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self._dropped_devices.discard(fd)
             self.key_pressed_devices.discard(id(device))
             forwarder = self._forwarders.pop(fd, None)
+            clone_path = self._forwarder_paths.pop(fd, None)
+            if clone_path is not None:
+                self._clone_paths.discard(clone_path)
+            self._forwarded_held.pop(fd, None)
+            # The fd can be recycled for a newly plugged device; a stale
+            # swallowed press would then eat that device's first release.
+            self._combo_swallowed.discard(fd)
 
         if forwarder is not None:
             try:
@@ -769,106 +898,159 @@ class EvdevKeyboardBackend(KeyboardBackend):
         # split half dropping mid-hold); don't leave the combo logically held.
         self._reset_combo_state()
 
+    def _resync_clone_key_state(self, fd: int, device: InputDevice) -> None:
+        """Release clone-side keys whose releases were lost to SYN_DROPPED.
+
+        The kernel's dropped-event burst may have skipped release events,
+        but the paired clone only saw what we forwarded — a forwarded press
+        whose release was dropped leaves the key held on the clone forever,
+        and no later event supplies the missing release. Compare what the
+        clone believes (``_forwarded_held``) against the device's live
+        kernel key state and emit releases for the phantom keys.
+        """
+        forwarder = self._forwarders.get(fd)
+        held = self._forwarded_held.get(fd)
+        if forwarder is None or not held:
+            return
+        try:
+            actually_held = set(device.active_keys())
+        except (OSError, IOError) as e:
+            logger.warning(f"Cannot resync key state for fd {fd}: {e}")
+            return
+        for code in sorted(held - actually_held):
+            try:
+                forwarder.write(ecodes.EV_KEY, code, 0)
+            except (OSError, IOError) as e:
+                logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
+                self._release_failed_forwarder(fd)
+                return
+            held.discard(code)
+        if self._combo_main_code is not None and self._combo_main_code not in actually_held:
+            # The dropped burst may have eaten the release of a swallowed
+            # combo press; if the key is physically up, the pairing is over.
+            self._combo_swallowed.discard(fd)
+
     def _monitor_devices(self) -> None:
         """Monitor keyboard devices for events."""
         logger.debug("Starting device monitor thread")
         last_scan = time.monotonic()
 
-        while self.running:
-            try:
-                now = time.monotonic()
-                if now - last_scan >= DEVICE_RESCAN_SECONDS:
-                    self._scan_for_new_devices()
-                    last_scan = now
+        try:
+            while self.running:
+                try:
+                    now = time.monotonic()
+                    if now - last_scan >= DEVICE_RESCAN_SECONDS:
+                        self._scan_for_new_devices()
+                        last_scan = now
 
-                # Use select to wait for events on any device
-                with self._devices_lock:
-                    device_fds = list(self.device_fds)
+                    # Use select to wait for events on any device
+                    with self._devices_lock:
+                        device_fds = list(self.device_fds)
 
-                if not device_fds:
-                    time.sleep(1.0)
-                    continue
-
-                readable, _, _ = select.select(device_fds, [], [], 1.0)  # 1 second timeout
-
-                for fd in readable:
-                    try:
-                        # Find the device for this fd
-                        with self._devices_lock:
-                            device = None
-                            for d in self.devices:
-                                if d.fileno() == fd:
-                                    device = d
-                                    break
-
-                        if device is None:
-                            continue
-
-                        # Read events from this device. On grabbed devices,
-                        # everything we do not consume is re-emitted on the
-                        # paired uinput clone so the focused app keeps typing.
-                        for event in device.read():
-                            if event.type == ecodes.EV_SYN:
-                                if event.code == ecodes.SYN_DROPPED:
-                                    # Kernel buffer overflowed — discard until SYN_REPORT
-                                    self._dropped_devices.add(fd)
-                                    logger.warning(
-                                        f"SYN_DROPPED on {device.name} (fd={fd}), "
-                                        "resetting key state"
-                                    )
-                                elif event.code == ecodes.SYN_REPORT:
-                                    if fd in self._dropped_devices:
-                                        # End of dropped sequence — clear stale state
-                                        self._dropped_devices.discard(fd)
-                                        self.key_pressed_devices.discard(id(device))
-                                        # A dropped modifier release must not leave
-                                        # the combo logically held.
-                                        self._reset_combo_state()
-                                    self._forward_event(fd, event)
-                                continue
-                            if fd in self._dropped_devices:
-                                # Handling shortcut state mid-drop is unsafe,
-                                # but surviving non-shortcut events still pass
-                                # through so the app sees what the kernel kept.
-                                if not self._event_is_shortcut(event):
-                                    self._forward_event(fd, event)
-                                continue
-                            if event.type == ecodes.EV_KEY:
-                                # Every key event updates shortcut state (combo
-                                # modifiers must be tracked AND forwarded); only
-                                # the forwarding decision differs.
-                                consumed = self._event_is_shortcut(event)
-                                self._handle_key_event(event, device)
-                                if not consumed:
-                                    self._forward_event(fd, event)
-                            else:
-                                self._forward_event(fd, event)
-
-                    except (OSError, IOError) as e:
-                        # Device was disconnected - remove it to avoid busy loop
-                        device_name = (
-                            device.name if device and hasattr(device, "name") else "unknown"
-                        )
-                        logger.info(f"Device disconnected: {device_name} (fd={fd})")
-                        if device is not None:
-                            self._remove_keyboard_device(fd, device)
+                    if not device_fds:
+                        time.sleep(1.0)
                         continue
 
-            except (OSError, ValueError) as e:
-                if self.running:
-                    logger.error(f"Error monitoring devices: {e}")
-                break
+                    readable, _, _ = select.select(device_fds, [], [], 1.0)  # 1 second timeout
+
+                    for fd in readable:
+                        try:
+                            # Find the device for this fd
+                            with self._devices_lock:
+                                device = None
+                                for d in self.devices:
+                                    if d.fileno() == fd:
+                                        device = d
+                                        break
+
+                            if device is None:
+                                continue
+
+                            # Read events from this device. On grabbed devices,
+                            # everything we do not consume is re-emitted on the
+                            # paired uinput clone so the focused app keeps typing.
+                            for event in device.read():
+                                if event.type == ecodes.EV_SYN:
+                                    if event.code == ecodes.SYN_DROPPED:
+                                        # Kernel buffer overflowed — discard until SYN_REPORT
+                                        self._dropped_devices.add(fd)
+                                        logger.warning(
+                                            f"SYN_DROPPED on {device.name} (fd={fd}), "
+                                            "resetting key state"
+                                        )
+                                    elif event.code == ecodes.SYN_REPORT:
+                                        if fd in self._dropped_devices:
+                                            # End of dropped sequence — clear stale state
+                                            self._dropped_devices.discard(fd)
+                                            self.key_pressed_devices.discard(id(device))
+                                            # Release keys the clone still thinks
+                                            # are held before the SYN_REPORT
+                                            # reaches it, atomically.
+                                            self._resync_clone_key_state(fd, device)
+                                            # A dropped modifier release must not leave
+                                            # the combo logically held.
+                                            self._reset_combo_state()
+                                        self._forward_event(fd, event)
+                                    continue
+                                if fd in self._dropped_devices:
+                                    # Handling shortcut state mid-drop is unsafe,
+                                    # but surviving non-shortcut events still pass
+                                    # through so the app sees what the kernel kept.
+                                    if not self._event_is_shortcut(fd, event):
+                                        self._forward_event(fd, event)
+                                    continue
+                                if event.type == ecodes.EV_KEY:
+                                    # Every key event updates shortcut state (combo
+                                    # modifiers must be tracked AND forwarded); only
+                                    # the forwarding decision differs.
+                                    consumed = self._event_is_shortcut(fd, event)
+                                    self._handle_key_event(event, device)
+                                    if not consumed:
+                                        self._forward_event(fd, event)
+                                else:
+                                    self._forward_event(fd, event)
+
+                        except (OSError, IOError) as e:
+                            # Device was disconnected - remove it to avoid busy loop
+                            device_name = (
+                                device.name if device and hasattr(device, "name") else "unknown"
+                            )
+                            logger.info(f"Device disconnected: {device_name} (fd={fd})")
+                            if device is not None:
+                                self._remove_keyboard_device(fd, device)
+                            continue
+
+                except (OSError, ValueError) as e:
+                    if self.running:
+                        logger.error(f"Error monitoring devices: {e}")
+                    break
+        finally:
+            if self.running:
+                # Exiting while still "running" means the loop died
+                # unexpectedly — a failed select, an fd closed underneath
+                # it, or an error escaping the handler. Nothing will ever
+                # read the grabbed keyboards again, so close every device
+                # and clone: closing releases each grab and hands input
+                # delivery back to the kernel instead of leaving the
+                # user's keyboards dead.
+                logger.error(
+                    "Keyboard monitor exited unexpectedly; closing devices "
+                    "to release grabs so keyboards keep working"
+                )
+                self.running = False
+                self.active = False
+                self._close_all_devices()
 
         logger.debug("Device monitor thread stopped")
 
-    def _handle_key_event(self, event, device) -> None:
+    def _handle_key_event(self, event: InputEvent, device: InputDevice) -> None:
         """Handle a key event from evdev."""
         if getattr(self, "_spec", None) is not None and self._spec.is_combo:
             self._handle_combo_key_event(event)
             return
         self._handle_modifier_key_event(event, device)
 
-    def _handle_combo_key_event(self, event) -> None:
+    def _handle_combo_key_event(self, event: InputEvent) -> None:
         """Handle a key event for a modifier+key combo (e.g. Alt+R).
 
         Combo state is tracked globally across all keyboard devices, which is
@@ -925,7 +1107,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 logger.debug(f"Combo {self._shortcut} released (evdev)")
                 threading.Thread(target=self.key_release_callback, daemon=True).start()
 
-    def _handle_modifier_key_event(self, event, device) -> None:
+    def _handle_modifier_key_event(self, event: InputEvent, device: InputDevice) -> None:
         """Handle a key event for a single-modifier gesture (double-tap / hold)."""
         try:
             code = event.code
