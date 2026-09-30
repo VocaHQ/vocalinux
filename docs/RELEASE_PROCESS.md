@@ -396,7 +396,9 @@ After pushing the tag, the GitHub Actions workflow will automatically:
 8. Deploy the website to vocalinux.com
 9. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
    `edge`/`candidate`. Store human review (for example `uinput` allow-installation)
-   must not block the GitHub `.snap`. `stable` is still a manual promote
+   must not block the GitHub `.snap`. `stable` does not auto-release (#783):
+   after candidate QA, dispatch `snap-promote.yml`, which releases the
+   candidate revision to `latest/stable`
 10. Mark as pre-release if version contains alpha/beta/rc
 
 Monitor at: https://github.com/VocaHQ/vocalinux/actions
@@ -409,6 +411,12 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
       users to run `sha256sum -c` against it
 - [ ] If the Store held the snap for `uinput` review, confirm the GitHub `.snap`
       is still attached and the notes document `snap install --dangerous`
+- [ ] After candidate QA (install, tray, mic, model download, typing into a real
+      app), promote the snap to stable:
+      `gh workflow run snap-promote.yml -f tag=vX.Y.Z` - it fails unless
+      `latest/candidate` carries a revision whose version matches the tag. An
+      optional `snap-stable` environment with required reviewers adds a second
+      approval gate on the dispatch
 - [ ] Verify provenance: `gh attestation verify <artifact> --repo VocaHQ/vocalinux`
 - [ ] Verify PyPI package was published (if applicable), and that its wheel sha256
       matches the line for that wheel in `SHA256SUMS`

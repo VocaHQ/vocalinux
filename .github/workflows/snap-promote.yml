@@ -1,0 +1,98 @@
+name: Promote snap to stable
+
+# Issue #783, the "safer" option: `v*` tags keep auto-publishing the snap to
+# edge + candidate in release.yml; latest/stable stays gated on candidate QA.
+# After QA (install, tray, mic, model download, typing into a real app), run:
+#   gh workflow run snap-promote.yml -f tag=v0.18.0
+#
+# The candidate revision must carry the tag's version, so a typo'd tag or a
+# stale candidate fails the run instead of promoting the wrong revision.
+# The `snap-stable` environment is an optional second gate: add required
+# reviewers to it in repo settings and each dispatch waits for an approval.
+# Caller-supplied tag values stay in the environment, never in run: source.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag whose candidate snap to promote (e.g. v0.18.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    name: Promote latest/candidate to latest/stable
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment:
+      name: snap-stable
+    steps:
+      - name: Require a version tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          case "$TAG" in
+            v[0-9]*) ;;
+            *)
+              echo "refusing tag that is not v<digit>…: $TAG" >&2
+              exit 1
+              ;;
+          esac
+          if printf '%s' "$TAG" | grep -q '[^A-Za-z0-9._-]'; then
+            echo "refusing tag with unexpected characters: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Require Snap Store credentials
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot promote the snap"
+            exit 1
+          fi
+
+      - name: Install snapcraft
+        run: sudo snap install snapcraft --classic
+
+      # `snapcraft status` prints the channel map grouped by track and arch;
+      # the candidate row is a continuation line, so column 1 is the channel.
+      - name: Resolve the candidate revision
+        id: candidate
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          /snap/bin/snapcraft status vocalinux | tee /tmp/snap-status.txt
+          row=$(awk '/^\S/ { track = $1 }
+                    track == "latest" && $1 == "candidate" { print $2, $3; exit }' \
+                    /tmp/snap-status.txt)
+          read -r seen_version revision <<<"$row"
+          echo "latest/candidate holds version=${seen_version:-none} revision=${revision:-none}"
+          case "${revision:-}" in
+            ''|*[!0-9]*)
+              echo "No promotable revision on latest/candidate (stale or under review?)" >&2
+              exit 1
+              ;;
+          esac
+          if [ "$seen_version" != "$VERSION" ]; then
+            echo "candidate version '$seen_version' does not match tag version '$VERSION'" >&2
+            exit 1
+          fi
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Release the resolved revision to latest/stable
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          REVISION: ${{ steps.candidate.outputs.revision }}
+        run: |
+          set -euo pipefail
+          /snap/bin/snapcraft release vocalinux "$REVISION" latest/stable
+          /snap/bin/snapcraft status vocalinux
