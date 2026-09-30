@@ -139,6 +139,11 @@ class TrayIndicator:
     #: "no binding owns the live session" instead of raising on release paths.
     _ptt_owner: Optional["KeyboardShortcutManager"] = None
 
+    #: Serializes push-to-talk press/release handling. Press and release
+    #: callbacks run on separate backend threads, so a release landing while
+    #: start_recognition is still running must not be lost (#805).
+    _ptt_lock = threading.RLock()
+
     def __init__(
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
@@ -188,6 +193,9 @@ class TrayIndicator:
         # The binding whose press started the live push-to-talk session, so an
         # unrelated key's release cannot end it (#805).
         self._ptt_owner: Optional[KeyboardShortcutManager] = None
+        # Serializes the press/release pair across backend threads, so a
+        # release landing while start_recognition runs cannot be lost.
+        self._ptt_lock = threading.RLock()
 
         # Ensure icon directory exists
         os.makedirs(ICON_DIR, exist_ok=True)
@@ -435,7 +443,7 @@ class TrayIndicator:
             self._language_shortcut_managers.append(manager)
             logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
 
-    def _stop_language_shortcut_managers(self):
+    def _stop_language_shortcut_managers(self) -> None:
         """Stop every per-language listener and drop the managers."""
         for manager in self._language_shortcut_managers:
             try:
@@ -668,22 +676,44 @@ class TrayIndicator:
 
     def _toggle_recognition(self) -> None:
         """Toggle the recognition state between IDLE and LISTENING."""
-        self._ptt_owner = None
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition()
-        else:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition()
+            else:
+                self.speech_engine.stop_recognition()
 
     def _start_recognition(self) -> None:
         """Start voice recognition (for push-to-talk mode)."""
-        if self.speech_engine.state == RecognitionState.IDLE:
-            if self.speech_engine.start_recognition(mode="push_to_talk"):
-                self._ptt_owner = self.shortcut_manager
+        self._push_to_talk_press(
+            self.shortcut_manager,
+            lambda: self.speech_engine.start_recognition(mode="push_to_talk"),
+        )
+
+    def _push_to_talk_press(
+        self, manager: Optional[KeyboardShortcutManager], start: Callable[[], bool]
+    ) -> None:
+        """Push-to-talk press shared by the main and per-language bindings (#805).
+
+        The release runs on another backend thread and used to be dropped when
+        it landed between LISTENING and the owner assignment, leaving
+        dictation running with the key already up. Holding the lock through
+        the whole start makes the release wait instead: it then finds the
+        owner and ends the session normally.
+        """
+        with self._ptt_lock:
+            if self.speech_engine.state == RecognitionState.IDLE and start():
+                self._ptt_owner = manager
+
+    def _push_to_talk_release(self, manager: KeyboardShortcutManager) -> None:
+        """Push-to-talk release: end the session only when this binding owns it."""
+        with self._ptt_lock:
+            if self._ptt_owner is manager:
+                self._stop_recognition()
 
     def _release_main_push_to_talk(self) -> None:
         """End a push-to-talk session only when the main binding started it (#805)."""
-        if self._ptt_owner is self.shortcut_manager:
-            self._stop_recognition()
+        self._push_to_talk_release(self.shortcut_manager)
 
     def _release_language_push_to_talk(self, manager: KeyboardShortcutManager) -> None:
         """End a push-to-talk session only when this binding started it (#805).
@@ -691,8 +721,7 @@ class TrayIndicator:
         Sharing one stop callback across listeners let an unrelated binding's
         release end a session it never started.
         """
-        if self._ptt_owner is manager:
-            self._stop_recognition()
+        self._push_to_talk_release(manager)
 
     def _toggle_recognition_in_language(self, language: str) -> None:
         """Toggle-style trigger for a per-language shortcut (#805).
@@ -701,19 +730,23 @@ class TrayIndicator:
         dictating it stops, matching the main toggle's behaviour regardless
         of which language the current utterance is in.
         """
-        self._ptt_owner = None
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition_with_language(language)
-        else:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition_with_language(language)
+            else:
+                self.speech_engine.stop_recognition()
 
     def _start_recognition_in_language(
         self, language: str, manager: Optional[KeyboardShortcutManager] = None
     ) -> None:
         """Push-to-talk start for a per-language shortcut (#805)."""
-        if self.speech_engine.state == RecognitionState.IDLE:
-            if self.speech_engine.start_recognition_with_language(language, mode="push_to_talk"):
-                self._ptt_owner = manager
+        self._push_to_talk_press(
+            manager,
+            lambda: self.speech_engine.start_recognition_with_language(
+                language, mode="push_to_talk"
+            ),
+        )
 
     def _external_start(self) -> None:
         """Start recognition for an external (D-Bus) trigger.
@@ -722,20 +755,24 @@ class TrayIndicator:
         `vocalinux --start` transcribes immediately/with silence detection
         rather than deferring until a Stop.
         """
-        self._ptt_owner = None
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state == RecognitionState.IDLE:
+                self.speech_engine.start_recognition()
 
     def _external_stop(self) -> None:
         """Stop recognition for an external (D-Bus) trigger."""
-        if self.speech_engine.state != RecognitionState.IDLE:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state != RecognitionState.IDLE:
+                self.speech_engine.stop_recognition()
 
     def _stop_recognition(self) -> None:
         """Stop voice recognition (for push-to-talk mode)."""
-        self._ptt_owner = None
-        if self.speech_engine.state != RecognitionState.IDLE:
-            self.speech_engine.stop_recognition()
+        with self._ptt_lock:
+            self._ptt_owner = None
+            if self.speech_engine.state != RecognitionState.IDLE:
+                self.speech_engine.stop_recognition()
 
     def _add_menu_item(self, label: str, callback: Callable):
         """

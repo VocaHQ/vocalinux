@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib
 import os
+import queue
 import sys
 import tempfile
 import threading
@@ -471,6 +472,54 @@ def test_tray_language_release_stops_only_its_own_session() -> None:
     assert tray._ptt_owner is None
 
 
+def test_tray_ptt_release_during_start_still_ends_the_session() -> None:
+    """A release landing mid-start waits for the owner claim, then stops (#805)."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(shortcut_mode="push_to_talk")
+    german = MagicMock()
+    tray.speech_engine.state = RecognitionState.IDLE
+
+    def fake_start(*_args: Any, **_kwargs: Any) -> bool:
+        tray.speech_engine.state = RecognitionState.LISTENING
+        releaser.start()
+        return True
+
+    releaser = threading.Thread(
+        target=TrayIndicator._release_language_push_to_talk, args=(tray, german)
+    )
+    tray.speech_engine.start_recognition_with_language.side_effect = fake_start
+
+    TrayIndicator._start_recognition_in_language(tray, "de", german)
+    releaser.join(timeout=5)
+
+    tray.speech_engine.stop_recognition.assert_called_once()
+    assert tray._ptt_owner is None
+
+
+def test_tray_main_ptt_release_during_start_still_ends_the_session() -> None:
+    """The main binding has the same deferred-release guarantee (#805)."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(shortcut_mode="push_to_talk")
+    tray.shortcut_manager = MagicMock()
+    tray.speech_engine.state = RecognitionState.IDLE
+
+    def fake_start(*_args: Any, **_kwargs: Any) -> bool:
+        tray.speech_engine.state = RecognitionState.LISTENING
+        releaser.start()
+        return True
+
+    releaser = threading.Thread(target=TrayIndicator._release_main_push_to_talk, args=(tray,))
+    tray.speech_engine.start_recognition.side_effect = fake_start
+
+    TrayIndicator._start_recognition(tray)
+    releaser.join(timeout=5)
+
+    tray.speech_engine.stop_recognition.assert_called_once()
+    assert tray._ptt_owner is None
+
+
 def test_tray_skips_gesture_equivalent_bindings() -> None:
     """Different spellings of the same gesture still collide."""
     from vocalinux.ui.tray_indicator import TrayIndicator
@@ -634,6 +683,30 @@ def test_dictation_language_tracks_the_session_snapshot() -> None:
     assert manager._dictation_language() == "de"
     manager._session_language = None
     assert manager._dictation_language() == "en-us"
+
+
+def test_dictation_language_prefers_the_segment_snapshot() -> None:
+    """The stamped snapshot beats the session binding and the preference."""
+    manager = _manager_stub(language="en-us")
+    manager._session_language = "fr"
+    assert manager._dictation_language("de") == "de"
+
+
+def test_stale_worker_keeps_the_segments_own_language() -> None:
+    """A worker draining after a newer start must not adopt its language."""
+    manager = _manager_stub(language="en-us")
+    manager._segment_queue = queue.Queue(maxsize=32)
+    manager.should_record = False
+    manager._session_language = "de"
+    manager._process_audio_buffer = MagicMock()
+
+    manager._enqueue_audio_segment([b"audio"])
+    # A newer dictation binds its language before the stale worker drains.
+    manager._session_language = "fr"
+    manager._signal_recognition_stop()
+    manager._perform_recognition()
+
+    manager._process_audio_buffer.assert_called_once_with([b"audio"], "de")
 
 
 # --- settings dialog plumbing ------------------------------------------------

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     import numpy as np
+    import requests
 
 from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     _STICKY_LOCK_MIN_MEAN_SQUARE,
@@ -720,15 +721,20 @@ class SpeechRecognitionManager:
                 "multilingual model in Settings to use this mode."
             )
 
-    def _dictation_language(self) -> str:
-        """The language the in-flight dictation session was started with (#805).
+    def _dictation_language(self, segment_language: Optional[str] = None) -> str:
+        """The language a queued audio segment was recorded under (#805).
 
         A transcription worker can outlive ``stop_recognition``'s timed joins,
         so ``self.language`` may already be restored to the configured value
-        while a queued segment still needs the one-shot override. Outside a
-        session (tests and direct transcribe calls) this falls back to the
-        configured language.
+        while a queued segment still needs the one-shot override — and a newer
+        dictation may already have overwritten ``_session_language`` by the
+        time a stale worker reads it. Queued segments therefore carry a
+        ``segment_language`` snapshot stamped at enqueue time; calls without
+        one (tests and direct transcribe calls) fall back to the session
+        binding, then the configured language.
         """
+        if segment_language is not None:
+            return segment_language
         return self._session_language or self.language
 
     def _refuse_language_override(self, language: str) -> None:
@@ -991,12 +997,16 @@ class SpeechRecognitionManager:
             self.state = RecognitionState.ERROR
             raise
 
-    def _transcribe_with_whisper(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_whisper(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using Whisper.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -1031,7 +1041,7 @@ class SpeechRecognitionManager:
                     import torch
                 use_fp16 = self.model.device != torch.device("cpu")
 
-                lang = resolve_whisper_language(self._dictation_language())
+                lang = resolve_whisper_language(self._dictation_language(language))
 
                 # Transcribe with Whisper (handles variable length audio automatically)
                 result = self.model.transcribe(
@@ -1243,12 +1253,16 @@ class SpeechRecognitionManager:
             self.state = RecognitionState.ERROR
             raise
 
-    def _transcribe_with_faster_whisper(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_faster_whisper(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using faster-whisper.
 
         Args:
             audio_buffer: List of audio data chunks (16-bit PCM at 16kHz)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -1259,7 +1273,7 @@ class SpeechRecognitionManager:
                 return ""
 
             return self._faster_whisper_engine.transcribe(
-                audio_buffer, language=self._dictation_language()
+                audio_buffer, language=self._dictation_language(language)
             )
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
@@ -1666,7 +1680,9 @@ class SpeechRecognitionManager:
         logger.info("Successfully loaded model with CPU backend")
         return cpu_backend
 
-    def _transcribe_with_whispercpp(self, audio_buffer: list[bytes]) -> str:
+    def _transcribe_with_whispercpp(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> str:
         """
         Transcribe audio buffer using whisper.cpp.
 
@@ -1697,7 +1713,7 @@ class SpeechRecognitionManager:
             )
 
             # Prepare language parameter
-            lang = resolve_whisper_language(self._dictation_language())
+            lang = resolve_whisper_language(self._dictation_language(language))
 
             logger.debug(f"whisper.cpp using language: {lang or 'auto-detect'}")
 
@@ -2067,7 +2083,12 @@ class SpeechRecognitionManager:
         self._model_initialized = True
         logger.info("Remote API engine setup complete.")
 
-    def _transcribe_with_remote_api(self, audio_buffer: list[bytes], session) -> str:
+    def _transcribe_with_remote_api(
+        self,
+        audio_buffer: list[bytes],
+        session: Optional["requests.Session"],
+        language: Optional[str] = None,
+    ) -> str:
         """Transcribe audio via remote API.
 
         Package audio buffer into WAV format and send to remote server via HTTP POST.
@@ -2077,6 +2098,8 @@ class SpeechRecognitionManager:
         Args:
             audio_buffer: Audio data chunk list (16-bit PCM at 16kHz)
             session: A requests.Session snapshot (obtained under _model_lock)
+            language: Per-utterance snapshot stamped on the queued segment
+                (#805); None resolves the live session language.
 
         Returns:
             Transcribed text
@@ -2112,7 +2135,7 @@ class SpeechRecognitionManager:
             )
 
             # Prepare language parameters
-            lang = resolve_whisper_language(self._dictation_language())
+            lang = resolve_whisper_language(self._dictation_language(language))
 
             # Prepare HTTP request headers
             headers = {}
@@ -3537,10 +3560,17 @@ class SpeechRecognitionManager:
 
         self._process_audio_buffer(audio_buffer)
 
-    def _process_audio_buffer(self, audio_buffer: list[bytes]):
-        """Process an immutable audio segment for transcription and commands."""
+    def _process_audio_buffer(
+        self, audio_buffer: list[bytes], language: Optional[str] = None
+    ) -> None:
+        """Process an immutable audio segment for transcription and commands.
+
+        ``language`` is the per-utterance snapshot stamped on the segment when
+        it was queued (#805); None resolves the live session language.
+        """
         if not audio_buffer:
             return
+        dictation_language = self._dictation_language(language)
 
         if self.engine == "vosk":
             # Lock recognizer access to prevent race condition with reconfigure
@@ -3556,16 +3586,16 @@ class SpeechRecognitionManager:
                 text = result.get("text", "")
 
         elif self.engine == "whisper":
-            text = self._transcribe_with_whisper(audio_buffer)
+            text = self._transcribe_with_whisper(audio_buffer, dictation_language)
 
         elif self.engine == "whisper_cpp":
-            text = self._transcribe_with_whispercpp(audio_buffer)
+            text = self._transcribe_with_whispercpp(audio_buffer, dictation_language)
 
         elif self.engine == "parakeet":
             text = self._transcribe_with_parakeet(audio_buffer)
 
         elif self.engine == "faster_whisper":
-            text = self._transcribe_with_faster_whisper(audio_buffer)
+            text = self._transcribe_with_faster_whisper(audio_buffer, dictation_language)
 
         elif self.engine == "remote_api":
             # Snapshot the HTTP session under lock to prevent race with
@@ -3579,7 +3609,7 @@ class SpeechRecognitionManager:
             if session is None:
                 logger.error("Remote API HTTP session not initialized")
                 return
-            text = self._transcribe_with_remote_api(audio_buffer, session)
+            text = self._transcribe_with_remote_api(audio_buffer, session, dictation_language)
 
         else:
             logger.error(f"Unknown engine: {self.engine}")
@@ -3626,7 +3656,7 @@ class SpeechRecognitionManager:
                     f"Recognition loop - should_record={self.should_record}, queue_empty={self._segment_queue.empty()}"
                 )
                 try:
-                    segment = self._segment_queue.get(timeout=0.1)
+                    queued = self._segment_queue.get(timeout=0.1)
                 except queue.Empty:
                     # Only exit if we're not recording AND queue is empty
                     if not self.should_record and self._segment_queue.empty():
@@ -3635,7 +3665,7 @@ class SpeechRecognitionManager:
                         )
                         # Give a brief moment for any final items to be enqueued
                         try:
-                            segment = self._segment_queue.get(timeout=0.5)
+                            queued = self._segment_queue.get(timeout=0.5)
                         except queue.Empty:
                             logger.debug("Recognition loop - no more items, exiting")
                             break
@@ -3643,28 +3673,30 @@ class SpeechRecognitionManager:
                         logger.debug("Recognition loop - queue timeout, continuing")
                         continue
 
-                if segment is None:
+                if queued is None:
                     logger.debug("Recognition loop - got None signal, draining remaining items...")
                     # Drain any remaining items before exiting
                     while not self._segment_queue.empty():
                         try:
                             remaining = self._segment_queue.get_nowait()
                             if remaining is not None:
+                                remaining_segment, remaining_language = remaining
                                 logger.debug(
-                                    f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
+                                    f"Recognition loop - processing remaining segment with {len(remaining_segment)} chunks"
                                 )
                                 if self.should_record:
                                     self._update_state(RecognitionState.PROCESSING)
-                                self._process_audio_buffer(remaining)
+                                self._process_audio_buffer(remaining_segment, remaining_language)
                         except queue.Empty:
                             break
                     logger.debug("Recognition loop - exiting after None signal")
                     break
 
+                segment, segment_language = queued
                 logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
                 if self.should_record:
                     self._update_state(RecognitionState.PROCESSING)
-                self._process_audio_buffer(segment)
+                self._process_audio_buffer(segment, segment_language)
                 if self.should_record:
                     self._update_state(RecognitionState.LISTENING)
         finally:
@@ -3684,14 +3716,19 @@ class SpeechRecognitionManager:
 
         logger.debug(f"_enqueue_audio_segment called with {len(segment)} chunks")
 
+        # Stamp this utterance's language on the segment: a worker that
+        # outlives its dictation (or drains another session's queue) must
+        # transcribe each segment in the language it was recorded under, not
+        # whatever a newer session stored in _session_language (#805).
+        stamped = (segment, self._dictation_language())
         try:
-            self._segment_queue.put_nowait(segment)
+            self._segment_queue.put_nowait(stamped)
             logger.debug("Enqueued segment successfully")
         except queue.Full:
             logger.warning("Transcription queue is full, dropping oldest pending segment")
             try:
                 self._segment_queue.get_nowait()
-                self._segment_queue.put_nowait(segment)
+                self._segment_queue.put_nowait(stamped)
             except queue.Empty:
                 logger.warning("Could not recover queue space for transcription segment")
 
