@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Sequence
 import numpy as np
 
 from ..utils.host_process import host_env
+from ..utils.model_checksums import verify_model_file
 from ..utils.whispercpp_model_info import TDRZ_MODEL, get_model_path, is_model_downloaded
 
 if TYPE_CHECKING:
@@ -124,6 +125,11 @@ def _load_wav(path: str) -> np.ndarray:
     return (stereo[:, 0] + stereo[:, 1]) / 65536.0
 
 
+def ffmpeg_available() -> bool:
+    """Whether ffmpeg can decode non-WAV formats for file transcription."""
+    return shutil.which("ffmpeg") is not None
+
+
 def _load_with_ffmpeg(path: str) -> np.ndarray:
     """Decode any ffmpeg-supported media to mono 16 kHz float32 samples."""
     if shutil.which("ffmpeg") is None:
@@ -183,12 +189,22 @@ def transcribe_audio_file(audio_path: str, model_name: str = TDRZ_MODEL) -> list
             "the catalog before transcribing"
         )
 
+    model_path = get_model_path(model_name)
+    # A file merely present on disk (copied in, truncated, tampered) is hashed
+    # against the pinned digest before native code maps it, same as dictation.
+    verify_model_file(model_path)
+
+    from ..utils.pywhispercpp_loader import preload_shared_libraries
+
+    # Source builds without RPATH need the bundled libwhisper/libggml loaded
+    # first; the headless path never reaches engine initialization.
+    preload_shared_libraries()
     from pywhispercpp.model import Model  # deferred: heavy native import
 
     audio = load_audio(audio_path)
     if audio.size == 0:
         raise ValueError(f"{audio_path} contains no audio")
 
-    model = Model(get_model_path(model_name), tdrz_enable=True)
+    model = Model(model_path, tdrz_enable=True)
     segments = model.transcribe(audio)
     return speaker_turn_blocks(segments)

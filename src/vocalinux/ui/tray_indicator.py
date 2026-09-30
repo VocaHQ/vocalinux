@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from typing import Any, Callable, Optional, cast
+from typing import Any, Callable, Optional, Sequence, cast
 
 import gi
 
@@ -40,7 +40,11 @@ from ..common_types import RecognitionState, SpeechRecognitionManagerProtocol, T
 from ..dbus_service import VocalinuxDBusService
 from ..gateway_embed import GatewayStatus, get_gateway_embed_manager
 from ..model_keepalive import DEFAULT_IDLE_TIMEOUT_SECONDS, ModelKeepAlive
-from ..speech_recognition.diarization import transcribe_audio_file
+from ..speech_recognition.diarization import (
+    TranscriptBlock,
+    ffmpeg_available,
+    transcribe_audio_file,
+)
 from ..suspend_handler import SuspendHandler
 from ..utils.host_process import host_env
 from ..utils.resource_manager import ResourceManager
@@ -764,7 +768,7 @@ class TrayIndicator:
         """Download the offered model, then report how it went."""
         last_notified = 0.0
 
-        def on_progress(fraction, speed_mbps, status):
+        def on_progress(fraction: float, speed_mbps: float, status: str) -> None:
             nonlocal last_notified
             now = time.monotonic()
             if now - last_notified < _DOWNLOAD_NOTIFY_INTERVAL_SECONDS:
@@ -824,7 +828,7 @@ class TrayIndicator:
             self.speech_engine.end_download()
             self._model_download_active = False
 
-    def _on_transcribe_file_clicked(self, widget) -> None:
+    def _on_transcribe_file_clicked(self, widget: Gtk.Widget) -> None:
         """Pick an audio file and transcribe it with speaker attribution."""
         chooser = Gtk.FileChooserDialog(
             title="Transcribe Audio File",
@@ -834,10 +838,17 @@ class TrayIndicator:
         chooser.add_button("_Cancel", Gtk.ResponseType.CANCEL)
         chooser.add_button("_Open", Gtk.ResponseType.OK)
 
+        # Non-WAV formats are decoded through ffmpeg; without it only the
+        # patterns the built-in WAV loader accepts are offered, so the picker
+        # never advertises a format that cannot be transcribed.
         audio_filter = Gtk.FileFilter()
-        audio_filter.set_name("Audio files")
-        for pattern in ("*.wav", "*.mp3", "*.ogg", "*.flac", "*.m4a", "*.opus"):
-            audio_filter.add_pattern(pattern)
+        if ffmpeg_available():
+            audio_filter.set_name("Audio files")
+            for pattern in ("*.wav", "*.mp3", "*.ogg", "*.flac", "*.m4a", "*.opus"):
+                audio_filter.add_pattern(pattern)
+        else:
+            audio_filter.set_name("WAV audio (install ffmpeg for MP3/OGG/FLAC/M4A/Opus)")
+            audio_filter.add_pattern("*.wav")
         chooser.add_filter(audio_filter)
 
         try:
@@ -882,7 +893,7 @@ class TrayIndicator:
 
         threading.Thread(target=run, daemon=True, name="file-transcription").start()
 
-    def _show_transcript(self, basename: str, blocks) -> None:
+    def _show_transcript(self, basename: str, blocks: Sequence[TranscriptBlock]) -> None:
         """Open the transcript dialog for the finished blocks."""
         from .transcript_dialog import TranscriptDialog
 
@@ -932,10 +943,10 @@ class TrayIndicator:
         dialog.connect("response", lambda *_args: dialog.destroy())
 
         def run() -> None:
-            def on_progress(fraction, speed_mbps, status):
+            def on_progress(fraction: float, speed_mbps: float, status: str) -> None:
                 GLib.idle_add(dialog.update_progress, fraction, speed_mbps, status)
 
-            def check_cancelled():
+            def check_cancelled() -> bool:
                 if dialog.cancelled:
                     self.speech_engine.cancel_download()
                 return not dialog.cancelled

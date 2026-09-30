@@ -322,6 +322,8 @@ class TestTranscribeAudioFile(unittest.TestCase):
             patch.object(
                 diarization, "get_model_path", return_value="/models/ggml-small.en-tdrz.bin"
             ),
+            patch.object(diarization, "verify_model_file"),
+            patch("vocalinux.utils.pywhispercpp_loader.preload_shared_libraries"),
             patch.object(diarization, "load_audio", return_value=np.zeros(1600, dtype=np.float32)),
         ):
             # pywhispercpp is imported lazily inside the function.
@@ -341,6 +343,8 @@ class TestTranscribeAudioFile(unittest.TestCase):
 
         with (
             patch.object(diarization, "is_model_downloaded", return_value=True),
+            patch.object(diarization, "verify_model_file"),
+            patch("vocalinux.utils.pywhispercpp_loader.preload_shared_libraries"),
             patch.object(diarization, "load_audio", return_value=np.zeros(0, dtype=np.float32)),
         ):
             with self.assertRaises(ValueError) as ctx:

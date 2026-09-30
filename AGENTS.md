@@ -104,6 +104,7 @@ pytest tests/test_command_processor.py::TestCommandProcessor::test_initializatio
 pytest -m "not slow"
 pytest -m "not integration"
 python -m vocalinux.main --debug
+python -m vocalinux.main --transcribe-file path/to/audio.wav   # diarized file transcription
 ```
 
 Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate site commands here.
@@ -146,6 +147,7 @@ src/vocalinux/
 ├── speech_recognition/
 │   ├── recognition_manager.py  # whisper.cpp / Whisper / Vosk / remote
 │   ├── command_processor.py    # voice commands
+│   ├── diarization.py          # --transcribe-file / tray "Transcribe audio file"
 │   ├── silero_vad.py
 │   └── data/                   # bundled silero_vad.onnx
 ├── text_injection/
@@ -153,6 +155,7 @@ src/vocalinux/
 │   └── ibus_engine.py          # Wayland IBus injection
 ├── ui/
 │   ├── tray_indicator.py, settings_dialog.py, first_run_dialog.py
+│   ├── transcript_dialog.py    # speaker-attributed transcript viewer/export
 │   ├── config_manager.py, action_handler.py, audio_feedback.py
 │   ├── autostart_manager.py, keyboard_shortcuts.py
 │   ├── logging_dialog.py, logging_manager.py
@@ -160,6 +163,7 @@ src/vocalinux/
 ├── utils/
 │   ├── paths.py, resource_manager.py
 │   ├── update_checker.py, update_monitor.py
+│   ├── pywhispercpp_loader.py  # bundled-lib preloader for source-built installs
 │   └── whispercpp_model_info.py, vosk_model_info.py
 └── resources/                  # SVG icons + WAV cues (also repo resources/)
 ```

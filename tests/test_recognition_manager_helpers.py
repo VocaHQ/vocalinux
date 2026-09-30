@@ -35,6 +35,7 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.speech_recognition import recognition_manager as rm
+from vocalinux.utils import pywhispercpp_loader
 from vocalinux.speech_recognition.recognition_manager import (
     SpeechRecognitionManager,
     _filter_non_speech,
@@ -224,9 +225,9 @@ class TestPywhispercppLibraryHelpers:
             loaded_handles.append(handle)
             return handle
 
-        monkeypatch.setattr(rm, "_PYWHISPERCPP_PRELOADED_LIBS", [])
-        monkeypatch.setattr(rm, "_find_pywhispercpp_shared_library_dirs", lambda: [str(libs_dir)])
-        monkeypatch.setattr(rm.ctypes, "CDLL", fake_cdll)
+        monkeypatch.setattr(pywhispercpp_loader, "_PRELOADED_LIBS", [])
+        monkeypatch.setattr(pywhispercpp_loader, "find_shared_library_dirs", lambda: [str(libs_dir)])
+        monkeypatch.setattr(pywhispercpp_loader.ctypes, "CDLL", fake_cdll)
 
         _preload_pywhispercpp_shared_libraries()
 
@@ -234,7 +235,7 @@ class TestPywhispercppLibraryHelpers:
             str(ggml_lib),
             str(whisper_lib),
         ]
-        assert rm._PYWHISPERCPP_PRELOADED_LIBS == loaded_handles
+        assert pywhispercpp_loader._PRELOADED_LIBS == loaded_handles
 
 
 class TestTestAudioInput(unittest.TestCase):
