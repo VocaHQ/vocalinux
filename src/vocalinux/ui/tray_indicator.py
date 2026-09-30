@@ -62,7 +62,7 @@ from .keyboard_backends import (
 )
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import ModelDownloadDialog, SettingsDialog, recommended_model_for_engine
-from .transcription_history import TranscriptionHistory
+from .transcription_history import DEFAULT_MAX_ITEMS, TranscriptionHistory
 
 logger = logging.getLogger(__name__)
 
@@ -442,6 +442,19 @@ class TrayIndicator:
             manager.start()
             self._language_shortcut_managers.append(manager)
             logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
+
+    def _apply_history_settings(self) -> None:
+        """Push the saved history preferences onto the live store (#805).
+
+        Toggling history off must stop retention immediately — not after a
+        restart — and the snippets-keep limit applies to what's already held.
+        """
+        if self.transcription_history is None:
+            return
+        enabled = self.config_manager.get_bool("history", "enabled", True)
+        max_items = self.config_manager.get_int("history", "max_items", DEFAULT_MAX_ITEMS)
+        self.transcription_history.set_max_items(max_items)
+        self.transcription_history.set_enabled(enabled)
 
     def _stop_language_shortcut_managers(self) -> None:
         """Stop every per-language listener and drop the managers."""
@@ -1344,6 +1357,7 @@ class TrayIndicator:
             overlay_enabled_callback=self.set_overlay_enabled,
             hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
             language_shortcuts_update_callback=self.refresh_language_shortcuts,
+            history_update_callback=self._apply_history_settings,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)

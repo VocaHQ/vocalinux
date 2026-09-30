@@ -2570,6 +2570,7 @@ class SettingsDialog(Gtk.Dialog):
         overlay_enabled_callback: Optional[Callable[[bool], None]] = None,
         hotkey_listener_update_callback: Optional[Callable[[], None]] = None,
         language_shortcuts_update_callback: Optional[Callable[[], None]] = None,
+        history_update_callback: Optional[Callable[[], None]] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -2585,6 +2586,7 @@ class SettingsDialog(Gtk.Dialog):
         self.overlay_enabled_callback = overlay_enabled_callback
         self.hotkey_listener_update_callback = hotkey_listener_update_callback
         self.language_shortcuts_update_callback = language_shortcuts_update_callback
+        self.history_update_callback = history_update_callback
         # Per-language shortcut rows (#805): a dict of row widgets per binding,
         # populated by _build_language_shortcuts_section.
         self._language_shortcut_rows: list[dict] = []
@@ -3648,6 +3650,8 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Transcription history toggled: {enabled}")
         self.config_manager.set("history", "enabled", enabled)
         self.config_manager.save_settings()
+        if self.history_update_callback:
+            self.history_update_callback()
         return False
 
     def _on_history_max_items_changed(self, widget: Gtk.SpinButton) -> None:
@@ -3659,6 +3663,8 @@ class SettingsDialog(Gtk.Dialog):
         logger.info(f"Transcription history max items: {max_items}")
         self.config_manager.set("history", "max_items", max_items)
         self.config_manager.save_settings()
+        if self.history_update_callback:
+            self.history_update_callback()
 
     def _on_autostart_toggled(self, widget, state):
         """Handle toggle of the autostart switch."""
