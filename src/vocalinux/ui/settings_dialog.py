@@ -5549,7 +5549,7 @@ class SettingsDialog(Gtk.Dialog):
             return
         self._advanced_prompt_dirty = True
 
-    def _on_language_candidates_changed(self, entry):
+    def _on_language_candidates_changed(self, entry: Gtk.Entry) -> None:
         """Track candidate edits without applying settings on every keystroke."""
         if self._initializing:
             return
@@ -5589,13 +5589,19 @@ class SettingsDialog(Gtk.Dialog):
         self._pending_text_edits = None
         if not pending:
             return
-        try:
-            self.speech_engine.reconfigure(**pending)
-            for key, value in pending.items():
-                self.config_manager.set("advanced", key, value)
-            self.config_manager.save_settings()
-        except Exception as e:
-            logger.warning(f"Could not persist deferred settings edits: {e}")
+
+        def persist() -> None:
+            try:
+                self.speech_engine.reconfigure(**pending)
+                for key, value in pending.items():
+                    self.config_manager.set("advanced", key, value)
+                self.config_manager.save_settings()
+            except Exception as e:
+                logger.warning(f"Could not persist deferred settings edits: {e}")
+
+        # reconfigure() restarts the model; like the normal apply path it runs
+        # on a worker so the model load never blocks the GTK main loop.
+        threading.Thread(target=persist, daemon=True).start()
 
     def _on_advanced_param_changed(self, widget, *args):
         """Handle any advanced parameter change."""
