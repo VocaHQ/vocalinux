@@ -145,7 +145,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
         with (
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, mock_stream),
             ) as mock_open,
             patch(
@@ -194,15 +194,15 @@ class TestAudioDeviceDetection(unittest.TestCase):
         with (
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_device_by_name",
+                "vocalinux.audio.capture._resolve_device_by_name",
                 return_value=None,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_valid_input_device",
+                "vocalinux.audio.capture._resolve_valid_input_device",
                 return_value=None,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, mock_stream),
             ) as mock_open,
             patch("vocalinux.speech_recognition.recognition_manager.play_error_sound"),
@@ -233,7 +233,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
             if isinstance(sys.modules.get("numpy"), MagicMock):
                 del sys.modules["numpy"]
             with patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 48000, None),
             ):
                 result = _run_test_audio_input(device_index=None, duration=0.1)
@@ -549,7 +549,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
             if isinstance(sys.modules.get("numpy"), MagicMock):
                 del sys.modules["numpy"]
             with patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 48000, mock_stream),
             ) as mock_open:
                 result = test_audio_input(device_index=None, duration=0.1)
@@ -579,7 +579,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
             if isinstance(sys.modules.get("numpy"), MagicMock):
                 del sys.modules["numpy"]
             with patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, None),
             ):
                 result = _run_test_audio_input(device_index=14, duration=0.1)
@@ -602,7 +602,7 @@ class TestAudioDeviceDetection(unittest.TestCase):
 
         with patch.dict("sys.modules", {"pyaudio": mock_pyaudio}):
             with patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, None),
             ):
                 result = _run_test_audio_input(device_index=14, duration=0.1)
@@ -974,11 +974,11 @@ class TestRecordAudioNegotiationFallback(unittest.TestCase):
         with (
             patch.dict("sys.modules", {"pyaudio": mock_pyaudio}),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._resolve_device_by_name",
+                "vocalinux.audio.capture._resolve_device_by_name",
                 return_value=0,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                "vocalinux.audio.capture._open_capture_stream",
                 return_value=(1, 16000, None),
             ),
             patch(

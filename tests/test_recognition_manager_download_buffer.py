@@ -696,11 +696,11 @@ class TestAudioDeviceReconnection(unittest.TestCase):
             patch("threading.Thread"),
             patch.object(SpeechRecognitionManager, "_get_vosk_model_path"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_channels",
+                "vocalinux.audio.capture._get_supported_channels",
                 return_value=1,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_sample_rate",
+                "vocalinux.audio.capture._get_supported_sample_rate",
                 return_value=16000,
             ),
         ]
@@ -729,11 +729,11 @@ class TestAudioDeviceReconnection(unittest.TestCase):
             patch("threading.Thread"),
             patch.object(SpeechRecognitionManager, "_get_vosk_model_path"),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_channels",
+                "vocalinux.audio.capture._get_supported_channels",
                 return_value=1,
             ),
             patch(
-                "vocalinux.speech_recognition.recognition_manager._get_supported_sample_rate",
+                "vocalinux.audio.capture._get_supported_sample_rate",
                 return_value=16000,
             ),
         ]
