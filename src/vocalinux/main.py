@@ -809,15 +809,24 @@ def main():
 
         def _probe_result(
             probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
+            wait_seconds: Optional[float] = None,
         ) -> Optional[focused_window.FocusedWindow]:
             """Return the focus identity a submit-time probe captured.
 
             The probe thread starts the moment the segment is submitted, so
             joining it here adds no wait beyond the probe's own runtime.
+            wait_seconds bounds that join for jobs that must stay immediate;
+            a timed-out probe yields None, which the focus check treats
+            permissively like any other failed probe.
             """
             if probe is None:
                 return None
-            return probe.get()
+            if wait_seconds is None:
+                return probe.get()
+            try:
+                return probe.get(timeout=wait_seconds)
+            except queue.Empty:
+                return None
 
         def post_process_and_inject(
             text_to_inject: str,
@@ -864,16 +873,20 @@ def main():
             """Run one voice-command action on the post-processing worker.
 
             Actions send keystrokes through the same injector as transcription
-            text, so they queue on the same worker in spoken order and — like
-            queued text — are bound to the app focused when the command was
-            issued: a queued shortcut must not fire in whatever application
-            the user has switched to meanwhile.
+            text, so they queue on the same worker in spoken order and are
+            bound to the app focused when the command was issued: even a
+            submission that looks immediate can run after a context switch,
+            so the binding applies to every action.  Waiting on the probe is
+            bounded — a compositor call answers in milliseconds on a healthy
+            desktop — so an immediate "undo" or "select all" is never made
+            slow; only a genuinely stalled probe falls back to the injector's
+            own targeting.
             """
             nonlocal pending_jobs
             try:
                 if not accepting_injections.is_set():
                     return False
-                if not _focused_app_unchanged(_probe_result(target_probe)):
+                if not _focused_app_unchanged(_probe_result(target_probe, wait_seconds=1.0)):
                     logger.info("Dropping queued action: focus moved to another application")
                     return False
                 with injection_lock:
@@ -899,20 +912,18 @@ def main():
             nonlocal pending_jobs
             if not accepting_injections.is_set():
                 return None
-            # An action only needs the submit-time focus binding when it can
-            # run late — i.e. when other jobs are ahead of it.  A free worker
-            # injects it right away, so there is no focus-change window to
-            # guard against and no probe wait to pay: an immediate "undo" or
-            # "select all" must stay immediate even when a script is
-            # configured.
+            # Every action is bound to the app focused at submit time:
+            # submission does not guarantee immediate execution, so there is
+            # always a focus-change window between the two.  The probe runs
+            # off this thread and the worker only waits on it briefly, so
+            # the binding costs nothing on a healthy desktop.
             # Probing and submitting happen inside the lock so queue order
             # matches the order these callbacks ran in — a job that saw an
             # empty queue cannot end up waiting behind one that arrived while
             # its submission was still in flight.
             with pending_jobs_lock:
-                queued_behind = pending_jobs > 0
                 pending_jobs += 1
-                target_probe = _start_focus_probe() if queued_behind else None
+                target_probe = _start_focus_probe()
                 try:
                     future: Future = post_processing_executor.submit(
                         _run_action, action, target_probe
@@ -934,15 +945,13 @@ def main():
             results, and pending submissions are cancelled without waiting on
             a running script — quit must not freeze the tray on the script's
             own timeout.  Only an injection already in progress is waited out,
-            so the injector is never stopped mid-inject; the wait itself is
-            capped because every inject-path subprocess is individually
-            bounded, and even a pathological retry chain must not stall quit.
+            so the injector is never stopped mid-inject; every inject-path
+            subprocess is individually bounded, so the wait always ends with
+            the injection and is never interrupted partway through.
             """
             accepting_injections.clear()
-            if injection_lock.acquire(timeout=10):
-                injection_lock.release()
-            else:
-                logger.warning("Proceeding with quit while an injection is still finishing")
+            with injection_lock:
+                pass
             post_processing_executor.shutdown(wait=False, cancel_futures=True)
 
         def text_callback_wrapper(text: str) -> Optional[Future]:

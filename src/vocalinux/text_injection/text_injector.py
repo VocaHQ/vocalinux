@@ -1627,6 +1627,12 @@ class TextInjector:
                 ).start()
 
             return True
+        except subprocess.TimeoutExpired as e:
+            # A type call that ran past its bound may have delivered only part
+            # of the text; putting the full text on the clipboard would let a
+            # manual paste duplicate the fragment already typed.
+            logger.error(f"Text injection timed out, text may be partially typed: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to inject text: {e}", exc_info=True)
 
@@ -2493,11 +2499,18 @@ class TextInjector:
 
         if self.wayland_tool == "wtype":
             cmd = ["wtype", text]
+            # wtype types the whole string in one call; the budget scales with
+            # its length so only a wedged process can ever hit it.
+            type_timeout = max(5, len(text) * 0.05)
         else:  # ydotool
             # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
             # Low delay so fallback typing finishes quickly for long phrases.
             key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
             cmd = ["ydotool", "type", "--key-delay", key_delay, text]
+            # The budget is a generous multiple of the configured per-key
+            # delay: a legitimately slow type must never be cut mid-text —
+            # only a stall far beyond the expected duration is.
+            type_timeout = max(5, len(text) * self._key_delay_seconds(key_delay) * 4)
 
         try:
             subprocess.run(
@@ -2505,12 +2518,12 @@ class TextInjector:
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
-                # wtype/ydotool type the whole string in one call, so the
-                # budget scales with its length the way the xdotool chunks
-                # and backspace counts already do.
-                timeout=max(5, len(text) * 0.05),
+                timeout=type_timeout,
                 env=host_env(),
             )
+        except subprocess.TimeoutExpired:
+            logger.error(f"{self.wayland_tool} type timed out; text may be partially typed")
+            raise
         except subprocess.CalledProcessError as e:
             # Re-raise with stderr preserved for better diagnostics
             raise subprocess.CalledProcessError(
