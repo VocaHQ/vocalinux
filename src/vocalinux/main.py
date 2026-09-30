@@ -6,9 +6,10 @@ Main entry point for Vocalinux application.
 import argparse
 import atexit
 import logging
+import queue
 import sys
 import threading
-from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -754,16 +755,14 @@ def main():
         post_processing_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="vocalinux-post-processing"
         )
-        # Focus probes shell out to compositor tools under their own timeouts,
-        # so they run on a dedicated worker: the recognition thread only submits
-        # a probe and moves on, and the job reads the result at inject time.
-        focus_probe_executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="vocalinux-focus-probe"
-        )
         # Cleared by the quit hook so a queued or in-flight job drops its
         # segment instead of injecting while the injector is being stopped.
         accepting_injections = threading.Event()
         accepting_injections.set()
+        # Serialises the flag check and the inject call itself: quitting can
+        # wait out an injection already in progress while never blocking on a
+        # queued or running script.
+        injection_lock = threading.Lock()
         # Segments that may sit in the backlog (a script is configured, or a
         # job is still running) are bound to the app focused at submit time;
         # the worker drops them if focus has moved to another application.
@@ -785,26 +784,44 @@ def main():
                 return True
             return current.identity_blob() == target.identity_blob()
 
+        def _start_focus_probe() -> queue.Queue[Optional[focused_window.FocusedWindow]]:
+            """Probe the focused window now, off the calling thread.
+
+            Focus probes shell out to compositor tools under their own
+            timeouts, so each runs on a fresh daemon thread: the recognition
+            thread never waits on them, and — unlike a shared worker — an
+            earlier slow probe cannot delay this one past the focus change it
+            is meant to capture.
+            """
+            probe_result: queue.Queue[Optional[focused_window.FocusedWindow]] = queue.Queue(
+                maxsize=1
+            )
+
+            def probe() -> None:
+                try:
+                    probe_result.put(focused_window.get_focused_window())
+                except Exception:
+                    # A crashed probe must still unblock the waiting job.
+                    probe_result.put(None)
+
+            threading.Thread(target=probe, daemon=True, name="vocalinux-focus-probe").start()
+            return probe_result
+
         def _probe_result(
-            probe: Optional[Future[Optional[focused_window.FocusedWindow]]],
+            probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
         ) -> Optional[focused_window.FocusedWindow]:
             """Return the focus identity a submit-time probe captured.
 
-            The probe ran on its own worker from the moment the segment was
-            submitted, so joining it here adds no wait beyond its own runtime.
-            A probe that was cancelled during quit resolves to the permissive
-            None path like any other undetermined identity.
+            The probe thread starts the moment the segment is submitted, so
+            joining it here adds no wait beyond the probe's own runtime.
             """
             if probe is None:
                 return None
-            try:
-                return probe.result()
-            except CancelledError:
-                return None
+            return probe.get()
 
         def post_process_and_inject(
             text_to_inject: str,
-            target_probe: Optional[Future[Optional[focused_window.FocusedWindow]]],
+            target_probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
         ) -> None:
             """Apply the configured post-processing script, then inject.
 
@@ -814,10 +831,9 @@ def main():
 
             Args:
                 text_to_inject: Finalised transcription segment.
-                target_probe: In-flight probe of the app focused when the
-                    segment was dictated; the segment is dropped if focus has
-                    since moved elsewhere.  None keeps the injector's own
-                    targeting.
+                target_probe: Probe of the app focused when the segment was
+                    dictated; the segment is dropped if focus has since moved
+                    elsewhere.  None keeps the injector's own targeting.
             """
             nonlocal pending_jobs
             try:
@@ -833,28 +849,38 @@ def main():
                 if not _focused_app_unchanged(_probe_result(target_probe)):
                     logger.info("Dropping queued segment: focus moved to another application")
                     return
-                # The focus re-probe above can take a moment; quit may have
-                # cleared the flag while it ran.
-                if not accepting_injections.is_set():
-                    return
-                inject_transcription(processed_text)
+                with injection_lock:
+                    if not accepting_injections.is_set():
+                        return
+                    inject_transcription(processed_text)
             finally:
                 with pending_jobs_lock:
                     pending_jobs -= 1
 
-        def _run_action(action: str) -> bool:
+        def _run_action(
+            action: str,
+            target_probe: Optional[queue.Queue[Optional[focused_window.FocusedWindow]]],
+        ) -> bool:
             """Run one voice-command action on the post-processing worker.
 
             Actions send keystrokes through the same injector as transcription
-            text, so they queue on the same worker and cannot overtake a
-            dictated segment submitted before them.
+            text, so they queue on the same worker in spoken order and — like
+            queued text — are bound to the app focused when the command was
+            issued: a queued shortcut must not fire in whatever application
+            the user has switched to meanwhile.
             """
             nonlocal pending_jobs
             try:
-                if accepting_injections.is_set():
+                if not accepting_injections.is_set():
+                    return False
+                if not _focused_app_unchanged(_probe_result(target_probe)):
+                    logger.info("Dropping queued action: focus moved to another application")
+                    return False
+                with injection_lock:
+                    if not accepting_injections.is_set():
+                        return False
                     handled: bool = action_handler.handle_action(action)
                     return handled
-                return False
             finally:
                 with pending_jobs_lock:
                     pending_jobs -= 1
@@ -873,10 +899,15 @@ def main():
             nonlocal pending_jobs
             if not accepting_injections.is_set():
                 return None
+            # Same binding rule as text: an action that may run late targets
+            # the app focused when it was issued.
+            script_configured = bool(config_manager.get_str("post_processing", "script_path", ""))
             with pending_jobs_lock:
+                may_queue = pending_jobs > 0 or script_configured
                 pending_jobs += 1
+            target_probe = _start_focus_probe() if may_queue else None
             try:
-                future: Future = post_processing_executor.submit(_run_action, action)
+                future: Future = post_processing_executor.submit(_run_action, action, target_probe)
                 return future
             except RuntimeError:
                 # The quit path already shut the worker down.
@@ -884,17 +915,23 @@ def main():
                     pending_jobs -= 1
                 return None
 
+        def _reset_last_injected() -> None:
+            """Clear the last-injected buffer on the post-processing worker."""
+            action_handler.set_last_injected_text("")
+
         def _shutdown_post_processing() -> None:
             """Stop the post-processing worker for application quit.
 
             Clearing the flag makes queued or in-flight jobs drop their
-            results; pending submissions are cancelled without waiting on a
-            running script — quit must not freeze the tray on the script's
-            own timeout.
+            results, and pending submissions are cancelled without waiting on
+            a running script — quit must not freeze the tray on the script's
+            own timeout.  Only an injection already in progress is waited out,
+            so the injector is never stopped mid-inject.
             """
             accepting_injections.clear()
+            with injection_lock:
+                pass
             post_processing_executor.shutdown(wait=False, cancel_futures=True)
-            focus_probe_executor.shutdown(wait=False, cancel_futures=True)
 
         def text_callback_wrapper(text: str) -> Optional[Future]:
             """Bridge between speech engine text events and the text injector.
@@ -932,13 +969,7 @@ def main():
             with pending_jobs_lock:
                 may_queue = pending_jobs > 0 or script_configured
                 pending_jobs += 1
-            target_probe: Optional[Future[Optional[focused_window.FocusedWindow]]] = None
-            if may_queue:
-                try:
-                    target_probe = focus_probe_executor.submit(focused_window.get_focused_window)
-                except RuntimeError:
-                    # The quit path already shut the probe worker down.
-                    target_probe = None
+            target_probe = _start_focus_probe() if may_queue else None
             try:
                 future: Future = post_processing_executor.submit(
                     post_process_and_inject, text_to_inject, target_probe
@@ -946,8 +977,6 @@ def main():
                 return future
             except RuntimeError:
                 # The quit path already shut the worker down.
-                if target_probe is not None:
-                    target_probe.cancel()
                 with pending_jobs_lock:
                     pending_jobs -= 1
                 return None
@@ -956,13 +985,24 @@ def main():
             """Reset the last-injected buffer when a listening session ends.
 
             Also commits the just-finished dictation session to the
-            transcription history as a single snippet.
+            transcription history as a single snippet. With jobs still queued
+            the reset is queued behind them, so a "delete that" action
+            recognised just before the session ended still sees the text it
+            refers to.
             """
             nonlocal session_open, session_worker, latest_snippet_extendable
             nonlocal ended_session_epoch
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
-                    action_handler.set_last_injected_text("")
+                    with pending_jobs_lock:
+                        backlog = pending_jobs > 0
+                    if backlog and accepting_injections.is_set():
+                        try:
+                            post_processing_executor.submit(_reset_last_injected)
+                        except RuntimeError:
+                            action_handler.set_last_injected_text("")
+                    else:
+                        action_handler.set_last_injected_text("")
                 with session_lock:
                     session_open = False
                     session_worker = None

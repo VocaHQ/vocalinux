@@ -1347,6 +1347,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             main()
             text_cb = mock_speech.register_text_callback.call_args.args[0]
             action_cb = mock_speech.register_action_callback.call_args.args[0]
+            state_cb = mock_speech.register_state_callback.call_args.args[0]
         except BaseException:
             # The caller only closes the stack once it gets one back, so a
             # failure here would leak these patches into every later test.
@@ -1357,6 +1358,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             stack=stack,
             text_cb=text_cb,
             action_cb=action_cb,
+            state_cb=state_cb,
             mock_text=mock_text,
             mock_config=mock_config,
             mock_tray_cls=mock_tray_cls,
@@ -1546,6 +1548,82 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             action_future.result(timeout=10)
             boot.mock_text._inject_keyboard_shortcut.assert_called_once_with("ctrl+a")
         finally:
+            boot.stack.close()
+
+    def test_idle_reset_waits_for_queued_delete_action(self) -> None:
+        """A 'delete that' queued before IDLE must still see the text it targets."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        started = threading.Event()
+        gate = threading.Event()
+
+        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+            started.set()
+            gate.wait(timeout=10)
+            return MagicMock(returncode=0, stdout="HELLO", stderr="")
+
+        try:
+            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+                text_future = boot.text_cb("hello")
+                self.assertTrue(started.wait(timeout=5))
+                delete_future = boot.action_cb("delete_last")
+                # The session ends while both jobs are queued; the reset must
+                # run only after the delete action consumed last_injected_text.
+                boot.state_cb(RecognitionState.IDLE)
+                gate.set()
+                text_future.result(timeout=10)
+                delete_future.result(timeout=10)
+            boot.mock_text.press_backspace.assert_called_once_with(len("HELLO "))
+        finally:
+            gate.set()
+            boot.stack.close()
+
+    def test_queued_action_dropped_when_focus_moves(self) -> None:
+        """A queued shortcut is dropped, not fired into the newly focused app."""
+        from vocalinux.text_injection.focused_window import FocusedWindow
+
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        started = threading.Event()
+        gate = threading.Event()
+        probes_done = threading.Event()
+        probe_calls: list = []
+
+        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+            started.set()
+            gate.wait(timeout=10)
+            return MagicMock(returncode=0, stdout="OUT", stderr="")
+
+        try:
+            window_a = FocusedWindow(app_id="editor", wm_class="Editor", process_name="editor")
+            window_b = FocusedWindow(app_id="browser", wm_class="Browser", process_name="browser")
+            window_iter = iter([window_a, window_a, window_b, window_b, window_b, window_b])
+
+            def fake_probe() -> FocusedWindow:
+                # Both submit-time probes capture the editor; the jobs' later
+                # re-probes then see the browser.
+                probe_calls.append(1)
+                if len(probe_calls) == 2:
+                    probes_done.set()
+                return next(window_iter)
+
+            with (
+                patch(
+                    "vocalinux.text_injection.focused_window.get_focused_window",
+                    side_effect=fake_probe,
+                ),
+                patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run),
+            ):
+                text_future = boot.text_cb("hello")
+                self.assertTrue(started.wait(timeout=5))
+                action_future = boot.action_cb("select_all")
+                # Wait for both submit-time probes so the re-probes in the
+                # queued jobs deterministically observe the new application.
+                self.assertTrue(probes_done.wait(timeout=5))
+                gate.set()
+                text_future.result(timeout=10)
+                action_future.result(timeout=10)
+            boot.mock_text._inject_keyboard_shortcut.assert_not_called()
+        finally:
+            gate.set()
             boot.stack.close()
 
     def test_quit_hook_stops_worker_and_blocks_new_submissions(self) -> None:
