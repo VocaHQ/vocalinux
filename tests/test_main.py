@@ -6,10 +6,12 @@ import argparse
 import sys
 import threading
 import time
-import time
+import threading
 import unittest
 from contextlib import ExitStack
 from typing import Any, Callable, Dict, Optional, Tuple
+from unittest.mock import ANY, MagicMock, patch
+from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
@@ -255,6 +257,9 @@ class TestMainModule(unittest.TestCase):
                 speech_engine=mock_speech_instance,
                 text_injector=mock_text_instance,
                 transcription_history=ANY,
+                speech_engine=mock_speech_instance,
+                text_injector=mock_text_instance,
+                on_quit=ANY,
             )
 
             # Verify callbacks were registered
@@ -318,17 +323,19 @@ class TestMainModule(unittest.TestCase):
         text_callback = mock_speech_instance.register_text_callback.call_args.args[0]
         state_callback = mock_speech_instance.register_state_callback.call_args.args[0]
 
-        text_callback("Hello.")
+        # Injection now happens on the post-processing worker; the returned
+        # future drains it synchronously.
+        text_callback("Hello.").result(timeout=10)
         state_callback(RecognitionState.PROCESSING)
         state_callback(RecognitionState.LISTENING)
-        text_callback("World")
+        text_callback("World").result(timeout=10)
 
         calls = [call.args[0] for call in mock_text_instance.inject_text.call_args_list]
         self.assertEqual(calls, ["Hello. ", "World "])
 
         state_callback(RecognitionState.IDLE)
         mock_text_instance.inject_text.reset_mock()
-        text_callback("Next session")
+        text_callback("Next session").result(timeout=10)
         # Trailing space persists in the previous field; next session starts clean
         # (no leading space) but still gets its own trailing space.
         mock_text_instance.inject_text.assert_called_once_with("Next session ")
@@ -410,7 +417,7 @@ class TestMainModule(unittest.TestCase):
             mock_check_deps=mock_check_deps,
         )
 
-        text_callback("hello world. goodbye")
+        text_callback("hello world. goodbye").result(timeout=10)
         mock_text_instance.inject_text.assert_called_once_with("Hello world. Goodbye ")
 
     @patch("vocalinux.main.check_dependencies")
@@ -439,7 +446,7 @@ class TestMainModule(unittest.TestCase):
             mock_check_deps=mock_check_deps,
         )
 
-        text_callback("hello world. goodbye")
+        text_callback("hello world. goodbye").result(timeout=10)
         mock_text_instance.inject_text.assert_called_once_with("hello world. goodbye ")
 
     @patch("vocalinux.main.check_dependencies")
@@ -468,7 +475,7 @@ class TestMainModule(unittest.TestCase):
             mock_check_deps=mock_check_deps,
         )
 
-        text_callback("hello world. goodbye")
+        text_callback("hello world. goodbye").result(timeout=10)
         mock_text_instance.inject_text.assert_called_once_with("hello world. goodbye ")
 
     @patch("vocalinux.main.check_dependencies")
@@ -1268,8 +1275,8 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         append_trailing_space: bool = True,
         inject_ok: bool = True,
         post_script: str = "",
-    ):
-        """Return (exit_stack, text_cb, mock_text) with patches still active."""
+    ) -> SimpleNamespace:
+        """Boot main() under mocks; return namespace of stack, text_cb and mocks."""
         from contextlib import ExitStack
 
         stack = ExitStack()
@@ -1310,6 +1317,15 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 return_value=append_trailing_space,
             )
         )
+        # Probing the focused window shells out to compositor tools; keep the
+        # callback tests deterministic by making the probe report "unknown",
+        # which keeps the permissive injection path.
+        stack.enter_context(
+            patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                return_value=None,
+            )
+        )
         mock_parse = stack.enter_context(patch("vocalinux.main.parse_arguments"))
         stack.enter_context(patch("sys.argv", ["vocalinux"]))
 
@@ -1330,95 +1346,200 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             stack.close()
             raise
 
-        return stack, text_cb, mock_text
+        return SimpleNamespace(
+            stack=stack,
+            text_cb=text_cb,
+            mock_text=mock_text,
+            mock_config=mock_config,
+            mock_tray_cls=mock_tray_cls,
+        )
 
     def test_whitespace_only_is_skipped_through_main(self):
-        stack, text_cb, mock_text = self._boot_under_patches()
+        boot = self._boot_under_patches()
         try:
-            text_cb("   \t  ")
-            mock_text.inject_text.assert_not_called()
+            self.assertIsNone(boot.text_cb("   \t  "))
+            boot.mock_text.inject_text.assert_not_called()
         finally:
-            stack.close()
+            boot.stack.close()
 
     def test_newline_segment_skips_trailing_space_through_main(self):
-        stack, text_cb, mock_text = self._boot_under_patches()
+        boot = self._boot_under_patches()
         try:
-            text_cb("Hello.\n")
-            mock_text.inject_text.assert_called_once_with("Hello.\n")
+            boot.text_cb("Hello.\n").result(timeout=10)
+            boot.mock_text.inject_text.assert_called_once_with("Hello.\n")
         finally:
-            stack.close()
+            boot.stack.close()
 
     def test_legacy_mode_adds_leading_space_in_session(self):
-        stack, text_cb, mock_text = self._boot_under_patches(append_trailing_space=False)
+        boot = self._boot_under_patches(append_trailing_space=False)
         try:
-            text_cb("Hello.")
-            text_cb("World")
-            calls = [c.args[0] for c in mock_text.inject_text.call_args_list]
+            boot.text_cb("Hello.").result(timeout=10)
+            boot.text_cb("World").result(timeout=10)
+            calls = [c.args[0] for c in boot.mock_text.inject_text.call_args_list]
             self.assertEqual(calls, ["Hello.", " World"])
         finally:
-            stack.close()
+            boot.stack.close()
 
     def test_failed_inject_does_not_remember_text(self):
-        stack, text_cb, mock_text = self._boot_under_patches(
-            append_trailing_space=False, inject_ok=False
-        )
+        boot = self._boot_under_patches(append_trailing_space=False, inject_ok=False)
         try:
-            text_cb("Hello.")
-            mock_text.inject_text.reset_mock()
-            mock_text.inject_text.return_value = True
-            text_cb("World")
+            boot.text_cb("Hello.").result(timeout=10)
+            boot.mock_text.inject_text.reset_mock()
+            boot.mock_text.inject_text.return_value = True
+            boot.text_cb("World").result(timeout=10)
             # Failure means last_injected stays empty; next segment has no leading space
-            mock_text.inject_text.assert_called_once_with("World")
+            boot.mock_text.inject_text.assert_called_once_with("World")
         finally:
-            stack.close()
-
-    @staticmethod
-    def _await_inject_text(mock_text: MagicMock, timeout: float = 5.0) -> None:
-        """Wait for the post-processing worker to reach inject_text."""
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            if mock_text.inject_text.call_count:
-                return
-            time.sleep(0.01)
+            boot.stack.close()
 
     def test_post_processing_transform_reaches_injector(self) -> None:
         """Configured script output is what gets injected, spacing rules included."""
-        stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
         try:
             run_result = MagicMock()
             run_result.returncode = 0
             run_result.stderr = ""
             run_result.stdout = "TRANSFORMED"
             with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
-                text_cb("hello")
-                self._await_inject_text(mock_text)
-                mock_text.inject_text.assert_called_once_with("TRANSFORMED ")
+                boot.text_cb("hello").result(timeout=10)
+                boot.mock_text.inject_text.assert_called_once_with("TRANSFORMED ")
 
                 # A transformed paragraph break keeps its newlines (and so
                 # skips the appended trailing space like any "\n" ending).
-                mock_text.inject_text.reset_mock()
+                boot.mock_text.inject_text.reset_mock()
                 run_result.stdout = "PARA ONE.\n\n"
-                text_cb("para one.\n\n")
-                self._await_inject_text(mock_text)
-                mock_text.inject_text.assert_called_once_with("PARA ONE.\n\n")
+                boot.text_cb("para one.\n\n").result(timeout=10)
+                boot.mock_text.inject_text.assert_called_once_with("PARA ONE.\n\n")
         finally:
-            stack.close()
+            boot.stack.close()
 
     def test_post_processing_empty_output_skips_injection(self) -> None:
         """A script that emits nothing swallows the segment — nothing injected."""
-        stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
         try:
             run_result = MagicMock()
             run_result.returncode = 0
             run_result.stderr = ""
             run_result.stdout = ""
             with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
-                text_cb("hello")
-                # Give the worker a moment in case it (incorrectly) injects.
-                time.sleep(0.2)
-                mock_text.inject_text.assert_not_called()
+                boot.text_cb("hello").result(timeout=10)
+                boot.mock_text.inject_text.assert_not_called()
         finally:
-            stack.close()
+            boot.stack.close()
+
+    def test_segment_queues_behind_running_script_when_script_cleared(self) -> None:
+        """Clearing the script path mid-queue cannot let a later segment overtake."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        started = threading.Event()
+        gate = threading.Event()
+
+        def blocked_run(cmd, **kwargs):
+            started.set()
+            gate.wait(timeout=10)
+            return MagicMock(returncode=0, stdout="PROCESSED FIRST", stderr="")
+
+        try:
+            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+                first = boot.text_cb("first")
+                self.assertTrue(started.wait(timeout=5))
+                # User disables the script while the first segment still runs;
+                # the second must still queue behind it, not inject directly.
+                boot.mock_config.get_str.return_value = ""
+                second = boot.text_cb("second")
+                gate.set()
+                self.assertIsNotNone(first)
+                self.assertIsNotNone(second)
+                first.result(timeout=10)
+                second.result(timeout=10)
+            calls = [c.args[0] for c in boot.mock_text.inject_text.call_args_list]
+            self.assertEqual(calls, ["PROCESSED FIRST ", "second "])
+        finally:
+            gate.set()
+            boot.stack.close()
+
+    def test_queued_segment_dropped_when_focus_moves(self) -> None:
+        """A segment that outlived its target app is dropped, not injected."""
+        from vocalinux.text_injection.focused_window import FocusedWindow
+
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        try:
+            window_a = FocusedWindow(app_id="editor", wm_class="Editor", process_name="editor")
+            window_b = FocusedWindow(app_id="browser", wm_class="Browser", process_name="browser")
+            run_result = MagicMock(returncode=0, stdout="OUT", stderr="")
+            # First probe (submit time) sees the editor; the worker's re-probe
+            # after the script finds the browser — different application.
+            with (
+                patch(
+                    "vocalinux.text_injection.focused_window.get_focused_window",
+                    side_effect=[window_a, window_b, window_b, window_b],
+                ),
+                patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
+            ):
+                boot.text_cb("hello").result(timeout=10)
+            boot.mock_text.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_same_app_focus_change_still_injects(self) -> None:
+        """Focus probe returning the same app keeps the segment deliverable."""
+        from vocalinux.text_injection.focused_window import FocusedWindow
+
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        try:
+            window = FocusedWindow(app_id="editor", process_name="editor")
+            # Two editor windows differ only by title — same application.
+            other_doc = FocusedWindow(app_id="editor", title="other.py", process_name="editor")
+            run_result = MagicMock(returncode=0, stdout="hello", stderr="")
+            with (
+                patch(
+                    "vocalinux.text_injection.focused_window.get_focused_window",
+                    side_effect=[window, other_doc, other_doc],
+                ),
+                patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
+            ):
+                boot.text_cb("hello").result(timeout=10)
+            boot.mock_text.inject_text.assert_called_once_with("hello ")
+        finally:
+            boot.stack.close()
+
+    def test_quit_hook_stops_worker_and_blocks_new_submissions(self) -> None:
+        """The tray's on_quit hook drains the worker and rejects new segments."""
+        boot = self._boot_under_patches()
+        try:
+            on_quit = boot.mock_tray_cls.call_args.kwargs["on_quit"]
+            on_quit()
+            self.assertIsNone(boot.text_cb("hello"))
+            boot.mock_text.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_running_job_drops_result_during_quit(self) -> None:
+        """A script mid-flight when quit begins cannot inject afterwards."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        started = threading.Event()
+        gate = threading.Event()
+
+        def blocked_run(cmd, **kwargs):
+            started.set()
+            gate.wait(timeout=10)
+            return MagicMock(returncode=0, stdout="TOO LATE", stderr="")
+
+        try:
+            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+                future = boot.text_cb("hello")
+                self.assertTrue(started.wait(timeout=5))
+                quit_thread = threading.Thread(
+                    target=boot.mock_tray_cls.call_args.kwargs["on_quit"]
+                )
+                quit_thread.start()
+                gate.set()
+                quit_thread.join(timeout=10)
+                self.assertFalse(quit_thread.is_alive())
+                future.result(timeout=10)
+            boot.mock_text.inject_text.assert_not_called()
+        finally:
+            gate.set()
+            boot.stack.close()
 
 
 class TestSessionHistoryRecording(unittest.TestCase):
