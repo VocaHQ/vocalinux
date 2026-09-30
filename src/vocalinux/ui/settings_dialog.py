@@ -96,7 +96,6 @@ from ..utils.whispercpp_model_info import (
 )
 from ..version import __copyright__, __url__, __version__  # noqa: E402
 from .config_manager import (  # noqa: E402
-    CONFIG_FILE,
     DEFAULT_CONFIG,
     DEFAULT_PASTE_SHORTCUT,
     DEFAULT_SOUND_EFFECT_TONE,
@@ -132,6 +131,13 @@ if TYPE_CHECKING:
     from .config_manager import ConfigManager  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+# Serializes settings applies against deferred-edit persistence across dialog
+# instances: a dialog closed mid-apply hands its pending edits to a worker, and
+# a reopened dialog shares the same engine and config manager, so both sides
+# must agree on whose snapshot is newest.
+_apply_settings_lock = threading.Lock()
+_apply_settings_generation = 0
 
 
 def _raw_audio_device_name(device_name: Optional[str]) -> Optional[str]:
@@ -2611,6 +2617,7 @@ class SettingsDialog(Gtk.Dialog):
         # Deferred text edits stashed when the dialog closes mid-apply; persisted
         # by _finish_auto_apply once the running apply releases the guard.
         self._pending_text_edits: Optional[dict] = None
+        self._pending_apply_generation = 0
         self._about_release_url = ""
         self._update_check_in_progress = False
         self._update_check_generation = 0
@@ -6141,6 +6148,7 @@ class SettingsDialog(Gtk.Dialog):
             # The apply holding the guard cannot see these edits; stash them so
             # _finish_auto_apply can re-apply (dialog open) or persist (closed).
             self._pending_text_edits = self._deferred_text_edit_settings()
+            self._pending_apply_generation = _apply_settings_generation
             return
         self._auto_apply_settings()
 
@@ -6153,24 +6161,22 @@ class SettingsDialog(Gtk.Dialog):
 
         def persist() -> None:
             try:
-                mtime = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else None
-                self.speech_engine.reconfigure(**pending)
-                current = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else None
-                if current != mtime:
-                    # A newer dialog applied settings while the model
-                    # restarted: this older snapshot must not leave the engine
-                    # configured from it, so reconcile the engine to the
-                    # settings that won instead.
-                    fresh = {
-                        key: self.config_manager.get("advanced", key, value)
+                with _apply_settings_lock:
+                    if _apply_settings_generation != self._pending_apply_generation:
+                        # A newer apply already reconfigured the shared engine
+                        # and saved over these fields; the deferred snapshot is
+                        # stale and must not reach either again.
+                        return
+                    if all(
+                        self.config_manager.get("advanced", key) == value
                         for key, value in pending.items()
-                    }
-                    if fresh != pending:
-                        self.speech_engine.reconfigure(**fresh)
-                    return
-                for key, value in pending.items():
-                    self.config_manager.set("advanced", key, value)
-                self.config_manager.save_settings()
+                    ):
+                        # The apply that was running already landed these values.
+                        return
+                    self.speech_engine.reconfigure(**pending)
+                    for key, value in pending.items():
+                        self.config_manager.set("advanced", key, value)
+                    self.config_manager.save_settings()
             except Exception as e:
                 logger.warning(f"Could not persist deferred settings edits: {e}")
 
@@ -7766,6 +7772,10 @@ class SettingsDialog(Gtk.Dialog):
         if self._simple_driving:
             return
 
+        # Bump before the guard is set so a close-time stash always reads a
+        # generation that already includes this in-flight apply.
+        global _apply_settings_generation
+        _apply_settings_generation += 1
         self._applying_settings = True
         # Already-downloaded apply is handed to a worker that clears this flag
         # via GLib.idle_add. Download still holds it for the modal run() below.
@@ -8371,6 +8381,8 @@ For now, the engine has been reverted to VOSK."""
             logger.warning("Ignoring apply_settings(); another apply is already in progress")
             return False
 
+        global _apply_settings_generation
+        _apply_settings_generation += 1
         settings = self.get_selected_settings()
         # Same consumption as _auto_apply_settings: an apply snapshots the
         # deferred text fields, so their pending-edit flags are done.
@@ -8486,9 +8498,11 @@ For now, the engine has been reverted to VOSK."""
 
             # Persist only once the engine really runs these settings: this call
             # downloads missing models, and a config saved up front would keep
-            # pointing at a model that never made it to disk.
-            self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
-            self._save_selected_settings(settings)
+            # pointing at a model that never made it to disk. The lock orders
+            # this snapshot against _persist_pending_text_edits' deferred one.
+            with _apply_settings_lock:
+                self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
+                self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True

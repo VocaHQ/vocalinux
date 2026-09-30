@@ -1238,9 +1238,7 @@ def test_parakeet_recognition_does_not_consume_language():
 
 def test_normalize_language_for_engine_forces_auto_for_parakeet():
     """CLI/saved non-auto languages must not survive for Parakeet."""
-    from vocalinux.speech_recognition.recognition_manager import (
-        normalize_language_for_engine,
-    )
+    from vocalinux.speech_recognition.recognition_manager import normalize_language_for_engine
 
     assert normalize_language_for_engine("parakeet", "fr") == "auto"
     assert normalize_language_for_engine("parakeet", "en-us") == "auto"
@@ -1361,3 +1359,56 @@ def test_speech_manager_command_processor_follows_language():
         manager.reconfigure(language="en-us", force_download=False)
     assert manager.command_processor.language == "en-us"
     assert "virgola" not in manager.command_processor.text_commands
+
+
+def test_deferred_text_edits_persist_once_the_inflight_apply_finishes(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """Edits stashed at close are saved when no newer apply has begun."""
+    dialog = _dialog_stub()
+    dialog._pending_text_edits = {"whispercpp_language_candidates": "en,es"}
+    dialog._pending_apply_generation = settings_dialog._apply_settings_generation
+
+    with patch.object(settings_dialog.threading, "Thread", _InlineThread):
+        dialog_class._persist_pending_text_edits(dialog)
+
+    dialog.speech_engine.reconfigure.assert_called_once_with(whispercpp_language_candidates="en,es")
+    dialog.config_manager.set.assert_called_once_with(
+        "advanced", "whispercpp_language_candidates", "en,es"
+    )
+    dialog.config_manager.save_settings.assert_called_once()
+
+
+def test_deferred_text_edits_dropped_when_a_newer_apply_ran(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """A newer apply owns the engine and config; the stashed snapshot stays stale."""
+    dialog = _dialog_stub()
+    dialog._pending_text_edits = {"whispercpp_language_candidates": "en,es"}
+    dialog._pending_apply_generation = settings_dialog._apply_settings_generation
+    # A newer apply began after the edits were stashed.
+    settings_dialog._apply_settings_generation += 1
+
+    with patch.object(settings_dialog.threading, "Thread", _InlineThread):
+        dialog_class._persist_pending_text_edits(dialog)
+
+    dialog.speech_engine.reconfigure.assert_not_called()
+    dialog.config_manager.set.assert_not_called()
+    dialog.config_manager.save_settings.assert_not_called()
+
+
+def test_deferred_text_edits_skipped_when_the_inflight_apply_landed_them(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """No second model restart when the saved values already match the edits."""
+    dialog = _dialog_stub()
+    dialog._pending_text_edits = {"whispercpp_language_candidates": "en,es"}
+    dialog._pending_apply_generation = settings_dialog._apply_settings_generation
+    dialog.config_manager.get.side_effect = lambda section, key, default=None: "en,es"
+
+    with patch.object(settings_dialog.threading, "Thread", _InlineThread):
+        dialog_class._persist_pending_text_edits(dialog)
+
+    dialog.speech_engine.reconfigure.assert_not_called()
+    dialog.config_manager.set.assert_not_called()
+    dialog.config_manager.save_settings.assert_not_called()
