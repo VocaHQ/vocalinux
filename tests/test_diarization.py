@@ -5,11 +5,41 @@ Covers speaker-turn parsing, transcript formatting, and audio decoding —
 the parts of the "Transcribe audio file" flow that do not need GTK.
 """
 
+import importlib
 import subprocess
+import sys
 import unittest
-import wave
 from dataclasses import dataclass
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _real_wave_and_numpy():
+    """Pin real wave/numpy in sys.modules for each test.
+
+    Sibling test modules replace them with MagicMocks at import time (the same
+    hazard test_audio_feedback's fixture documents), and diarization binds
+    `import wave`/`import numpy`/`import tempfile` when first imported inside a
+    test. Popping before reimporting works no matter which module was imported
+    first.
+    """
+    poisoned = ("wave", "numpy", "tempfile")
+    previous = {name: sys.modules.pop(name, None) for name in poisoned}
+    for name in poisoned:
+        sys.modules[name] = importlib.import_module(name)
+    # If another test imported diarization while wave/numpy were mocked, its
+    # module-level bindings are stale — force a reimport under the real ones.
+    sys.modules.pop("vocalinux.speech_recognition.diarization", None)
+    try:
+        yield
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 @dataclass
@@ -122,6 +152,9 @@ class TestFormatTranscript(unittest.TestCase):
 
 def _write_wav(path, sample_rate=16000, channels=1, sample_width=2, frames=160):
     """Write a minimal PCM WAV: silence for ``frames`` frames."""
+    # Resolve wave at call time: sibling test modules poison sys.modules.
+    import wave
+
     with wave.open(str(path), "wb") as wav_file:
         wav_file.setnchannels(channels)
         wav_file.setsampwidth(sample_width)
