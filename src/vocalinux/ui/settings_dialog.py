@@ -2752,6 +2752,7 @@ class SettingsDialog(Gtk.Dialog):
         # Search state: baseline visibility snapshot while a query is active.
         self._search_baseline = None
         self._search_previous_page = None
+        self._search_previous_dictionary_pane = None
 
         # Set content_box to speech_engine_tab for backward compatibility
         self.content_box = self.speech_engine_tab
@@ -2968,6 +2969,9 @@ class SettingsDialog(Gtk.Dialog):
         visible_page = self.settings_stack.get_visible_child_name()
         page_names = {page.name for page in self._pages}
         self._search_previous_page = visible_page if visible_page in page_names else "dictation"
+        self._search_previous_dictionary_pane = (
+            self.dictionary_management_stack.get_visible_child_name()
+        )
 
         baseline = {"rows": {}, "groups": {}, "extras": {}, "islands": {}}
         for page in self._pages:
@@ -3021,6 +3025,14 @@ class SettingsDialog(Gtk.Dialog):
         self._scroll_sidebar_selection_into_view()
         self.settings_stack.set_visible_child_name(page.name)
         self._search_previous_page = None
+
+        if self._search_previous_dictionary_pane is not None:
+            # A search may have auto-switched the dictionary pane to reveal a
+            # match; clearing the query returns to the pane the user selected.
+            self.dictionary_management_stack.set_visible_child_name(
+                self._search_previous_dictionary_pane
+            )
+            self._search_previous_dictionary_pane = None
 
     def _on_search_changed(self, entry):
         """Live-filter settings rows across all pages."""
