@@ -7,6 +7,8 @@ The tests focus on the business logic of the TrayIndicator class.
 
 import os
 import sys
+import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, PropertyMock, patch
@@ -982,6 +984,148 @@ class TestTrayIndicator(unittest.TestCase):
         self.assertIsNone(self.tray_indicator.overlay)
         patched_gtk.main_quit.assert_called_once()
 
+    # --- Recent Transcripts history menu ------------------------------------
+
+    def _make_history(self, **kwargs):
+        from vocalinux.ui.transcription_history import TranscriptionHistory
+
+        # Never touch the real XDG data dir in tests.
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        kwargs.setdefault("path", f"{tmp.name}/transcript_history.json")
+        return TranscriptionHistory(**kwargs)
+
+    def test_truncate_label_collapses_and_truncates(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        self.assertEqual(TrayIndicator._truncate_label("  a   b\nc  "), "a b c")
+        long = "x" * 200
+        truncated = TrayIndicator._truncate_label(long)
+        self.assertTrue(truncated.endswith("…"))
+        self.assertEqual(len(truncated), 50)
+
+    def test_history_entry_label_prefixes_time(self):
+        from vocalinux.ui.transcription_history import TranscriptEntry
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        entry = TranscriptEntry(text="hello", timestamp=1700000000.0)
+        label = TrayIndicator._history_entry_label(entry)
+        clock = time.strftime("%H:%M", time.localtime(1700000000.0))
+        self.assertEqual(label, f"{clock} · hello")
+
+        no_time = TrayIndicator._history_entry_label(TranscriptEntry(text="hello"))
+        self.assertEqual(no_time, "hello")
+
+    def test_history_entry_tooltip_includes_metadata(self):
+        from vocalinux.ui.transcription_history import TranscriptEntry
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        entry = TranscriptEntry(
+            text="a & <b>",
+            timestamp=1700000000.0,
+            engine="whisper_cpp",
+            model="tiny",
+            language="en-us",
+            duration_seconds=3.25,
+        )
+        with patch("vocalinux.ui.tray_indicator.GLib") as glib:
+            glib.markup_escape_text.side_effect = (
+                lambda t: t.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            tooltip = TrayIndicator._history_entry_tooltip(entry)
+            plain = TrayIndicator._history_entry_tooltip(TranscriptEntry(text="just text"))
+        self.assertIn("whisper_cpp tiny", tooltip)
+        self.assertIn("en-us", tooltip)
+        self.assertIn("3.2s", tooltip)
+        self.assertIn("a &amp; &lt;b&gt;", tooltip)
+        self.assertEqual(plain, "just text")
+
+    def test_refresh_history_menu_populated(self):
+        history = self._make_history()
+        history.add("first transcript", engine="whisper_cpp")
+        history.add("second transcript")
+        self.tray_indicator.transcription_history = history
+        self.tray_indicator._history_menu_item = MagicMock()
+
+        result = self.tray_indicator._refresh_history_menu()
+
+        self.assertFalse(result)
+        self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
+
+    def test_refresh_history_menu_empty(self):
+        self.tray_indicator.transcription_history = self._make_history()
+        self.tray_indicator._history_menu_item = MagicMock()
+
+        result = self.tray_indicator._refresh_history_menu()
+
+        self.assertFalse(result)
+        self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
+
+    def test_refresh_history_menu_disabled_shows_hint(self):
+        self.tray_indicator.transcription_history = self._make_history(enabled=False)
+        self.tray_indicator._history_menu_item = MagicMock()
+
+        result = self.tray_indicator._refresh_history_menu()
+
+        self.assertFalse(result)
+        self.tray_indicator._history_menu_item.set_submenu.assert_called_once()
+
+    def test_refresh_history_menu_noop_without_item(self):
+        self.tray_indicator.transcription_history = None
+        self.tray_indicator._history_menu_item = None
+
+        # Should return False and not raise.
+        self.assertFalse(self.tray_indicator._refresh_history_menu())
+
+    def test_on_history_item_clicked_copies_to_clipboard(self):
+        self.tray_indicator._on_history_item_clicked(MagicMock(), "some transcript")
+
+        clipboard = mock_gtk.Clipboard.get.return_value
+        clipboard.set_text.assert_called_once_with("some transcript", -1)
+        clipboard.store.assert_called_once()
+
+    def test_on_clear_history_clicked_clears(self):
+        history = self._make_history()
+        history.add("a")
+        history.add("b")
+        self.tray_indicator.transcription_history = history
+
+        self.tray_indicator._on_clear_history_clicked(MagicMock())
+
+        self.assertEqual(len(history), 0)
+
+    def test_construct_with_history_creates_submenu_and_wires_callback(self):
+        from vocalinux.ui.tray_indicator import TrayIndicator
+
+        history = self._make_history()
+        tray = TrayIndicator(
+            speech_engine=self.mock_speech_engine,
+            text_injector=self.mock_text_injector,
+            transcription_history=history,
+        )
+        tray.shortcut_manager = self.mock_ksm
+
+        # The submenu item is created during _init_indicator.
+        self.assertIsNotNone(tray._history_menu_item)
+        # Adding a transcript fires the change callback, which refreshes the
+        # menu (GLib.idle_add runs synchronously under the test mocks).
+        history.add("live transcript")
+        self.assertTrue(tray._history_menu_item.set_submenu.called)
+
+    def test_settings_dialog_receives_transcription_history(self):
+        import vocalinux.ui.tray_indicator as tray_module
+
+        history = self._make_history()
+        self.tray_indicator.transcription_history = history
+
+        mock_dialog_instance = MagicMock()
+        mock_dialog_class = MagicMock(return_value=mock_dialog_instance)
+
+        with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
+            self.tray_indicator._on_settings_clicked(None)
+            kwargs = mock_dialog_class.call_args.kwargs
+            self.assertIs(kwargs["transcription_history"], history)
+
 
 class TestTrayIndicatorFlatpakIcons(unittest.TestCase):
     """Tray icon names must adapt to the Flatpak runtime.
@@ -1054,6 +1198,7 @@ class TestAppIndicatorImportFallback(unittest.TestCase):
             GLib=mock_glib,
             GObject=mock_gobject,
             GdkPixbuf=mock_gdkpixbuf,
+            Gdk=MagicMock(),
             Gio=MagicMock(name="Gio"),
             **appindicator_attrs,
         )

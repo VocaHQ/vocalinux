@@ -7,6 +7,8 @@ import argparse
 import atexit
 import logging
 import sys
+import time
+from typing import Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
@@ -258,8 +260,6 @@ def main():
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
         try:
-            import time
-
             from gi.repository import Notify
 
             Notify.init("Vocalinux")
@@ -332,6 +332,7 @@ def main():
     from .ui.action_handler import ActionHandler
     from .ui.config_manager import get_shared_config_manager
     from .ui.logging_manager import initialize_logging
+    from .ui.transcription_history import TranscriptionHistory
 
     # Initialize logging manager early
     initialize_logging()
@@ -427,6 +428,10 @@ def main():
 
     advanced_settings = config_manager.get_settings().get("advanced", {})
 
+    history_settings = config_manager.get_settings().get("history", {})
+    history_enabled = history_settings.get("enabled", True)
+    history_max_items = history_settings.get("max_items", 10)
+
     logger.info(f"Final settings: engine={engine}, language={language}, model={model_size}")
     if audio_device_index is not None:
         logger.info(
@@ -470,6 +475,18 @@ def main():
 
         # Initialize action handler
         action_handler = ActionHandler(text_system)
+
+        # Transcript history: a bounded, newest-first store of recent dictation
+        # sessions, persisted to a small JSON file under the XDG data dir so
+        # dictated text survives restarts — and failed injections. Surfaced in
+        # the tray menu for copy-back (#758).
+        transcription_history = TranscriptionHistory(
+            max_items=history_max_items, enabled=history_enabled
+        )
+        # Segments dictated during the current session, joined and committed to
+        # history when the session ends (state returns to IDLE).
+        session_segments: list[str] = []
+        session_started_at: Optional[float] = None
 
         # --- Callback wiring ---------------------------------------------------
         # The speech engine emits three kinds of events, each handled by a
@@ -516,6 +533,14 @@ def main():
 
                 text_to_inject = capitalize_sentences(text_to_inject)
 
+            # Record the recognized segment in history regardless of whether
+            # injection succeeds: recovering text from a failed injection (e.g.
+            # on Wayland compositors where injection can silently no-op) is a
+            # primary reason to keep a history. Stored clean, without the
+            # inter-segment space added below.
+            if transcription_history.enabled:
+                session_segments.append(text_to_inject)
+
             # Read from disk so the Settings toggle applies without restart.
             append_trailing_space = _should_append_trailing_space()
 
@@ -537,9 +562,32 @@ def main():
                 action_handler.set_last_injected_text(text_to_inject)
 
         def on_state_change(state: RecognitionState) -> None:
-            """Reset the last-injected buffer when a listening session ends."""
-            if state == RecognitionState.IDLE:
+            """Reset the last-injected buffer when a listening session ends.
+
+            Also commits the just-finished dictation session to the
+            transcript history as a single entry, with its duration and the
+            engine/model/language that produced it.
+            """
+            nonlocal session_started_at
+            if state == RecognitionState.LISTENING:
+                session_started_at = time.monotonic()
+            elif state == RecognitionState.IDLE:
                 action_handler.set_last_injected_text("")
+                if session_segments:
+                    duration = (
+                        time.monotonic() - session_started_at
+                        if session_started_at is not None
+                        else 0.0
+                    )
+                    transcription_history.add(
+                        " ".join(session_segments),
+                        engine=speech_engine.engine,
+                        model=speech_engine.model_size,
+                        language=speech_engine.language,
+                        duration_seconds=duration,
+                    )
+                    session_segments.clear()
+                session_started_at = None
 
         # Connect speech recognition to text injection and action handling
         speech_engine.register_text_callback(text_callback_wrapper)
@@ -550,6 +598,7 @@ def main():
         indicator = tray_indicator.TrayIndicator(
             speech_engine=speech_engine,
             text_injector=text_system,
+            transcription_history=transcription_history,
         )
 
         # Start the GTK main loop

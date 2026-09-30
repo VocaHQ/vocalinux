@@ -191,6 +191,13 @@ DEFAULT_CONFIG = {
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
         "backend": "auto",
     },
+    "history": {
+        # Keep recent transcripts (one per dictation session) on disk under the
+        # XDG data dir and list them in the tray menu for copy-back. Turn off
+        # to record nothing at all; disabling deletes the stored file.
+        "enabled": True,
+        "max_items": 10,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,

@@ -32,7 +32,7 @@ except (ImportError, ValueError):
         gi.require_version("AppIndicator3", "0.1")
         from gi.repository import AppIndicator3
 
-from gi.repository import GdkPixbuf, Gio, GLib, GObject, Gtk
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, GObject, Gtk
 
 # Import local modules - Use protocols to avoid circular imports
 from ..auto_pause_monitor import DEFAULT_POLL_INTERVAL_SECONDS, AutoPauseMonitor
@@ -49,6 +49,7 @@ from .config_manager import get_shared_config_manager
 from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import SettingsDialog, recommended_model_for_engine
+from .transcription_history import TranscriptEntry, TranscriptionHistory
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,9 @@ ICON_DIR = _resource_manager.icons_dir
 
 # How often a running model download refreshes its notification.
 _DOWNLOAD_NOTIFY_INTERVAL_SECONDS = 5.0
+
+# Maximum characters shown for a history transcript label before truncation.
+_HISTORY_LABEL_MAX_CHARS = 50
 
 
 def _idle_once(func, *args):
@@ -118,6 +122,7 @@ class TrayIndicator:
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
         text_injector: TextInjectorProtocol,
+        transcription_history: Optional[TranscriptionHistory] = None,
     ):
         """
         Initialize the system tray indicator.
@@ -125,13 +130,27 @@ class TrayIndicator:
         Args:
             speech_engine: The speech recognition manager instance
             text_injector: The text injector instance
+            transcription_history: Optional store of recent dictation
+                transcripts. When provided, a "Recent Transcripts" submenu is
+                shown; entries persist on disk so text survives restarts and
+                failed injections.
         """
         self.speech_engine = speech_engine
         self.text_injector = text_injector
+        self.transcription_history = transcription_history
         # Shared with main() and the settings dialog: separate instances would
         # overwrite each other's saves with stale in-memory copies.
         self.config_manager = get_shared_config_manager()
         self._syncing_autostart_menu = False
+        self._history_menu_item = None
+
+        # Refresh the history submenu whenever the history changes. The change
+        # callback fires on the recognition thread, so marshal onto the GTK
+        # main thread before touching widgets.
+        if self.transcription_history is not None:
+            self.transcription_history.set_change_callback(
+                lambda: GLib.idle_add(self._refresh_history_menu)
+            )
 
         # Get configured shortcut and mode from config
         shortcut = self.config_manager.get_str("shortcuts", "toggle_recognition", DEFAULT_SHORTCUT)
@@ -335,6 +354,15 @@ class TrayIndicator:
         self._add_menu_item("Start Voice Typing", self._on_start_clicked)
         self._add_menu_item("Stop Voice Typing", self._on_stop_clicked)
         self._add_menu_separator()
+
+        # Recent transcripts submenu. The item exists whenever a history store
+        # was provided — even one currently disabled — so enabling history in
+        # Settings surfaces it without a restart.
+        if self.transcription_history is not None:
+            self._history_menu_item = Gtk.MenuItem.new_with_label("Recent Transcripts")
+            self.menu.append(self._history_menu_item)
+            self._refresh_history_menu()
+            self._add_menu_separator()
 
         self._autostart_menu_item = self._add_menu_checkbox(
             "Start on Login", self._on_autostart_toggled
@@ -813,6 +841,89 @@ class TrayIndicator:
         logger.debug("Stop Voice Typing clicked")
         self.speech_engine.stop_recognition()
 
+    def _refresh_history_menu(self):
+        """Rebuild the Recent Transcripts submenu from the current history."""
+        if self._history_menu_item is None or self.transcription_history is None:
+            return False  # Remove idle callback
+
+        submenu = Gtk.Menu()
+
+        if not self.transcription_history.enabled:
+            disabled_item = Gtk.MenuItem.new_with_label("History is off — enable it in Settings")
+            disabled_item.set_sensitive(False)
+            submenu.append(disabled_item)
+        else:
+            entries = self.transcription_history.get_all()
+            if not entries:
+                empty_item = Gtk.MenuItem.new_with_label("(no transcripts yet)")
+                empty_item.set_sensitive(False)
+                submenu.append(empty_item)
+            else:
+                for entry in entries:
+                    item = Gtk.MenuItem.new_with_label(self._history_entry_label(entry))
+                    item.set_tooltip_markup(self._history_entry_tooltip(entry))
+                    # The entry's text is passed as connect user-data, so each
+                    # item copies its own text (no late-binding pitfall).
+                    item.connect("activate", self._on_history_item_clicked, entry.text)
+                    submenu.append(item)
+
+                submenu.append(Gtk.SeparatorMenuItem())
+                clear_item = Gtk.MenuItem.new_with_label("Clear History")
+                clear_item.connect("activate", self._on_clear_history_clicked)
+                submenu.append(clear_item)
+
+        submenu.show_all()
+        self._history_menu_item.set_submenu(submenu)
+        return False  # Remove idle callback
+
+    @staticmethod
+    def _history_entry_label(entry: TranscriptEntry) -> str:
+        """One-line menu label: time of day plus a truncated text preview."""
+        text = TrayIndicator._truncate_label(entry.text)
+        if entry.timestamp > 0:
+            clock = time.strftime("%H:%M", time.localtime(entry.timestamp))
+            return f"{clock} · {text}"
+        return text
+
+    @staticmethod
+    def _history_entry_tooltip(entry: TranscriptEntry) -> str:
+        """Tooltip markup: a small metadata line above the full text."""
+        text: str = GLib.markup_escape_text(entry.text)
+        meta = []
+        if entry.timestamp > 0:
+            meta.append(time.strftime("%Y-%m-%d %H:%M", time.localtime(entry.timestamp)))
+        engine_model = " ".join(part for part in (entry.engine, entry.model) if part)
+        if engine_model:
+            meta.append(engine_model)
+        if entry.language:
+            meta.append(entry.language)
+        if entry.duration_seconds > 0:
+            meta.append(f"{entry.duration_seconds:.1f}s")
+        if not meta:
+            return text
+        return f"<span size='small'>{' · '.join(meta)}</span>\n{text}"
+
+    @staticmethod
+    def _truncate_label(text: str) -> str:
+        """Collapse whitespace and truncate a transcript for menu display."""
+        single_line = " ".join(text.split())
+        if len(single_line) > _HISTORY_LABEL_MAX_CHARS:
+            return single_line[: _HISTORY_LABEL_MAX_CHARS - 1].rstrip() + "…"
+        return single_line
+
+    def _on_history_item_clicked(self, widget, text: str):
+        """Copy the selected transcript back to the clipboard."""
+        logger.debug("History transcript clicked, copying to clipboard")
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
+        clipboard.store()
+
+    def _on_clear_history_clicked(self, widget):
+        """Clear all stored transcripts."""
+        logger.debug("Clear history clicked")
+        if self.transcription_history is not None:
+            self.transcription_history.clear()
+
     def _on_settings_clicked(self, widget):
         """Handle click on the Settings menu item."""
         logger.debug("Settings clicked")
@@ -843,6 +954,7 @@ class TrayIndicator:
                 available, release, notify=False
             ),
             overlay_enabled_callback=self.set_overlay_enabled,
+            transcription_history=self.transcription_history,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)

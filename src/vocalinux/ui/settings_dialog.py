@@ -114,6 +114,7 @@ from .keyboard_backends import (  # noqa: E402
     parse_shortcut_spec,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
+from .transcription_history import default_history_path  # noqa: E402
 
 from ..utils.faster_whisper_model_info import (  # isort:skip
     FASTER_WHISPER_MODEL_INFO,
@@ -127,6 +128,7 @@ from ..utils.whispercpp_model_info import (  # isort:skip
 if TYPE_CHECKING:
     from ..speech_recognition.recognition_manager import SpeechRecognitionManager  # noqa: E402
     from .config_manager import ConfigManager  # noqa: E402
+    from .transcription_history import TranscriptionHistory  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -2424,6 +2426,7 @@ class SettingsDialog(Gtk.Dialog):
         pending_update: Optional[ReleaseInfo] = None,
         update_status_callback: callable = None,
         overlay_enabled_callback: Optional[Callable[[bool], None]] = None,
+        transcription_history: Optional["TranscriptionHistory"] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -2437,6 +2440,8 @@ class SettingsDialog(Gtk.Dialog):
         self.shortcut_update_callback = shortcut_update_callback
         self.update_status_callback = update_status_callback
         self.overlay_enabled_callback = overlay_enabled_callback
+        # Live store shared with the tray, so history toggles apply instantly.
+        self.transcription_history = transcription_history
         self._test_active = False
         self._test_result = ""
         self._initializing = True  # Flag to prevent auto-apply during initialization
@@ -3051,10 +3056,107 @@ class SettingsDialog(Gtk.Dialog):
 
         self.general_tab.pack_start(group, False, False, 0)
 
+        # Transcription history group
+        history_group = PreferencesGroup(
+            title="Transcription History",
+            description=(
+                "Recent transcripts are kept in a local file and listed in the "
+                "tray menu for quick copy-back — useful when text injection "
+                "fails. The file stays on this machine; turn this off to keep "
+                "no records at all."
+            ),
+            keywords=("history", "transcript", "clipboard", "copy"),
+        )
+
+        self.history_enabled_switch = Gtk.Switch()
+        self.history_enabled_switch.set_tooltip_text(
+            "Save recent transcripts to a local file and list them in the tray menu"
+        )
+        history_enabled_row = PreferenceRow(
+            title="Keep Transcript History",
+            subtitle="Recent transcripts stay reachable from the tray menu",
+            widget=self.history_enabled_switch,
+            keywords=("history", "transcript", "record"),
+        )
+        history_group.add_row(history_enabled_row)
+
+        self.history_max_items_spin = Gtk.SpinButton.new_with_range(1, 50, 1)
+        self.history_max_items_spin.set_tooltip_text("How many recent transcripts to keep")
+        _prevent_scroll_on_hover(self.history_max_items_spin)
+        history_max_items_row = PreferenceRow(
+            title="Transcripts to Keep",
+            subtitle="Maximum number of recent transcripts stored",
+            widget=self.history_max_items_spin,
+            keywords=("history", "limit", "size"),
+        )
+        history_group.add_row(history_max_items_row)
+
+        self.history_clear_button = Gtk.Button(label="Clear History")
+        self.history_clear_button.set_tooltip_text("Delete every stored transcript now")
+        history_clear_row = PreferenceRow(
+            title="Clear Saved Transcripts",
+            subtitle="Remove all stored transcripts, in memory and on disk",
+            widget=self.history_clear_button,
+            keywords=("history", "delete", "clear"),
+        )
+        history_group.add_row(history_clear_row)
+
+        self.general_tab.pack_start(history_group, False, False, 0)
+
         self.autostart_switch.connect("state-set", self._on_autostart_toggled)
         self.start_minimized_switch.connect("state-set", self._on_start_minimized_toggled)
         self.missing_tray_warning_switch.connect("state-set", self._on_missing_tray_warning_toggled)
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
+        self.history_enabled_switch.connect("state-set", self._on_history_enabled_toggled)
+        self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
+        self.history_clear_button.connect("clicked", self._on_history_clear_clicked)
+
+    def _on_history_enabled_toggled(self, widget, state):
+        """Handle toggle of the keep-history switch; applies immediately."""
+        if self._initializing or self._applying_settings:
+            return False
+
+        enabled = bool(state)
+        logger.info(f"Transcription history toggled: {enabled}")
+        self.config_manager.set("history", "enabled", enabled)
+        self.config_manager.save_settings()
+        self._update_history_sensitivity(enabled)
+        # Live-apply: disabling clears memory and deletes the stored file now,
+        # rather than waiting for a restart.
+        if self.transcription_history is not None:
+            self.transcription_history.set_enabled(enabled)
+        return False
+
+    def _on_history_max_items_changed(self, widget):
+        """Handle change of the transcripts-to-keep spin button."""
+        if self._initializing or self._applying_settings:
+            return
+
+        max_items = widget.get_value_as_int()
+        logger.info(f"Transcription history max items: {max_items}")
+        self.config_manager.set("history", "max_items", max_items)
+        self.config_manager.save_settings()
+        if self.transcription_history is not None:
+            self.transcription_history.set_max_items(max_items)
+
+    def _on_history_clear_clicked(self, _widget):
+        """Delete all stored transcripts immediately."""
+        logger.info("Clear transcript history clicked")
+        if self.transcription_history is not None:
+            self.transcription_history.clear()
+        else:
+            # No live store (e.g. tests): still honor the click on disk.
+            path = default_history_path()
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except OSError as e:
+                logger.warning(f"Could not delete transcript history {path}: {e}")
+
+    def _update_history_sensitivity(self, enabled: bool) -> None:
+        """Grey out the count/clear rows while history is off."""
+        self.history_max_items_spin.set_sensitive(enabled)
+        self.history_clear_button.set_sensitive(enabled)
 
     def _build_auto_pause_section(self):
         """Build Auto-Pause settings: enable toggle + process name list."""
@@ -5899,6 +6001,7 @@ class SettingsDialog(Gtk.Dialog):
         general_settings = self.config_manager.get_settings().get("general", {})
         ui_settings = self.config_manager.get_settings().get("ui", {})
         text_injection_settings = self.config_manager.get_settings().get("text_injection", {})
+        history_settings = self.config_manager.get_settings().get("history", {})
 
         autostart_enabled = general_settings.get("autostart", False)
         start_minimized = ui_settings.get("start_minimized", False)
@@ -5908,6 +6011,8 @@ class SettingsDialog(Gtk.Dialog):
         auto_capitalize = text_injection_settings.get("auto_capitalize", True)
         append_trailing_space = text_injection_settings.get("append_trailing_space", True)
         paste_shortcut = self.config_manager.get_paste_shortcut()
+        history_enabled = history_settings.get("enabled", True)
+        history_max_items = history_settings.get("max_items", 10)
 
         self.autostart_switch.set_active(autostart_enabled)
         self.start_minimized_switch.set_active(start_minimized)
@@ -5918,6 +6023,9 @@ class SettingsDialog(Gtk.Dialog):
         self.append_trailing_space_switch.set_active(append_trailing_space)
         if not self.paste_shortcut_combo.set_active_id(paste_shortcut):
             self.paste_shortcut_combo.set_active_id(DEFAULT_PASTE_SHORTCUT)
+        self.history_enabled_switch.set_active(history_enabled)
+        self.history_max_items_spin.set_value(history_max_items)
+        self._update_history_sensitivity(history_enabled)
         self.sound_effects_switch.set_active(self.config_manager.is_sound_effects_enabled())
         duck_enabled = self.config_manager.is_playback_duck_enabled()
         self.duck_level_scale.set_value(self.config_manager.get_playback_duck_percent())

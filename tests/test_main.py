@@ -3,9 +3,11 @@ Tests for the main module functionality.
 """
 
 import argparse
+import os
 import sys
+import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 # Mock GTK modules before importing vocalinux.main
 sys.modules["gi"] = MagicMock()
@@ -16,7 +18,26 @@ from vocalinux.common_types import RecognitionState
 from vocalinux.main import check_dependencies, main, parse_arguments
 
 
-class TestMainModule(unittest.TestCase):
+class _IsolatedHistoryDir:
+    """Redirect the transcript-history file to a temp dir per test.
+
+    main() constructs a real TranscriptionHistory; without this its writes
+    would land in the developer's real XDG data dir.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._history_tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._history_tmpdir.cleanup)
+        patcher = patch(
+            "vocalinux.ui.transcription_history.default_history_path",
+            return_value=os.path.join(self._history_tmpdir.name, "transcript_history.json"),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class TestMainModule(_IsolatedHistoryDir, unittest.TestCase):
     """Test cases for the main module."""
 
     def test_parse_arguments_defaults(self):
@@ -242,7 +263,9 @@ class TestMainModule(unittest.TestCase):
             mock_text.assert_called_once_with(wayland_mode=True)
             mock_action_handler.assert_called_once_with(mock_text_instance)
             mock_tray.assert_called_once_with(
-                speech_engine=mock_speech_instance, text_injector=mock_text_instance
+                speech_engine=mock_speech_instance,
+                text_injector=mock_text_instance,
+                transcription_history=ANY,
             )
 
             # Verify callbacks were registered
@@ -313,6 +336,12 @@ class TestMainModule(unittest.TestCase):
         self.assertEqual(calls, ["Hello. ", "World "])
 
         state_callback(RecognitionState.IDLE)
+
+        # The finished session is committed to transcript history as one entry
+        # joined from its segments, stored clean of the injected spacing.
+        history = mock_tray.call_args.kwargs["transcription_history"]
+        self.assertEqual([e.text for e in history.get_all()], ["Hello. World"])
+
         mock_text_instance.inject_text.reset_mock()
         text_callback("Next session")
         # Trailing space persists in the previous field; next session starts clean
@@ -816,7 +845,7 @@ class TestCheckDependencies(unittest.TestCase):
                 self.assertFalse(result)
 
 
-class TestMainConfigPrecedence(unittest.TestCase):
+class TestMainConfigPrecedence(_IsolatedHistoryDir, unittest.TestCase):
     """Test cases for configuration precedence in main."""
 
     @patch("vocalinux.main.check_dependencies")
@@ -1244,7 +1273,7 @@ class TestShouldAppendTrailingSpace(unittest.TestCase):
             self.assertTrue(_should_append_trailing_space())
 
 
-class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
+class TestMainCallbackTrailingSpaceEdges(_IsolatedHistoryDir, unittest.TestCase):
     """Exercise trailing-space edge paths through the real main() callback."""
 
     def _boot_under_patches(self, *, append_trailing_space: bool = True, inject_ok: bool = True):
