@@ -708,9 +708,10 @@ def test_stale_worker_keeps_the_segments_own_language() -> None:
     manager._perform_recognition()
 
     manager._process_audio_buffer.assert_called_once()
-    segment = manager._process_audio_buffer.call_args.args[0]
-    assert segment == [b"audio"]
-    assert segment.language == "de"
+    args = manager._process_audio_buffer.call_args.args
+    assert args[0] == [b"audio"]
+    assert args[0].language == "de"
+    assert args[1] == "de"
 
 
 # --- settings dialog plumbing ------------------------------------------------

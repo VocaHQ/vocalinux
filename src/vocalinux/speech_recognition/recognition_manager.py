@@ -3693,22 +3693,23 @@ class SpeechRecognitionManager:
                         try:
                             remaining = self._segment_queue.get_nowait()
                             if remaining is not None:
+                                remaining_segment, remaining_language = remaining
                                 logger.debug(
-                                    f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
+                                    f"Recognition loop - processing remaining segment with {len(remaining_segment)} chunks"
                                 )
                                 if self.should_record:
                                     self._update_state(RecognitionState.PROCESSING)
-                                self._process_audio_buffer(remaining)
+                                self._process_audio_buffer(remaining_segment, remaining_language)
                         except queue.Empty:
                             break
                     logger.debug("Recognition loop - exiting after None signal")
                     break
 
-                segment = queued
+                segment, segment_language = queued
                 logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
                 if self.should_record:
                     self._update_state(RecognitionState.PROCESSING)
-                self._process_audio_buffer(segment)
+                self._process_audio_buffer(segment, segment_language)
                 if self.should_record:
                     self._update_state(RecognitionState.LISTENING)
         finally:
@@ -3733,14 +3734,15 @@ class SpeechRecognitionManager:
         # transcribe each segment in the language it was recorded under, not
         # whatever a newer session stored in _session_language (#805).
         segment.language = self._dictation_language()
+        stamped = (segment, segment.language)
         try:
-            self._segment_queue.put_nowait(segment)
+            self._segment_queue.put_nowait(stamped)
             logger.debug("Enqueued segment successfully")
         except queue.Full:
             logger.warning("Transcription queue is full, dropping oldest pending segment")
             try:
                 self._segment_queue.get_nowait()
-                self._segment_queue.put_nowait(segment)
+                self._segment_queue.put_nowait(stamped)
             except queue.Empty:
                 logger.warning("Could not recover queue space for transcription segment")
 
