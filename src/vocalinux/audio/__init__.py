@@ -1,1 +1,1 @@
-"""Playback helpers that are not the dictation microphone."""
+"""Audio helpers — playback ducking and PipeWire system-audio capture."""

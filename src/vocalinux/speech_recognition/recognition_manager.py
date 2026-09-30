@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 if TYPE_CHECKING:
     import numpy as np
@@ -42,6 +42,7 @@ from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     get_audio_input_devices,
     test_audio_input,
 )
+from ..audio.pipewire import PipeWireCaptureSource, is_pipewire_device
 from ..audio.playback_ducker import default_dictation_duck_session, duck_delay_seconds
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
@@ -517,7 +518,7 @@ class SpeechRecognitionManager:
         self._capture_channels = 1  # Default, updated when device is opened
         self._capture_downmix_channel = None  # Speech-gated sticky N>=3 channel for open stream
         # The active capture source while a recording session is open.
-        self._capture_source: Optional[PortAudioCaptureSource] = None
+        self._capture_source: Optional[Union[PortAudioCaptureSource, PipeWireCaptureSource]] = None
 
         # Recover a sink left quiet by a crash before doing anything slow.
         # Tests inject a session so this never touches a real audio server.
@@ -2978,6 +2979,10 @@ class SpeechRecognitionManager:
         try:
             if not self._playback_duck.enabled():
                 return
+            if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+                # Ducking lowers the default sink — the very audio a
+                # system-audio source is capturing.
+                return
             # The capture thread may already have failed and released the duck;
             # arming now would lower playback in the error state with nothing
             # left to put it back.
@@ -3289,7 +3294,6 @@ class SpeechRecognitionManager:
 
         try:
             import numpy as np
-            import pyaudio
         except ImportError as e:
             logger.error(f"Failed to import required audio libraries: {e}")
             logger.error("Please install required dependencies: pip install pyaudio numpy")
@@ -3305,17 +3309,29 @@ class SpeechRecognitionManager:
             # PyAudio configuration
             CHUNK = 1024
 
-            # Initialize PyAudio with reconnection support
-            self._pyaudio_instance = pyaudio.PyAudio()
-            audio = self._pyaudio_instance
-
             # The capture source owns the device: resolution, format
-            # negotiation, downmixing, and resampling. This loop only consumes
-            # mono 16 kHz chunks and applies dictation segmentation policy.
-            source = PortAudioCaptureSource(
-                device_index=self.audio_device_index,
-                device_name=self.audio_device_name,
-            )
+            # negotiation, downmixing, and resampling. PipeWire sources spawn
+            # pw-record themselves and need no PyAudio instance; PortAudio
+            # sources get one passed to open()/reopen(). This loop only
+            # consumes mono 16 kHz chunks and applies dictation segmentation
+            # policy.
+            source = self._new_capture_source()
+            audio = None
+            if getattr(source, "requires_pyaudio", True):
+                try:
+                    import pyaudio
+                except ImportError as e:
+                    logger.error(f"Failed to import required audio libraries: {e}")
+                    logger.error("Please install required dependencies: pip install pyaudio numpy")
+                    self.should_record = False
+                    self.release_playback_duck()
+                    play_error_sound()
+                    self._buffered_capture_failed = True
+                    self._update_state(RecognitionState.ERROR)
+                    self._signal_buffered_capture_done()
+                    return
+                self._pyaudio_instance = pyaudio.PyAudio()
+                audio = self._pyaudio_instance
             self._capture_source = source
             # The attempt count belongs to this session — a previous thread
             # may still be finishing and must not leave its retries here.
@@ -3338,7 +3354,8 @@ class SpeechRecognitionManager:
                     self.should_record = False
                     self.release_playback_duck()
                     play_error_sound()
-                    audio.terminate()
+                    if audio is not None:
+                        audio.terminate()
                     self._buffered_capture_failed = True
                     self._update_state(RecognitionState.ERROR)
                     return
@@ -3504,6 +3521,10 @@ class SpeechRecognitionManager:
 
                         if self._attempt_audio_reconnection(audio):
                             logger.info("Audio reconnection successful, continuing recording")
+                            # The session source may have been rebuilt (e.g.
+                            # the configured device switched between a mic and
+                            # a PipeWire sink) — keep reading the new source.
+                            source = self._capture_source
                             continue  # Continue recording with the reopened source
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
@@ -3961,18 +3982,36 @@ class SpeechRecognitionManager:
             # If only VOSK params changed, just log it
             logger.info("Applied VAD/silence timeout changes.")
 
-    def _capture_source_for_session(self) -> PortAudioCaptureSource:
+    def _new_capture_source(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
+        """Build the capture source matching the configured device."""
+        if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+            return PipeWireCaptureSource(
+                device_index=self.audio_device_index,
+                device_name=self.audio_device_name,
+            )
+        return PortAudioCaptureSource(
+            device_index=self.audio_device_index,
+            device_name=self.audio_device_name,
+        )
+
+    def _capture_source_for_session(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
         """Return the session's capture source, creating one when absent.
 
         Device selection is refreshed from the manager's configured device so
-        reconnections track the current setting.
+        reconnections track the current setting. The source is rebuilt when
+        the configured device switched families (PortAudio <-> PipeWire).
         """
+        want_pipewire = is_pipewire_device(
+            getattr(self, "audio_device_index", None),
+            getattr(self, "audio_device_name", None),
+        )
         source = getattr(self, "_capture_source", None)
-        if source is None:
-            source = PortAudioCaptureSource()
+        if source is None or isinstance(source, PipeWireCaptureSource) != want_pipewire:
+            source = self._new_capture_source()
             self._capture_source = source
-        source.device_index = getattr(self, "audio_device_index", None)
-        source.device_name = getattr(self, "audio_device_name", None)
+        else:
+            source.device_index = getattr(self, "audio_device_index", None)
+            source.device_name = getattr(self, "audio_device_name", None)
         return source
 
     def _sync_capture_state(self) -> None:
@@ -4018,7 +4057,21 @@ class SpeechRecognitionManager:
         # The source may not know about the stream it is asked to replace
         # (e.g. when tests drive this method directly).
         source.stream = getattr(self, "_audio_stream", None)
-        ok = source.reopen(audio_instance)
+        audio = audio_instance
+        if getattr(source, "requires_pyaudio", True) and audio is None:
+            # A session that started on a PipeWire sink never built a PyAudio
+            # instance; a PortAudio source still needs one to reopen.
+            audio = getattr(self, "_pyaudio_instance", None)
+            if audio is None:
+                try:
+                    import pyaudio
+
+                    audio = pyaudio.PyAudio()
+                    self._pyaudio_instance = audio
+                except (ImportError, OSError, AttributeError) as e:
+                    logger.error(f"Failed to initialize PyAudio for reconnection: {e}")
+                    return False
+        ok = source.reopen(audio)
         self._sync_capture_state()
         return ok
 
