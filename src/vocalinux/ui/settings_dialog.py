@@ -2563,7 +2563,14 @@ class SettingsDialog(Gtk.Dialog):
         for page in self._pages:
             self.sidebar_listbox.add(self._build_sidebar_row(page))
         self.sidebar_listbox.connect("row-selected", self._on_sidebar_row_selected)
-        sidebar_box.pack_start(self.sidebar_listbox, True, True, 0)
+        # Same treatment as the pages: without a ScrolledWindow the category
+        # list's natural height pins the dialog's minimum height, so the
+        # window can never shrink past the list and new categories clip.
+        sidebar_scroller = Gtk.ScrolledWindow()
+        sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sidebar_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        sidebar_scroller.add(self.sidebar_listbox)
+        sidebar_box.pack_start(sidebar_scroller, True, True, 0)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         main_box.pack_start(sidebar_box, False, False, 0)
