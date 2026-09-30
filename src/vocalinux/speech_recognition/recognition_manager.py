@@ -556,6 +556,9 @@ class SpeechRecognitionManager:
         self.whispercpp_no_timestamps = kwargs.get("whispercpp_no_timestamps", True)
         self.whispercpp_no_context = kwargs.get("whispercpp_no_context", True)
         self.whispercpp_initial_prompt = kwargs.get("whispercpp_initial_prompt", "")
+        self.whispercpp_language_candidates = self._normalize_language_candidates(
+            kwargs.get("whispercpp_language_candidates", "")
+        )
         self.whispercpp_temperature = kwargs.get("whispercpp_temperature", 0.0)
         self.whispercpp_temperature_inc = kwargs.get("whispercpp_temperature_inc", -1.0)
         self.whispercpp_entropy_thold = kwargs.get("whispercpp_entropy_thold", 2.4)
@@ -636,6 +639,23 @@ class SpeechRecognitionManager:
         else:
             raise ValueError(f"Unsupported speech recognition engine: {engine}")
 
+    @staticmethod
+    def _normalize_language_candidates(value: str | list[str] | None) -> list[str]:
+        """Normalize a comma-separated string or list of Whisper language codes."""
+        if value is None:
+            return []
+
+        raw_candidates = value.replace(";", ",").split(",") if isinstance(value, str) else value
+        candidates = []
+        for candidate in raw_candidates:
+            code = str(candidate).strip().lower().replace("_", "-")
+            if not code:
+                continue
+            code = code.split("-", 1)[0]
+            if code not in candidates:
+                candidates.append(code)
+        return candidates
+
     def _resolve_voice_commands_enabled(self) -> bool:
         """Resolve effective voice commands state from preference and engine."""
         if self._voice_commands_preference is None:
@@ -685,6 +705,7 @@ class SpeechRecognitionManager:
         "whispercpp_no_timestamps",
         "whispercpp_no_context",
         "whispercpp_initial_prompt",
+        "whispercpp_language_candidates",
         "whispercpp_temperature",
         "whispercpp_temperature_inc",
         "whispercpp_entropy_thold",
@@ -1679,6 +1700,49 @@ class SpeechRecognitionManager:
                 if self.model is None:
                     logger.warning("Model is None during transcription, returning empty result")
                     return ""
+
+                if lang is None and self.whispercpp_language_candidates:
+                    detected, lang_probs = self.model.auto_detect_language(
+                        audio_float,
+                        n_threads=min(4, max(1, os.cpu_count() or 1)),
+                    )
+                    # lang_probs names every language whisper.cpp can return; a
+                    # configured code missing from it (a typo, or "auto") has no
+                    # real probability and must not win the max() below.
+                    candidate_probs = {
+                        candidate: float(lang_probs[candidate])
+                        for candidate in self.whispercpp_language_candidates
+                        if candidate in lang_probs
+                    }
+                    unsupported = [
+                        candidate
+                        for candidate in self.whispercpp_language_candidates
+                        if candidate not in lang_probs
+                    ]
+                    if unsupported:
+                        logger.warning(
+                            "Ignoring unsupported whisper.cpp language candidates: %s",
+                            ",".join(unsupported),
+                        )
+                    if candidate_probs:
+                        lang = max(candidate_probs, key=candidate_probs.get)
+                        logger.info(
+                            "whisper.cpp restricted language detection: detected=%s %.3f, candidates=%s, using=%s %.3f",
+                            detected[0],
+                            float(detected[1]),
+                            ",".join(candidate_probs.keys()),
+                            lang,
+                            candidate_probs[lang],
+                        )
+                    else:
+                        # Every configured candidate was unusable; keep the
+                        # unrestricted detection rather than forcing a code the
+                        # model never scored.
+                        lang = detected[0]
+                        logger.warning(
+                            "No usable whisper.cpp language candidates configured; using detected language %s",
+                            lang,
+                        )
 
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
@@ -3677,7 +3741,10 @@ class SpeechRecognitionManager:
 
         for param_name in whispercpp_attrs:
             if param_name in kwargs:
-                setattr(self, param_name, kwargs[param_name])
+                value = kwargs[param_name]
+                if param_name == "whispercpp_language_candidates":
+                    value = self._normalize_language_candidates(value)
+                setattr(self, param_name, value)
                 restart_needed = True
 
         # Handle Remote API settings

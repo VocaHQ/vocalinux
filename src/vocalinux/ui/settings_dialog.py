@@ -132,6 +132,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Serializes settings applies against deferred-edit persistence across dialog
+# instances: a dialog closed mid-apply hands its pending edits to a worker, and
+# a reopened dialog shares the same engine and config manager, so both sides
+# must agree on whose snapshot is newest.
+_apply_settings_lock = threading.Lock()
+_apply_settings_generation = 0
+
 
 def _raw_audio_device_name(device_name: Optional[str]) -> Optional[str]:
     """Return the persisted device name without UI-only suffixes."""
@@ -2606,6 +2613,12 @@ class SettingsDialog(Gtk.Dialog):
         self._follow_layout_active = False
         self._applying_settings = False  # Flag to prevent recursive settings application
         self._advanced_prompt_dirty = False
+        self._language_candidates_dirty = False
+        # Deferred text edits stashed when the dialog closes mid-apply; persisted
+        # by _finish_auto_apply once the running apply releases the guard.
+        self._pending_text_edits: Optional[dict] = None
+        self._pending_text_edit_baseline: Optional[dict] = None
+        self._pending_apply_generation = 0
         self._about_release_url = ""
         self._update_check_in_progress = False
         self._update_check_generation = 0
@@ -5025,6 +5038,21 @@ class SettingsDialog(Gtk.Dialog):
         )
         group.add_row(no_speech_row)
 
+        candidates_help = (
+            "Optional comma-separated Whisper language codes for auto-detect, "
+            "such as en,es. Leave blank to consider all languages."
+        )
+        self.advanced_language_candidates_entry = Gtk.Entry()
+        self.advanced_language_candidates_entry.set_placeholder_text("en,es")
+        self.advanced_language_candidates_entry.set_tooltip_text(candidates_help)
+        language_candidates_row = PreferenceRow(
+            title="Language Candidates",
+            subtitle="Restrict auto-detect to selected language codes",
+            widget=self.advanced_language_candidates_entry,
+        )
+        language_candidates_row.set_tooltip_text(candidates_help)
+        group.add_row(language_candidates_row)
+
         # Initial Prompt -- moved to the end and made multiline
         initial_prompt_help = (
             "Optional. Add names, jargon, punctuation style, or other context to bias "
@@ -5090,6 +5118,9 @@ class SettingsDialog(Gtk.Dialog):
         self.advanced_entropy_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_logprob_thold_spin.connect("value-changed", self._on_advanced_param_changed)
         self.advanced_no_speech_thold_spin.connect("value-changed", self._on_advanced_param_changed)
+        self.advanced_language_candidates_entry.connect(
+            "changed", self._on_language_candidates_changed
+        )
 
         self.advanced_initial_prompt_buffer = self.advanced_initial_prompt_textview.get_buffer()
         self.advanced_initial_prompt_buffer.connect("changed", self._on_advanced_prompt_changed)
@@ -6083,23 +6114,103 @@ class SettingsDialog(Gtk.Dialog):
 
     def _on_advanced_prompt_changed(self, buffer):
         """Track prompt edits without applying settings on every keystroke."""
-        if _handlers_suppressed(self):
+        if self._initializing:
             return
         self._advanced_prompt_dirty = True
 
+    def _on_language_candidates_changed(self, entry: Gtk.Entry) -> None:
+        """Track candidate edits without applying settings on every keystroke."""
+        if self._initializing:
+            return
+        self._language_candidates_dirty = True
+
+    def _deferred_text_edit_settings(self) -> dict[str, Any]:
+        """Current values of the deferred text fields, for a mid-apply close."""
+        pending: dict[str, Any] = {}
+        if self._advanced_prompt_dirty:
+            pending["whispercpp_initial_prompt"] = self.advanced_initial_prompt_buffer.get_text(
+                self.advanced_initial_prompt_buffer.get_start_iter(),
+                self.advanced_initial_prompt_buffer.get_end_iter(),
+                False,
+            )
+        if self._language_candidates_dirty:
+            pending["whispercpp_language_candidates"] = (
+                self.advanced_language_candidates_entry.get_text()
+            )
+        return pending
+
     def _flush_advanced_prompt_if_dirty(self):
-        """Apply deferred initial prompt edits."""
-        if not self._advanced_prompt_dirty or _handlers_suppressed(self):
+        """Apply deferred advanced text edits (initial prompt, language candidates)."""
+        if self._initializing:
+            return
+        if not (self._advanced_prompt_dirty or self._language_candidates_dirty):
+            return
+        if self._applying_settings:
+            # The apply holding the guard cannot see these edits; stash them so
+            # _finish_auto_apply can re-apply (dialog open) or persist (closed).
+            self._pending_text_edits = self._deferred_text_edit_settings()
+            # Pre-edit values: lets a later persist keep keys a newer apply
+            # never touched instead of dropping the whole snapshot.
+            self._pending_text_edit_baseline = {
+                key: self.config_manager.get("advanced", key) for key in self._pending_text_edits
+            }
+            self._pending_apply_generation = _apply_settings_generation
             return
         self._auto_apply_settings()
-        self._advanced_prompt_dirty = False
+
+    def _persist_pending_text_edits(self) -> None:
+        """Persist deferred edits captured when the dialog closed mid-apply."""
+        pending = self._pending_text_edits
+        baseline = self._pending_text_edit_baseline or {}
+        self._pending_text_edits = None
+        self._pending_text_edit_baseline = None
+        if not pending:
+            return
+
+        def persist() -> None:
+            try:
+                with _apply_settings_lock:
+                    if _apply_settings_generation != self._pending_apply_generation:
+                        # A newer apply already reconfigured the shared engine
+                        # and saved newer values. Keep only the keys it left
+                        # untouched — the rest of the snapshot is stale and
+                        # must not reach the engine or the config again.
+                        surviving = {
+                            key: value
+                            for key, value in pending.items()
+                            if self.config_manager.get("advanced", key) == baseline.get(key)
+                        }
+                    else:
+                        surviving = dict(pending)
+                    if not surviving:
+                        return
+                    if all(
+                        self.config_manager.get("advanced", key) == value
+                        for key, value in surviving.items()
+                    ):
+                        # The apply that was running already landed these values.
+                        return
+                    self.speech_engine.reconfigure(**surviving)
+                    for key, value in surviving.items():
+                        self.config_manager.set("advanced", key, value)
+                    self.config_manager.save_settings()
+            except (OSError, ValueError, TypeError, RuntimeError) as e:
+                logger.warning(
+                    "Could not persist deferred settings edits for keys %s: %s",
+                    sorted(pending),
+                    e,
+                    exc_info=True,
+                )
+
+        # reconfigure() restarts the model; like the normal apply path it runs
+        # on a worker so the model load never blocks the GTK main loop.
+        threading.Thread(target=persist, daemon=True).start()
 
     def _on_advanced_param_changed(self, widget, *args):
         """Handle any advanced parameter change."""
         if _handlers_suppressed(self):
             return False
         self._auto_apply_settings()
-        self._advanced_prompt_dirty = False
         return False
 
     def _on_reset_advanced_clicked(self, widget):
@@ -6112,6 +6223,9 @@ class SettingsDialog(Gtk.Dialog):
             self.advanced_no_timestamps_switch.set_active(defaults["whispercpp_no_timestamps"])
             self.advanced_no_context_switch.set_active(defaults["whispercpp_no_context"])
             self.advanced_initial_prompt_buffer.set_text(defaults["whispercpp_initial_prompt"], -1)
+            self.advanced_language_candidates_entry.set_text(
+                defaults["whispercpp_language_candidates"]
+            )
             self.advanced_temperature_spin.set_value(defaults["whispercpp_temperature"])
             self.advanced_temperature_inc_spin.set_value(defaults["whispercpp_temperature_inc"])
             self.advanced_entropy_thold_spin.set_value(defaults["whispercpp_entropy_thold"])
@@ -6285,6 +6399,17 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.advanced_initial_prompt_buffer.set_text(
             advanced_settings.get("whispercpp_initial_prompt", ""), -1
+        )
+        # The saved value may be a JSON list (the engine accepts both forms);
+        # render the canonical comma-separated text its normalization produces.
+        from ..speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        self.advanced_language_candidates_entry.set_text(
+            ",".join(
+                SpeechRecognitionManager._normalize_language_candidates(
+                    advanced_settings.get("whispercpp_language_candidates", "")
+                )
+            )
         )
         self.advanced_temperature_spin.set_value(
             advanced_settings.get("whispercpp_temperature", 0.0)
@@ -7669,12 +7794,22 @@ class SettingsDialog(Gtk.Dialog):
         if self._simple_driving:
             return
 
+        # Bump before the guard is set so a close-time stash always reads a
+        # generation that already includes this in-flight apply.
+        global _apply_settings_generation
+        _apply_settings_generation += 1
         self._applying_settings = True
         # Already-downloaded apply is handed to a worker that clears this flag
         # via GLib.idle_add. Download still holds it for the modal run() below.
         worker_holds_guard = False
         try:
             settings = self.get_selected_settings()
+            # Collecting consumed every deferred text field; clear the flags
+            # here so edits that arrived mid-apply still schedule a follow-up.
+            self._advanced_prompt_dirty = False
+            self._language_candidates_dirty = False
+            self._pending_text_edits = None
+            self._pending_text_edit_baseline = None
             engine = settings.get("engine", "vosk")
             model_name = settings.get("model_size", "small")
 
@@ -7792,7 +7927,15 @@ class SettingsDialog(Gtk.Dialog):
         """
         self._applying_settings = False
         if self._dialog_is_alive():
-            self._resync_model_ui_from_config()
+            if self._advanced_prompt_dirty or self._language_candidates_dirty:
+                # Edits landed while the guard was held; run their apply now.
+                self._auto_apply_settings()
+            else:
+                self._resync_model_ui_from_config()
+        else:
+            # Closed mid-apply: the running apply saved an older snapshot, so
+            # write any edits it could not see now that it has finished.
+            self._persist_pending_text_edits()
         return False
 
     def _idle_resync_model_ui_from_config(self) -> bool:
@@ -7918,6 +8061,7 @@ class SettingsDialog(Gtk.Dialog):
                 self.advanced_initial_prompt_buffer.get_end_iter(),
                 False,
             ),
+            "whispercpp_language_candidates": self.advanced_language_candidates_entry.get_text(),
             "whispercpp_temperature": self.advanced_temperature_spin.get_value(),
             "whispercpp_temperature_inc": self.advanced_temperature_inc_spin.get_value(),
             "whispercpp_entropy_thold": self.advanced_entropy_thold_spin.get_value(),
@@ -8260,7 +8404,15 @@ For now, the engine has been reverted to VOSK."""
             logger.warning("Ignoring apply_settings(); another apply is already in progress")
             return False
 
+        global _apply_settings_generation
+        _apply_settings_generation += 1
         settings = self.get_selected_settings()
+        # Same consumption as _auto_apply_settings: an apply snapshots the
+        # deferred text fields, so their pending-edit flags are done.
+        self._advanced_prompt_dirty = False
+        self._language_candidates_dirty = False
+        self._pending_text_edits = None
+        self._pending_text_edit_baseline = None
         logger.info(f"Applying settings: {settings}")
 
         engine = settings.get("engine", "vosk")
@@ -8370,9 +8522,11 @@ For now, the engine has been reverted to VOSK."""
 
             # Persist only once the engine really runs these settings: this call
             # downloads missing models, and a config saved up front would keep
-            # pointing at a model that never made it to disk.
-            self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
-            self._save_selected_settings(settings)
+            # pointing at a model that never made it to disk. The lock orders
+            # this snapshot against _persist_pending_text_edits' deferred one.
+            with _apply_settings_lock:
+                self.speech_engine.reconfigure(force_reinit=force_reinit, **settings)
+                self._save_selected_settings(settings)
 
             logger.info("Settings applied successfully.")
             return True
