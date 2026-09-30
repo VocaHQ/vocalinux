@@ -91,9 +91,18 @@ class _AudioSegment(list):
     from speech captured after it, however late the decode finishes.
     """
 
-    def __init__(self, chunks: list[bytes], started_at: Optional[float]) -> None:
+    def __init__(
+        self,
+        chunks: list[bytes],
+        started_at: Optional[float],
+        language: Optional[str] = None,
+    ) -> None:
         super().__init__(chunks)
         self.started_at = started_at
+        # The language this utterance was dictated under (#805): a worker that
+        # outlives its session must not transcribe a stale segment in a newer
+        # session's language.
+        self.language = language
 
 
 def _pywhispercpp_distribution_version() -> Optional[tuple[int, ...]]:
@@ -585,6 +594,7 @@ class SpeechRecognitionManager:
 
     #: Same for the one-shot override state (#805): __new__-built stubs in tests
     #: must not raise on the dictation path either.
+    language: str = "auto"
     _pending_language_override: Optional[str] = None
     _oneshot_language_restore: Optional[str] = None
     _session_language: Optional[str] = None
@@ -3566,10 +3576,13 @@ class SpeechRecognitionManager:
         """Process an immutable audio segment for transcription and commands.
 
         ``language`` is the per-utterance snapshot stamped on the segment when
-        it was queued (#805); None resolves the live session language.
+        it was queued (#805); None falls back to the segment's own stamp and
+        then to the live session language.
         """
         if not audio_buffer:
             return
+        if language is None:
+            language = getattr(audio_buffer, "language", None)
         dictation_language = self._dictation_language(language)
 
         if self.engine == "vosk":
@@ -3680,23 +3693,22 @@ class SpeechRecognitionManager:
                         try:
                             remaining = self._segment_queue.get_nowait()
                             if remaining is not None:
-                                remaining_segment, remaining_language = remaining
                                 logger.debug(
-                                    f"Recognition loop - processing remaining segment with {len(remaining_segment)} chunks"
+                                    f"Recognition loop - processing remaining segment with {len(remaining)} chunks"
                                 )
                                 if self.should_record:
                                     self._update_state(RecognitionState.PROCESSING)
-                                self._process_audio_buffer(remaining_segment, remaining_language)
+                                self._process_audio_buffer(remaining)
                         except queue.Empty:
                             break
                     logger.debug("Recognition loop - exiting after None signal")
                     break
 
-                segment, segment_language = queued
+                segment = queued
                 logger.debug(f"Recognition loop - processing segment with {len(segment)} chunks")
                 if self.should_record:
                     self._update_state(RecognitionState.PROCESSING)
-                self._process_audio_buffer(segment, segment_language)
+                self._process_audio_buffer(segment)
                 if self.should_record:
                     self._update_state(RecognitionState.LISTENING)
         finally:
@@ -3720,15 +3732,15 @@ class SpeechRecognitionManager:
         # outlives its dictation (or drains another session's queue) must
         # transcribe each segment in the language it was recorded under, not
         # whatever a newer session stored in _session_language (#805).
-        stamped = (segment, self._dictation_language())
+        segment.language = self._dictation_language()
         try:
-            self._segment_queue.put_nowait(stamped)
+            self._segment_queue.put_nowait(segment)
             logger.debug("Enqueued segment successfully")
         except queue.Full:
             logger.warning("Transcription queue is full, dropping oldest pending segment")
             try:
                 self._segment_queue.get_nowait()
-                self._segment_queue.put_nowait(stamped)
+                self._segment_queue.put_nowait(segment)
             except queue.Empty:
                 logger.warning("Could not recover queue space for transcription segment")
 
