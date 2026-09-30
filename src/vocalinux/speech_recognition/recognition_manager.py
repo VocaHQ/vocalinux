@@ -498,8 +498,14 @@ def _resolve_valid_input_device(audio, preferred_index: Optional[int] = None) ->
         # MagicMock-based tests or misbehaving drivers can yield non-int counts.
         return preferred_index
 
-    if device_count <= 0:
-        # No enumeration available; let PyAudio fall back to system default.
+    if device_count == 0:
+        # Enumeration worked and reported zero devices: no index can be valid,
+        # and PortAudio aborts the process when asked to open one. Returning
+        # None omits the explicit index so PyAudio uses the system default and
+        # surfaces a catchable error instead.
+        return None
+    if device_count < 0:
+        # Enumeration failed; the preferred device may still exist by index.
         return preferred_index
 
     for i in range(device_count):
