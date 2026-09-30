@@ -751,9 +751,7 @@ class TestSettingsDialogHelperFunctions(unittest.TestCase):
 
     def test_faster_whisper_recommendation_uses_language_for_english_variant(self):
         """English language nudges Faster Whisper recommendations to .en variants."""
-        from vocalinux.ui.settings_dialog import (
-            _recommended_faster_whisper_variant_for_language,
-        )
+        from vocalinux.ui.settings_dialog import _recommended_faster_whisper_variant_for_language
 
         self.assertEqual(
             _recommended_faster_whisper_variant_for_language(
@@ -1161,6 +1159,20 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn('"f"', body)
         self.assertIn("self.search_entry.grab_focus()", body)
         self.assertIn('"escape"', body)
+
+    def test_sidebar_category_list_is_scrollable(self) -> None:
+        """The category list sits in a ScrolledWindow so the dialog can shrink
+        vertically without clipping categories (#678)."""
+        class_body = self.source_code.split("class SettingsDialog(Gtk.Dialog):")[1]
+        init_body = class_body.split("def __init__")[1].split("\n    def ")[0]
+        self.assertIn("sidebar_scroller = Gtk.ScrolledWindow()", init_body)
+        self.assertIn(
+            "sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)",
+            init_body,
+        )
+        self.assertIn("sidebar_scroller.set_shadow_type(Gtk.ShadowType.NONE)", init_body)
+        self.assertIn("sidebar_scroller.add(self.sidebar_listbox)", init_body)
+        self.assertIn("sidebar_box.pack_start(sidebar_scroller", init_body)
 
 
 class TestAboutPage(unittest.TestCase):
