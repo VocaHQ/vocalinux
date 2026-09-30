@@ -3244,7 +3244,8 @@ class SpeechRecognitionManager:
                     self.should_record = False
                     self.release_playback_duck()
                     play_error_sound()
-                    audio.terminate()
+                    if audio is not None:
+                        audio.terminate()
                     self._buffered_capture_failed = True
                     self._update_state(RecognitionState.ERROR)
                     return
@@ -3919,7 +3920,21 @@ class SpeechRecognitionManager:
         # The source may not know about the stream it is asked to replace
         # (e.g. when tests drive this method directly).
         source.stream = getattr(self, "_audio_stream", None)
-        ok = source.reopen(audio_instance)
+        audio = audio_instance
+        if getattr(source, "requires_pyaudio", True) and audio is None:
+            # A session that started on a PipeWire sink never built a PyAudio
+            # instance; a PortAudio source still needs one to reopen.
+            audio = getattr(self, "_pyaudio_instance", None)
+            if audio is None:
+                try:
+                    import pyaudio
+
+                    audio = pyaudio.PyAudio()
+                    self._pyaudio_instance = audio
+                except Exception as e:
+                    logger.error(f"Failed to initialize PyAudio for reconnection: {e}")
+                    return False
+        ok = source.reopen(audio)
         self._sync_capture_state()
         return ok
 
