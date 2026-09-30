@@ -618,6 +618,11 @@ def main():
         # snippet once the next session has closed, so an older worker
         # finishing two sessions later cannot leak into a newer entry.
         ended_session_worker: Optional[threading.Thread] = None
+        # Every worker that has delivered in-session segments; a delivery on
+        # a thread never associated with a session is treated as the
+        # just-ended session's trailing decode, while a worker seen producing
+        # an earlier session can never merge into a newer entry.
+        session_workers_seen: set[threading.Thread] = set()
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
@@ -744,6 +749,7 @@ def main():
                     )
                 ):
                     session_worker = worker
+                    session_workers_seen.add(worker)
                     session_segments.append((segment, started_at))
                     return
                 # Late segment from a session that already ended: merge into
@@ -761,7 +767,10 @@ def main():
                 # segment forms a snippet of its own instead.
                 if (
                     latest_snippet_id is not None
-                    and (worker is ended_session_worker or session_open)
+                    and (
+                        worker is ended_session_worker
+                        or (session_open and worker not in session_workers_seen)
+                    )
                     and transcription_history.extend_entry(
                         latest_snippet_id, segment, expected_epoch=ended_session_epoch
                     )
@@ -773,6 +782,7 @@ def main():
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
                     ended_session_worker = worker
+                    session_workers_seen.add(worker)
 
         def inject_transcription(text_to_inject: str) -> None:
             """Apply the separator rules and inject one finalised segment.
