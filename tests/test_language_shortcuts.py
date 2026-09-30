@@ -7,6 +7,7 @@ import importlib
 import os
 import sys
 import tempfile
+import threading
 from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -349,6 +350,9 @@ def _tray_stub(shortcut_mode: str = "toggle", entries: Any = None) -> Any:
     tray.speech_engine = MagicMock()
     tray.speech_engine.state = RecognitionState.IDLE
     tray._language_shortcut_managers = []
+    # D-Bus activation unavailable -> the internal listener family is on,
+    # which is what these tests exercise.
+    tray._external_activation_unavailable = True
     return tray
 
 
@@ -408,7 +412,11 @@ def test_tray_language_managers_follow_push_to_talk() -> None:
 
     manager_class.assert_called_once_with(shortcut="alt+d", mode="push_to_talk")
     manager.register_press_callback.assert_called_once()
-    manager.register_release_callback.assert_called_once_with(tray._stop_recognition)
+    # The release is routed through the owner-gated helper for this binding,
+    # not a stop callback shared by every listener.
+    release_callback = manager.register_release_callback.call_args.args[0]
+    assert release_callback.func == tray._release_language_push_to_talk
+    assert release_callback.args == (manager,)
 
 
 def test_tray_toggle_in_language_starts_a_one_shot() -> None:
@@ -444,6 +452,91 @@ def test_tray_push_to_talk_in_language_starts_a_one_shot() -> None:
     tray.speech_engine.start_recognition_with_language.assert_called_once_with(
         "de", mode="push_to_talk"
     )
+
+
+def test_tray_language_release_stops_only_its_own_session() -> None:
+    """Another binding's release must not end a hold it did not start."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(shortcut_mode="push_to_talk")
+    german, french = MagicMock(), MagicMock()
+    tray.speech_engine.state = RecognitionState.LISTENING
+    tray._ptt_owner = german
+
+    TrayIndicator._release_language_push_to_talk(tray, french)
+    tray.speech_engine.stop_recognition.assert_not_called()
+
+    TrayIndicator._release_language_push_to_talk(tray, german)
+    tray.speech_engine.stop_recognition.assert_called_once()
+    assert tray._ptt_owner is None
+
+
+def test_tray_skips_gesture_equivalent_bindings() -> None:
+    """Different spellings of the same gesture still collide."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(
+        entries=[
+            {"shortcut": "ctrl+alt+r", "language": "de"},
+            {"shortcut": "alt+ctrl+r", "language": "fr"},  # reordered, same gesture
+            {"shortcut": "ctrl+enter", "language": "es"},
+            {"shortcut": "alt+return", "language": "hu"},  # enter/return alias
+        ]
+    )
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as manager_class:
+        TrayIndicator._setup_language_shortcuts(tray)
+
+    armed = [call.kwargs["shortcut"] for call in manager_class.call_args_list]
+    assert armed == ["ctrl+alt+r", "ctrl+enter"]
+
+
+def test_tray_skips_pure_modifier_gesture_overlap() -> None:
+    """A one-sided hold fires inside the both-sides binding's key set."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(
+        entries=[
+            {"shortcut": "left_ctrl+left_ctrl", "language": "de"},
+            {"shortcut": "ctrl+ctrl", "language": "fr"},  # left ctrl fires both
+            {"shortcut": "right_ctrl+right_ctrl", "language": "es"},  # other side
+        ]
+    )
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as manager_class:
+        TrayIndicator._setup_language_shortcuts(tray)
+
+    armed = [call.kwargs["shortcut"] for call in manager_class.call_args_list]
+    assert armed == ["left_ctrl+left_ctrl", "right_ctrl+right_ctrl"]
+
+
+def test_refresh_does_not_rearm_under_external_activation() -> None:
+    """A binding edit must not arm listeners while internal hotkeys are off."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(entries=[{"shortcut": "alt+d", "language": "de"}])
+    tray._external_activation_unavailable = False
+    tray.config_manager.get_bool.return_value = True  # disable_internal_hotkey
+
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager") as manager_class:
+        TrayIndicator.refresh_language_shortcuts(tray)
+
+    manager_class.assert_not_called()
+    assert tray._language_shortcut_managers == []
+
+
+def test_refresh_stops_a_held_push_to_talk_first() -> None:
+    """Rebuilding listeners cannot strand a session waiting on its release."""
+    from vocalinux.ui.tray_indicator import TrayIndicator
+
+    tray = _tray_stub(
+        shortcut_mode="push_to_talk",
+        entries=[{"shortcut": "alt+d", "language": "de"}],
+    )
+    tray.speech_engine.state = RecognitionState.LISTENING
+
+    with patch("vocalinux.ui.tray_indicator.KeyboardShortcutManager"):
+        TrayIndicator.refresh_language_shortcuts(tray)
+
+    tray.speech_engine.stop_recognition.assert_called_once()
 
 
 def test_refresh_rebuilds_the_language_listeners() -> None:
@@ -482,6 +575,65 @@ def test_stop_language_shortcut_managers_survives_a_bad_stop() -> None:
     bad.stop.assert_called_once()
     good.stop.assert_called_once()
     assert tray._language_shortcut_managers == []
+
+
+def test_oneshot_restore_is_part_of_the_reconfigure_snapshot() -> None:
+    """Rollback must be able to revive the pending one-shot restore (#805)."""
+    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+    assert "_oneshot_language_restore" in SpeechRecognitionManager._RECONFIGURE_STATE_ATTRS
+
+
+def test_failed_reconfigure_settles_the_pending_oneshot_restore() -> None:
+    """Rollback revives the pending restore, then settles it before re-init."""
+    manager = _manager_stub(language="de")
+    manager._oneshot_language_restore = "en-us"
+    manager._voice_commands_preference = None
+    manager._defer_download = True
+    manager._model_lock = threading.Lock()
+    manager._snapshot_reconfigure_state = MagicMock(
+        return_value={"language": "de", "_oneshot_language_restore": "en-us"}
+    )
+    manager._init_selected_engine = MagicMock(side_effect=[RuntimeError("boom"), None])
+
+    with pytest.raises(RuntimeError):
+        manager.reconfigure(language="fr", model_size="tiny")
+
+    assert manager.language == "en-us"
+    assert manager._oneshot_language_restore is None
+
+
+def test_language_shortcut_allowed_when_layout_will_swap_model() -> None:
+    """Follow-layout can swap in the multilingual sibling the shortcut needs."""
+    import vocalinux.speech_recognition.recognition_manager as rm
+
+    manager = _manager_stub(model_size="small.en", language_preference="layout")
+    manager.start_recognition = MagicMock(return_value=True)
+
+    with (
+        patch.object(rm, "is_model_downloaded", return_value=True),
+        patch.object(rm, "_multilingual_sibling", return_value="small"),
+    ):
+        assert manager.start_recognition_with_language("de") is True
+
+    manager.start_recognition.assert_called_once()
+
+
+def test_parakeet_auto_shortcut_is_still_allowed() -> None:
+    """Normalizing to auto is only a refusal when it drops the request."""
+    manager = _manager_stub(engine="parakeet", model_size="turbo", language="auto")
+    manager.start_recognition = MagicMock(return_value=True)
+
+    assert manager.start_recognition_with_language("auto") is True
+
+
+def test_dictation_language_tracks_the_session_snapshot() -> None:
+    """Workers read the session binding, not the live configured language."""
+    manager = _manager_stub(language="en-us")
+    manager._session_language = "de"
+    assert manager._dictation_language() == "de"
+    manager._session_language = None
+    assert manager._dictation_language() == "en-us"
 
 
 # --- settings dialog plumbing ------------------------------------------------
@@ -583,3 +735,99 @@ def test_picker_change_retitles_the_row(dialog_class: type[Any]) -> None:
 
     row.set_title.assert_called_once_with(SUPPORTED_LANGUAGES["de"]["name"])
     dialog.language_shortcuts_update_callback.assert_called_once()
+
+
+def test_persist_keeps_last_valid_binding_during_partial_edit(
+    dialog_class: type[Any],
+) -> None:
+    """A half-typed key cannot erase the row's persisted binding."""
+    dialog = _dialog_stub()
+    picker, entry = MagicMock(), MagicMock()
+    picker.get_active_id.return_value = "de"
+    entry.get_text.return_value = "alt+"  # mid-typing
+    dialog._language_shortcut_rows = [
+        {
+            "language_picker": picker,
+            "shortcut_entry": entry,
+            "last_valid_shortcut": "alt+d",
+        }
+    ]
+
+    dialog_class._persist_language_shortcuts(dialog)
+
+    dialog.config_manager.set_language_shortcuts.assert_called_once_with(
+        [{"shortcut": "alt+d", "language": "de"}]
+    )
+
+
+def test_persist_reports_a_rejected_duplicate(dialog_class: type[Any]) -> None:
+    """A row claiming a taken key keeps its last binding and says why."""
+    dialog = _dialog_stub()
+    first_picker, second_picker = MagicMock(), MagicMock()
+    first_entry, second_entry = MagicMock(), MagicMock()
+    first_picker.get_active_id.return_value = "de"
+    second_picker.get_active_id.return_value = "fr"
+    first_entry.get_text.return_value = "alt+d"
+    second_entry.get_text.return_value = "alt+d"
+    dialog._language_shortcut_rows = [
+        {
+            "language_picker": first_picker,
+            "shortcut_entry": first_entry,
+            "last_valid_shortcut": "alt+d",
+        },
+        {
+            "language_picker": second_picker,
+            "shortcut_entry": second_entry,
+            "last_valid_shortcut": "alt+f",
+        },
+    ]
+    dialog._report_language_shortcut_rejections = (
+        lambda rejected: dialog_class._report_language_shortcut_rejections(dialog, rejected)
+    )
+
+    dialog_class._persist_language_shortcuts(dialog)
+
+    dialog.config_manager.set_language_shortcuts.assert_called_once_with(
+        [
+            {"shortcut": "alt+d", "language": "de"},
+            {"shortcut": "alt+f", "language": "fr"},
+        ]
+    )
+    dialog.language_shortcuts_info_label.set_markup.assert_called_once()
+
+
+def test_removing_an_armed_row_cancels_recording(dialog_class: type[Any]) -> None:
+    """A capture aimed at a removed row is cancelled before it is destroyed."""
+    dialog = _dialog_stub()
+    entry, button = MagicMock(), MagicMock()
+    refs = {
+        "row": MagicMock(),
+        "language_picker": MagicMock(),
+        "shortcut_entry": entry,
+        "record_button": button,
+    }
+    dialog._language_shortcut_rows = [refs]
+    dialog._recording_shortcut = True
+    dialog._recording_shortcut_target = (entry, MagicMock(), button, MagicMock())
+
+    dialog_class._on_remove_language_shortcut_clicked(dialog, refs, button)
+
+    dialog._stop_recording_shortcut.assert_called_once()
+
+
+def test_begin_recording_disarms_the_previous_target(dialog_class: type[Any]) -> None:
+    """Arming a second row resets the first row's 'Press keys…' button."""
+    dialog = _dialog_stub()
+    dialog._recording_shortcut = True
+    dialog._recording_shortcut_target = (
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+        MagicMock(),
+    )
+
+    dialog_class._begin_shortcut_recording(
+        dialog, MagicMock(), MagicMock(), MagicMock(), MagicMock()
+    )
+
+    dialog._stop_recording_shortcut.assert_called_once()

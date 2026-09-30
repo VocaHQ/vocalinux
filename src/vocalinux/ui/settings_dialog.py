@@ -4544,7 +4544,7 @@ class SettingsDialog(Gtk.Dialog):
 
         return False
 
-    def _build_language_shortcuts_section(self):
+    def _build_language_shortcuts_section(self) -> None:
         """Build the Language Shortcuts section (#805).
 
         One row per shortcut → language binding, an Add row at the bottom, and
@@ -4597,7 +4597,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.shortcuts_tab.pack_start(info_box, False, False, 0)
 
-    def _add_language_shortcut_row(self, language: str, shortcut: str):
+    def _add_language_shortcut_row(self, language: str, shortcut: str) -> None:
         """Append one language → shortcut binding row (#805)."""
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
@@ -4633,6 +4633,10 @@ class SettingsDialog(Gtk.Dialog):
             "language_picker": language_picker,
             "shortcut_entry": shortcut_entry,
             "record_button": record_button,
+            # The last binding this row actually persisted; a mid-edit entry
+            # (empty or half-typed) falls back to it rather than erasing the
+            # binding.
+            "last_valid_shortcut": shortcut.strip().lower(),
         }
         language_picker.connect("changed", partial(self._on_language_shortcut_picker_changed, refs))
         record_button.connect("clicked", partial(self._on_record_language_shortcut_clicked, refs))
@@ -4659,26 +4663,34 @@ class SettingsDialog(Gtk.Dialog):
             self.language_shortcuts_group.add_row(row)
         self._language_shortcut_rows.append(refs)
 
-    def _on_language_shortcut_picker_changed(self, refs, picker):
+    def _on_language_shortcut_picker_changed(
+        self, refs: dict[str, Any], picker: SearchablePicker
+    ) -> None:
         """Apply a row's language change: retitle it and persist (#805)."""
         row = refs.get("row")
         if row is not None:
-            lang_id = picker.get_active_id()
+            lang_id = picker.get_active_id() or ""
             lang_info = cast(Optional[dict], SUPPORTED_LANGUAGES.get(lang_id))
-            lang_name = str(lang_info["name"]) if lang_info else (lang_id or "")
+            lang_name = str(lang_info["name"]) if lang_info else lang_id
             row.set_title(lang_name)
         self._on_language_shortcut_row_changed(picker)
 
-    def _on_language_shortcut_row_changed(self, *args):
+    def _on_language_shortcut_row_changed(self, *args: object) -> None:
         """Persist the bindings whenever a row's language or key changes (#805)."""
         self._persist_language_shortcuts()
 
-    def _on_record_language_shortcut_clicked(self, refs, button):
+    def _on_record_language_shortcut_clicked(
+        self, refs: dict[str, Any], button: Gtk.Button
+    ) -> None:
         """Arm key-capture aimed at a language row's entry (#805)."""
 
         def _apply(shortcut: str) -> None:
-            refs["shortcut_entry"].set_text(shortcut)
-            self._persist_language_shortcuts()
+            # _commit_recorded_shortcut already wrote the captured key to the
+            # entry, whose changed signal persisted it; setting the same text
+            # again would write config a second time and rebuild the
+            # listeners for one recorded key.
+            if refs["shortcut_entry"].get_text() != shortcut:
+                refs["shortcut_entry"].set_text(shortcut)
 
         self._begin_shortcut_recording(
             refs["shortcut_entry"],
@@ -4687,8 +4699,19 @@ class SettingsDialog(Gtk.Dialog):
             self.language_shortcuts_info_label,
         )
 
-    def _on_remove_language_shortcut_clicked(self, refs, button):
+    def _on_remove_language_shortcut_clicked(
+        self, refs: dict[str, Any], button: Gtk.Button
+    ) -> None:
         """Remove a language binding row and persist (#805)."""
+        # An armed Record capture aimed at this row's entry must be cancelled
+        # first: the commit would otherwise write into a destroyed widget.
+        target = getattr(self, "_recording_shortcut_target", None)
+        if (
+            getattr(self, "_recording_shortcut", False)
+            and target is not None
+            and target[0] is refs["shortcut_entry"]
+        ):
+            self._stop_recording_shortcut()
         row = refs["row"]
         self.language_shortcuts_group.listbox.remove(row)
         if row in self.language_shortcuts_group.rows:
@@ -4697,13 +4720,13 @@ class SettingsDialog(Gtk.Dialog):
         row.destroy()
         self._persist_language_shortcuts()
 
-    def _on_add_language_shortcut_clicked(self, button):
+    def _on_add_language_shortcut_clicked(self, button: Gtk.Button) -> None:
         """Append a fresh binding row (defaults to auto-detect) (#805)."""
         self._add_language_shortcut_row("auto", "")
         self.language_shortcuts_group.show_all()
         self._persist_language_shortcuts()
 
-    def _collect_language_shortcuts(self) -> list[dict]:
+    def _collect_language_shortcuts(self) -> list[dict[str, str]]:
         """Read the current rows as [{shortcut, language}] for config (#805)."""
         entries = []
         for refs in self._language_shortcut_rows:
@@ -4715,14 +4738,59 @@ class SettingsDialog(Gtk.Dialog):
             )
         return entries
 
-    def _persist_language_shortcuts(self):
-        """Write the rows to config and refresh the live listeners (#805)."""
+    def _persist_language_shortcuts(self) -> None:
+        """Write the rows to config and refresh the live listeners (#805).
+
+        A row mid-edit — empty, half-typed, or claiming a key another row
+        already holds — would be dropped by config normalization, erasing its
+        binding when the dialog closes. Such rows keep their last persisted
+        binding instead, and a rejected duplicate is called out on the info
+        label.
+        """
         if self._initializing:
             return
-        self.config_manager.set_language_shortcuts(self._collect_language_shortcuts())
+        entries = []
+        rejected = []
+        claimed = set()
+        for refs in self._language_shortcut_rows:
+            language = refs["language_picker"].get_active_id() or "auto"
+            shortcut = refs["shortcut_entry"].get_text().strip().lower()
+            last_valid = refs.get("last_valid_shortcut", "")
+            if shortcut and is_valid_shortcut(shortcut) and shortcut not in claimed:
+                refs["last_valid_shortcut"] = shortcut
+                claimed.add(shortcut)
+            elif last_valid and last_valid not in claimed:
+                if shortcut and is_valid_shortcut(shortcut):
+                    rejected.append(shortcut)
+                shortcut = last_valid
+                claimed.add(shortcut)
+            else:
+                if shortcut and is_valid_shortcut(shortcut):
+                    rejected.append(shortcut)
+                continue
+            entries.append({"shortcut": shortcut, "language": language})
+        self.config_manager.set_language_shortcuts(entries)
         self.config_manager.save_settings()
         if self.language_shortcuts_update_callback:
             self.language_shortcuts_update_callback()
+        self._report_language_shortcut_rejections(rejected)
+
+    def _report_language_shortcut_rejections(self, rejected: list[str]) -> None:
+        """Surface dropped duplicate keys on the section's info label (#805)."""
+        label = getattr(self, "language_shortcuts_info_label", None)
+        if label is None:
+            return
+        if rejected:
+            keys = ", ".join(sorted(set(rejected)))
+            label.set_markup(
+                f"<span foreground='#e01b24'>Shortcut "
+                f"<b>{GLib.markup_escape_text(keys)}</b> is already bound on "
+                "another row.</span>"
+            )
+        elif not getattr(self, "_recording_shortcut", False):
+            label.set_text(
+                "Language shortcuts take effect immediately and follow the " "shortcut mode above."
+            )
 
     def _is_preset_shortcut(self, shortcut: str) -> bool:
         """Return True if shortcut is one of the built-in double-tap presets."""
@@ -4835,12 +4903,22 @@ class SettingsDialog(Gtk.Dialog):
             self.shortcut_info_label,
         )
 
-    def _begin_shortcut_recording(self, entry, apply_fn, button, hint_label) -> None:
+    def _begin_shortcut_recording(
+        self,
+        entry: Gtk.Entry,
+        apply_fn: Callable[[str], None],
+        button: Gtk.Button,
+        hint_label: Gtk.Label,
+    ) -> None:
         """Arm key-capture for one shortcut target.
 
         ``apply_fn`` receives the captured shortcut string; ``hint_label`` gets
         the press-keys hint and any error/cancel messages for this capture.
         """
+        if self._recording_shortcut:
+            # Only one capture can be armed: reset the previously armed
+            # button instead of leaving two targets captioned "Press keys…".
+            self._stop_recording_shortcut()
         self._recording_shortcut = True
         self._recording_shortcut_target = (entry, apply_fn, button, hint_label)
         button.set_label("Press keys…")
@@ -4849,7 +4927,7 @@ class SettingsDialog(Gtk.Dialog):
         )
         self._start_evdev_shortcut_recorder()
 
-    def _stop_recording_shortcut(self):
+    def _stop_recording_shortcut(self) -> None:
         """Exit key-capture mode and restore the armed Record button."""
         self._recording_shortcut = False
         self._stop_evdev_shortcut_recorder()

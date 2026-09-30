@@ -54,7 +54,12 @@ from ..utils.update_monitor import UpdateMonitor
 from ..utils.whispercpp_model_info import TDRZ_MODEL, WHISPERCPP_MODEL_INFO, is_model_downloaded
 from . import notifications
 from .config_manager import get_shared_config_manager
-from .keyboard_backends import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE, SHORTCUT_MODES
+from .keyboard_backends import (
+    DEFAULT_SHORTCUT,
+    DEFAULT_SHORTCUT_MODE,
+    SHORTCUT_MODES,
+    shortcut_gestures_collide,
+)
 from .keyboard_shortcuts import KeyboardShortcutManager
 from .settings_dialog import ModelDownloadDialog, SettingsDialog, recommended_model_for_engine
 from .transcription_history import TranscriptionHistory
@@ -130,6 +135,10 @@ class TrayIndicator:
     # class-level default so teardown paths like _quit() still find the list.
     _language_shortcut_managers: list = []
 
+    #: Same for the push-to-talk owner slot: a __new__-built stub must answer
+    #: "no binding owns the live session" instead of raising on release paths.
+    _ptt_owner: Optional["KeyboardShortcutManager"] = None
+
     def __init__(
         self,
         speech_engine: SpeechRecognitionManagerProtocol,
@@ -176,6 +185,9 @@ class TrayIndicator:
         # One listener per bound language shortcut (#805); rebuilt by
         # _setup_language_shortcuts alongside the main one.
         self._language_shortcut_managers: list[KeyboardShortcutManager] = []
+        # The binding whose press started the live push-to-talk session, so an
+        # unrelated key's release cannot end it (#805).
+        self._ptt_owner: Optional[KeyboardShortcutManager] = None
 
         # Ensure icon directory exists
         os.makedirs(ICON_DIR, exist_ok=True)
@@ -336,6 +348,9 @@ class TrayIndicator:
         # in over D-Bus (see VocalinuxDBusService).
         if self._external_activation_active():
             logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
+            # The whole internal listener family is off; per-language
+            # listeners must not keep firing either.
+            self._stop_language_shortcut_managers()
             return
 
         # Get configured mode from config
@@ -348,22 +363,29 @@ class TrayIndicator:
         elif mode == "push_to_talk":
             # Register press/release callbacks for push-to-talk mode
             self.shortcut_manager.register_press_callback(self._start_recognition)
-            self.shortcut_manager.register_release_callback(self._stop_recognition)
+            self.shortcut_manager.register_release_callback(self._release_main_push_to_talk)
 
         # Start the keyboard shortcut manager
         self.shortcut_manager.start()
 
         self._setup_language_shortcuts()
 
-    def _setup_language_shortcuts(self):
+    def _setup_language_shortcuts(self) -> None:
         """(Re)build a listener per configured language shortcut (#805).
 
         Each entry gets its own KeyboardShortcutManager because the backends
         open the input devices read-only and never grab them, so parallel
-        listeners do not interfere. A binding that collides with the main
-        shortcut or an earlier language binding is skipped: the same gesture
-        cannot fire both.
+        listeners do not interfere. A binding whose gesture collides with the
+        main shortcut or an earlier language binding is skipped: the same
+        gesture cannot fire both.
         """
+        # Same stop-first protection as _setup_keyboard_shortcuts: rebuilding
+        # below removes the release callback a held push-to-talk key needs to
+        # end its session, so the hold must be ended before it can be lost.
+        if self.speech_engine.state != RecognitionState.IDLE:
+            logger.info("Stopping active recognition before rebuilding language shortcuts")
+            self._stop_recognition()
+
         self._stop_language_shortcut_managers()
 
         mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
@@ -378,17 +400,20 @@ class TrayIndicator:
             .lower()
         )
 
-        bound = {main_shortcut}
+        # Collisions are judged on the gestures the backends match, not the
+        # strings: "ctrl+alt+r" and "alt+ctrl+r" name the same key press, and
+        # "left_ctrl+left_ctrl" fires inside "ctrl+ctrl"'s key set.
+        bound = [main_shortcut]
         for entry in self.config_manager.get_language_shortcuts():
             shortcut = entry["shortcut"]
             language = entry["language"]
-            if shortcut in bound:
+            if any(shortcut_gestures_collide(shortcut, other) for other in bound):
                 logger.warning(
                     f"Skipping language shortcut {shortcut!r} for {language}: "
-                    "it collides with another binding"
+                    "it shares its gesture with another binding"
                 )
                 continue
-            bound.add(shortcut)
+            bound.append(shortcut)
 
             try:
                 manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
@@ -401,9 +426,11 @@ class TrayIndicator:
                 )
             else:
                 manager.register_press_callback(
-                    partial(self._start_recognition_in_language, language)
+                    partial(self._start_recognition_in_language, language, manager)
                 )
-                manager.register_release_callback(self._stop_recognition)
+                manager.register_release_callback(
+                    partial(self._release_language_push_to_talk, manager)
+                )
             manager.start()
             self._language_shortcut_managers.append(manager)
             logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
@@ -417,8 +444,13 @@ class TrayIndicator:
                 logger.exception("Failed to stop a language shortcut manager")
         self._language_shortcut_managers = []
 
-    def refresh_language_shortcuts(self):
+    def refresh_language_shortcuts(self) -> None:
         """Rebuild the per-language listeners after a settings change (#805)."""
+        if self._external_activation_active():
+            # The internal listener family is off; a binding edit must not
+            # arm language listeners behind the external-activation setting.
+            self._stop_language_shortcut_managers()
+            return
         self._setup_language_shortcuts()
 
     def _init_icons(self):
@@ -634,17 +666,54 @@ class TrayIndicator:
         dialog.show()
         return False
 
-    def _toggle_recognition(self):
+    def _toggle_recognition(self) -> None:
         """Toggle the recognition state between IDLE and LISTENING."""
+        self._ptt_owner = None
         if self.speech_engine.state == RecognitionState.IDLE:
             self.speech_engine.start_recognition()
         else:
             self.speech_engine.stop_recognition()
 
-    def _start_recognition(self):
+    def _start_recognition(self) -> None:
         """Start voice recognition (for push-to-talk mode)."""
         if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition(mode="push_to_talk")
+            if self.speech_engine.start_recognition(mode="push_to_talk"):
+                self._ptt_owner = self.shortcut_manager
+
+    def _release_main_push_to_talk(self) -> None:
+        """End a push-to-talk session only when the main binding started it (#805)."""
+        if self._ptt_owner is self.shortcut_manager:
+            self._stop_recognition()
+
+    def _release_language_push_to_talk(self, manager: KeyboardShortcutManager) -> None:
+        """End a push-to-talk session only when this binding started it (#805).
+
+        Sharing one stop callback across listeners let an unrelated binding's
+        release end a session it never started.
+        """
+        if self._ptt_owner is manager:
+            self._stop_recognition()
+
+    def _toggle_recognition_in_language(self, language: str) -> None:
+        """Toggle-style trigger for a per-language shortcut (#805).
+
+        While idle it starts a one-shot dictation in ``language``; while
+        dictating it stops, matching the main toggle's behaviour regardless
+        of which language the current utterance is in.
+        """
+        self._ptt_owner = None
+        if self.speech_engine.state == RecognitionState.IDLE:
+            self.speech_engine.start_recognition_with_language(language)
+        else:
+            self.speech_engine.stop_recognition()
+
+    def _start_recognition_in_language(
+        self, language: str, manager: Optional[KeyboardShortcutManager] = None
+    ) -> None:
+        """Push-to-talk start for a per-language shortcut (#805)."""
+        if self.speech_engine.state == RecognitionState.IDLE:
+            if self.speech_engine.start_recognition_with_language(language, mode="push_to_talk"):
+                self._ptt_owner = manager
 
     def _external_start(self) -> None:
         """Start recognition for an external (D-Bus) trigger.
@@ -653,6 +722,7 @@ class TrayIndicator:
         `vocalinux --start` transcribes immediately/with silence detection
         rather than deferring until a Stop.
         """
+        self._ptt_owner = None
         if self.speech_engine.state == RecognitionState.IDLE:
             self.speech_engine.start_recognition()
 
@@ -661,25 +731,9 @@ class TrayIndicator:
         if self.speech_engine.state != RecognitionState.IDLE:
             self.speech_engine.stop_recognition()
 
-    def _toggle_recognition_in_language(self, language: str):
-        """Toggle-style trigger for a per-language shortcut (#805).
-
-        While idle it starts a one-shot dictation in ``language``; while
-        dictating it stops, matching the main toggle's behaviour regardless
-        of which language the current utterance is in.
-        """
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition_with_language(language)
-        else:
-            self.speech_engine.stop_recognition()
-
-    def _start_recognition_in_language(self, language: str):
-        """Push-to-talk start for a per-language shortcut (#805)."""
-        if self.speech_engine.state == RecognitionState.IDLE:
-            self.speech_engine.start_recognition_with_language(language, mode="push_to_talk")
-
-    def _stop_recognition(self):
+    def _stop_recognition(self) -> None:
         """Stop voice recognition (for push-to-talk mode)."""
+        self._ptt_owner = None
         if self.speech_engine.state != RecognitionState.IDLE:
             self.speech_engine.stop_recognition()
 
