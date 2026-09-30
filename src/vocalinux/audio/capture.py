@@ -13,6 +13,7 @@ without inheriting dictation behavior.
 
 import ctypes
 import logging
+import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -220,8 +221,12 @@ def get_audio_input_devices() -> list:
     try:
         for position, source in enumerate(get_system_audio_sources()):
             devices.append((PIPEWIRE_INDEX_BASE - position, source.display_name, source.is_default))
+    except (OSError, subprocess.SubprocessError) as e:
+        logger.debug("PipeWire source enumeration failed: %s", e)
     except Exception:
-        logger.debug("PipeWire source enumeration failed", exc_info=True)
+        # Unexpected: system-audio sources silently vanish from the picker
+        # without a trace at info level otherwise.
+        logger.warning("PipeWire source enumeration failed", exc_info=True)
 
     return devices
 
@@ -755,6 +760,9 @@ class PortAudioCaptureSource:
         self.sample_rate = 16000
         self.channels = 1
         self.downmix_channel: Optional[int] = None
+
+    #: Reads through a PyAudio instance — the caller must supply one.
+    requires_pyaudio: bool = True
 
     def open(self, audio: Any = None) -> None:
         """Resolve the input device and open the negotiated capture stream.

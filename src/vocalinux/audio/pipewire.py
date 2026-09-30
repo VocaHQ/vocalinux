@@ -233,6 +233,8 @@ def resolve_pipewire_source(
 
 
 class PipeWireCaptureSource:
+    #: Spawns ``pw-record`` itself — the PortAudio instance can be absent.
+    requires_pyaudio: bool = False
     """``CaptureSource`` over a PipeWire sink monitor via ``pw-record --raw``.
 
     ``pw-record --raw`` emits raw s16 PCM on stdout at the rate/channels the

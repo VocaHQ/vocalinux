@@ -3184,7 +3184,6 @@ class SpeechRecognitionManager:
 
         try:
             import numpy as np
-            import pyaudio
         except ImportError as e:
             logger.error(f"Failed to import required audio libraries: {e}")
             logger.error("Please install required dependencies: pip install pyaudio numpy")
@@ -3200,14 +3199,29 @@ class SpeechRecognitionManager:
             # PyAudio configuration
             CHUNK = 1024
 
-            # Initialize PyAudio with reconnection support
-            self._pyaudio_instance = pyaudio.PyAudio()
-            audio = self._pyaudio_instance
-
             # The capture source owns the device: resolution, format
-            # negotiation, downmixing, and resampling. This loop only consumes
-            # mono 16 kHz chunks and applies dictation segmentation policy.
+            # negotiation, downmixing, and resampling. PipeWire sources spawn
+            # pw-record themselves and need no PyAudio instance; PortAudio
+            # sources get one passed to open()/reopen(). This loop only
+            # consumes mono 16 kHz chunks and applies dictation segmentation
+            # policy.
             source = self._new_capture_source()
+            audio = None
+            if getattr(source, "requires_pyaudio", True):
+                try:
+                    import pyaudio
+                except ImportError as e:
+                    logger.error(f"Failed to import required audio libraries: {e}")
+                    logger.error("Please install required dependencies: pip install pyaudio numpy")
+                    self.should_record = False
+                    self.release_playback_duck()
+                    play_error_sound()
+                    self._buffered_capture_failed = True
+                    self._update_state(RecognitionState.ERROR)
+                    self._signal_buffered_capture_done()
+                    return
+                self._pyaudio_instance = pyaudio.PyAudio()
+                audio = self._pyaudio_instance
             self._capture_source = source
             # The attempt count belongs to this session — a previous thread
             # may still be finishing and must not leave its retries here.
@@ -3396,6 +3410,10 @@ class SpeechRecognitionManager:
 
                         if self._attempt_audio_reconnection(audio):
                             logger.info("Audio reconnection successful, continuing recording")
+                            # The session source may have been rebuilt (e.g.
+                            # the configured device switched between a mic and
+                            # a PipeWire sink) — keep reading the new source.
+                            source = self._capture_source
                             continue  # Continue recording with the reopened source
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
