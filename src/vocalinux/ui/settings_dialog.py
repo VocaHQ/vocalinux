@@ -6157,8 +6157,16 @@ class SettingsDialog(Gtk.Dialog):
                 self.speech_engine.reconfigure(**pending)
                 current = os.path.getmtime(CONFIG_FILE) if os.path.exists(CONFIG_FILE) else None
                 if current != mtime:
-                    # A newer dialog applied settings while the model restarted;
-                    # this older snapshot must not overwrite them.
+                    # A newer dialog applied settings while the model
+                    # restarted: this older snapshot must not leave the engine
+                    # configured from it, so reconcile the engine to the
+                    # settings that won instead.
+                    fresh = {
+                        key: self.config_manager.get("advanced", key, value)
+                        for key, value in pending.items()
+                    }
+                    if fresh != pending:
+                        self.speech_engine.reconfigure(**fresh)
                     return
                 for key, value in pending.items():
                     self.config_manager.set("advanced", key, value)
