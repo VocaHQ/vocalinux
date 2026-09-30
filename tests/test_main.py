@@ -1869,6 +1869,79 @@ class TestPadRoutingCallbacks(unittest.TestCase):
         finally:
             boot.stack.close()
 
+    def test_delete_that_after_manual_pad_edit_is_a_no_op(self) -> None:
+        """A manual edit blurs segment boundaries: "delete that" must not
+        erase user-typed text with the stale recorded length."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("hello").result(timeout=10)
+            # The widget's own edit cleared the tracked segment boundaries.
+            boot.pad.last_segment = None
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_not_called()
+            boot.text_system.press_backspace.assert_not_called()
+            # Tracking stays cleared, so a repeat cannot retry the stale length.
+            self.assertTrue(boot.action_cb("delete_last").result(timeout=10))
+            boot.pad.delete_last_chars.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_bound_segment_survives_focus_change(self) -> None:
+        """Pad-bound text is not dropped when focus moved since the dictate."""
+        # A configured script arms the submit-time focus probe.
+        boot = _boot_main_callbacks(dictate_to_pad=True, post_script="/bin/cat")
+        try:
+            app_a = MagicMock()
+            app_a.identity_blob.return_value = "app-a"
+            app_b = MagicMock()
+            app_b.identity_blob.return_value = "app-b"
+            with patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                side_effect=[app_a, app_b],
+            ):
+                boot.text_cb("hello").result(timeout=10)
+            boot.pad.append_text.assert_called_once_with("hello ")
+            boot.text_system.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_app_bound_segment_drops_on_focus_change(self) -> None:
+        """App-bound text is still dropped when focus moved since the dictate."""
+        # A configured script arms the submit-time focus probe.
+        boot = _boot_main_callbacks(dictate_to_pad=False, post_script="/bin/cat")
+        try:
+            app_a = MagicMock()
+            app_a.identity_blob.return_value = "app-a"
+            app_b = MagicMock()
+            app_b.identity_blob.return_value = "app-b"
+            with patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                side_effect=[app_a, app_b],
+            ):
+                boot.text_cb("hello").result(timeout=10)
+            boot.text_system.inject_text.assert_not_called()
+            boot.pad.append_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_pad_bound_action_survives_focus_change(self) -> None:
+        """Pad-bound editing commands are not dropped on a focus change."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.pad.handle_action.return_value = True
+            app_a = MagicMock()
+            app_a.identity_blob.return_value = "app-a"
+            app_b = MagicMock()
+            app_b.identity_blob.return_value = "app-b"
+            with patch(
+                "vocalinux.text_injection.focused_window.get_focused_window",
+                side_effect=[app_a, app_b],
+            ):
+                self.assertTrue(boot.action_cb("undo").result(timeout=10))
+            boot.pad.handle_action.assert_called_once_with("undo")
+        finally:
+            boot.stack.close()
+
     def test_pad_redo_restores_delete_target(self) -> None:
         """A redo that brings the segment back must re-arm "delete that"."""
         boot = _boot_main_callbacks(dictate_to_pad=True)

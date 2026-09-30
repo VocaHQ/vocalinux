@@ -613,6 +613,11 @@ def main():
         # TranscriptionHistory.add), so late segments extend that entry
         # rather than whichever snippet happens to be newest.
         latest_snippet_id: Optional[int] = None
+        # Worker thread that produced the most-recently-ended session's
+        # segments; deliveries on that same thread may extend its committed
+        # snippet once the next session has closed, so an older worker
+        # finishing two sessions later cannot leak into a newer entry.
+        ended_session_worker: Optional[threading.Thread] = None
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
@@ -698,7 +703,7 @@ def main():
             captured after the clear are kept, so dictation that continues
             across a clear is still recoverable.
             """
-            nonlocal session_worker, latest_snippet_id
+            nonlocal session_worker, latest_snippet_id, ended_session_worker
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -747,8 +752,19 @@ def main():
                 # Both writes are guarded by the ended session's epoch, so a
                 # clear() landing between that commit and this delivery
                 # still refuses the text.
-                if latest_snippet_id is not None and transcription_history.extend_entry(
-                    latest_snippet_id, segment, expected_epoch=ended_session_epoch
+                #
+                # Only deliveries from the worker that produced the ended
+                # session may merge into its committed snippet; while a new
+                # session is open, the same boundary rule lets its stragglers
+                # still land there. A different (older) worker finishing two
+                # sessions later cannot leak into the newer entry — its
+                # segment forms a snippet of its own instead.
+                if (
+                    latest_snippet_id is not None
+                    and (worker is ended_session_worker or session_open)
+                    and transcription_history.extend_entry(
+                        latest_snippet_id, segment, expected_epoch=ended_session_epoch
+                    )
                 ):
                     return
                 # Otherwise the late segments are the session's only output
@@ -756,6 +772,7 @@ def main():
                 snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
+                    ended_session_worker = worker
 
         def inject_transcription(text_to_inject: str) -> None:
             """Apply the separator rules and inject one finalised segment.
@@ -907,7 +924,12 @@ def main():
                     processed_text = text_to_inject
                 if processed_text is None or not accepting_injections.is_set():
                     return
-                if not _focused_app_unchanged(_probe_result(target_probe)):
+                # Pad-bound segments land in the dictation pad regardless of
+                # where focus sits, so a focus change since the segment was
+                # dictated must not drop them.
+                if not dictate_to_pad_enabled() and not _focused_app_unchanged(
+                    _probe_result(target_probe)
+                ):
                     logger.info("Dropping queued segment: focus moved to another application")
                     return
                 with injection_lock:
@@ -940,7 +962,15 @@ def main():
             try:
                 if not accepting_injections.is_set():
                     return False
-                if not _focused_app_unchanged(_probe_result(target_probe)):
+                # Pad-bound actions run on the dictation pad no matter which
+                # application is focused, so a focus change since the command
+                # was issued must not drop them; only app-bound deliveries are
+                # focus-checked.
+                if action == "delete_last":
+                    targets_pad = bool(last_injected["to_pad"])
+                else:
+                    targets_pad = dictate_to_pad_enabled()
+                if not targets_pad and not _focused_app_unchanged(_probe_result(target_probe)):
                     logger.info("Dropping action: focus moved to another application")
                     return False
                 with injection_lock:
@@ -957,10 +987,19 @@ def main():
                         if not action_handler.last_injected_text:
                             return True
                         if last_injected["to_pad"]:
-                            # The pad's own segment bookkeeping wins over the
-                            # recorded text: a pad "undo" may have popped that
-                            # segment, leaving its length stale.
-                            target = dictation_pad.last_segment or action_handler.last_injected_text
+                            # Only the pad's own segment bookkeeping may size
+                            # the deletion: a manual edit or a pad "undo"
+                            # blurs the boundaries (last_segment is None), and
+                            # falling back to the recorded text's length could
+                            # erase characters the user typed after dictating.
+                            # Refuse rather than misdelete — the tracking is
+                            # still cleared so a repeated command cannot retry
+                            # the stale length.
+                            target = dictation_pad.last_segment
+                            if target is None:
+                                action_handler.set_last_injected_text("")
+                                last_injected["to_pad"] = False
+                                return True
                             deleted = dictation_pad.delete_last_chars(len(target))
                             if deleted:
                                 action_handler.set_last_injected_text("")
@@ -1098,7 +1137,7 @@ def main():
             refers to.
             """
             nonlocal session_open, session_worker, latest_snippet_id
-            nonlocal ended_session_epoch, session_started_floor
+            nonlocal ended_session_epoch, session_started_floor, ended_session_worker
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     with pending_jobs_lock:
@@ -1114,6 +1153,7 @@ def main():
                         last_injected["to_pad"] = False
                 with session_lock:
                     session_open = False
+                    ended_session_worker = session_worker
                     session_worker = None
                     ended_session_epoch = transcription_history.epoch
                     # Only segments captured after the last clear() join the
@@ -1136,6 +1176,9 @@ def main():
                 with session_lock:
                     if not session_open:
                         session_open = True
+                        # Worker behind the leftover segments below, captured
+                        # before the reset loses it.
+                        ended_session_worker = session_worker
                         session_worker = None
                         session_started_floor = time.monotonic()
                         # Segments left over by a session that ended without a
