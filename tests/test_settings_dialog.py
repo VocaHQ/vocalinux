@@ -1160,7 +1160,7 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("self.search_entry.grab_focus()", body)
         self.assertIn('"escape"', body)
 
-    def test_sidebar_category_list_is_scrollable(self):
+    def test_sidebar_category_list_is_scrollable(self) -> None:
         """The category list sits in a ScrolledWindow so the dialog can shrink
         vertically without clipping categories (#678)."""
         class_body = self.source_code.split("class SettingsDialog(Gtk.Dialog):")[1]

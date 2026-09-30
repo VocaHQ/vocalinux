@@ -2566,10 +2566,11 @@ class SettingsDialog(Gtk.Dialog):
         # Same treatment as the pages: without a ScrolledWindow the category
         # list's natural height pins the dialog's minimum height, so the
         # window can never shrink past the list and new categories clip.
-        sidebar_scroller = Gtk.ScrolledWindow()
-        sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sidebar_scroller.set_shadow_type(Gtk.ShadowType.NONE)
-        sidebar_scroller.add(self.sidebar_listbox)
+        self.sidebar_scroller = Gtk.ScrolledWindow()
+        self.sidebar_scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        self.sidebar_scroller.set_shadow_type(Gtk.ShadowType.NONE)
+        self.sidebar_scroller.add(self.sidebar_listbox)
+        sidebar_scroller = self.sidebar_scroller
         sidebar_box.pack_start(sidebar_scroller, True, True, 0)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -2622,6 +2623,7 @@ class SettingsDialog(Gtk.Dialog):
             self.navigate_to_page(self._initial_page)
         else:
             self.sidebar_listbox.select_row(self.sidebar_listbox.get_row_at_index(0))
+            self._scroll_sidebar_selection_into_view()
 
         # Restore the saved mode and point the simple questions at the live model
         # before the first visibility pass, so nothing flashes the wrong group.
@@ -2646,11 +2648,37 @@ class SettingsDialog(Gtk.Dialog):
     # Navigation: sidebar, stack, and settings search
     # ------------------------------------------------------------------
 
+    def _scroll_sidebar_selection_into_view(self) -> None:
+        """Bring the selected sidebar row into the scroller's viewport."""
+        row = self.sidebar_listbox.get_selected_row()
+        if row is None:
+            return
+
+        def scroll() -> bool:
+            allocation = row.get_allocation()
+            adjustment = self.sidebar_scroller.get_vadjustment()
+            page_size = adjustment.get_page_size()
+            value = adjustment.get_value()
+            if allocation.y < value:
+                adjustment.set_value(max(adjustment.get_lower(), allocation.y))
+            elif allocation.y + allocation.height > value + page_size:
+                adjustment.set_value(
+                    min(
+                        adjustment.get_upper() - page_size,
+                        allocation.y + allocation.height - page_size,
+                    )
+                )
+            return False
+
+        # Allocations exist only once the row is mapped.
+        GLib.idle_add(scroll)
+
     def navigate_to_page(self, page_name: str) -> bool:
         """Select a settings page by its internal name (e.g. ``about``)."""
         for page in self._pages:
             if page.name == page_name and page.sidebar_row is not None:
                 self.sidebar_listbox.select_row(page.sidebar_row)
+                self._scroll_sidebar_selection_into_view()
                 return True
         return False
 
@@ -2805,6 +2833,7 @@ class SettingsDialog(Gtk.Dialog):
             self._pages[0],
         )
         self.sidebar_listbox.select_row(page.sidebar_row)
+        self._scroll_sidebar_selection_into_view()
         self.settings_stack.set_visible_child_name(page.name)
         self._search_previous_page = None
 
@@ -2869,6 +2898,7 @@ class SettingsDialog(Gtk.Dialog):
 
         if first_match_page is not None:
             self.sidebar_listbox.select_row(first_match_page.sidebar_row)
+            self._scroll_sidebar_selection_into_view()
             self.settings_stack.set_visible_child_name(first_match_page.name)
         else:
             self.sidebar_listbox.unselect_all()
