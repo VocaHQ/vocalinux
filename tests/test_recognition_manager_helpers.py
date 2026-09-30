@@ -396,11 +396,21 @@ class TestResolveValidInputDevice:
         audio.get_device_count.side_effect = OSError("driver dead")
         assert _resolve_valid_input_device(audio, preferred_index=3) == 3
 
-    def test_zero_device_count_returns_preferred(self):
+    def test_zero_device_count_returns_none(self) -> None:
         audio = MagicMock()
         audio.get_default_input_device_info.side_effect = IOError("nope")
         audio.get_device_count.return_value = 0
-        assert _resolve_valid_input_device(audio, preferred_index=7) == 7
+        # Zero enumerated devices means no index can exist — the caller must
+        # fall back to the system default rather than open an explicit index.
+        assert _resolve_valid_input_device(audio, preferred_index=7) is None
+
+    def test_negative_device_count_returns_preferred(self) -> None:
+        audio = MagicMock()
+        audio.get_default_input_device_info.side_effect = IOError("nope")
+        audio.get_device_count.return_value = -1
+        # Enumeration failure (host API error sentinel) cannot tell whether
+        # the preferred index exists, so it passes through.
+        assert _resolve_valid_input_device(audio, preferred_index=3) == 3
 
     def test_non_dict_info_is_treated_as_valid(self):
         audio = MagicMock()
@@ -421,6 +431,52 @@ class TestResolveValidInputDevice:
 
         audio.get_device_info_by_index.side_effect = info
         assert _resolve_valid_input_device(audio, preferred_index=None) == 1
+
+    def test_capture_stream_omits_index_when_resolver_returns_none(self) -> None:
+        mock_pa_mod = MagicMock()
+        mock_pa_mod.paInt16 = 8
+
+        audio = MagicMock()
+        audio.get_default_input_device_info.return_value = {
+            "name": "Default Mic",
+            "index": 0,
+            "maxInputChannels": 1,
+            "defaultSampleRate": 16000,
+        }
+
+        with patch.dict("sys.modules", {"pyaudio": mock_pa_mod}):
+            channels, rate, stream = rm._open_capture_stream(audio, device_index=None)
+
+        assert stream is audio.open.return_value
+        audio.open.assert_called_once()
+        assert "input_device_index" not in audio.open.call_args.kwargs
+        assert (channels, rate) == (1, 16000)
+
+    def test_saved_device_zero_enumeration_opens_default(self) -> None:
+        # End-to-end check of the fix: a stale saved index must not reach
+        # PortAudio when enumeration reports zero devices.
+        mock_pa_mod = MagicMock()
+        mock_pa_mod.paInt16 = 8
+
+        audio = MagicMock()
+        audio.get_default_input_device_info.side_effect = IOError("no default")
+        audio.get_device_count.return_value = 0
+
+        resolved = _resolve_valid_input_device(audio, preferred_index=7)
+        assert resolved is None
+
+        audio.get_default_input_device_info.side_effect = None
+        audio.get_default_input_device_info.return_value = {
+            "name": "Default Mic",
+            "index": 0,
+            "maxInputChannels": 1,
+            "defaultSampleRate": 16000,
+        }
+        with patch.dict("sys.modules", {"pyaudio": mock_pa_mod}):
+            rm._open_capture_stream(audio, device_index=resolved)
+
+        audio.open.assert_called_once()
+        assert "input_device_index" not in audio.open.call_args.kwargs
 
 
 class TestDetectPywhispercppGpuBackend:
