@@ -200,6 +200,12 @@ DEFAULT_CONFIG = {
         "enabled": True,  # Keep recent dictation snippets in the tray menu
         "max_items": 10,  # How many snippets to retain (in-memory only, cleared on quit)
     },
+    "dictionary": {
+        # Preserve the custom-dictionary contract used by the accessibility scanner.
+        "enabled": False,
+        "file_path": os.path.join(CONFIG_DIR, "dictionary.txt"),
+        "max_words": 200,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,
