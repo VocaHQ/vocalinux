@@ -1824,6 +1824,40 @@ class TestTranscriptionHistoryRecording(_IsolatedHistoryDir, unittest.TestCase):
         finally:
             stack.close()
 
+    def test_late_segment_from_older_empty_session_after_clear_is_dropped(self) -> None:
+        """Two untagged sessions: an older worker's post-clear text drops."""
+        stack, text_cb, state_cb, history, _ = self._boot()
+        try:
+            # Session A produces nothing: its worker is never tagged.
+            worker_a, jobs_a = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_a
+            state_cb(RecognitionState.LISTENING)
+            state_cb(RecognitionState.IDLE)
+
+            history.clear()
+
+            # Session B produces nothing either.
+            worker_b, jobs_b = self._spawn_worker()
+            self._mock_speech.recognition_thread = worker_b
+            state_cb(RecognitionState.LISTENING)
+            state_cb(RecognitionState.IDLE)
+
+            # A's old worker finally delivers: judged against A's own
+            # (pre-clear) epoch, not B's — refused.
+            jobs_a.put(lambda: text_cb("cleared dictation"))
+            jobs_a.join()
+            self.assertEqual(self._texts(history), [])
+
+            # B's own late worker still lands under B's epoch.
+            jobs_b.put(lambda: text_cb("B late output"))
+            jobs_b.join()
+            self.assertEqual(self._texts(history), ["B late output"])
+
+            jobs_a.put(None)
+            jobs_b.put(None)
+        finally:
+            stack.close()
+
     def test_late_segment_from_untracked_worker_is_dropped(self) -> None:
         """A worker no session recorded cannot be attributed; it drops."""
         stack, text_cb, state_cb, history, _ = self._boot()
