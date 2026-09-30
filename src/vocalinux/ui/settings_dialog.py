@@ -24,7 +24,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional, cast
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional
 
 import gi
 
