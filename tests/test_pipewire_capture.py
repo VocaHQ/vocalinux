@@ -545,9 +545,11 @@ class TestManagerPipeWireIntegration(unittest.TestCase):
             ),
         ):
             if isinstance(sys.modules.get("numpy"), MagicMock):
-                real = getattr(sys, "_vocalinux_real_numpy", None)
-                if real is not None:
-                    sys.modules["numpy"] = real
+                # Restore the stashed real module — re-importing it would
+                # leave sys.modules["numpy.*"] bound to an orphan.
+                real_numpy = getattr(sys, "_vocalinux_real_numpy", None)
+                if real_numpy is not None:
+                    sys.modules["numpy"] = real_numpy
                 else:
                     del sys.modules["numpy"]
             result = _run_test_audio_input(device_index=PIPEWIRE_INDEX_BASE, duration=0.1)
