@@ -1362,7 +1362,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             stack.close()
 
     @staticmethod
-    def _await_inject_text(mock_text, timeout: float = 5.0) -> None:
+    def _await_inject_text(mock_text: MagicMock, timeout: float = 5.0) -> None:
         """Wait for the post-processing worker to reach inject_text."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -1370,7 +1370,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                 return
             time.sleep(0.01)
 
-    def test_post_processing_transform_reaches_injector(self):
+    def test_post_processing_transform_reaches_injector(self) -> None:
         """Configured script output is what gets injected, spacing rules included."""
         stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
         try:
@@ -1393,7 +1393,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         finally:
             stack.close()
 
-    def test_post_processing_empty_output_skips_injection(self):
+    def test_post_processing_empty_output_skips_injection(self) -> None:
         """A script that emits nothing swallows the segment — nothing injected."""
         stack, text_cb, mock_text = self._boot_under_patches(post_script="/fake/script.sh")
         try:
