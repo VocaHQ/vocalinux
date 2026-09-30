@@ -3032,10 +3032,11 @@ class SpeechRecognitionManager:
                 device_name=self.audio_device_name,
             )
             self._capture_source = source
-            # Retry state belongs to this session — a previous thread may
-            # still be finishing and must not leave its attempt count here.
+            # The attempt count belongs to this session — a previous thread
+            # may still be finishing and must not leave its retries here.
+            # _last_audio_error_time stays: it also throttles a device that
+            # fails again within seconds of the previous session's error.
             self._reconnection_attempts = 0
-            self._last_audio_error_time = 0
 
             try:
                 source.open(audio)
