@@ -1543,6 +1543,29 @@ class TestPadRoutingCallbacks(unittest.TestCase):
         finally:
             boot.stack.close()
 
+    def test_pad_redo_restores_delete_target(self) -> None:
+        """A redo that brings the segment back must re-arm "delete that"."""
+        boot = _boot_main_callbacks(dictate_to_pad=True)
+        try:
+            boot.text_cb("only")
+            boot.pad.handle_action.return_value = True
+
+            # Undo to an empty pad clears the target but keeps the pad as the
+            # last dictation destination.
+            boot.pad.last_segment = None
+            self.assertTrue(boot.action_cb("undo"))
+            self.assertTrue(boot.action_cb("delete_last"))
+            boot.pad.delete_last_chars.assert_not_called()
+
+            # Redo restores the segment; the next delete reaches the pad.
+            boot.pad.last_segment = "only"
+            self.assertTrue(boot.action_cb("redo"))
+            self.assertTrue(boot.action_cb("delete_last"))
+            boot.pad.delete_last_chars.assert_called_once_with(len("only"))
+            boot.text_system.press_backspace.assert_not_called()
+        finally:
+            boot.stack.close()
+
 
 class TestSessionHistoryRecording(unittest.TestCase):
     """Segments commit to transcription history as one snippet per session."""

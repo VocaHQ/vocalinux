@@ -569,6 +569,65 @@ class TestDictationPadFacade(unittest.TestCase):
             pad._window = None
             pad.destroy()
 
+    def test_flushed_ops_do_not_run_again_on_glib_dispatch(self) -> None:
+        """An op a flush already ran must no-op when GLib still dispatches it."""
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("queued ")
+            queued = pad._GLib.idle_add.call_args.args[0]
+            pad._flush_idle_ops()
+            pad._buffer.insert.assert_called_once()
+
+            # GLib still fires the callback later; without the pending-entry
+            # guard the insert would land a second time.
+            queued()
+            pad._buffer.insert.assert_called_once()
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_widget_edit_drops_stale_full_refresh(self) -> None:
+        """A queued full refresh must not erase a manual edit.
+
+        After a voice undo the post-undo refresh waits in the idle queue; a
+        keystroke landing first makes that refresh stale — running it would
+        wipe the edit before it ever reaches the controller.
+        """
+        pad = _pad_without_gtk(enabled=True)
+        try:
+            pad._gtk_ready = True
+            pad._GLib = MagicMock()
+            pad._buffer = MagicMock()
+            pad._textview = MagicMock()
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad.append_text("one ")
+            pad.append_text("two ")
+            pad.handle_action("undo")
+            # The undo refresh is still queued when the user types.
+            pad._buffer.get_text.return_value = "one two edited"
+            pad._on_buffer_changed(pad._buffer)
+
+            pad._buffer.set_text.assert_not_called()
+            self.assertEqual(pad.controller.text, "one two edited")
+            self.assertEqual(pad._pending_idle, [])
+
+            # GLib still dispatches the dropped refresh later — it must no-op.
+            queued = pad._GLib.idle_add.call_args.args[0]
+            queued()
+            pad._buffer.set_text.assert_not_called()
+        finally:
+            pad._window = None
+            pad.destroy()
+
     def test_copy_all_flushes_queued_appends(self) -> None:
         """Copy All sees segments still waiting in the idle queue."""
         pad = _pad_without_gtk()

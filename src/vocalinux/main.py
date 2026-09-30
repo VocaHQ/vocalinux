@@ -870,10 +870,9 @@ def main():
                 handled = bool(dictation_pad.handle_action(action))
                 if handled and action in ("undo", "redo") and last_injected["to_pad"]:
                     # Pad history moved: retarget "delete that" at the segment
-                    # now at the pad's tail ("" when no dictation survives).
-                    segment = dictation_pad.last_segment
-                    action_handler.set_last_injected_text(segment or "")
-                    last_injected["to_pad"] = bool(segment)
+                    # now at the pad's tail. Keep the pad destination even
+                    # when the tail is empty — a redo can restore it.
+                    action_handler.set_last_injected_text(dictation_pad.last_segment or "")
                 return handled
             return bool(action_handler.handle_action(action))
 

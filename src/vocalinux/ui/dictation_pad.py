@@ -217,7 +217,7 @@ class DictationPad:
         # events outrank idle callbacks, so a manual edit can land before a
         # queued append — _flush_idle_ops replays this list to keep the view
         # in the order the controller already applied.
-        self._pending_idle: list[Callable[[], bool]] = []
+        self._pending_idle: list[tuple[Callable[..., None], tuple[Any, ...]]] = []
         self._copied_feedback_id: Optional[int] = None
 
         try:
@@ -372,14 +372,17 @@ class DictationPad:
         glib = getattr(self, "_GLib", None)
         if glib is None:
             return
+        entry = (func, args)
 
         def _call() -> bool:
-            if _call in self._pending_idle:
-                self._pending_idle.remove(_call)
-            func(*args)
+            # A flush may have already run this op; GLib still dispatches the
+            # callback, so only act while the entry is still pending.
+            if entry in self._pending_idle:
+                self._pending_idle.remove(entry)
+                func(*args)
             return False
 
-        self._pending_idle.append(_call)
+        self._pending_idle.append(entry)
         glib.idle_add(_call)
 
     def _bump_generation(self) -> None:
@@ -391,7 +394,7 @@ class DictationPad:
         self._generation += 1
         self._pending_idle = []
 
-    def _flush_idle_ops(self) -> None:
+    def _flush_idle_ops(self, keep_user_view: bool = False) -> None:
         """Replay queued widget ops so the view catches up with the controller.
 
         GTK input events outrank idle callbacks: a keystroke can land in the
@@ -399,11 +402,17 @@ class DictationPad:
         then write the pre-append view back over the controller — losing the
         queued dictation. Running the queue first keeps the view (and the
         controller sync) in the order the controller already applied.
+
+        With ``keep_user_view`` — a manual edit being synced back — ops that
+        replace the whole buffer are dropped instead of run: the keystroke
+        already landed on the newer view, so a stale refresh would erase it.
         """
         pending = self._pending_idle
         self._pending_idle = []
-        for call in pending:
-            call()
+        for func, args in pending:
+            if keep_user_view and func == self._apply_set_text:
+                continue
+            func(*args)
 
     def _apply_append(self, text: str, generation: int) -> None:
         """Insert a segment at the end of the widget and keep the tail visible."""
@@ -516,7 +525,7 @@ class DictationPad:
         # A keystroke may land while dictation appends still sit in the idle
         # queue; replay them first so the read below includes them and the
         # controller is not overwritten with a stale view.
-        self._flush_idle_ops()
+        self._flush_idle_ops(keep_user_view=True)
         try:
             text = buffer.get_text(buffer.get_start_iter(), buffer.get_end_iter(), False)
         except _ui_errors() as e:
