@@ -866,7 +866,7 @@ class TestEvdevKeyboardBackendHotplug:
         backend.devices = [device]
         backend.device_fds = [10]
         backend._remove_keyboard_device = MagicMock(
-            side_effect=lambda fd, device: setattr(backend, "running", False)
+            side_effect=lambda fd, device, generation: setattr(backend, "running", False)
         )
 
         with (
@@ -881,7 +881,9 @@ class TestEvdevKeyboardBackendHotplug:
         ):
             backend._monitor_devices()
 
-        backend._remove_keyboard_device.assert_called_once_with(10, device)
+        backend._remove_keyboard_device.assert_called_once_with(
+            10, device, backend._hub._generation
+        )
 
     def test_monitor_handles_fd_lookup_error(self):
         """Test fd lookup errors do not try to remove an unknown device."""
@@ -1995,4 +1997,56 @@ class TestSharedEvdevDeviceLayer:
         assert hub.running is False
         assert hub.monitor_thread is None
         assert engine not in hub._engines
+        hub.reset()
+
+    def test_stale_monitor_leaves_new_generation_devices_alone(self) -> None:
+        """A monitor that outlived its generation can't touch new devices.
+
+        Regression test for "old monitor reaches new devices": once the
+        generation advanced, every fd the new listener opened is off-limits
+        to the stale reader — no dispatch, no forward, no removal — even
+        though its fd number is readable and mapped.
+        """
+        hub = EvdevDeviceHub()
+        hub.running = True
+        hub._generation = 6
+
+        new_device = MagicMock()
+        new_device.fileno.return_value = 10
+        new_device.name = "External Keyboard"
+        new_clone = MagicMock()
+        hub.devices = [new_device]
+        hub.device_fds = [10]
+        hub.device_paths = {"/dev/input/event4"}
+        hub._device_paths_by_fd = {10: "/dev/input/event4"}
+        hub._forwarders = {10: new_clone}
+        hub._fd_generation = {10: 6}
+        hub._dispatch_events = MagicMock()
+
+        def select_then_stop(read_fds, write_fds, error_fds, timeout):
+            hub.running = False
+            return [10], [], []
+
+        with (
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                side_effect=[0.0, 0.0],
+            ),
+            patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                side_effect=select_then_stop,
+            ),
+        ):
+            hub._monitor_devices(generation=5)
+
+        hub._dispatch_events.assert_not_called()
+
+        hub._forward_event(10, MagicMock(type=1, code=30, value=1), generation=5)
+        new_clone.write_event.assert_not_called()
+
+        hub._remove_keyboard_device(10, new_device, generation=5)
+        new_device.close.assert_not_called()
+        assert hub.devices == [new_device]
+        assert hub.device_fds == [10]
+
         hub.reset()

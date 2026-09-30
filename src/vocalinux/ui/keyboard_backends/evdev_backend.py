@@ -322,6 +322,7 @@ _HUB_OWNED_ATTRIBUTES = frozenset(
         "monitor_thread",
         "_dropped_devices",
         "_device_paths_by_fd",
+        "_fd_generation",
         "_devices_lock",
         "_forwarders",
         "_forwarder_paths",
@@ -408,6 +409,11 @@ class EvdevDeviceHub:
         self._devices_lock = threading.Lock()
         self._dropped_devices: set[int] = set()  # fds with SYN_DROPPED pending
         self._device_paths_by_fd: dict[int, str] = {}
+        # fd -> generation that opened it. A monitor thread tags its work
+        # with its own generation and skips any fd a newer generation owns,
+        # so a reader that outlives join() can never dispatch from, forward
+        # to, or remove devices it did not open.
+        self._fd_generation: dict[int, int] = {}
         # Grabbed fd -> uinput clone that re-emits events we do not consume.
         self._forwarders: dict[int, UInput] = {}
         # Grabbed fd -> its clone's /dev/input/eventN path, and the live set
@@ -466,8 +472,12 @@ class EvdevDeviceHub:
 
         # Cold start: forget everything from any previous incarnation before
         # opening, then register the engine before the thread goes live so
-        # not a single event is dispatched without it.
+        # not a single event is dispatched without it. The generation bumps
+        # BEFORE the opens so every fd is tagged for this generation — a
+        # monitor that outlived join() can then never mistake the fresh
+        # devices for its own.
         self._init_device_state()
+        self._generation += 1
         for device_path in device_paths:
             self._open_keyboard_device(device_path)
 
@@ -477,7 +487,6 @@ class EvdevDeviceHub:
 
         self._engines.add(engine)
         self.running = True
-        self._generation += 1
         self.monitor_thread = threading.Thread(
             target=self._monitor_devices,
             kwargs={"generation": self._generation},
@@ -541,6 +550,7 @@ class EvdevDeviceHub:
         fd: int,
         device: InputDevice,
         engines: Optional[Sequence["EvdevKeyboardBackend"]] = None,
+        generation: Optional[int] = None,
     ) -> None:
         """Fan one device's buffered events out to every registered engine.
 
@@ -553,6 +563,11 @@ class EvdevDeviceHub:
             engines = self._engine_snapshot()
 
         for event in device.read():
+            if generation is not None and self._generation != generation:
+                # The generation advanced mid-read: this monitor's teardown
+                # is done or in flight, so drop the rest of the buffer
+                # rather than act on a newer generation's state.
+                return
             if event.type == ecodes.EV_SYN:
                 if event.code == ecodes.SYN_DROPPED:
                     # Kernel buffer overflowed — discard until SYN_REPORT
@@ -566,12 +581,12 @@ class EvdevDeviceHub:
                             engine.key_pressed_devices.discard(id(device))
                         # Release keys the clone still thinks are held before
                         # the SYN_REPORT reaches it, atomically.
-                        self._resync_clone_key_state(fd, device, engines)
+                        self._resync_clone_key_state(fd, device, engines, generation)
                         # A dropped modifier release must not leave any
                         # engine's combo logically held.
                         for engine in engines:
                             engine._reset_combo_state()
-                    self._forward_event(fd, event)
+                    self._forward_event(fd, event, generation)
                 continue
             if fd in self._dropped_devices:
                 # Handling shortcut state mid-drop is unsafe, but surviving
@@ -582,7 +597,7 @@ class EvdevDeviceHub:
                     if engine._event_is_shortcut(fd, event):
                         consumed = True
                 if not consumed:
-                    self._forward_event(fd, event)
+                    self._forward_event(fd, event, generation)
                 continue
             if event.type == ecodes.EV_KEY:
                 # Every key event updates each engine's shortcut state (combo
@@ -594,9 +609,9 @@ class EvdevDeviceHub:
                         consumed = True
                     engine._handle_key_event(event, device)
                 if not consumed:
-                    self._forward_event(fd, event)
+                    self._forward_event(fd, event, generation)
             else:
-                self._forward_event(fd, event)
+                self._forward_event(fd, event, generation)
 
     def _monitor_devices(
         self,
@@ -614,7 +629,7 @@ class EvdevDeviceHub:
                 try:
                     now = time.monotonic()
                     if now - last_scan >= DEVICE_RESCAN_SECONDS:
-                        self._scan_for_new_devices()
+                        self._scan_for_new_devices(generation=generation)
                         last_scan = now
 
                     # Use select to wait for events on any device
@@ -628,14 +643,25 @@ class EvdevDeviceHub:
                     readable, _, _ = select.select(device_fds, [], [], 1.0)  # 1 second timeout
 
                     for fd in readable:
+                        if self._generation != generation:
+                            # A newer generation started while select() was
+                            # out: nothing in the containers is ours.
+                            break
                         try:
-                            # Find the device for this fd
+                            # Find the device for this fd — but only if this
+                            # generation opened it. An fd number the kernel
+                            # recycled for the next generation's device must
+                            # never be dispatched, forwarded, or removed by
+                            # a monitor that outlived its join().
                             with self._devices_lock:
-                                device = None
-                                for d in self.devices:
-                                    if d.fileno() == fd:
-                                        device = d
-                                        break
+                                if self._fd_generation.get(fd, generation) != generation:
+                                    device = None
+                                else:
+                                    device = None
+                                    for d in self.devices:
+                                        if d.fileno() == fd:
+                                            device = d
+                                            break
 
                             if device is None:
                                 continue
@@ -643,7 +669,12 @@ class EvdevDeviceHub:
                             # Read events from this device. On grabbed devices,
                             # everything no engine consumes is re-emitted on
                             # the paired uinput clone so apps keep typing.
-                            self._dispatch_events(fd, device, self._engine_snapshot(extra_engines))
+                            self._dispatch_events(
+                                fd,
+                                device,
+                                self._engine_snapshot(extra_engines),
+                                generation=generation,
+                            )
 
                         except (OSError, IOError):
                             # Device was disconnected - remove it to avoid busy loop
@@ -652,7 +683,7 @@ class EvdevDeviceHub:
                             )
                             logger.info(f"Device disconnected: {device_name} (fd={fd})")
                             if device is not None:
-                                self._remove_keyboard_device(fd, device)
+                                self._remove_keyboard_device(fd, device, generation)
                             continue
 
                 except (OSError, ValueError) as e:
@@ -731,10 +762,19 @@ class EvdevDeviceHub:
         for engine in self._engine_snapshot(include_known=True):
             engine._drop_all_device_state()
 
-    def _open_keyboard_device(self, device_path: str) -> bool:
-        """Open a keyboard device if it is not already monitored."""
+    def _open_keyboard_device(self, device_path: str, generation: Optional[int] = None) -> bool:
+        """Open a keyboard device if it is not already monitored.
+
+        ``generation`` identifies the caller's monitor generation; a caller
+        from a superseded generation is refused so a stale rescan cannot
+        add devices to a device set it no longer owns.
+        """
         with self._devices_lock:
-            if device_path in self.device_paths or self._closed:
+            if (
+                device_path in self.device_paths
+                or self._closed
+                or (generation is not None and generation != self._generation)
+            ):
                 return False
 
         try:
@@ -779,7 +819,12 @@ class EvdevDeviceHub:
                 forwarder = None
 
         with self._devices_lock:
-            if device_path in self.device_paths or fd in self.device_fds or self._closed:
+            if (
+                device_path in self.device_paths
+                or fd in self.device_fds
+                or self._closed
+                or (generation is not None and generation != self._generation)
+            ):
                 try:
                     device.close()
                 except (OSError, IOError, RuntimeError) as e:
@@ -797,6 +842,7 @@ class EvdevDeviceHub:
             self.device_fds.append(fd)
             self.device_paths.add(device_path)
             self._device_paths_by_fd[fd] = device_path
+            self._fd_generation[fd] = self._generation
             if forwarder is not None:
                 self._forwarders[fd] = forwarder
                 clone_path = self._forwarder_device_path(forwarder)
@@ -853,7 +899,7 @@ class EvdevDeviceHub:
                 )
             return None
 
-    def _release_failed_forwarder(self, fd: int) -> None:
+    def _release_failed_forwarder(self, fd: int, forwarder: Optional[UInput] = None) -> None:
         """Drop a dead uinput clone and release the source device's grab.
 
         A keyboard that stays grabbed while its clone can no longer accept
@@ -862,8 +908,15 @@ class EvdevDeviceHub:
         then no longer be suppressed, matching the ungrabbed fallback). If
         the grab itself cannot be released, the device is removed outright
         — a grabbed device with a dead clone is worse than no listener.
+
+        ``forwarder`` is the clone the failed write went to; when a newer
+        generation owns the fd's clone now, that one is left alone.
         """
         with self._devices_lock:
+            if forwarder is not None and self._forwarders.get(fd) is not forwarder:
+                # The fd was recycled for a newer generation's clone;
+                # ungrabbing or popping here would break that listener.
+                return
             device = next((d for d in self.devices if d.fileno() == fd), None)
             forwarder = self._forwarders.pop(fd, None)
             clone_path = self._forwarder_paths.pop(fd, None)
@@ -893,14 +946,17 @@ class EvdevDeviceHub:
             "but the dictation shortcut can no longer be suppressed"
         )
 
-    def _forward_event(self, fd: int, event: InputEvent) -> None:
+    def _forward_event(self, fd: int, event: InputEvent, generation: Optional[int] = None) -> None:
         """Re-emit an event on the uinput clone paired with a grabbed device.
 
         Successful EV_KEY writes also update ``_forwarded_held`` so
         ``_resync_clone_key_state`` can tell which keys the clone still
-        believes are held after a SYN_DROPPED burst.
+        believes are held after a SYN_DROPPED burst. ``generation`` refuses
+        writes to a clone a newer generation owns.
         """
         if event.type != ecodes.EV_SYN and event.type not in _FORWARDED_EVENT_TYPES:
+            return
+        if generation is not None and self._fd_generation.get(fd, generation) != generation:
             return
         forwarder = self._forwarders.get(fd)
         if forwarder is None:
@@ -909,7 +965,7 @@ class EvdevDeviceHub:
             forwarder.write_event(event)
         except (OSError, IOError) as e:
             logger.error(f"Failed to forward event on fd {fd}: {e}")
-            self._release_failed_forwarder(fd)
+            self._release_failed_forwarder(fd, forwarder)
             return
         if event.type == ecodes.EV_KEY:
             held = self._forwarded_held.get(fd)
@@ -919,7 +975,7 @@ class EvdevDeviceHub:
                 else:
                     held.add(event.code)
 
-    def _scan_for_new_devices(self) -> int:
+    def _scan_for_new_devices(self, generation: Optional[int] = None) -> int:
         """Find and open keyboard devices that appeared after startup."""
         new_device_count = 0
 
@@ -930,7 +986,7 @@ class EvdevDeviceHub:
             return 0
 
         for device_path in device_paths:
-            if self._open_keyboard_device(device_path):
+            if self._open_keyboard_device(device_path, generation):
                 new_device_count += 1
 
         if new_device_count:
@@ -938,8 +994,16 @@ class EvdevDeviceHub:
 
         return new_device_count
 
-    def _remove_keyboard_device(self, fd: int, device: InputDevice) -> None:
-        """Close and forget a disconnected keyboard device."""
+    def _remove_keyboard_device(
+        self, fd: int, device: InputDevice, generation: Optional[int] = None
+    ) -> None:
+        """Close and forget a disconnected keyboard device.
+
+        ``generation`` identifies the caller's monitor generation; a stale
+        caller never closes or removes an fd a newer generation now owns.
+        """
+        if generation is not None and self._fd_generation.get(fd, generation) != generation:
+            return
         try:
             device.close()
         except (OSError, IOError, RuntimeError) as e:
@@ -957,6 +1021,7 @@ class EvdevDeviceHub:
             device_path = self._device_paths_by_fd.pop(fd, None)
             if device_path is not None:
                 self.device_paths.discard(device_path)
+            self._fd_generation.pop(fd, None)
             self._dropped_devices.discard(fd)
             forwarder = self._forwarders.pop(fd, None)
             clone_path = self._forwarder_paths.pop(fd, None)
@@ -981,6 +1046,7 @@ class EvdevDeviceHub:
         fd: int,
         device: InputDevice,
         engines: Optional[Sequence["EvdevKeyboardBackend"]] = None,
+        generation: Optional[int] = None,
     ) -> None:
         """Release clone-side keys whose releases were lost to SYN_DROPPED.
 
@@ -993,6 +1059,8 @@ class EvdevDeviceHub:
         and what each engine paired (``_combo_swallowed``) against the
         device's live kernel key state and emit releases for phantom keys.
         """
+        if generation is not None and self._fd_generation.get(fd, generation) != generation:
+            return
         if engines is None:
             engines = self._engine_snapshot(include_known=True)
         forwarder = self._forwarders.get(fd)
@@ -1012,7 +1080,7 @@ class EvdevDeviceHub:
                     forwarder.write(ecodes.EV_KEY, code, 0)
                 except (OSError, IOError) as e:
                     logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
-                    self._release_failed_forwarder(fd)
+                    self._release_failed_forwarder(fd, forwarder)
                     return
                 held.discard(code)
         for engine in engines:
