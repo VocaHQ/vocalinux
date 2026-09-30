@@ -23,6 +23,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     DEVICE_RESCAN_SECONDS,
     EVDEV_AVAILABLE,
     MODIFIER_KEY_CODES,
+    EvdevDeviceHub,
     EvdevKeyboardBackend,
     device_has_key,
     device_has_modifier_key,
@@ -1742,3 +1743,154 @@ class TestEvdevGrabAndForwarding:
         backend._resync_clone_key_state(fd, device)
 
         assert backend._withheld_modifier[fd] == {}
+
+
+class TestSharedEvdevDeviceLayer:
+    """Several backends share one evdev reader instead of competing grabs.
+
+    Regression tests for the "language listeners compete for keyboards"
+    finding: each EvdevKeyboardBackend used to open and grab its own
+    InputDevice on the same keyboard, so the first grabber won and every
+    other listener received no events — language shortcuts could never
+    fire on Wayland.
+    """
+
+    def _key_event(self, code: int, value: int = 1) -> MagicMock:
+        return MagicMock(type=ecodes.EV_KEY, code=code, value=value)
+
+    def _registered(self, *engines: EvdevKeyboardBackend) -> EvdevDeviceHub:
+        """Register engines on the shared hub without opening devices."""
+        hub = engines[0]._hub
+        hub.running = True
+        for engine in engines:
+            assert hub.register(engine) is True
+        return hub
+
+    def test_backends_share_one_device_layer(self) -> None:
+        """Every backend binds to the same process-wide hub."""
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        second = EvdevKeyboardBackend(shortcut="alt+d")
+
+        assert first._hub is second._hub
+        assert second.devices is first.devices
+        assert second._forwarders is first._forwarders
+        assert second._device_paths_by_fd is first._device_paths_by_fd
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    def test_second_start_registers_without_reopening_devices(
+        self, mock_find: Mock, mock_input_device: Mock, mock_uinput: Mock
+    ) -> None:
+        """The first backend opens and grabs once; later ones just register."""
+        mock_find.return_value = ["/dev/input/event0"]
+        device = MagicMock()
+        device.name = "test-kbd"
+        device.fileno.return_value = 10
+        device.capabilities.return_value = {}
+        mock_input_device.return_value = device
+        forwarder = MagicMock()
+        forwarder.device.path = "/dev/input/event9"
+        mock_uinput.return_value = forwarder
+
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        with patch("select.select", return_value=([], [], [])):
+            assert first.start() is True
+            second = EvdevKeyboardBackend(shortcut="alt+d")
+            assert second.start() is True
+
+            assert mock_input_device.call_count == 1  # device opened once
+            assert device.grab.call_count == 1  # grabbed once
+            assert set(first._hub._engine_snapshot()) == {first, second}
+
+            second.stop()
+            assert first._hub.running is True  # layer outlives one listener
+            first.stop()
+            assert first._hub.running is False
+            device.close.assert_called()
+
+    def test_two_engines_both_fire_on_one_device(self) -> None:
+        """Events on a shared keyboard reach every registered engine."""
+        german = EvdevKeyboardBackend(shortcut="ctrl+ctrl", mode="toggle")
+        french = EvdevKeyboardBackend(shortcut="alt+d", mode="toggle")
+        hub = self._registered(german, french)
+
+        german_fired = MagicMock()
+        french_fired = MagicMock()
+        german.register_toggle_callback(german_fired)
+        french.register_toggle_callback(french_fired)
+
+        device = MagicMock()
+        fd = 10
+        device.read.return_value = [
+            self._key_event(29, 1),  # ctrl press (german tap 1)
+            self._key_event(29, 0),  # ctrl release
+            self._key_event(29, 1),  # ctrl press (german double-tap)
+            self._key_event(56, 1),  # alt press (french modifier)
+            self._key_event(32, 1),  # d press (french combo main key)
+        ]
+
+        hub._dispatch_events(fd, device)
+
+        time.sleep(0.1)
+        german_fired.assert_called_once()
+        french_fired.assert_called_once()
+
+    def test_shortcut_events_consumed_once_across_engines(self) -> None:
+        """An event claimed by any engine never reaches the application."""
+        pure = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        combo = EvdevKeyboardBackend(shortcut="ctrl+f", mode="toggle")
+        hub = self._registered(pure, combo)
+        fd = 10
+        forwarder = MagicMock()
+        hub._forwarders = {fd: forwarder}
+        hub._forwarded_held = {fd: set()}
+
+        ctrl_press = self._key_event(29, 1)
+        f_press = self._key_event(33, 1)
+        a_press = self._key_event(30, 1)
+        ralt_press = self._key_event(100, 1)
+        ralt_release = self._key_event(100, 0)
+        device = MagicMock()
+        device.read.return_value = [ctrl_press, f_press, a_press, ralt_press, ralt_release]
+
+        hub._dispatch_events(fd, device)
+
+        # f is consumed by the combo engine while ctrl is held, both right-alt
+        # events by the pure-modifier engine; unrelated keys still pass through.
+        forwarded = [call.args[0] for call in forwarder.write_event.call_args_list]
+        assert forwarded == [ctrl_press, a_press]
+
+    def test_unregister_shuts_down_only_when_last_engine_leaves(self) -> None:
+        """The shared layer stays up until its last listener stops."""
+        first = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        second = EvdevKeyboardBackend(shortcut="alt+d")
+        hub = self._registered(first, second)
+        first.active = True
+        second.active = True
+        device = MagicMock()
+        hub.devices = [device]
+
+        first.stop()
+        assert hub.running is True
+        device.close.assert_not_called()
+
+        second.stop()
+        assert hub.running is False
+        assert hub.devices == []
+        device.close.assert_called_once()
+
+    def test_dispatch_reaches_only_registered_engines(self) -> None:
+        """A backend that never started observes nothing."""
+        active = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        idle = EvdevKeyboardBackend(shortcut="alt+d")
+        hub = self._registered(active)
+        active._handle_key_event = MagicMock()
+        idle._handle_key_event = MagicMock()
+
+        device = MagicMock()
+        device.read.return_value = [self._key_event(29, 1)]
+        hub._dispatch_events(10, device)
+
+        active._handle_key_event.assert_called_once()
+        idle._handle_key_event.assert_not_called()

@@ -1004,3 +1004,22 @@ def test_refresh_rebuilds_immediately_when_idle() -> None:
     assert tray._language_shortcuts_refresh_pending is False
     manager_class.assert_called_once_with(shortcut="alt+d", mode="toggle")
     manager.start.assert_called_once()
+
+
+def test_language_shortcut_managers_share_the_evdev_device_layer() -> None:
+    """Two per-language managers must not spawn competing evdev readers.
+
+    Regression test for PR #479 review: each manager used to open and grab
+    its own InputDevice on the same keyboard, so only the first grabber
+    ever saw events and language shortcuts could not fire on Wayland.
+    """
+    from vocalinux.ui.keyboard_backends.evdev_backend import EvdevKeyboardBackend
+    from vocalinux.ui.keyboard_shortcuts import KeyboardShortcutManager
+
+    with patch.object(EvdevKeyboardBackend, "is_available", return_value=True):
+        german = KeyboardShortcutManager(backend="evdev", shortcut="alt+d", mode="toggle")
+        french = KeyboardShortcutManager(backend="evdev", shortcut="ctrl+alt+f", mode="toggle")
+
+    assert isinstance(german.backend_instance, EvdevKeyboardBackend)
+    assert isinstance(french.backend_instance, EvdevKeyboardBackend)
+    assert french.backend_instance._hub is german.backend_instance._hub

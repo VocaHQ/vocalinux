@@ -393,11 +393,11 @@ class TrayIndicator:
     def _setup_language_shortcuts(self) -> None:
         """(Re)build a listener per configured language shortcut (#805).
 
-        Each entry gets its own KeyboardShortcutManager because the backends
-        open the input devices read-only and never grab them, so parallel
-        listeners do not interfere. A binding whose gesture collides with the
-        main shortcut or an earlier language binding is skipped: the same
-        gesture cannot fire both.
+        Each entry gets its own KeyboardShortcutManager; on evdev the
+        backends all share one process-wide device layer, so parallel
+        listeners observe the same keyboards without competing grabs. A
+        binding whose gesture collides with the main shortcut or an earlier
+        language binding is skipped: the same gesture cannot fire both.
         """
         # Same stop-first protection as _setup_keyboard_shortcuts: rebuilding
         # below removes the release callback a held push-to-talk key needs to

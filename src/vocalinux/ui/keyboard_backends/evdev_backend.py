@@ -9,6 +9,12 @@ and its events are re-emitted through a paired uinput clone, so the keys
 that make up the dictation shortcut are consumed here and never reach the
 focused application. Without uinput access the backend still listens
 ungrabbed, but shortcut presses also pass through to apps.
+
+All EvdevKeyboardBackend instances in the process share one device layer
+(EvdevDeviceHub): a grabbed device reports to a single fd, so a second
+reader opening the same keyboard would see no events. The hub owns the
+devices, grabs, clones and the monitor thread, and dispatches every event
+to each registered backend for its own consumption decision.
 """
 
 import errno
@@ -18,7 +24,8 @@ import re
 import select
 import threading
 import time
-from typing import Optional, Sequence, TextIO
+import weakref
+from typing import Any, Optional, Sequence, TextIO
 
 # Try to import evdev
 try:
@@ -302,45 +309,88 @@ def device_supports_shortcut(device_path: str, spec: ShortcutSpec) -> bool:
     return spec.key is not None and device_has_key(device_path, spec.key)
 
 
-class EvdevKeyboardBackend(KeyboardBackend):
+# Attribute names the shared device layer owns. On EvdevKeyboardBackend these
+# resolve through __getattr__/__setattr__ to the process-wide hub, so device
+# bookkeeping written or replaced on a backend instance is what the hub's own
+# calls see.
+_HUB_OWNED_ATTRIBUTES = frozenset(
+    {
+        "devices",
+        "device_fds",
+        "device_paths",
+        "running",
+        "monitor_thread",
+        "_dropped_devices",
+        "_device_paths_by_fd",
+        "_devices_lock",
+        "_forwarders",
+        "_forwarder_paths",
+        "_clone_paths",
+        "_forwarded_held",
+        "_uinput_warned",
+        "_engine_snapshot",
+        "_open_keyboard_device",
+        "_scan_for_new_devices",
+        "_remove_keyboard_device",
+        "_close_all_devices",
+        "_create_forwarder",
+        "_forwarder_device_path",
+        "_release_failed_forwarder",
+        "_forward_event",
+        "_dispatch_events",
+        "_resync_clone_key_state",
+    }
+)
+
+# Hub methods the monitor thread calls through self. An override installed on
+# the hub (as tests do through the delegating backend) must not survive a
+# reset, or a stale double would shadow the real method forever.
+_HUB_METHOD_ATTRIBUTES = frozenset(
+    {
+        "_engine_snapshot",
+        "_open_keyboard_device",
+        "_scan_for_new_devices",
+        "_remove_keyboard_device",
+        "_close_all_devices",
+        "_create_forwarder",
+        "_forwarder_device_path",
+        "_release_failed_forwarder",
+        "_forward_event",
+        "_dispatch_events",
+        "_resync_clone_key_state",
+    }
+)
+
+
+class EvdevDeviceHub:
+    """Process-wide evdev device layer shared by every keyboard backend.
+
+    A grabbed input device delivers events only to the file descriptor that
+    holds the grab, so a second backend opening its own ``InputDevice`` on
+    the same keyboard received nothing — its shortcut could never fire. The
+    hub opens each keyboard once, owns the grabs and the paired uinput
+    clones, and fans every event out to all registered engines. An event is
+    re-emitted to applications only when no engine consumed it.
+
+    ``_engines`` holds the started engines that dispatch goes to;
+    ``_known_engines`` additionally tracks live unregistered backends so
+    fd-scoped shortcut state is still dropped when its device disappears.
+    Both are weak sets: garbage-collecting a backend untracks it.
     """
-    Keyboard backend using python-evdev.
 
-    This backend reads keyboard events directly from input devices,
-    which works on both X11 and Wayland when the user has permission
-    to read from /dev/input/event* devices (member of 'input' group).
-    """
+    def __init__(self) -> None:
+        self._engines: weakref.WeakSet = weakref.WeakSet()
+        self._known_engines: weakref.WeakSet = weakref.WeakSet()
+        self._engines_lock = threading.Lock()
+        self._init_device_state()
 
-    def __init__(self, shortcut: str = DEFAULT_SHORTCUT, mode: str = DEFAULT_SHORTCUT_MODE):
-        """
-        Initialize the evdev keyboard backend.
-
-        Args:
-            shortcut: The shortcut string to listen for (e.g., "ctrl+ctrl")
-            mode: The shortcut mode ("toggle" or "push_to_talk")
-        """
-        super().__init__(shortcut, mode)
+    def _init_device_state(self) -> None:
+        """(Re)initialize every container describing opened devices."""
         self.devices: list[InputDevice] = []
         self.device_fds: list[int] = []
         self.device_paths: set[str] = set()
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
-
-        self.last_trigger_time = 0
-        self.last_key_press_time = 0
-        self.double_tap_threshold = 0.3  # seconds
-        self.key_pressed_devices: set[int] = set()
-
-        # Combo (modifier+key) state. Populated by _resolve_combo_targets().
-        self._combo_main_code: Optional[int] = None
-        self._combo_modifier_sets: list[set[int]] = []
-        self._combo_all_codes: set[int] = set()
-        self._combo_pressed: set[int] = set()  # currently-held combo-relevant codes
-        self._combo_active = False  # True while a push-to-talk combo hold is live
-        # fds whose combo main-key press was consumed but not yet released —
-        # per-device so one keyboard's release can't consume another's press.
-        self._combo_swallowed: set[int] = set()
-        self._resolve_combo_targets()
 
         self._devices_lock = threading.Lock()
         self._dropped_devices: set[int] = set()  # fds with SYN_DROPPED pending
@@ -355,198 +405,49 @@ class EvdevKeyboardBackend(KeyboardBackend):
         # Grabbed fd -> key codes the clone currently believes are held.
         # Needed to reconcile after SYN_DROPPED eats release events.
         self._forwarded_held: dict[int, set[int]] = {}
-        # Grabbed fd -> consumed pure-modifier presses withheld for AltGr
-        # replay, as {code: [press_event, replayed]}. A press replayed once
-        # stays listed so its release can be forwarded too.
-        self._withheld_modifier: dict[int, dict[int, list]] = {}
         self._uinput_warned = False
 
-        if not EVDEV_AVAILABLE:
-            logger.error("python-evdev not available")
+    def reset(self) -> None:
+        """Drop all device state plus any method a test replaced."""
+        self._init_device_state()
+        for name in _HUB_METHOD_ATTRIBUTES:
+            self.__dict__.pop(name, None)
 
-    def _get_target_key_codes(self) -> set[int]:
-        """Get the evdev key codes for the configured modifier."""
-        return MODIFIER_KEY_CODES.get(self._modifier_key, set())
+    def reset_if_idle(self) -> None:
+        """Clear stale state only while no engine is registered or running."""
+        with self._engines_lock:
+            idle = not self._engines and not self.running
+        if idle:
+            self.reset()
 
-    def set_shortcut(self, shortcut: str) -> None:
-        """Update the shortcut and recompute combo key targets."""
-        super().set_shortcut(shortcut)
-        self._resolve_combo_targets()
+    def register(self, engine: "EvdevKeyboardBackend") -> bool:
+        """Attach an engine to the shared reader, cold-starting it if needed.
 
-    def _resolve_combo_targets(self) -> None:
-        """Resolve the spec's combo modifiers and main key to evdev codes."""
-        self._combo_main_code = None
-        self._combo_modifier_sets = []
-        self._combo_all_codes = set()
-        self._combo_pressed = set()
-        self._combo_active = False
-        self._combo_swallowed = set()
-
-        spec = getattr(self, "_spec", None)
-        if spec is None or not spec.is_combo:
-            return
-
-        main_code = evdev_code_for_key(spec.key)
-        if main_code is None:
-            logger.error(
-                f"Combo shortcut '{self._shortcut}': cannot resolve key '{spec.key}' "
-                "to an evdev code; combo will not trigger"
-            )
-            return
-
-        modifier_sets = []
-        for modifier in spec.modifiers:
-            codes = MODIFIER_KEY_CODES.get(modifier, set())
-            if not codes:
-                logger.error(f"Combo shortcut '{self._shortcut}': unknown modifier '{modifier}'")
-                return
-            modifier_sets.append(set(codes))
-
-        self._combo_main_code = main_code
-        self._combo_modifier_sets = modifier_sets
-        self._combo_all_codes = set().union(*modifier_sets) | {main_code}
-
-    def _required_modifiers_held(self) -> bool:
-        """True if at least one key code for every required modifier is held."""
-        return all(bool(codes & self._combo_pressed) for codes in self._combo_modifier_sets)
-
-    def _reset_combo_state(self) -> None:
-        """Drop cached combo key state after lost events (SYN_DROPPED / disconnect).
-
-        When the kernel drops events or a device disconnects, a modifier *release*
-        may be among the lost events. If we kept the stale "modifier held" state,
-        the main key pressed alone could falsely toggle/start dictation, and a
-        push-to-talk hold could stay stuck on. Clearing the pressed set fails
-        safe (the user simply re-presses the modifier), and ending any live hold
-        prevents a stuck session.
-
-        ``_combo_swallowed`` is deliberately left alone: it records consumed
-        presses per device, so clearing it here would let the matching
-        release of a still-held key leak to the application without its
-        press. Stale entries are pruned per-device on removal and during
-        the SYN_DROPPED resync instead.
+        Returns True once the engine is registered and the device layer is
+        running, False when no keyboard could be opened.
         """
-        self._combo_pressed = set()
-        # Ends an active push-to-talk hold (fires the release callback); no-op
-        # for toggle mode or when no hold is active.
-        self._combo_released()
+        with self._engines_lock:
+            if engine in self._engines:
+                return True
+            if self.running:
+                self._engines.add(engine)
+                logger.debug("Keyboard backend joined the shared evdev device layer")
+                return True
+            return self._start_locked(engine)
 
-    def is_available(self) -> bool:
-        """Check if evdev can access a keyboard device that supports this shortcut."""
-        if not EVDEV_AVAILABLE:
-            return False
-
-        try:
-            devices = find_keyboard_devices()
-            if not devices:
-                return False
-
-            for device_path in devices:
-                if device_supports_shortcut(device_path, self._spec):
-                    return True
-
-            return False
-        except Exception:
-            return False
-
-    def get_permission_hint(self) -> Optional[str]:
-        """
-        Get permission hint for evdev backend.
-
-        Returns:
-            Instructions if permissions are missing, None otherwise
-        """
-        if not EVDEV_AVAILABLE:
-            return "Install python-evdev: pip install evdev"
-
-        in_snap = bool(os.environ.get("SNAP_NAME") or os.environ.get("SNAP"))
-
-        try:
-            devices = find_keyboard_devices()
-            if devices:
-                # Try to open the first device to check permissions
-                for device_path in devices[:1]:
-                    try:
-                        InputDevice(device_path)
-                        return None  # Successfully opened, permissions OK
-                    except (OSError, IOError) as e:
-                        if "Permission denied" in str(e) or e.errno == errno.EACCES:
-                            if in_snap:
-                                return (
-                                    "Snap is missing input-device access. "
-                                    "Connect once, then restart:\n"
-                                    "sudo snap connect vocalinux:raw-input\n"
-                                    "sudo snap connect vocalinux:hardware-observe"
-                                )
-                            return (
-                                "Add your user to the 'input' group and log out/in:\n"
-                                "sudo usermod -a -G input $USER"
-                            )
-                return None
-
-            # No devices found: snap without raw-input and hardware-observe
-            # often cannot list anything.
-            if in_snap:
-                return (
-                    "Snap is missing input-device access. Connect once, then restart:\n"
-                    "sudo snap connect vocalinux:raw-input\n"
-                    "sudo snap connect vocalinux:hardware-observe"
-                )
-
-            try:
-                with open("/proc/bus/input/devices", "r"):
-                    pass
-            except (OSError, IOError) as e:
-                if "Permission denied" in str(e) or getattr(e, "errno", None) == errno.EACCES:
-                    return (
-                        "Add your user to the 'input' group and log out/in:\n"
-                        "sudo usermod -a -G input $USER"
-                    )
-        except Exception:
-            pass
-
-        return None
-
-    def start(self) -> bool:
-        """
-        Start the evdev keyboard listener.
-
-        Returns:
-            True if started successfully, False otherwise
-        """
-        if not EVDEV_AVAILABLE:
-            logger.error("Cannot start: python-evdev not available")
-            return False
-
-        if self.active:
-            return True
-
-        # Find keyboard devices
+    def _start_locked(self, engine: "EvdevKeyboardBackend") -> bool:
+        """Open keyboards and start the reader thread. Caller holds the lock."""
         device_paths = find_keyboard_devices()
         if not device_paths:
             logger.error("No keyboard devices found")
             return False
 
         logger.info(f"Found {len(device_paths)} keyboard device(s)")
-        logger.info(f"Listening for shortcut: {self._shortcut} (mode: {self._mode})")
 
-        # Open devices
-        self.devices = []
-        self.device_fds = []
-        self.device_paths = set()
-        self.key_pressed_devices = set()
-        self._dropped_devices = set()
-        self._withheld_modifier = {}
-        self._device_paths_by_fd = {}
-        self._forwarders = {}
-        self._forwarder_paths = {}
-        self._clone_paths = set()
-        self._forwarded_held = {}
-        self._uinput_warned = False
-
-        # Refresh combo targets and clear any stale held-key state.
-        self._resolve_combo_targets()
-
+        # Cold start: forget everything from any previous incarnation before
+        # opening, then register the engine before the thread goes live so
+        # not a single event is dispatched without it.
+        self._init_device_state()
         for device_path in device_paths:
             self._open_keyboard_device(device_path)
 
@@ -554,30 +455,184 @@ class EvdevKeyboardBackend(KeyboardBackend):
             logger.error("Failed to open any keyboard device (permission denied?)")
             return False
 
-        # Start monitoring thread
+        self._engines.add(engine)
         self.running = True
         self.monitor_thread = threading.Thread(target=self._monitor_devices, daemon=True)
         self.monitor_thread.start()
 
-        logger.info("Evdev keyboard listener started successfully")
-        self.active = True
+        logger.info("Shared evdev device layer started")
         return True
 
-    def stop(self) -> None:
-        """Stop the evdev keyboard listener."""
-        if not self.active:
-            return
+    def unregister(self, engine: "EvdevKeyboardBackend") -> None:
+        """Detach an engine; the last one out stops the shared reader."""
+        with self._engines_lock:
+            self._engines.discard(engine)
+            if self._engines or not self.running:
+                return
+            self.running = False
 
-        logger.info("Stopping evdev keyboard listener")
-        self.running = False
-        self.active = False
-
-        # Wait for monitor thread to finish before closing fds it may be selecting on.
-        if self.monitor_thread:
+        # Wait for the monitor thread before closing fds it may select on.
+        if self.monitor_thread is not None:
             self.monitor_thread.join(timeout=2.0)
             self.monitor_thread = None
 
         self._close_all_devices()
+
+    def _engine_snapshot(
+        self,
+        extra: Sequence["EvdevKeyboardBackend"] = (),
+        include_known: bool = False,
+    ) -> list["EvdevKeyboardBackend"]:
+        """Registered engines plus ``extra``, optionally every live backend."""
+        with self._engines_lock:
+            engines = list(self._engines)
+            if include_known:
+                for engine in self._known_engines:
+                    if engine not in engines:
+                        engines.append(engine)
+        for engine in extra:
+            if engine not in engines:
+                engines.append(engine)
+        return engines
+
+    def _dispatch_events(
+        self,
+        fd: int,
+        device: InputDevice,
+        engines: Optional[Sequence["EvdevKeyboardBackend"]] = None,
+    ) -> None:
+        """Fan one device's buffered events out to every registered engine.
+
+        Every engine makes its own consumption decision and keeps its own
+        shortcut state. An event is re-emitted on the paired uinput clone
+        only when no engine claimed it, so a grabbed keyboard still types
+        normally outside the shortcuts.
+        """
+        if engines is None:
+            engines = self._engine_snapshot()
+
+        for event in device.read():
+            if event.type == ecodes.EV_SYN:
+                if event.code == ecodes.SYN_DROPPED:
+                    # Kernel buffer overflowed — discard until SYN_REPORT
+                    self._dropped_devices.add(fd)
+                    logger.warning(f"SYN_DROPPED on {device.name} (fd={fd}), resetting key state")
+                elif event.code == ecodes.SYN_REPORT:
+                    if fd in self._dropped_devices:
+                        # End of dropped sequence — clear stale state
+                        self._dropped_devices.discard(fd)
+                        for engine in engines:
+                            engine.key_pressed_devices.discard(id(device))
+                        # Release keys the clone still thinks are held before
+                        # the SYN_REPORT reaches it, atomically.
+                        self._resync_clone_key_state(fd, device, engines)
+                        # A dropped modifier release must not leave any
+                        # engine's combo logically held.
+                        for engine in engines:
+                            engine._reset_combo_state()
+                    self._forward_event(fd, event)
+                continue
+            if fd in self._dropped_devices:
+                # Handling shortcut state mid-drop is unsafe, but surviving
+                # non-shortcut events still pass through so the app sees
+                # what the kernel kept.
+                consumed = False
+                for engine in engines:
+                    if engine._event_is_shortcut(fd, event):
+                        consumed = True
+                if not consumed:
+                    self._forward_event(fd, event)
+                continue
+            if event.type == ecodes.EV_KEY:
+                # Every key event updates each engine's shortcut state (combo
+                # modifiers must be tracked AND forwarded); only the
+                # forwarding decision differs.
+                consumed = False
+                for engine in engines:
+                    if engine._event_is_shortcut(fd, event):
+                        consumed = True
+                    engine._handle_key_event(event, device)
+                if not consumed:
+                    self._forward_event(fd, event)
+            else:
+                self._forward_event(fd, event)
+
+    def _monitor_devices(self, extra_engines: Sequence["EvdevKeyboardBackend"] = ()) -> None:
+        """Monitor keyboard devices for events."""
+        logger.debug("Starting device monitor thread")
+        last_scan = time.monotonic()
+
+        try:
+            while self.running:
+                try:
+                    now = time.monotonic()
+                    if now - last_scan >= DEVICE_RESCAN_SECONDS:
+                        self._scan_for_new_devices()
+                        last_scan = now
+
+                    # Use select to wait for events on any device
+                    with self._devices_lock:
+                        device_fds = list(self.device_fds)
+
+                    if not device_fds:
+                        time.sleep(1.0)
+                        continue
+
+                    readable, _, _ = select.select(device_fds, [], [], 1.0)  # 1 second timeout
+
+                    for fd in readable:
+                        try:
+                            # Find the device for this fd
+                            with self._devices_lock:
+                                device = None
+                                for d in self.devices:
+                                    if d.fileno() == fd:
+                                        device = d
+                                        break
+
+                            if device is None:
+                                continue
+
+                            # Read events from this device. On grabbed devices,
+                            # everything no engine consumes is re-emitted on
+                            # the paired uinput clone so apps keep typing.
+                            self._dispatch_events(fd, device, self._engine_snapshot(extra_engines))
+
+                        except (OSError, IOError):
+                            # Device was disconnected - remove it to avoid busy loop
+                            device_name = (
+                                device.name if device and hasattr(device, "name") else "unknown"
+                            )
+                            logger.info(f"Device disconnected: {device_name} (fd={fd})")
+                            if device is not None:
+                                self._remove_keyboard_device(fd, device)
+                            continue
+
+                except (OSError, ValueError) as e:
+                    if self.running:
+                        logger.error(f"Error monitoring devices: {e}")
+                    break
+        finally:
+            if self.running:
+                # Exiting while still "running" means the loop died
+                # unexpectedly — a failed select, an fd closed underneath
+                # it, or an error escaping the handler. Nothing will ever
+                # read the grabbed keyboards again, so close every device
+                # and clone: closing releases each grab and hands input
+                # delivery back to the kernel instead of leaving the
+                # user's keyboards dead.
+                logger.error(
+                    "Keyboard monitor exited unexpectedly; closing devices "
+                    "to release grabs so keyboards keep working"
+                )
+                self.running = False
+                for engine in self._engine_snapshot(extra_engines):
+                    engine.active = False
+                with self._engines_lock:
+                    self._engines.clear()
+                self._close_all_devices()
+
+        logger.debug("Device monitor thread stopped")
 
     def _close_all_devices(self) -> None:
         """Close every monitored device and uinput clone.
@@ -593,13 +648,11 @@ class EvdevKeyboardBackend(KeyboardBackend):
             self.device_fds = []
             self.device_paths = set()
             self._dropped_devices = set()
-            self._withheld_modifier = {}
             self._device_paths_by_fd = {}
             self._forwarders = {}
             self._forwarder_paths = {}
             self._clone_paths = set()
             self._forwarded_held = {}
-            self._combo_swallowed = set()
 
         for device in devices:
             try:
@@ -611,6 +664,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 forwarder.close()
             except (OSError, IOError, RuntimeError) as e:
                 logger.debug(f"Ignoring clone close failure during cleanup: {e}")
+        for engine in self._engine_snapshot(include_known=True):
+            engine._drop_all_device_state()
 
     def _open_keyboard_device(self, device_path: str) -> bool:
         """Open a keyboard device if it is not already monitored."""
@@ -685,7 +740,6 @@ class EvdevKeyboardBackend(KeyboardBackend):
                     self._forwarder_paths[fd] = clone_path
                     self._clone_paths.add(clone_path)
                 self._forwarded_held[fd] = set()
-            self._withheld_modifier[fd] = {}
 
         logger.debug(
             f"Opened keyboard device: {device_path} ({device.name})"
@@ -801,20 +855,394 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 else:
                     held.add(event.code)
 
-    def _replay_withheld_modifiers(self, fd: int) -> None:
-        """Emit withheld modifier presses ahead of a non-target key.
+    def _scan_for_new_devices(self) -> int:
+        """Find and open keyboard devices that appeared after startup."""
+        new_device_count = 0
 
-        A pure-modifier trigger press that turns out to be AltGr (another
-        key arrives while it is held) was consumed for the shortcut; re-emit
-        it so the focused application sees the composition's modifier down.
+        try:
+            device_paths = find_keyboard_devices()
+        except Exception as e:
+            logger.error(f"Error rescanning keyboard devices: {e}")
+            return 0
+
+        for device_path in device_paths:
+            if self._open_keyboard_device(device_path):
+                new_device_count += 1
+
+        if new_device_count:
+            logger.info(f"Added {new_device_count} hotplugged keyboard device(s)")
+
+        return new_device_count
+
+    def _remove_keyboard_device(self, fd: int, device: InputDevice) -> None:
+        """Close and forget a disconnected keyboard device."""
+        try:
+            device.close()
+        except (OSError, IOError, RuntimeError) as e:
+            logger.debug(f"Ignoring close failure for disconnected fd {fd}: {e}")
+
+        with self._devices_lock:
+            try:
+                self.devices.remove(device)
+            except ValueError:
+                pass
+            try:
+                self.device_fds.remove(fd)
+            except ValueError:
+                pass
+            device_path = self._device_paths_by_fd.pop(fd, None)
+            if device_path is not None:
+                self.device_paths.discard(device_path)
+            self._dropped_devices.discard(fd)
+            forwarder = self._forwarders.pop(fd, None)
+            clone_path = self._forwarder_paths.pop(fd, None)
+            if clone_path is not None:
+                self._clone_paths.discard(clone_path)
+            self._forwarded_held.pop(fd, None)
+
+        if forwarder is not None:
+            try:
+                forwarder.close()
+            except (OSError, IOError, RuntimeError) as e:
+                logger.debug(f"Ignoring clone close failure for disconnected fd {fd}: {e}")
+
+        # A disconnect can swallow the modifier release (e.g. a wireless
+        # split half dropping mid-hold); don't leave any engine's combo
+        # logically held or pairing a swallowed press with a recycled fd.
+        for engine in self._engine_snapshot(include_known=True):
+            engine._drop_device_state(fd, device)
+
+    def _resync_clone_key_state(
+        self,
+        fd: int,
+        device: InputDevice,
+        engines: Optional[Sequence["EvdevKeyboardBackend"]] = None,
+    ) -> None:
+        """Release clone-side keys whose releases were lost to SYN_DROPPED.
+
+        The kernel's dropped-event burst may have skipped release events,
+        but the paired clone only saw what we forwarded — a forwarded press
+        whose release was dropped leaves the key held on the clone forever,
+        and no later event supplies the missing release. The burst can also
+        eat the release of a swallowed combo press, which the clone never
+        saw at all. Compare what the clone believes (``_forwarded_held``)
+        and what each engine paired (``_combo_swallowed``) against the
+        device's live kernel key state and emit releases for phantom keys.
         """
-        withheld = self._withheld_modifier.get(fd)
-        if not withheld:
+        if engines is None:
+            engines = self._engine_snapshot(include_known=True)
+        forwarder = self._forwarders.get(fd)
+        held = self._forwarded_held.get(fd)
+        if (forwarder is None or not held) and not any(
+            engine._has_fd_state(fd) for engine in engines
+        ):
             return
-        for entry in withheld.values():
-            if not entry[1]:
-                self._forward_event(fd, entry[0])
-                entry[1] = True
+        try:
+            actually_held = set(device.active_keys())
+        except (OSError, IOError) as e:
+            logger.warning(f"Cannot resync key state for fd {fd}: {e}")
+            return
+        if forwarder is not None and held:
+            for code in sorted(held - actually_held):
+                try:
+                    forwarder.write(ecodes.EV_KEY, code, 0)
+                except (OSError, IOError) as e:
+                    logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
+                    self._release_failed_forwarder(fd)
+                    return
+                held.discard(code)
+        for engine in engines:
+            engine._resync_shortcut_state(fd, actually_held)
+
+
+class EvdevKeyboardBackend(KeyboardBackend):
+    """
+    Keyboard backend using python-evdev.
+
+    This backend reads keyboard events directly from input devices,
+    which works on both X11 and Wayland when the user has permission
+    to read from /dev/input/event* devices (member of 'input' group).
+
+    Device access is shared through the process-wide ``EvdevDeviceHub``:
+    every backend registers on one reader instead of opening (and grabbing)
+    its own copy of each keyboard, so several shortcuts can listen at once.
+    The backend keeps only its own matching state — combo progress, withheld
+    modifiers, swallowed presses — and decides per event whether the
+    configured shortcut consumes it.
+    """
+
+    _HUB_ATTRS = _HUB_OWNED_ATTRIBUTES
+
+    def __getattr__(self, name: str) -> Any:
+        if name in self._HUB_ATTRS:
+            hub = self.__dict__.get("_hub")
+            if hub is not None:
+                return getattr(hub, name)
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in self._HUB_ATTRS:
+            hub = self.__dict__.get("_hub")
+            if hub is not None:
+                setattr(hub, name, value)
+                return
+        object.__setattr__(self, name, value)
+
+    def __init__(self, shortcut: str = DEFAULT_SHORTCUT, mode: str = DEFAULT_SHORTCUT_MODE):
+        """
+        Initialize the evdev keyboard backend.
+
+        Args:
+            shortcut: The shortcut string to listen for (e.g., "ctrl+ctrl")
+            mode: The shortcut mode ("toggle" or "push_to_talk")
+        """
+        super().__init__(shortcut, mode)
+        # Bind to the process-wide device layer before anything else: the
+        # attributes it owns delegate straight to it. The layer resets only
+        # while no engine is registered, so live listeners are never
+        # disturbed by a new backend's construction.
+        self._hub = _shared_device_hub()
+        self._hub._known_engines.add(self)
+        self._hub.reset_if_idle()
+
+        self.last_trigger_time = 0
+        self.last_key_press_time = 0
+        self.double_tap_threshold = 0.3  # seconds
+        self.key_pressed_devices: set[int] = set()
+
+        # Combo (modifier+key) state. Populated by _resolve_combo_targets().
+        self._combo_main_code: Optional[int] = None
+        self._combo_modifier_sets: list[set[int]] = []
+        self._combo_all_codes: set[int] = set()
+        self._combo_pressed: set[int] = set()  # currently-held combo-relevant codes
+        self._combo_active = False  # True while a push-to-talk combo hold is live
+        # fds whose combo main-key press was consumed but not yet released —
+        # per-device so one keyboard's release can't consume another's press.
+        self._combo_swallowed: set[int] = set()
+        # fd -> consumed pure-modifier presses withheld for AltGr replay, as
+        # {code: [press_event, replayed]}. A press replayed once stays listed
+        # so its release can be forwarded too.
+        self._withheld_modifier: dict[int, dict[int, list]] = {}
+        self._resolve_combo_targets()
+
+        if not EVDEV_AVAILABLE:
+            logger.error("python-evdev not available")
+
+    def _get_target_key_codes(self) -> set[int]:
+        """Get the evdev key codes for the configured modifier."""
+        return MODIFIER_KEY_CODES.get(self._modifier_key, set())
+
+    def set_shortcut(self, shortcut: str) -> None:
+        """Update the shortcut and recompute combo key targets."""
+        super().set_shortcut(shortcut)
+        self._resolve_combo_targets()
+
+    def _resolve_combo_targets(self) -> None:
+        """Resolve the spec's combo modifiers and main key to evdev codes."""
+        self._combo_main_code = None
+        self._combo_modifier_sets = []
+        self._combo_all_codes = set()
+        self._combo_pressed = set()
+        self._combo_active = False
+        self._combo_swallowed = set()
+
+        spec = getattr(self, "_spec", None)
+        if spec is None or not spec.is_combo:
+            return
+
+        main_code = evdev_code_for_key(spec.key)
+        if main_code is None:
+            logger.error(
+                f"Combo shortcut '{self._shortcut}': cannot resolve key '{spec.key}' "
+                "to an evdev code; combo will not trigger"
+            )
+            return
+
+        modifier_sets = []
+        for modifier in spec.modifiers:
+            codes = MODIFIER_KEY_CODES.get(modifier, set())
+            if not codes:
+                logger.error(f"Combo shortcut '{self._shortcut}': unknown modifier '{modifier}'")
+                return
+            modifier_sets.append(set(codes))
+
+        self._combo_main_code = main_code
+        self._combo_modifier_sets = modifier_sets
+        self._combo_all_codes = set().union(*modifier_sets) | {main_code}
+
+    def _required_modifiers_held(self) -> bool:
+        """True if at least one key code for every required modifier is held."""
+        return all(bool(codes & self._combo_pressed) for codes in self._combo_modifier_sets)
+
+    def _reset_combo_state(self) -> None:
+        """Drop cached combo key state after lost events (SYN_DROPPED / disconnect).
+
+        When the kernel drops events or a device disconnects, a modifier *release*
+        may be among the lost events. If we kept the stale "modifier held" state,
+        the main key pressed alone could falsely toggle/start dictation, and a
+        push-to-talk hold could stay stuck on. Clearing the pressed set fails
+        safe (the user simply re-presses the modifier), and ending any live hold
+        prevents a stuck session.
+
+        ``_combo_swallowed`` is deliberately left alone: it records consumed
+        presses per device, so clearing it here would let the matching
+        release of a still-held key leak to the application without its
+        press. Stale entries are pruned per-device on removal and during
+        the SYN_DROPPED resync instead.
+        """
+        self._combo_pressed = set()
+        # Ends an active push-to-talk hold (fires the release callback); no-op
+        # for toggle mode or when no hold is active.
+        self._combo_released()
+
+    def _has_fd_state(self, fd: int) -> bool:
+        """True if this engine still tracks shortcut state for a device fd."""
+        return fd in self._combo_swallowed or bool(self._withheld_modifier.get(fd))
+
+    def _resync_shortcut_state(self, fd: int, actually_held: set[int]) -> None:
+        """Prune this engine's fd-scoped state after a SYN_DROPPED resync."""
+        withheld = self._withheld_modifier.get(fd)
+        if withheld:
+            for code in list(withheld):
+                if code not in actually_held:
+                    withheld.pop(code)
+        if self._combo_main_code is not None and self._combo_main_code not in actually_held:
+            # A dropped burst can also eat the release of a swallowed combo
+            # press — a key the clone never saw, so the hub's forwarded-held
+            # set cannot reflect it. Without this prune the next ordinary
+            # press of that key would be consumed too, eating a keystroke.
+            self._combo_swallowed.discard(fd)
+
+    def _drop_device_state(self, fd: int, device: InputDevice) -> None:
+        """Forget shortcut bookkeeping tied to a removed device's fd."""
+        self.key_pressed_devices.discard(id(device))
+        self._withheld_modifier.pop(fd, None)
+        # The fd can be recycled for a newly plugged device; a stale
+        # swallowed press would then eat that device's first release.
+        self._combo_swallowed.discard(fd)
+        # A disconnect can swallow the modifier release (e.g. a wireless
+        # split half dropping mid-hold); don't leave the combo logically held.
+        self._reset_combo_state()
+
+    def _drop_all_device_state(self) -> None:
+        """Forget every fd-scoped shortcut pairing (shared layer teardown)."""
+        self._withheld_modifier = {}
+        self._combo_swallowed = set()
+
+    def is_available(self) -> bool:
+        """Check if evdev can access a keyboard device that supports this shortcut."""
+        if not EVDEV_AVAILABLE:
+            return False
+
+        try:
+            devices = find_keyboard_devices()
+            if not devices:
+                return False
+
+            for device_path in devices:
+                if device_supports_shortcut(device_path, self._spec):
+                    return True
+
+            return False
+        except Exception:
+            return False
+
+    def get_permission_hint(self) -> Optional[str]:
+        """
+        Get permission hint for evdev backend.
+
+        Returns:
+            Instructions if permissions are missing, None otherwise
+        """
+        if not EVDEV_AVAILABLE:
+            return "Install python-evdev: pip install evdev"
+
+        in_snap = bool(os.environ.get("SNAP_NAME") or os.environ.get("SNAP"))
+
+        try:
+            devices = find_keyboard_devices()
+            if devices:
+                # Try to open the first device to check permissions
+                for device_path in devices[:1]:
+                    try:
+                        InputDevice(device_path)
+                        return None  # Successfully opened, permissions OK
+                    except (OSError, IOError) as e:
+                        if "Permission denied" in str(e) or e.errno == errno.EACCES:
+                            if in_snap:
+                                return (
+                                    "Snap is missing input-device access. "
+                                    "Connect once, then restart:\n"
+                                    "sudo snap connect vocalinux:raw-input\n"
+                                    "sudo snap connect vocalinux:hardware-observe"
+                                )
+                            return (
+                                "Add your user to the 'input' group and log out/in:\n"
+                                "sudo usermod -a -G input $USER"
+                            )
+                return None
+
+            # No devices found: snap without raw-input and hardware-observe
+            # often cannot list anything.
+            if in_snap:
+                return (
+                    "Snap is missing input-device access. Connect once, then restart:\n"
+                    "sudo snap connect vocalinux:raw-input\n"
+                    "sudo snap connect vocalinux:hardware-observe"
+                )
+
+            try:
+                with open("/proc/bus/input/devices", "r"):
+                    pass
+            except (OSError, IOError) as e:
+                if "Permission denied" in str(e) or getattr(e, "errno", None) == errno.EACCES:
+                    return (
+                        "Add your user to the 'input' group and log out/in:\n"
+                        "sudo usermod -a -G input $USER"
+                    )
+        except Exception:
+            pass
+
+        return None
+
+    def start(self) -> bool:
+        """
+        Start listening through the shared device layer.
+
+        Returns:
+            True if started successfully, False otherwise
+        """
+        if not EVDEV_AVAILABLE:
+            logger.error("Cannot start: python-evdev not available")
+            return False
+
+        if self.active:
+            return True
+
+        logger.info(f"Listening for shortcut: {self._shortcut} (mode: {self._mode})")
+
+        # Refresh combo targets and drop any stale per-engine fd state.
+        self._resolve_combo_targets()
+        self.key_pressed_devices = set()
+        self._withheld_modifier = {}
+
+        self.active = self._hub.register(self)
+        if self.active:
+            logger.info("Evdev keyboard listener started successfully")
+        return self.active
+
+    def stop(self) -> None:
+        """Stop this engine's listener; the shared layer outlives the others."""
+        if not self.active:
+            return
+
+        logger.info("Stopping evdev keyboard listener")
+        self.active = False
+        self._hub.unregister(self)
+
+    def _monitor_devices(self) -> None:
+        """Run the shared monitor with this engine in the dispatch set."""
+        self._hub._monitor_devices(extra_engines=(self,))
 
     def _event_is_shortcut(self, fd: int, event: InputEvent) -> bool:
         """Return True if an EV_KEY event belongs to the dictation shortcut.
@@ -890,223 +1318,20 @@ class EvdevKeyboardBackend(KeyboardBackend):
             return True
         return fd in self._combo_swallowed
 
-    def _scan_for_new_devices(self) -> int:
-        """Find and open keyboard devices that appeared after startup."""
-        new_device_count = 0
+    def _replay_withheld_modifiers(self, fd: int) -> None:
+        """Emit withheld modifier presses ahead of a non-target key.
 
-        try:
-            device_paths = find_keyboard_devices()
-        except Exception as e:
-            logger.error(f"Error rescanning keyboard devices: {e}")
-            return 0
-
-        for device_path in device_paths:
-            if self._open_keyboard_device(device_path):
-                new_device_count += 1
-
-        if new_device_count:
-            logger.info(f"Added {new_device_count} hotplugged keyboard device(s)")
-
-        return new_device_count
-
-    def _remove_keyboard_device(self, fd: int, device) -> None:
-        """Close and forget a disconnected keyboard device."""
-        try:
-            device.close()
-        except (OSError, IOError, RuntimeError) as e:
-            logger.debug(f"Ignoring close failure for disconnected fd {fd}: {e}")
-
-        with self._devices_lock:
-            try:
-                self.devices.remove(device)
-            except ValueError:
-                pass
-            try:
-                self.device_fds.remove(fd)
-            except ValueError:
-                pass
-            device_path = self._device_paths_by_fd.pop(fd, None)
-            if device_path is not None:
-                self.device_paths.discard(device_path)
-            self._dropped_devices.discard(fd)
-            self.key_pressed_devices.discard(id(device))
-            forwarder = self._forwarders.pop(fd, None)
-            clone_path = self._forwarder_paths.pop(fd, None)
-            if clone_path is not None:
-                self._clone_paths.discard(clone_path)
-            self._forwarded_held.pop(fd, None)
-            self._withheld_modifier.pop(fd, None)
-            # The fd can be recycled for a newly plugged device; a stale
-            # swallowed press would then eat that device's first release.
-            self._combo_swallowed.discard(fd)
-
-        if forwarder is not None:
-            try:
-                forwarder.close()
-            except (OSError, IOError, RuntimeError) as e:
-                logger.debug(f"Ignoring clone close failure for disconnected fd {fd}: {e}")
-        # A disconnect can swallow the modifier release (e.g. a wireless
-        # split half dropping mid-hold); don't leave the combo logically held.
-        self._reset_combo_state()
-
-    def _resync_clone_key_state(self, fd: int, device: InputDevice) -> None:
-        """Release clone-side keys whose releases were lost to SYN_DROPPED.
-
-        The kernel's dropped-event burst may have skipped release events,
-        but the paired clone only saw what we forwarded — a forwarded press
-        whose release was dropped leaves the key held on the clone forever,
-        and no later event supplies the missing release. The burst can also
-        eat the release of a swallowed combo press, which the clone never
-        saw at all. Compare what the clone believes (``_forwarded_held``)
-        and what we paired (``_combo_swallowed``) against the device's live
-        kernel key state and emit releases for the phantom keys.
+        A pure-modifier trigger press that turns out to be AltGr (another
+        key arrives while it is held) was consumed for the shortcut; re-emit
+        it so the focused application sees the composition's modifier down.
         """
-        forwarder = self._forwarders.get(fd)
-        held = self._forwarded_held.get(fd)
-        if (
-            (forwarder is None or not held)
-            and fd not in self._combo_swallowed
-            and not self._withheld_modifier.get(fd)
-        ):
-            return
-        try:
-            actually_held = set(device.active_keys())
-        except (OSError, IOError) as e:
-            logger.warning(f"Cannot resync key state for fd {fd}: {e}")
-            return
-        if forwarder is not None and held:
-            for code in sorted(held - actually_held):
-                try:
-                    forwarder.write(ecodes.EV_KEY, code, 0)
-                except (OSError, IOError) as e:
-                    logger.error(f"Failed to release stuck key {code} on fd {fd}: {e}")
-                    self._release_failed_forwarder(fd)
-                    return
-                held.discard(code)
         withheld = self._withheld_modifier.get(fd)
-        if withheld:
-            for code in list(withheld):
-                if code not in actually_held:
-                    withheld.pop(code)
-        if self._combo_main_code is not None and self._combo_main_code not in actually_held:
-            # A dropped burst can also eat the release of a swallowed combo
-            # press — a key the clone never saw, so ``held`` cannot reflect
-            # it. Without this prune the next ordinary press of that key
-            # would be consumed too, eating a keystroke.
-            self._combo_swallowed.discard(fd)
-
-    def _monitor_devices(self) -> None:
-        """Monitor keyboard devices for events."""
-        logger.debug("Starting device monitor thread")
-        last_scan = time.monotonic()
-
-        try:
-            while self.running:
-                try:
-                    now = time.monotonic()
-                    if now - last_scan >= DEVICE_RESCAN_SECONDS:
-                        self._scan_for_new_devices()
-                        last_scan = now
-
-                    # Use select to wait for events on any device
-                    with self._devices_lock:
-                        device_fds = list(self.device_fds)
-
-                    if not device_fds:
-                        time.sleep(1.0)
-                        continue
-
-                    readable, _, _ = select.select(device_fds, [], [], 1.0)  # 1 second timeout
-
-                    for fd in readable:
-                        try:
-                            # Find the device for this fd
-                            with self._devices_lock:
-                                device = None
-                                for d in self.devices:
-                                    if d.fileno() == fd:
-                                        device = d
-                                        break
-
-                            if device is None:
-                                continue
-
-                            # Read events from this device. On grabbed devices,
-                            # everything we do not consume is re-emitted on the
-                            # paired uinput clone so the focused app keeps typing.
-                            for event in device.read():
-                                if event.type == ecodes.EV_SYN:
-                                    if event.code == ecodes.SYN_DROPPED:
-                                        # Kernel buffer overflowed — discard until SYN_REPORT
-                                        self._dropped_devices.add(fd)
-                                        logger.warning(
-                                            f"SYN_DROPPED on {device.name} (fd={fd}), "
-                                            "resetting key state"
-                                        )
-                                    elif event.code == ecodes.SYN_REPORT:
-                                        if fd in self._dropped_devices:
-                                            # End of dropped sequence — clear stale state
-                                            self._dropped_devices.discard(fd)
-                                            self.key_pressed_devices.discard(id(device))
-                                            # Release keys the clone still thinks
-                                            # are held before the SYN_REPORT
-                                            # reaches it, atomically.
-                                            self._resync_clone_key_state(fd, device)
-                                            # A dropped modifier release must not leave
-                                            # the combo logically held.
-                                            self._reset_combo_state()
-                                        self._forward_event(fd, event)
-                                    continue
-                                if fd in self._dropped_devices:
-                                    # Handling shortcut state mid-drop is unsafe,
-                                    # but surviving non-shortcut events still pass
-                                    # through so the app sees what the kernel kept.
-                                    if not self._event_is_shortcut(fd, event):
-                                        self._forward_event(fd, event)
-                                    continue
-                                if event.type == ecodes.EV_KEY:
-                                    # Every key event updates shortcut state (combo
-                                    # modifiers must be tracked AND forwarded); only
-                                    # the forwarding decision differs.
-                                    consumed = self._event_is_shortcut(fd, event)
-                                    self._handle_key_event(event, device)
-                                    if not consumed:
-                                        self._forward_event(fd, event)
-                                else:
-                                    self._forward_event(fd, event)
-
-                        except (OSError, IOError) as e:
-                            # Device was disconnected - remove it to avoid busy loop
-                            device_name = (
-                                device.name if device and hasattr(device, "name") else "unknown"
-                            )
-                            logger.info(f"Device disconnected: {device_name} (fd={fd})")
-                            if device is not None:
-                                self._remove_keyboard_device(fd, device)
-                            continue
-
-                except (OSError, ValueError) as e:
-                    if self.running:
-                        logger.error(f"Error monitoring devices: {e}")
-                    break
-        finally:
-            if self.running:
-                # Exiting while still "running" means the loop died
-                # unexpectedly — a failed select, an fd closed underneath
-                # it, or an error escaping the handler. Nothing will ever
-                # read the grabbed keyboards again, so close every device
-                # and clone: closing releases each grab and hands input
-                # delivery back to the kernel instead of leaving the
-                # user's keyboards dead.
-                logger.error(
-                    "Keyboard monitor exited unexpectedly; closing devices "
-                    "to release grabs so keyboards keep working"
-                )
-                self.running = False
-                self.active = False
-                self._close_all_devices()
-
-        logger.debug("Device monitor thread stopped")
+        if not withheld:
+            return
+        for entry in withheld.values():
+            if not entry[1]:
+                self._forward_event(fd, entry[0])
+                entry[1] = True
 
     def _handle_key_event(self, event: InputEvent, device: InputDevice) -> None:
         """Handle a key event from evdev."""
@@ -1219,8 +1444,23 @@ class EvdevKeyboardBackend(KeyboardBackend):
             logger.error(f"Error handling key event: {e}")
 
 
+_shared_hub: Optional[EvdevDeviceHub] = None
+_shared_hub_lock = threading.Lock()
+
+
+def _shared_device_hub() -> EvdevDeviceHub:
+    """Return the process-wide device layer, creating it on first use."""
+    global _shared_hub
+    if _shared_hub is None:
+        with _shared_hub_lock:
+            if _shared_hub is None:
+                _shared_hub = EvdevDeviceHub()
+    return _shared_hub
+
+
 # Export availability
 __all__ = [
+    "EvdevDeviceHub",
     "EvdevKeyboardBackend",
     "EVDEV_AVAILABLE",
     "find_keyboard_devices",
