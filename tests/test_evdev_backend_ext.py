@@ -1696,3 +1696,49 @@ class TestEvdevGrabAndForwarding:
         backend._remove_keyboard_device(10, device)
 
         assert backend._withheld_modifier == {}
+
+    def test_split_keyboard_altgr_replays_modifier_from_other_device(self) -> None:
+        """A chord spanning two devices still replays the withheld modifier.
+
+        On a split keyboard RightAlt arrives on one device and the character
+        key on another: the modifier is withheld under its own fd, so the
+        replay must scan every device — checking only the character key's fd
+        would forward a plain character and lose the AltGr composition.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        mod_fd, char_fd = 10, 20
+        mod_forwarder, char_forwarder = MagicMock(), MagicMock()
+        backend._forwarders = {mod_fd: mod_forwarder, char_fd: char_forwarder}
+        backend._forwarded_held = {mod_fd: set(), char_fd: set()}
+        backend._withheld_modifier = {mod_fd: {}, char_fd: {}}
+
+        press = self._key_event(100, 1)  # KEY_RIGHTALT down on the left half
+        key_e = self._key_event(18, 1)  # KEY_E down on the right half
+
+        assert backend._event_is_shortcut(mod_fd, press) is True
+        mod_forwarder.write_event.assert_not_called()
+
+        assert backend._event_is_shortcut(char_fd, key_e) is False
+        # The modifier press is replayed through ITS OWN device's clone —
+        # before the character is forwarded — so the app sees AltGr+e.
+        mod_forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[mod_fd]
+
+    def test_syn_dropped_prunes_unreplayed_withheld_modifier(self) -> None:
+        """A withheld press whose release SYN_DROPPED ate leaves no stale entry.
+
+        When the modifier was never replayed the clone holds nothing, so the
+        old early return skipped the withheld-state cleanup entirely and a
+        later ordinary press would replay a modifier that is not held.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        device = MagicMock()
+        device.active_keys.return_value = []  # modifier already released
+        backend._forwarders = {fd: MagicMock()}
+        backend._forwarded_held = {fd: set()}  # nothing forwarded
+        backend._withheld_modifier = {fd: {100: [self._key_event(100, 1), False]}}
+
+        backend._resync_clone_key_state(fd, device)
+
+        assert backend._withheld_modifier[fd] == {}

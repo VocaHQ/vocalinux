@@ -849,8 +849,13 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 # A press of any other key while a modifier press is withheld
                 # means the modifier was AltGr composition, not the gesture:
                 # replay the withheld press first so the app sees it down.
+                # Withheld presses from every device replay, not only this
+                # key's — on a split keyboard the modifier and the character
+                # arrive on different devices, and checking only this fd
+                # would forward the plain character and lose the AltGr.
                 if event.value == 1:
-                    self._replay_withheld_modifiers(fd)
+                    for dev_fd in list(self._withheld_modifier):
+                        self._replay_withheld_modifiers(dev_fd)
                 return False
             # Pure-modifier gesture: every event of the configured modifier
             # side(s) is consumed. RightAlt doubles as AltGr on many layouts,
@@ -958,7 +963,11 @@ class EvdevKeyboardBackend(KeyboardBackend):
         """
         forwarder = self._forwarders.get(fd)
         held = self._forwarded_held.get(fd)
-        if (forwarder is None or not held) and fd not in self._combo_swallowed:
+        if (
+            (forwarder is None or not held)
+            and fd not in self._combo_swallowed
+            and not self._withheld_modifier.get(fd)
+        ):
             return
         try:
             actually_held = set(device.active_keys())
