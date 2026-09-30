@@ -13,8 +13,16 @@ without inheriting dictation behavior.
 
 import ctypes
 import logging
+import subprocess
 import time
 from typing import TYPE_CHECKING, Any, Optional
+
+from .pipewire import (
+    PIPEWIRE_INDEX_BASE,
+    _test_pipewire_input,
+    get_system_audio_sources,
+    is_pipewire_device_index,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -208,6 +216,22 @@ def get_audio_input_devices() -> list:
         logger.error("PyAudio not installed, cannot enumerate audio devices")
     except OSError as e:
         logger.error(f"Error enumerating audio devices: {e}")
+
+    # PipeWire sinks exposed as system-audio sources. Indices count down from
+    # PIPEWIRE_INDEX_BASE so they can never collide with a PortAudio index.
+    # Kept outside the PortAudio block so a missing PyAudio still lists them.
+    try:
+        for position, source in enumerate(get_system_audio_sources()):
+            devices.append((PIPEWIRE_INDEX_BASE - position, source.display_name, source.is_default))
+    except (
+        OSError,
+        subprocess.SubprocessError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ):
+        logger.warning("PipeWire source enumeration failed", exc_info=True)
 
     return devices
 
@@ -620,6 +644,9 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
         "error": None,
     }
 
+    if is_pipewire_device_index(device_index):
+        return _test_pipewire_input(device_index, duration)
+
     try:
         import numpy as np
         import pyaudio
@@ -738,6 +765,9 @@ class PortAudioCaptureSource:
         self.sample_rate = 16000
         self.channels = 1
         self.downmix_channel: Optional[int] = None
+
+    #: Reads through a PyAudio instance — the caller must supply one.
+    requires_pyaudio: bool = True
 
     def open(self, audio: Any = None) -> None:
         """Resolve the input device and open the negotiated capture stream.
@@ -884,6 +914,7 @@ class PortAudioCaptureSource:
         FORMAT = pyaudio.paInt16
         self.audio = audio_instance
 
+        new_stream: Any = None
         try:
             # Close existing stream if it exists
             if self.stream:
@@ -952,9 +983,11 @@ class PortAudioCaptureSource:
 
         except (IOError, OSError) as e:
             logger.error(f"Audio reconnection failed: {e}")
+            _safe_close_stream(new_stream)
             return False
         except Exception as e:
             logger.error(f"Unexpected error during audio reconnection: {e}")
+            _safe_close_stream(new_stream)
             return False
 
     def close(self) -> None:

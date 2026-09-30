@@ -210,6 +210,12 @@ DEFAULT_CONFIG = {
     "post_processing": {
         "script_path": "",  # Path to executable; empty = disabled
     },
+    "dictionary": {
+        # Preserve the custom-dictionary contract used by the accessibility scanner.
+        "enabled": False,
+        "file_path": os.path.join(CONFIG_DIR, "dictionary.txt"),
+        "max_words": 200,
+    },
     "advanced": {
         "power_user_mode": False,
         "debug_logging": False,

@@ -114,6 +114,14 @@ def parse_arguments():
         help="Stop voice typing on a running instance (via D-Bus) and exit",
     )
     parser.add_argument(
+        "--dictionary-file",
+        type=str,
+        help=(
+            "Use this custom terms file for this session only (UTF-8, one term per line); "
+            "it does not change saved settings"
+        ),
+    )
+    parser.add_argument(
         "--transcribe-file",
         type=str,
         metavar="PATH",
@@ -417,6 +425,7 @@ def main():
 
     # Now it's safe to import GTK-dependent modules
     from .common_types import RecognitionState
+    from .custom_dictionary import CustomDictionaryManager
     from .speech_recognition import recognition_manager
     from .text_injection import focused_window, text_injector
     from .ui import tray_indicator
@@ -529,6 +538,16 @@ def main():
     # sanitize on load so a bad preference cannot abort startup.
     history_max_items = sanitize_max_items(history_settings.get("max_items", DEFAULT_MAX_ITEMS))
 
+    dictionary_file = getattr(args, "dictionary_file", None)
+    transient_terms_path = (
+        dictionary_file.strip()
+        if isinstance(dictionary_file, str) and dictionary_file.strip()
+        else None
+    )
+    if transient_terms_path is not None:
+        logger.info("Using session-only custom terms file: %s", transient_terms_path)
+    dictionary_manager = CustomDictionaryManager(config_manager, transient_terms_path)
+
     logger.info(f"Final settings: engine={engine}, language={language}, model={model_size}")
     if audio_device_index is not None:
         logger.info(
@@ -567,6 +586,7 @@ def main():
             whispercpp_no_speech_thold=advanced_settings.get("whispercpp_no_speech_thold", 0.6),
             whispercpp_n_threads=advanced_settings.get("whispercpp_n_threads", 0),
             whispercpp_gpu_device=advanced_settings.get("whispercpp_gpu_device", None),
+            dictionary_manager=dictionary_manager,
             remote_api_url=saved_settings.get("remote_api_url", ""),
             remote_api_key=saved_settings.get("remote_api_key", ""),
             remote_api_endpoint=saved_settings.get("remote_api_endpoint", "/inference"),
@@ -626,7 +646,6 @@ def main():
         # Clear epoch the most-recently-ended session was committed under;
         # late segments merging into its snippet are judged against it.
         ended_session_epoch = transcription_history.epoch
-
         # In-app dictation pad: the Wayland-proof fallback target that
         # receives dictated text when "dictate to pad" capture is enabled
         # (#726). Constructed before the tray so the tray menu can open it.
@@ -755,16 +774,16 @@ def main():
                 # Late segment from a session that already ended: merge into
                 # its own snippet by id — a newer session may already have
                 # committed on top, so the newest entry is not the target.
-                # Both writes are guarded by the ended session's epoch, so a
+                # Two kinds are admitted: trickles on the ended session's own
+                # worker thread (the engine's decode finishing after IDLE),
+                # and any straggler while a newer session is still open —
+                # the open session has not committed yet, so the tracked id
+                # still points to the ended session's own snippet. An older
+                # worker delivering after that newer session committed forms
+                # its own entry rather than growing the wrong snippet. Both
+                # writes are guarded by the ended session's epoch, so a
                 # clear() landing between that commit and this delivery
                 # still refuses the text.
-                #
-                # Only deliveries from the worker that produced the ended
-                # session may merge into its committed snippet; while a new
-                # session is open, the same boundary rule lets its stragglers
-                # still land there. A different (older) worker finishing two
-                # sessions later cannot leak into the newer entry — its
-                # segment forms a snippet of its own instead.
                 if (
                     latest_snippet_id is not None
                     and (
@@ -777,7 +796,7 @@ def main():
                 ):
                     return
                 # Otherwise the late segments are the session's only output
-                # and form their own snippet.
+                # and form their own snippet, which its worker keeps owning.
                 snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
@@ -1147,7 +1166,7 @@ def main():
             refers to.
             """
             nonlocal session_open, session_worker, latest_snippet_id
-            nonlocal ended_session_epoch, session_started_floor, ended_session_worker
+            nonlocal ended_session_epoch, ended_session_worker, session_started_floor
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     with pending_jobs_lock:
@@ -1163,7 +1182,7 @@ def main():
                         last_injected["to_pad"] = False
                 with session_lock:
                     session_open = False
-                    ended_session_worker = session_worker
+                    closing_worker = session_worker
                     session_worker = None
                     ended_session_epoch = transcription_history.epoch
                     # Only segments captured after the last clear() join the
@@ -1182,13 +1201,12 @@ def main():
                     latest_snippet_id = transcription_history.add(
                         joined, expected_epoch=ended_session_epoch
                     )
+                    ended_session_worker = closing_worker
             else:
                 with session_lock:
                     if not session_open:
                         session_open = True
-                        # Worker behind the leftover segments below, captured
-                        # before the reset loses it.
-                        ended_session_worker = session_worker
+                        leftover_worker = session_worker
                         session_worker = None
                         session_started_floor = time.monotonic()
                         # Segments left over by a session that ended without a
@@ -1203,8 +1221,9 @@ def main():
                                     for text, started_at in session_segments
                                     if started_at > cleared_at
                                 ),
-                                expected_epoch=transcription_history.epoch,
+                                expected_epoch=ended_session_epoch,
                             )
+                            ended_session_worker = leftover_worker
                             session_segments.clear()
 
         # Connect speech recognition to text injection and action handling.

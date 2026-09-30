@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional, Union
 
 if TYPE_CHECKING:
     import numpy as np
@@ -42,6 +42,7 @@ from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     get_audio_input_devices,
     test_audio_input,
 )
+from ..audio.pipewire import PipeWireCaptureSource, is_pipewire_device
 from ..audio.playback_ducker import default_dictation_duck_session, duck_delay_seconds
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
@@ -79,6 +80,9 @@ from ..utils.whispercpp_model_info import (
 from ..version import __version__
 from .command_processor import CommandProcessor
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
+
+if TYPE_CHECKING:
+    from ..custom_dictionary import CustomDictionaryManager
 
 
 class _AudioSegment(list):
@@ -399,6 +403,10 @@ class SpeechRecognitionManager:
         # change a queued segment's language (#805).
         self._session_language: Optional[str] = None
         self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", 200)
+        self.dictionary_manager: Optional["CustomDictionaryManager"] = kwargs.get(
+            "dictionary_manager"
+        )
+        self._vosk_dictionary_warned = False
         self.state = RecognitionState.IDLE
         self.audio_thread = None
         self.recognition_thread = None
@@ -517,7 +525,7 @@ class SpeechRecognitionManager:
         self._capture_channels = 1  # Default, updated when device is opened
         self._capture_downmix_channel = None  # Speech-gated sticky N>=3 channel for open stream
         # The active capture source while a recording session is open.
-        self._capture_source: Optional[PortAudioCaptureSource] = None
+        self._capture_source: Optional[Union[PortAudioCaptureSource, PipeWireCaptureSource]] = None
 
         # Recover a sink left quiet by a crash before doing anything slow.
         # Tests inject a session so this never touches a real audio server.
@@ -836,6 +844,36 @@ class SpeechRecognitionManager:
             self._faster_whisper_engine.language = previous
         logger.debug(f"Restored dictation language {previous} after one-shot")
 
+    def _get_dictionary_prompt(self) -> Optional[str]:
+        """Return a live custom-terms prompt without interrupting dictation on errors."""
+        if self.dictionary_manager is None:
+            return None
+        try:
+            return self.dictionary_manager.build_initial_prompt()
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not build custom terms prompt: %s", error)
+            return None
+
+    def _get_whispercpp_prompt(self) -> Optional[str]:
+        """Combine the Advanced prompt with the live custom terms prompt.
+
+        The explicit Advanced prompt remains first and custom terms are appended,
+        so enabling custom dictionary support never discards user configuration.
+        """
+        parts = [self.whispercpp_initial_prompt.strip(), self._get_dictionary_prompt() or ""]
+        prompt = " ".join(part for part in parts if part)
+        return prompt or None
+
+    def _apply_dictionary_corrections(self, text: str) -> str:
+        """Apply live corrections before voice-command interpretation."""
+        if self.dictionary_manager is None:
+            return text
+        try:
+            return self.dictionary_manager.apply_corrections(text)
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not apply custom dictionary corrections: %s", error)
+            return text
+
     def _init_vosk(self):
         """Initialize the VOSK speech recognition engine."""
         # VOSK doesn't support auto-detect, so fall back to en-us for "auto"
@@ -883,6 +921,15 @@ class SpeechRecognitionManager:
             self.recognizer = KaldiRecognizer(self.model, 16000)
             self._model_initialized = True
             logger.info("VOSK engine initialized successfully.")
+            if (
+                self.dictionary_manager is not None
+                and self.dictionary_manager.terms_enabled()
+                and not self._vosk_dictionary_warned
+            ):
+                self._vosk_dictionary_warned = True
+                logger.warning(
+                    "Custom terms are ignored by VOSK; transcript corrections still apply."
+                )
 
         except ImportError:
             logger.error("Failed to import VOSK. Please install it with 'pip install vosk'")
@@ -1066,6 +1113,7 @@ class SpeechRecognitionManager:
                     temperature=0.0,  # Greedy decoding for consistency
                     no_speech_threshold=0.6,
                     fp16=use_fp16,  # Explicitly set to avoid warning on CPU
+                    initial_prompt=self._get_dictionary_prompt(),
                 )
 
             text = result.get("text", "").strip()
@@ -1287,7 +1335,9 @@ class SpeechRecognitionManager:
                 return ""
 
             return self._faster_whisper_engine.transcribe(
-                audio_buffer, language=self._dictation_language(language)
+                audio_buffer,
+                language=self._dictation_language(language),
+                initial_prompt=self._get_dictionary_prompt(),
             )
         except (RuntimeError, OSError, ValueError) as e:
             logger.error(f"Error in faster-whisper transcription: {e}", exc_info=True)
@@ -1786,7 +1836,11 @@ class SpeechRecognitionManager:
                 # Transcribe with whisper.cpp
                 # pywhispercpp expects audio as numpy array
                 transcribe_start = time.time()
-                segments = self.model.transcribe(audio_float, language=lang)
+                transcribe_kwargs = {"language": lang}
+                # pywhispercpp reuses native parameter state.  Passing an empty
+                # value explicitly clears a prompt that was active last segment.
+                transcribe_kwargs["initial_prompt"] = self._get_whispercpp_prompt() or ""
+                segments = self.model.transcribe(audio_float, **transcribe_kwargs)
                 transcribe_duration = time.time() - transcribe_start
 
             # Extract text from segments, filtering non-speech tokens
@@ -2978,6 +3032,10 @@ class SpeechRecognitionManager:
         try:
             if not self._playback_duck.enabled():
                 return
+            if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+                # Ducking lowers the default sink — the very audio a
+                # system-audio source is capturing.
+                return
             # The capture thread may already have failed and released the duck;
             # arming now would lower playback in the error state with nothing
             # left to put it back.
@@ -3216,6 +3274,18 @@ class SpeechRecognitionManager:
             # stop_recognition owns the final buffer. Do not finish or allow a
             # new session until key release has completed that handoff.
             self._capture_finished.wait()
+            # The worker can exit during the bounded audio-thread join in
+            # stop_recognition, leaving the released key's final buffer — and
+            # any stragglers it never consumed — queued behind the stop
+            # sentinel. Transcribe what is still here before replacing the
+            # queue so the tail of the recording is not silently dropped.
+            # A failed capture or an explicit cancel still discards it.
+            if (
+                self.model_ready
+                and not self._buffered_capture_failed
+                and not self._cancel_buffered_session.is_set()
+            ):
+                self._transcribe_queued_segments()
             with self._buffer_lock:
                 self.audio_buffer = []
             self._segment_queue = queue.Queue(maxsize=32)
@@ -3289,7 +3359,6 @@ class SpeechRecognitionManager:
 
         try:
             import numpy as np
-            import pyaudio
         except ImportError as e:
             logger.error(f"Failed to import required audio libraries: {e}")
             logger.error("Please install required dependencies: pip install pyaudio numpy")
@@ -3305,17 +3374,29 @@ class SpeechRecognitionManager:
             # PyAudio configuration
             CHUNK = 1024
 
-            # Initialize PyAudio with reconnection support
-            self._pyaudio_instance = pyaudio.PyAudio()
-            audio = self._pyaudio_instance
-
             # The capture source owns the device: resolution, format
-            # negotiation, downmixing, and resampling. This loop only consumes
-            # mono 16 kHz chunks and applies dictation segmentation policy.
-            source = PortAudioCaptureSource(
-                device_index=self.audio_device_index,
-                device_name=self.audio_device_name,
-            )
+            # negotiation, downmixing, and resampling. PipeWire sources spawn
+            # pw-record themselves and need no PyAudio instance; PortAudio
+            # sources get one passed to open()/reopen(). This loop only
+            # consumes mono 16 kHz chunks and applies dictation segmentation
+            # policy.
+            source = self._new_capture_source()
+            audio = None
+            if getattr(source, "requires_pyaudio", True):
+                try:
+                    import pyaudio
+                except ImportError as e:
+                    logger.error(f"Failed to import required audio libraries: {e}")
+                    logger.error("Please install required dependencies: pip install pyaudio numpy")
+                    self.should_record = False
+                    self.release_playback_duck()
+                    play_error_sound()
+                    self._buffered_capture_failed = True
+                    self._update_state(RecognitionState.ERROR)
+                    self._signal_buffered_capture_done()
+                    return
+                self._pyaudio_instance = pyaudio.PyAudio()
+                audio = self._pyaudio_instance
             self._capture_source = source
             # The attempt count belongs to this session — a previous thread
             # may still be finishing and must not leave its retries here.
@@ -3338,7 +3419,8 @@ class SpeechRecognitionManager:
                     self.should_record = False
                     self.release_playback_duck()
                     play_error_sound()
-                    audio.terminate()
+                    if audio is not None:
+                        audio.terminate()
                     self._buffered_capture_failed = True
                     self._update_state(RecognitionState.ERROR)
                     return
@@ -3504,6 +3586,10 @@ class SpeechRecognitionManager:
 
                         if self._attempt_audio_reconnection(audio):
                             logger.info("Audio reconnection successful, continuing recording")
+                            # The session source may have been rebuilt (e.g.
+                            # the configured device switched between a mic and
+                            # a PipeWire sink) — keep reading the new source.
+                            source = self._capture_source
                             continue  # Continue recording with the reopened source
                         else:
                             logger.error("Audio reconnection failed, stopping recording")
@@ -3635,6 +3721,9 @@ class SpeechRecognitionManager:
         # Process text - either with voice commands or pass through directly
         logger.debug(f"_process_audio_buffer got text='{text[:50] if text else '(empty)'}...'")
         if text:
+            # Corrections must precede command parsing: a safe replacement can
+            # stop a model mishearing from triggering a destructive action.
+            text = self._apply_dictionary_corrections(text)
             if self._voice_commands_enabled:
                 # Process with voice commands (original behavior)
                 processed_text, actions = self.command_processor.process_text(text)
@@ -3760,6 +3849,30 @@ class SpeechRecognitionManager:
                 self._segment_queue.put_nowait(None)
             except queue.Empty:
                 logger.debug("Recognition queue emptied before stop signal")
+
+    def _transcribe_queued_segments(self) -> None:
+        """Transcribe audio segments still queued after the worker exited.
+
+        Runs on the reload thread once key release has finished its handoff,
+        so segments that missed the worker's final drain — the released
+        key's tail buffer queued during its bounded join — are still
+        transcribed instead of being thrown away with the queue.
+        """
+        while True:
+            try:
+                queued = self._segment_queue.get_nowait()
+            except queue.Empty:
+                return
+            if queued is None:
+                continue
+            # Queue items are (segment, language) tuples stamped at enqueue
+            # time — the language must reach the decoder or the buffer is
+            # transcribed under the wrong language.
+            segment, segment_language = queued
+            try:
+                self._process_audio_buffer(segment, segment_language)
+            except (ChecksumError, ImportError, OSError, RuntimeError, ValueError):
+                logger.exception("Failed to transcribe a leftover buffered segment")
 
     def reconfigure(
         self,
@@ -3961,18 +4074,36 @@ class SpeechRecognitionManager:
             # If only VOSK params changed, just log it
             logger.info("Applied VAD/silence timeout changes.")
 
-    def _capture_source_for_session(self) -> PortAudioCaptureSource:
+    def _new_capture_source(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
+        """Build the capture source matching the configured device."""
+        if is_pipewire_device(self.audio_device_index, self.audio_device_name):
+            return PipeWireCaptureSource(
+                device_index=self.audio_device_index,
+                device_name=self.audio_device_name,
+            )
+        return PortAudioCaptureSource(
+            device_index=self.audio_device_index,
+            device_name=self.audio_device_name,
+        )
+
+    def _capture_source_for_session(self) -> Union[PortAudioCaptureSource, PipeWireCaptureSource]:
         """Return the session's capture source, creating one when absent.
 
         Device selection is refreshed from the manager's configured device so
-        reconnections track the current setting.
+        reconnections track the current setting. The source is rebuilt when
+        the configured device switched families (PortAudio <-> PipeWire).
         """
+        want_pipewire = is_pipewire_device(
+            getattr(self, "audio_device_index", None),
+            getattr(self, "audio_device_name", None),
+        )
         source = getattr(self, "_capture_source", None)
-        if source is None:
-            source = PortAudioCaptureSource()
+        if source is None or isinstance(source, PipeWireCaptureSource) != want_pipewire:
+            source = self._new_capture_source()
             self._capture_source = source
-        source.device_index = getattr(self, "audio_device_index", None)
-        source.device_name = getattr(self, "audio_device_name", None)
+        else:
+            source.device_index = getattr(self, "audio_device_index", None)
+            source.device_name = getattr(self, "audio_device_name", None)
         return source
 
     def _sync_capture_state(self) -> None:
@@ -4018,7 +4149,21 @@ class SpeechRecognitionManager:
         # The source may not know about the stream it is asked to replace
         # (e.g. when tests drive this method directly).
         source.stream = getattr(self, "_audio_stream", None)
-        ok = source.reopen(audio_instance)
+        audio = audio_instance
+        if getattr(source, "requires_pyaudio", True) and audio is None:
+            # A session that started on a PipeWire sink never built a PyAudio
+            # instance; a PortAudio source still needs one to reopen.
+            audio = getattr(self, "_pyaudio_instance", None)
+            if audio is None:
+                try:
+                    import pyaudio
+
+                    audio = pyaudio.PyAudio()
+                    self._pyaudio_instance = audio
+                except (ImportError, OSError, AttributeError) as e:
+                    logger.error(f"Failed to initialize PyAudio for reconnection: {e}")
+                    return False
+        ok = source.reopen(audio)
         self._sync_capture_state()
         return ok
 

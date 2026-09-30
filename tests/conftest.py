@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -149,6 +150,23 @@ def _no_remote_desktop_portal(monkeypatch):
     mocked D-Bus. Tests that exercise the portal re-patch this themselves.
     """
     monkeypatch.setattr("vocalinux.text_injection.remote_desktop_portal.PORTAL_AVAILABLE", False)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_pipewire_enumeration() -> Generator[None, None, None]:
+    """Keep host PipeWire enumeration out of unit tests.
+
+    get_audio_input_devices appends the machine's real PipeWire sinks when
+    pw-dump is present and a daemon answers; tests exercising PipeWire
+    sources patch the seam with the sources they want.
+    """
+    try:
+        from vocalinux.audio import capture as _capture
+    except ImportError:
+        yield
+        return
+    with patch.object(_capture, "get_system_audio_sources", return_value=[]):
+        yield
 
 
 @pytest.fixture(autouse=True)

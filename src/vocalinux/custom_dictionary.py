@@ -1,0 +1,734 @@
+"""File-backed custom dictionary support for recognition bias and transcript fixes."""
+
+import itertools
+import json
+import logging
+import os
+import re
+import shutil
+import unicodedata
+import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Iterator, Optional
+
+from .utils.paths import config_dir
+
+if TYPE_CHECKING:
+    from .ui.config_manager import ConfigManager
+
+logger = logging.getLogger(__name__)
+
+TERMS_FILENAME = "dictionary.txt"
+DEFAULT_TERMS_PATH = str(Path(config_dir()) / TERMS_FILENAME)
+# Pre-XDG default persisted by older builds; keep as a configured path.
+LEGACY_DEFAULT_TERMS_PATH = "~/.config/vocalinux/dictionary.txt"
+CORRECTIONS_FILENAME = "custom-dictionary-corrections.json"
+CORRECTIONS_VERSION = 1
+CORRECTIONS_TOP_LEVEL_KEYS = frozenset({"version", "corrections"})
+CORRECTIONS_ENTRY_KEYS = frozenset({"heard", "replacement"})
+DEFAULT_MAX_TERMS = 200
+MAX_TERM_CHARACTERS = 200
+MAX_PROMPT_CHARACTERS = 2_000
+MAX_CORRECTIONS = 500
+MAX_CORRECTION_CHARACTERS = 500
+# A terms file beyond this bound is invalid everywhere rather than read in
+# part: the read itself stays bounded and no partial dictionary can reach
+# recognition while Settings reports the file unusable.
+MAX_TERMS_FILE_BYTES = 1_048_576
+# Even within the byte bound a scanner-managed file can hold ~130k terms; the
+# dictionary is a prompt vocabulary, so yields stop here — Settings would
+# otherwise build a row per term.
+MAX_TERMS_YIELDED = 4_096
+
+
+class _DuplicateJsonKeyError(ValueError):
+    """Raised when a JSON object contains the same key more than once."""
+
+
+def _object_pairs_without_duplicates(pairs: list[tuple[Any, Any]]) -> dict[Any, Any]:
+    """Return a dict, raising if any key repeats at this object level."""
+    payload: dict[Any, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise _DuplicateJsonKeyError(key)
+        payload[key] = value
+    return payload
+
+
+def normalize_corrections(raw_entries: Any) -> list[dict[str, str]]:
+    """Validate correction entries, retaining the first case-insensitive source.
+
+    Input order is meaningful for equal-length overlapping entries.  Keeping the
+    first duplicate makes hand-edited JSON deterministic and agrees with the
+    order used when building the matching expression.
+    """
+    if not isinstance(raw_entries, list):
+        return []
+
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(raw_entries):
+        if len(entries) >= MAX_CORRECTIONS:
+            logger.warning("Ignoring corrections after the supported limit of %d", MAX_CORRECTIONS)
+            break
+        if not isinstance(entry, dict):
+            logger.warning("Ignoring correction %d: expected an object", index)
+            continue
+        heard = entry.get("heard")
+        replacement = entry.get("replacement")
+        if not isinstance(heard, str) or not isinstance(replacement, str):
+            logger.warning("Ignoring correction %d: both fields must be strings", index)
+            continue
+        heard = unicodedata.normalize("NFC", heard.strip())
+        replacement = replacement.strip()
+        if not heard or not replacement:
+            logger.warning("Ignoring correction %d: both fields must be non-empty", index)
+            continue
+        if len(heard) > MAX_CORRECTION_CHARACTERS or len(replacement) > MAX_CORRECTION_CHARACTERS:
+            logger.warning("Ignoring correction %d: phrase is too long", index)
+            continue
+        normalized_heard = heard.casefold()
+        if normalized_heard in seen:
+            logger.warning("Ignoring duplicate correction source %r", heard)
+            continue
+        seen.add(normalized_heard)
+        entries.append({"heard": heard, "replacement": replacement})
+    return entries
+
+
+def apply_corrections(text: str, entries: list[dict[str, str]]) -> str:
+    """Replace configured phrases in *text* using the custom-dictionary policy.
+
+    Sources are matched case-insensitively only when neither adjacent character
+    is a Unicode word character.  Replacements retain the exact user-provided
+    spelling.  Longer source phrases take precedence; ties retain JSON order.
+    """
+    if not text or not entries:
+        return text
+
+    normalized_text = unicodedata.normalize("NFC", text)
+    ordered = sorted(
+        entries,
+        key=lambda entry: (len(entry["heard"].split()), len(entry["heard"])),
+        reverse=True,
+    )
+    alternatives = "|".join(
+        f"(?P<correction_{index}>{re.escape(entry['heard'])})"
+        for index, entry in enumerate(ordered)
+    )
+    pattern = re.compile(
+        r"(?<![\w\u0300-\u036f])(?:" + alternatives + r")(?![\w\u0300-\u036f])",
+        re.IGNORECASE,
+    )
+
+    def replace(match: re.Match[str]) -> str:
+        """Return the replacement associated with the matched alternative."""
+        for index, entry in enumerate(ordered):
+            if match.group(f"correction_{index}") is not None:
+                return entry["replacement"]
+        return match.group(0)
+
+    corrected = pattern.sub(replace, normalized_text)
+    if corrected != text:
+        logger.debug("Applied custom dictionary corrections to final transcript")
+    return corrected
+
+
+class CustomDictionaryManager:
+    """Read, write, and live-reload the two custom dictionary file contracts."""
+
+    def __init__(
+        self, config_manager: "ConfigManager", transient_terms_path: Optional[str] = None
+    ) -> None:
+        self.config = config_manager
+        self._transient_terms_path = transient_terms_path
+
+    @property
+    def is_transient_terms(self) -> bool:
+        """Return whether a CLI session-only terms file supersedes the saved file."""
+        return self._transient_terms_path is not None
+
+    def terms_enabled(self) -> bool:
+        """Return whether custom terms should be offered to Whisper-family engines."""
+        return self.is_transient_terms or bool(self.config.get("dictionary", "enabled", False))
+
+    def set_terms_enabled(self, enabled: bool) -> bool:
+        """Persist terms enablement, rolling back the in-memory setting on failure."""
+        if self.is_transient_terms:
+            logger.info("Ignoring saved terms enablement while a CLI override is active")
+            return False
+        old_value = self.config.get("dictionary", "enabled", False)
+        if not self.config.set("dictionary", "enabled", bool(enabled)):
+            return False
+        if self.config.save_config():
+            return True
+        self.config.set("dictionary", "enabled", old_value)
+        logger.warning("Could not save custom terms enablement; keeping previous setting")
+        return False
+
+    def terms_path_text(self) -> str:
+        """Return the configured or session-only terms path without expansion.
+
+        A missing or blank saved path uses the live XDG default. Historical
+        leftover pre-XDG default strings are kept, not rewritten to XDG.
+        """
+        if self._transient_terms_path is not None:
+            return self._transient_terms_path
+        default_path = str(Path(config_dir()) / TERMS_FILENAME)
+        configured = self.config.get("dictionary", "file_path", default_path)
+        if not isinstance(configured, str) or not configured.strip():
+            return default_path
+        configured = configured.strip()
+        if (
+            self._is_legacy_default_terms_path(configured, default_path)
+            and not self._file_path_is_explicit()
+        ):
+            self._stamp_legacy_default_terms_path_explicit()
+        return configured
+
+    def _file_path_is_explicit(self) -> bool:
+        """Return whether Settings persisted the current terms path on purpose."""
+        return bool(self.config.get("dictionary", "file_path_explicit", False))
+
+    @staticmethod
+    def _is_legacy_default_terms_path(configured: str, default_path: str) -> bool:
+        """Return whether a persisted path matches the pre-XDG default string."""
+        if configured == LEGACY_DEFAULT_TERMS_PATH:
+            return True
+        try:
+            expanded_legacy = str(Path.home() / ".config" / "vocalinux" / TERMS_FILENAME)
+        except RuntimeError:
+            return False
+        return configured == expanded_legacy and expanded_legacy != default_path
+
+    def _stamp_legacy_default_terms_path_explicit(self) -> None:
+        """Best-effort persist that a leftover pre-XDG path is an explicit choice.
+
+        Historical configs cannot distinguish leftover defaults from Settings
+        picks. Keep the stored path and mark it explicit so later reads stay
+        stable. Failures leave both the path and the marker unchanged.
+        """
+        if self.is_transient_terms:
+            return
+        old_explicit = self.config.get("dictionary", "file_path_explicit", False)
+        if not self.config.set("dictionary", "file_path_explicit", True):
+            return
+        if self.config.save_config():
+            return
+        self.config.set("dictionary", "file_path_explicit", old_explicit)
+        logger.warning(
+            "Could not persist custom terms path explicit marker; keeping the configured path"
+        )
+
+    def terms_path(self) -> Optional[Path]:
+        """Return the active expanded terms path, or None when it is invalid."""
+        configured = self.terms_path_text()
+        try:
+            return Path(configured).expanduser()
+        except RuntimeError as error:
+            logger.warning("Could not expand custom terms path %r: %s", configured, error)
+            return None
+
+    def _saved_terms_path(self) -> Optional[Path]:
+        """Return the persisted terms path, ignoring any CLI override."""
+        default_path = str(Path(config_dir()) / TERMS_FILENAME)
+        configured = self.config.get("dictionary", "file_path", default_path)
+        if not isinstance(configured, str) or not configured.strip():
+            configured = default_path
+        try:
+            return Path(configured.strip()).expanduser()
+        except RuntimeError as error:
+            logger.warning("Could not expand saved terms path %r: %s", configured, error)
+            return None
+
+    def set_terms_path(self, path: str) -> bool:
+        """Persist a usable terms path, retaining the prior setting on save failure."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms path change while a CLI override is active")
+            return False
+        if not isinstance(path, str) or not path.strip():
+            logger.warning("Ignoring empty custom terms path")
+            return False
+        configured = path.strip()
+        try:
+            candidate = Path(configured).expanduser()
+            if candidate.exists() and (not candidate.is_file() or not self._is_readable(candidate)):
+                logger.warning("Ignoring unusable custom terms path %s", candidate)
+                return False
+        except (OSError, RuntimeError) as error:
+            logger.warning("Ignoring invalid custom terms path %r: %s", configured, error)
+            return False
+
+        old_value = self.config.get(
+            "dictionary", "file_path", str(Path(config_dir()) / TERMS_FILENAME)
+        )
+        old_explicit = self.config.get("dictionary", "file_path_explicit", False)
+        if not self.config.set("dictionary", "file_path", configured):
+            return False
+        if not self.config.set("dictionary", "file_path_explicit", True):
+            self.config.set("dictionary", "file_path", old_value)
+            return False
+        if self.config.save_config():
+            return True
+        self.config.set("dictionary", "file_path", old_value)
+        self.config.set("dictionary", "file_path_explicit", old_explicit)
+        logger.warning("Could not save custom terms path; keeping previous setting")
+        return False
+
+    def corrections_path(self) -> Path:
+        """Return the fixed structured corrections path.
+
+        Corrections always live under config_dir(), the location promised by
+        the file contract, so a custom or session-only terms path cannot
+        strand or duplicate them.
+        """
+        return Path(config_dir()) / CORRECTIONS_FILENAME
+
+    def get_terms(self) -> list[str]:
+        """Read the current UTF-8 line file; external edits apply next segment."""
+        path = self.terms_path()
+        if path is None:
+            return []
+        return list(self._iter_terms(path))
+
+    @staticmethod
+    def _iter_terms(path: Path) -> Iterator[str]:
+        """Yield normalized, de-duplicated terms from a bounded read.
+
+        The bounded read validates the whole file when it fits the limit, so
+        a partly invalid file yields nothing and recognition never consumes
+        terms a status check would call invalid. Files past the limit still
+        supply their complete leading lines — a scanner-managed file can grow
+        past the bound without losing its usable prefix. Iterating over the
+        decoded lines still lets callers stop processing early.
+        """
+        try:
+            with path.open("rb") as terms_file:
+                raw = terms_file.read(MAX_TERMS_FILE_BYTES + 1)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            logger.warning("Could not read custom terms file: %s", error)
+            return
+        if len(raw) > MAX_TERMS_FILE_BYTES:
+            logger.warning(
+                "Custom terms file exceeds %d bytes; reading complete leading lines only",
+                MAX_TERMS_FILE_BYTES,
+            )
+            # Keep the valid leading lines: a scanner-managed file can grow
+            # past the bound, but its usable prefix still supplies terms. A
+            # prefix with no complete line supplies nothing.
+            last_newline = raw.rfind(b"\n")
+            if last_newline == -1:
+                return
+            raw = raw[:last_newline]
+        try:
+            text = raw.decode("utf-8-sig")
+        except UnicodeError as error:
+            logger.warning("Could not read custom terms file: %s", error)
+            return
+        seen: set[str] = set()
+        for line in text.splitlines():
+            term = unicodedata.normalize("NFC", line.strip())
+            normalized_term = term.casefold()
+            if not term or term.startswith("#") or normalized_term in seen:
+                continue
+            seen.add(normalized_term)
+            yield term
+            if len(seen) >= MAX_TERMS_YIELDED:
+                logger.warning(
+                    "Custom terms file supplies more than %d terms; trailing entries ignored",
+                    MAX_TERMS_YIELDED,
+                )
+                return
+
+    def _iter_terms_for_prompt(self, path: Path, limit: int) -> Iterator[str]:
+        """Yield up to *limit* terms, streaming oversized files line by line.
+
+        Files inside the read bound keep the same whole-file-validated
+        iteration as ``_iter_terms``. Past it — where the usable-prefix
+        policy already accepts complete leading lines — the prompt only
+        collects the first *limit* terms, but every complete line in the
+        bounded window is still decoded so an invalid file supplies no
+        terms at all. Each read is capped by the remaining window, so an
+        overlong line can never pull more than the byte bound into memory.
+        """
+        if limit <= 0:
+            return
+        try:
+            oversized = path.stat().st_size > MAX_TERMS_FILE_BYTES
+        except OSError:
+            oversized = False
+        if not oversized:
+            yield from itertools.islice(self._iter_terms(path), limit)
+            return
+        terms: list[str] = []
+        seen: set[str] = set()
+        consumed = 0
+        try:
+            with path.open("rb") as terms_file:
+                index = 0
+                while True:
+                    raw_line = terms_file.readline(MAX_TERMS_FILE_BYTES + 2 - consumed)
+                    consumed += len(raw_line)
+                    if (
+                        not raw_line
+                        or consumed > MAX_TERMS_FILE_BYTES + 1
+                        or not raw_line.endswith(b"\n")
+                    ):
+                        # Lines complete inside the byte bound are usable; a
+                        # line straddling it is not a complete leading line.
+                        break
+                    try:
+                        line = raw_line.decode("utf-8-sig" if index == 0 else "utf-8")
+                    except UnicodeError as error:
+                        logger.warning("Could not read custom terms file: %s", error)
+                        return
+                    index += 1
+                    # Collection stops at the prompt limit, but every
+                    # complete leading line is still decoded: the prompt
+                    # fails closed on the same invalid files the terms
+                    # reader rejects.
+                    if len(terms) >= limit:
+                        continue
+                    term = unicodedata.normalize("NFC", line.strip())
+                    normalized_term = term.casefold()
+                    if not term or term.startswith("#") or normalized_term in seen:
+                        continue
+                    seen.add(normalized_term)
+                    terms.append(term)
+        except FileNotFoundError:
+            return
+        except OSError as error:
+            logger.warning("Could not read custom terms file: %s", error)
+            return
+        yield from terms
+
+    def save_terms(self, terms: list[str]) -> bool:
+        """Safely replace the standard terms file with normalized line entries."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms edit while a CLI override is active")
+            return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot save custom terms because the configured path is invalid")
+            return False
+        normalized_terms = self._normalize_terms(terms)
+        contents = "\n".join(normalized_terms)
+        if contents:
+            contents += "\n"
+        return self._atomic_write(path, contents)
+
+    def add_term(self, term: str) -> bool:
+        """Add one valid term without dropping or rewriting unrelated lines."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms edit while a CLI override is active")
+            return False
+        cleaned = self._single_term(term)
+        if cleaned is None:
+            return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot add custom term because the configured path is invalid")
+            return False
+        contents = self._read_terms_contents(path, missing_value="")
+        if contents is None:
+            return False
+        existing_terms = self.get_terms()
+        if any(existing.casefold() == cleaned.casefold() for existing in existing_terms):
+            logger.warning("Ignoring duplicate custom term %r", cleaned)
+            return False
+        if (
+            len(contents.encode("utf-8")) > MAX_TERMS_FILE_BYTES
+            or len(existing_terms) >= MAX_TERMS_YIELDED
+        ):
+            # A tail append would land past the read window where the new term
+            # stays invisible, while rewriting from a capped read would drop
+            # scanner-owned lines. Prepending keeps the addition readable and
+            # leaves every existing line, comment, and blank line intact.
+            return self._atomic_write(path, f"{cleaned}\n{contents}")
+        separator = "" if not contents or contents.endswith(("\n", "\r")) else "\n"
+        return self._atomic_write(path, f"{contents}{separator}{cleaned}\n")
+
+    def remove_term(self, term: str) -> bool:
+        """Remove matching term lines without changing unrelated file content."""
+        if self.is_transient_terms:
+            logger.info("Ignoring terms edit while a CLI override is active")
+            return False
+        cleaned = self._single_term(term)
+        if cleaned is None:
+            return False
+        path = self.terms_path()
+        if path is None:
+            logger.warning("Cannot remove custom term because the configured path is invalid")
+            return False
+        contents = self._read_terms_contents(path)
+        if contents is None:
+            return False
+
+        remaining_lines: list[str] = []
+        removed = False
+        for line in contents.splitlines(keepends=True):
+            line_term = unicodedata.normalize("NFC", line.rstrip("\r\n").strip())
+            if not line_term.startswith("#") and line_term.casefold() == cleaned.casefold():
+                removed = True
+                continue
+            remaining_lines.append(line)
+        if not removed:
+            logger.warning("Custom term %r was not present in the terms file", cleaned)
+            return False
+        return self._atomic_write(path, "".join(remaining_lines))
+
+    def build_initial_prompt(self) -> Optional[str]:
+        """Build the current Whisper prompt from enabled terms, if any."""
+        if not self.terms_enabled():
+            return None
+        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
+        try:
+            max_terms = max(0, int(max_terms))
+        except (TypeError, ValueError):
+            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
+            max_terms = DEFAULT_MAX_TERMS
+        path = self.terms_path()
+        if path is None:
+            return None
+        prompt_terms: list[str] = []
+        prompt_characters = 0
+        for term in self._iter_terms_for_prompt(path, max_terms):
+            additional_characters = len(term) + (1 if prompt_terms else 0)
+            if prompt_characters + additional_characters > MAX_PROMPT_CHARACTERS:
+                logger.warning("Custom terms prompt reached %d characters", MAX_PROMPT_CHARACTERS)
+                break
+            prompt_terms.append(term)
+            prompt_characters += additional_characters
+        return " ".join(prompt_terms) or None
+
+    def get_corrections(self) -> list[dict[str, str]]:
+        """Read corrections from JSON for every segment, failing closed on errors."""
+        entries = self._read_corrections(for_edit=False)
+        return entries if entries is not None else []
+
+    def get_corrections_for_edit(self) -> Optional[list[dict[str, str]]]:
+        """Return losslessly editable entries, or None for an unsafe source file.
+
+        Runtime correction reads may safely ignore malformed individual entries,
+        but a UI edit must never rewrite the file from that filtered view.
+        """
+        return self._read_corrections(for_edit=True)
+
+    def _read_corrections_text(self, path: Path) -> Optional[str]:
+        """Return corrections JSON text, or None when no file exists.
+
+        If *path* is missing, copy once from beside the terms file when a
+        leftover file from the earlier co-located contract exists there so
+        those entries survive the move to the fixed location. Copy failure
+        still returns the old text so entries are not lost.
+        """
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            pass
+        # Legacy corrections lived beside the persisted terms file. Resolve
+        # that path from the saved setting — never the CLI override — so an
+        # override's sibling is not adopted while a saved file's corrections
+        # still apply.
+        terms = self._saved_terms_path()
+        old_path = terms.parent / CORRECTIONS_FILENAME if terms is not None else None
+        if old_path is None or old_path == path or not old_path.is_file():
+            return None
+        try:
+            contents = old_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        self._atomic_write(path, contents)
+        return contents
+
+    def _read_corrections(self, *, for_edit: bool) -> Optional[list[dict[str, str]]]:
+        """Read corrections with stricter validation for write-back workflows."""
+        path = self.corrections_path()
+        try:
+            contents = self._read_corrections_text(path)
+            if contents is None:
+                return self._legacy_corrections()
+            payload = json.loads(
+                contents,
+                object_pairs_hook=_object_pairs_without_duplicates if for_edit else None,
+            )
+        except _DuplicateJsonKeyError:
+            logger.warning(
+                "Refusing to edit custom corrections because the source has duplicate JSON keys"
+            )
+            return None
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            logger.warning("Could not read custom corrections file %s: %s", path, error)
+            return None if for_edit else []
+
+        version = payload.get("version") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(version, int)
+            or isinstance(version, bool)
+            or version != CORRECTIONS_VERSION
+        ):
+            logger.warning("Ignoring custom corrections file with an unsupported schema")
+            return None if for_edit else []
+
+        raw_entries = payload.get("corrections")
+        entries = normalize_corrections(raw_entries)
+        if for_edit:
+            if set(payload) - CORRECTIONS_TOP_LEVEL_KEYS:
+                logger.warning(
+                    "Refusing to edit custom corrections because the source has extra top-level fields"
+                )
+                return None
+            if not isinstance(raw_entries, list) or len(entries) != len(raw_entries):
+                logger.warning(
+                    "Refusing to edit custom corrections because some source entries are invalid"
+                )
+                return None
+            if any(
+                not isinstance(entry, dict) or set(entry) - CORRECTIONS_ENTRY_KEYS
+                for entry in raw_entries
+            ):
+                logger.warning(
+                    "Refusing to edit custom corrections because some source entries have extra fields"
+                )
+                return None
+            if any(
+                entry.get("heard") != normalized["heard"]
+                or entry.get("replacement") != normalized["replacement"]
+                for entry, normalized in zip(raw_entries, entries)
+            ):
+                logger.warning(
+                    "Refusing to edit custom corrections because normalization would change values"
+                )
+                return None
+        return entries
+
+    def save_corrections(self, entries: list[dict[str, str]]) -> bool:
+        """Safely write validated corrections in the versioned JSON contract."""
+        payload = {
+            "version": CORRECTIONS_VERSION,
+            "corrections": normalize_corrections(entries),
+        }
+        return self._atomic_write(
+            self.corrections_path(), json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        )
+
+    def apply_corrections(self, text: str) -> str:
+        """Live-reload and apply corrections to a completed transcript."""
+        return apply_corrections(text, self.get_corrections())
+
+    def terms_status(self) -> str:
+        """Return a concise, user-facing description of the custom terms file."""
+        path = self.terms_path()
+        if path is None:
+            return "Configured terms path is invalid or cannot be expanded."
+        try:
+            if not path.exists():
+                return "Terms file does not exist yet; add a term to create it."
+            if not path.is_file():
+                return "Terms path is not a regular file."
+            if path.stat().st_size > MAX_TERMS_FILE_BYTES:
+                count = len(self.get_terms())
+                return f"{count} term(s) available from the file's leading lines only."
+            if len(list(self._iter_terms(path))) >= MAX_TERMS_YIELDED:
+                return f"Only the first {MAX_TERMS_YIELDED} terms are used."
+            path.read_text(encoding="utf-8-sig")
+        except UnicodeError:
+            return "Terms file is not valid UTF-8."
+        except OSError:
+            return "Terms file cannot be inspected."
+        return f"{len(self.get_terms())} term(s) available from the live file."
+
+    @staticmethod
+    def _is_readable(path: Path) -> bool:
+        """Return whether a path can be opened for reading."""
+        try:
+            with path.open("r", encoding="utf-8"):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _normalize_terms(terms: list[str]) -> list[str]:
+        """Return trimmed, de-duplicated terms suitable for the line-file contract."""
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for term in terms:
+            if not isinstance(term, str):
+                continue
+            cleaned = unicodedata.normalize("NFC", term.strip())
+            if len(cleaned) > MAX_TERM_CHARACTERS:
+                logger.warning(
+                    "Ignoring custom term longer than %d characters", MAX_TERM_CHARACTERS
+                )
+                continue
+            key = cleaned.casefold()
+            if not cleaned or cleaned.startswith("#") or key in seen:
+                continue
+            seen.add(key)
+            normalized.append(cleaned)
+        return normalized
+
+    @staticmethod
+    def _single_term(term: str) -> Optional[str]:
+        """Validate a single line-file term for an incremental edit."""
+        if not isinstance(term, str) or "\n" in term or "\r" in term:
+            logger.warning("Ignoring invalid custom term")
+            return None
+        normalized = CustomDictionaryManager._normalize_terms([term])
+        return normalized[0] if normalized else None
+
+    @staticmethod
+    def _read_terms_contents(path: Path, missing_value: Optional[str] = None) -> Optional[str]:
+        """Read terms text for an edit while reporting invalid source files safely."""
+        try:
+            return path.read_text(encoding="utf-8-sig")
+        except FileNotFoundError:
+            return missing_value
+        except (OSError, UnicodeError) as error:
+            logger.warning("Could not read custom terms file %s: %s", path, error)
+            return None
+
+    def _legacy_corrections(self) -> list[dict[str, str]]:
+        """Read the never-released #768 config shape without migrating it silently."""
+        raw_entries = self.config.get("text_injection", "custom_dictionary", [])
+        entries = normalize_corrections(
+            [
+                {"heard": entry.get("spoken"), "replacement": entry.get("replacement")}
+                for entry in raw_entries
+                if isinstance(entry, dict)
+            ]
+        )
+        if entries:
+            logger.warning("Using legacy config entries until %s is saved", CORRECTIONS_FILENAME)
+        return entries
+
+    @staticmethod
+    def _atomic_write(path: Path, contents: str) -> bool:
+        """Atomically write UTF-8 user data and leave the old file intact on failure."""
+        temporary_path: Optional[Path] = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
+            with temporary_path.open("x", encoding="utf-8") as temporary_file:
+                temporary_file.write(contents)
+                temporary_file.flush()
+                os.fsync(temporary_file.fileno())
+            try:
+                # A replacement keeps the existing file's permissions; a new
+                # file keeps the umask-derived mode of the temporary file.
+                shutil.copymode(path, temporary_path)
+            except OSError:
+                pass
+            os.replace(temporary_path, path)
+            return True
+        except OSError as error:
+            logger.error("Could not save custom dictionary file %s: %s", path, error)
+            if temporary_path is not None:
+                try:
+                    temporary_path.unlink(missing_ok=True)
+                except OSError as cleanup_error:
+                    logger.warning("Could not remove temporary dictionary file: %s", cleanup_error)
+            return False
