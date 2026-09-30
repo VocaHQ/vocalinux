@@ -206,6 +206,33 @@ def test_prompt_on_oversized_file_with_corrupt_prefix_still_fails_closed(
     assert manager.build_initial_prompt() is None
 
 
+def test_prompt_on_oversized_file_validates_past_the_term_limit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Invalid UTF-8 after the collected prompt terms still supplies none."""
+    config = FakeConfig({"dictionary": {"enabled": True, "max_words": 2}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        b"one\ntwo\nthree\n"
+        + b"\xff\n"
+        + b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+
+    assert manager.build_initial_prompt() is None
+    assert manager.get_terms() == []
+
+
+def test_prompt_on_oversized_file_with_single_huge_line_stays_bounded(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A first line longer than the read bound supplies no prompt terms."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+    (tmp_path / TERMS_FILENAME).write_bytes(b"x" * (MAX_TERMS_FILE_BYTES + 10) + b"\nvalid\n")
+
+    assert manager.build_initial_prompt() is None
+
+
 def test_add_term_on_oversized_file_stays_visible(tmp_path: Path, monkeypatch) -> None:
     """Prepending past the read window keeps the new term visible while
     preserving every scanner-owned line, comment, and blank line."""

@@ -2772,7 +2772,10 @@ class SettingsDialog(Gtk.Dialog):
         # Terms added in this dialog that land past the display cap; they are
         # pinned to the top so a successful save is never invisible.
         self._pinned_terms: list[str] = []
-        self._scroll_terms_to_end = False
+        # A term saved under "show all" scrolls into view once the idle-sliced
+        # rebuild finishes: (row index, displayed term) so a stale target left
+        # by a superseded refresh can never jump to the wrong row.
+        self._scroll_terms_to_row: Optional[tuple[int, str]] = None
 
         # Set content_box to speech_engine_tab for backward compatibility
         self.content_box = self.speech_engine_tab
@@ -3589,9 +3592,16 @@ class SettingsDialog(Gtk.Dialog):
         if any(existing.casefold() == term.casefold() for existing in terms_now):
             self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
             if self._show_all_terms:
-                # Appends land at the end of a list the user is scrolling;
-                # jump there once the idle-sliced rebuild finishes.
-                self._scroll_terms_to_end = True
+                # Oversized or yield-capped files prepend the term, other
+                # files append it — scroll to wherever it landed once the
+                # idle-sliced rebuild finishes. Under "show all" the rebuilt
+                # rows match terms_now one to one.
+                new_index = next(
+                    index
+                    for index, existing in enumerate(terms_now)
+                    if existing.casefold() == term.casefold()
+                )
+                self._scroll_terms_to_row = (new_index, terms_now[new_index])
             else:
                 # A term that lands past the display cap is pinned to the top
                 # of the capped list — a saved term is never invisible. The
@@ -3769,15 +3779,51 @@ class SettingsDialog(Gtk.Dialog):
             overflow_row.add(overflow_box)
             self.dictionary_terms_listbox.add(overflow_row)
         self.dictionary_terms_listbox.show_all()
-        if self._scroll_terms_to_end:
-            self._scroll_terms_to_end = False
-            adjustment = self.dictionary_terms_scroller.get_vadjustment()
+        if self._scroll_terms_to_row is not None:
+            index, expected_term = self._scroll_terms_to_row
+            self._scroll_terms_to_row = None
+            row = self.dictionary_terms_listbox.get_row_at_index(index)
+            row_text = self._term_row_text(row) if row is not None else None
+            if row_text is not None and row_text.casefold() == expected_term.casefold():
+                self._scroll_terms_row_into_view(row)
 
-            def scroll_to_end() -> bool:
-                adjustment.set_value(adjustment.get_upper())
+    @staticmethod
+    def _term_row_text(row: Gtk.ListBoxRow) -> Optional[str]:
+        """Return the term displayed by a row built by ``_make_term_row``."""
+        row_box = row.get_child()
+        if not isinstance(row_box, Gtk.Box) or not row_box.get_children():
+            return None
+        label = row_box.get_children()[0]
+        return label.get_label() if isinstance(label, Gtk.Label) else None
+
+    def _scroll_terms_row_into_view(self, row: Gtk.ListBoxRow) -> None:
+        """Bring a term row inside the terms scroller's viewport once laid out."""
+        retries_left = 20
+
+        def scroll_once() -> bool:
+            nonlocal retries_left
+            retries_left -= 1
+            if row.get_parent() is not self.dictionary_terms_listbox:
                 return False
+            allocation = row.get_allocation()
+            if allocation.height <= 0:
+                # Not laid out yet — retry briefly instead of never scrolling.
+                return retries_left > 0
+            adjustment = self.dictionary_terms_scroller.get_vadjustment()
+            page_size = adjustment.get_page_size()
+            value = adjustment.get_value()
+            if allocation.y < value:
+                adjustment.set_value(max(adjustment.get_lower(), allocation.y))
+            elif allocation.y + allocation.height > value + page_size:
+                adjustment.set_value(
+                    min(
+                        adjustment.get_upper() - page_size,
+                        allocation.y + allocation.height - page_size,
+                    )
+                )
+            return False
 
-            GLib.idle_add(scroll_to_end)
+        GLib.idle_add(scroll_once)
 
     def _refresh_dictionary_ui(self) -> None:
         """Rebuild custom dictionary controls from the live, file-backed state."""

@@ -1172,6 +1172,24 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("self._pinned_terms.append(term)", add_body)
         self.assertIn("self._pinned_terms", self.source_code)
 
+    def test_show_all_add_scrolls_to_the_landed_term(self) -> None:
+        """Under "show all" the rebuild scrolls to the new term's own row.
+
+        Oversized or yield-capped files prepend the term, so scrolling to
+        the bottom would hide it; the target is the term's index in the
+        refreshed list and is verified against the row's label.
+        """
+        add_body = self.source_code.split("def _on_dictionary_add_term")[1].split("\n    def ")[0]
+        self.assertIn("self._show_all_terms", add_body)
+        self.assertIn("self._scroll_terms_to_row", add_body)
+        self.assertIn("terms_now[new_index]", add_body)
+        finish_body = self.source_code.split("def _finish_term_rows")[1].split("\n    def ")[0]
+        self.assertIn("self._scroll_terms_to_row", finish_body)
+        self.assertIn("get_row_at_index", finish_body)
+        self.assertIn("_term_row_text", finish_body)
+        self.assertIn("_scroll_terms_row_into_view", finish_body)
+        self.assertNotIn("_scroll_terms_to_end", self.source_code)
+
     def test_application_page_has_tray_warning_toggle(self):
         self.assertIn('PreferencesGroup(title="General")', self.source_code)
         self.assertIn("self.missing_tray_warning_switch = Gtk.Switch()", self.source_code)

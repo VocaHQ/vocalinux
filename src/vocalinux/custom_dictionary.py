@@ -348,10 +348,10 @@ class CustomDictionaryManager:
         Files inside the read bound keep the same whole-file-validated
         iteration as ``_iter_terms``. Past it — where the usable-prefix
         policy already accepts complete leading lines — the prompt only
-        needs the first *limit* terms, so this stops once it has them
-        instead of decoding the whole megabyte before every transcription
-        segment. The same validity contract applies: any invalid UTF-8 or
-        incomplete line inside the usable window yields nothing at all.
+        collects the first *limit* terms, but every complete line in the
+        bounded window is still decoded so an invalid file supplies no
+        terms at all. Each read is capped by the remaining window, so an
+        overlong line can never pull more than the byte bound into memory.
         """
         if limit <= 0:
             return
@@ -367,9 +367,15 @@ class CustomDictionaryManager:
         consumed = 0
         try:
             with path.open("rb") as terms_file:
-                for index, raw_line in enumerate(terms_file):
+                index = 0
+                while True:
+                    raw_line = terms_file.readline(MAX_TERMS_FILE_BYTES + 2 - consumed)
                     consumed += len(raw_line)
-                    if consumed > MAX_TERMS_FILE_BYTES + 1 or not raw_line.endswith(b"\n"):
+                    if (
+                        not raw_line
+                        or consumed > MAX_TERMS_FILE_BYTES + 1
+                        or not raw_line.endswith(b"\n")
+                    ):
                         # Lines complete inside the byte bound are usable; a
                         # line straddling it is not a complete leading line.
                         break
@@ -378,14 +384,19 @@ class CustomDictionaryManager:
                     except UnicodeError as error:
                         logger.warning("Could not read custom terms file: %s", error)
                         return
+                    index += 1
+                    # Collection stops at the prompt limit, but every
+                    # complete leading line is still decoded: the prompt
+                    # fails closed on the same invalid files the terms
+                    # reader rejects.
+                    if len(terms) >= limit:
+                        continue
                     term = unicodedata.normalize("NFC", line.strip())
                     normalized_term = term.casefold()
                     if not term or term.startswith("#") or normalized_term in seen:
                         continue
                     seen.add(normalized_term)
                     terms.append(term)
-                    if len(terms) >= limit:
-                        break
         except FileNotFoundError:
             return
         except OSError as error:
