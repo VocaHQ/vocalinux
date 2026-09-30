@@ -94,6 +94,50 @@ class TestLoggingDialogClass(unittest.TestCase):
         """Test that dialog unregisters callback on destroy."""
         self.assertIn("unregister_callback(self._on_new_log_record)", self.source_code)
 
+    def test_response_handler_closes_on_delete_event(self) -> None:
+        """Titlebar-X (DELETE_EVENT) destroys the dialog like Close does."""
+        import ast
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        # conftest mocks gi globally, so `class LoggingDialog(Gtk.Dialog)`
+        # resolves to a Mock at import time and the real handler is
+        # unreachable. Compile the actual _on_response source node and exec
+        # it against a real Gtk namespace — this runs the true code path.
+        class _FakeGtk:
+            Dialog = object
+            ResponseType = SimpleNamespace(CLOSE=-7, DELETE_EVENT=-4, CANCEL=-6)
+
+            def __getattr__(self, _name: str) -> type:
+                return object
+
+        tree = ast.parse(self.source_code)
+        func_node = next(
+            node
+            for cls in tree.body
+            if isinstance(cls, ast.ClassDef) and cls.name == "LoggingDialog"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_on_response"
+        )
+        module = ast.Module(body=[func_node], type_ignores=[])
+        namespace: dict = {"Gtk": _FakeGtk()}
+        exec(compile(ast.fix_missing_locations(module), "<test>", "exec"), namespace)
+        handler = namespace["_on_response"]
+
+        dialog = SimpleNamespace()
+        for response_id, expected in (
+            (_FakeGtk.ResponseType.CLOSE, True),
+            (_FakeGtk.ResponseType.DELETE_EVENT, True),
+            (_FakeGtk.ResponseType.CANCEL, False),
+        ):
+            dialog.destroy = MagicMock()
+            handler(dialog, dialog, response_id)
+            self.assertIs(
+                dialog.destroy.called,
+                expected,
+                f"response {response_id}: destroy called={dialog.destroy.called}",
+            )
+
 
 class TestLoggingDialogFilterBar(unittest.TestCase):
     """Test cases for LoggingDialog filter bar."""

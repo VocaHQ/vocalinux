@@ -622,9 +622,9 @@ class LoggingDialog(Gtk.Dialog):
 
         return False  # Remove from idle queue
 
-    def _on_response(self, dialog, response_id):
+    def _on_response(self, dialog: Gtk.Dialog, response_id: int) -> None:
         """Handle dialog responses."""
-        if response_id == Gtk.ResponseType.CLOSE:
+        if response_id in (Gtk.ResponseType.CLOSE, Gtk.ResponseType.DELETE_EVENT):
             self.destroy()
 
     def _export_logs(self):
