@@ -24,7 +24,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, NamedTuple, Optional, cast
 
 import gi
 
@@ -2756,6 +2756,12 @@ class SettingsDialog(Gtk.Dialog):
         self._search_baseline = None
         self._search_previous_page = None
         self._search_previous_dictionary_pane = None
+        # Marks dictionary pane switches made by the search filter itself so a
+        # user-initiated switch can drop the saved pre-search pane.
+        self._search_pane_programmatic = False
+        # Custom-terms list stays capped for GTK row count until the user (or a
+        # term add beyond the cap) asks to render the whole file.
+        self._show_all_terms = False
 
         # Set content_box to speech_engine_tab for backward compatibility
         self.content_box = self.speech_engine_tab
@@ -3037,6 +3043,19 @@ class SettingsDialog(Gtk.Dialog):
             )
             self._search_previous_dictionary_pane = None
 
+    def _on_dictionary_pane_changed(self, *_args) -> None:
+        """Keep a manual dictionary pane switch made during an active search.
+
+        The filter auto-switches panes to reveal a match and restores the
+        pre-search pane when the query clears. If the user clicks the pane
+        switcher themselves mid-search, that newer choice wins and clearing
+        the search must not roll it back.
+        """
+        if self._search_pane_programmatic:
+            return
+        if self._search_baseline is not None:
+            self._search_previous_dictionary_pane = None
+
     def _on_search_changed(self, entry):
         """Live-filter settings rows across all pages."""
         query = entry.get_text().strip()
@@ -3082,10 +3101,14 @@ class SettingsDialog(Gtk.Dialog):
                 current = self.dictionary_management_stack.get_visible_child_name()
                 terms_visible = self.dictionary_terms_group.get_visible()
                 corrections_visible = self.dictionary_corrections_group.get_visible()
-                if current == "terms" and not terms_visible and corrections_visible:
-                    self.dictionary_management_stack.set_visible_child_name("corrections")
-                elif current == "corrections" and not corrections_visible and terms_visible:
-                    self.dictionary_management_stack.set_visible_child_name("terms")
+                self._search_pane_programmatic = True
+                try:
+                    if current == "terms" and not terms_visible and corrections_visible:
+                        self.dictionary_management_stack.set_visible_child_name("corrections")
+                    elif current == "corrections" and not corrections_visible and terms_visible:
+                        self.dictionary_management_stack.set_visible_child_name("terms")
+                finally:
+                    self._search_pane_programmatic = False
 
             if page_matches > 0:
                 if page.update_badge_label is not None:
@@ -3330,6 +3353,9 @@ class SettingsDialog(Gtk.Dialog):
         self.dictionary_management_stack.set_homogeneous(False)
         self.dictionary_management_stack.set_hexpand(True)
         self.dictionary_management_stack.set_vexpand(True)
+        self.dictionary_management_stack.connect(
+            "notify::visible-child-name", self._on_dictionary_pane_changed
+        )
 
         self.dictionary_management_switcher = Gtk.StackSwitcher()
         self.dictionary_management_switcher.set_stack(self.dictionary_management_stack)
@@ -3546,13 +3572,25 @@ class SettingsDialog(Gtk.Dialog):
             )
             return
         self.dictionary_term_entry.set_text("")
-        if any(
-            existing.casefold() == term.casefold()
-            for existing in self.dictionary_manager.get_terms()
-        ):
+        terms_now = self.dictionary_manager.get_terms()
+        if any(existing.casefold() == term.casefold() for existing in terms_now):
             self.dictionary_feedback_label.set_text("Term saved to the live terms file.")
         else:
             self.dictionary_feedback_label.set_text("That term is not valid for the terms file.")
+        if len(terms_now) > _MAX_TERMS_DISPLAYED:
+            # Appends land at the end of the file; without expanding the capped
+            # list the just-added term renders with no row and no Remove button.
+            self._show_all_terms = True
+        self._refresh_dictionary_ui()
+
+    def _on_terms_show_all(self, widget: Any) -> None:
+        """Render every term, including those past the display cap."""
+        self._show_all_terms = True
+        self._refresh_dictionary_ui()
+
+    def _on_terms_show_fewer(self, widget: Any) -> None:
+        """Collapse the terms list back to the display cap."""
+        self._show_all_terms = False
         self._refresh_dictionary_ui()
 
     def _on_dictionary_remove_term(self, widget: Any, term: str) -> None:
@@ -3660,7 +3698,8 @@ class SettingsDialog(Gtk.Dialog):
         for child in list(self.dictionary_terms_listbox.get_children()):
             self.dictionary_terms_listbox.remove(child)
         terms = self.dictionary_manager.get_terms()
-        for term in terms[:_MAX_TERMS_DISPLAYED]:
+        visible_terms = terms if self._show_all_terms else terms[:_MAX_TERMS_DISPLAYED]
+        for term in visible_terms:
             row = Gtk.ListBoxRow()
             row.set_activatable(False)
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -3682,20 +3721,26 @@ class SettingsDialog(Gtk.Dialog):
         if len(terms) > _MAX_TERMS_DISPLAYED:
             overflow_row = Gtk.ListBoxRow()
             overflow_row.set_activatable(False)
-            overflow_label = Gtk.Label(
-                label=(
-                    f"Showing the first {_MAX_TERMS_DISPLAYED} of {len(terms)} terms; "
-                    "edit the terms file to manage the rest."
-                ),
-                xalign=0,
-            )
+            overflow_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            overflow_box.set_margin_top(6)
+            overflow_box.set_margin_bottom(6)
+            overflow_box.set_margin_start(16)
+            overflow_box.set_margin_end(16)
+            if self._show_all_terms:
+                overflow_text = f"Showing all {len(terms)} terms."
+                toggle_button = Gtk.Button(label=f"Show first {_MAX_TERMS_DISPLAYED}")
+                toggle_button.connect("clicked", self._on_terms_show_fewer)
+            else:
+                overflow_text = f"Showing the first {_MAX_TERMS_DISPLAYED} of {len(terms)} terms."
+                toggle_button = Gtk.Button(label=f"Show all {len(terms)}")
+                toggle_button.connect("clicked", self._on_terms_show_all)
+            overflow_label = Gtk.Label(label=overflow_text, xalign=0)
             overflow_label.set_line_wrap(True)
-            overflow_label.set_margin_top(6)
-            overflow_label.set_margin_bottom(6)
-            overflow_label.set_margin_start(16)
-            overflow_label.set_margin_end(16)
+            overflow_label.set_hexpand(True)
             overflow_label.get_style_context().add_class("tip-label")
-            overflow_row.add(overflow_label)
+            overflow_box.pack_start(overflow_label, True, True, 0)
+            overflow_box.pack_start(toggle_button, False, False, 0)
+            overflow_row.add(overflow_box)
             self.dictionary_terms_listbox.add(overflow_row)
 
         for child in list(self.dictionary_corrections_listbox.get_children()):

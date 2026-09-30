@@ -1088,7 +1088,7 @@ class TestSettingsNavigation(unittest.TestCase):
         ]:
             self.assertIn(f'SettingsPage("{name}", "{title}"', self.source_code)
 
-    def test_custom_dictionary_page_has_both_accessible_subsections(self):
+    def test_custom_dictionary_page_has_both_accessible_subsections(self) -> None:
         """The dictionary page keeps terms and corrections distinct and accessible."""
         body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
         self.assertIn('title="Custom terms"', body)
@@ -1128,13 +1128,13 @@ class TestSettingsNavigation(unittest.TestCase):
         ]
         self.assertNotIn("dictionary_feedback_label", corrections_child)
 
-    def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self):
+    def test_custom_dictionary_cards_preserve_rounded_bottom_corners(self) -> None:
         """Transparent list backgrounds do not cover the card's lower radius."""
         self.assertIn(".preferences-group-list", self.source_code)
         self.assertIn('add_class("preferences-group-list")', self.source_code)
         self.assertIn("border-radius: 0 0 11px 11px", self.source_code)
 
-    def test_custom_dictionary_path_and_persistence_handlers_are_present(self):
+    def test_custom_dictionary_path_and_persistence_handlers_are_present(self) -> None:
         """Path chooser and failure feedback keep existing settings safe."""
         self.assertIn('Gtk.FileChooserButton(title="Choose Terms File")', self.source_code)
         self.assertIn("def _on_dictionary_terms_path_changed", self.source_code)
@@ -1143,7 +1143,7 @@ class TestSettingsNavigation(unittest.TestCase):
         self.assertIn("add_term(term)", self.source_code)
         self.assertIn("remove_term(term)", self.source_code)
 
-    def test_correction_add_validates_candidate_before_save(self):
+    def test_correction_add_validates_candidate_before_save(self) -> None:
         """Invalid replacements must be rejected before the list is rewritten."""
         body = self.source_code.split("def _on_dictionary_add_correction")[1].split("\n    def ")[0]
         self.assertIn("normalize_corrections", body)
