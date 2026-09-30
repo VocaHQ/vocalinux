@@ -432,6 +432,11 @@ def test_bin_pkgbuild_tracks_the_release_tag_like_the_source_one() -> None:
         "release.yml must pin per-arch AppImage digests for vocalinux-bin — "
         "the publish action's updpkgsums only covers the runner's arch"
     )
+    # The aarch64 AppImage lands in a later job; the -bin publish must wait
+    # for it or the digest-pin step curls a 404 mid-release.
+    assert re.search(
+        r"publish-aur-bin:[\s\S]*?needs:\s*\[[^\]]*build-appimage-arm64", release
+    ), "publish-aur-bin must need build-appimage-arm64 so the aarch64 asset exists"
 
 
 def test_the_gate_builds_the_bin_package_too() -> None:
