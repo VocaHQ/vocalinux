@@ -752,11 +752,16 @@ install_text_input_tools() {
                 print_warning "You will need to LOG OUT and back in for text injection to work with ydotool/dotool"
             fi
 
-            # Install udev rule for ydotool/dotool
-            if [ ! -f /etc/udev/rules.d/80-dotool.rules ]; then
+            # Install udev rule for ydotool/dotool — and for the evdev
+            # backend's uinput clone, which opens /dev/uinput O_RDWR, so the
+            # rule needs 0660 (0620 is write-only). Appending (not overwriting)
+            # preserves any rules the user already keeps in this file; when an
+            # older MODE=0620 line is present our later line still wins.
+            UINPUT_UDEV_RULE='KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"'
+            if ! grep -qxF "$UINPUT_UDEV_RULE" /etc/udev/rules.d/80-dotool.rules 2>/dev/null; then
                 print_info "Installing udev rule for input device access..."
-                echo 'KERNEL=="uinput", GROUP="input", MODE="0620", OPTIONS+="static_node=uinput"' \
-                    | sudo tee /etc/udev/rules.d/80-dotool.rules >/dev/null 2>&1 || print_warning "Failed to install udev rule"
+                printf '\n%s\n' "$UINPUT_UDEV_RULE" \
+                    | sudo tee -a /etc/udev/rules.d/80-dotool.rules >/dev/null 2>&1 || print_warning "Failed to install udev rule"
                 sudo udevadm control --reload 2>/dev/null || true
                 sudo udevadm trigger 2>/dev/null || true
             fi
