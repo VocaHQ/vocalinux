@@ -30,6 +30,7 @@ from typing import Any, Optional, Sequence, TextIO
 # Try to import evdev
 try:
     import evdev
+    from evdev import _uinput  # type: ignore[attr-defined]  # C extension, unseen by mypy
     from evdev import InputDevice, InputEvent, UInput, UInputError, ecodes
 
     EVDEV_AVAILABLE = True
@@ -39,6 +40,7 @@ except ImportError:
     InputEvent = None  # type: ignore
     UInput = None  # type: ignore
     UInputError = OSError  # type: ignore
+    _uinput = None  # type: ignore
     ecodes = None  # type: ignore
     EVDEV_AVAILABLE = False
 
@@ -81,6 +83,99 @@ if EVDEV_AVAILABLE:
     )
 else:
     _FORWARDED_EVENT_TYPES = frozenset()
+
+# Suffix on every uinput clone name. ``_open_keyboard_device`` uses it to
+# skip clones (also ones created by other Vocalinux processes), so it must
+# survive the kernel's uinput name-length truncation.
+_CLONE_NAME_SUFFIX = " (vocalinux)"
+
+
+def _clone_device_name(device: InputDevice) -> str:
+    """Clone name that keeps the suffix rescan checks rely on.
+
+    The kernel stores at most ``_uinput.maxnamelen - 1`` name *bytes*, so
+    the base is truncated after encoding — a long multibyte device name
+    can otherwise push the suffix past the kernel's cut, and rescan would
+    no longer recognize (and skip) the clone.
+    """
+    base = str(getattr(device, "name", "") or "")
+    limit = _uinput.maxnamelen - 1 - len(_CLONE_NAME_SUFFIX)  # suffix is ASCII
+    base = base.encode("utf-8", errors="replace")[:limit].decode("utf-8", errors="ignore")
+    return f"{base}{_CLONE_NAME_SUFFIX}"
+
+
+if EVDEV_AVAILABLE:
+
+    class _WriteOnlyUInput(UInput):
+        """A ``UInput`` built on a write-only ``/dev/uinput`` descriptor.
+
+        python-evdev opens the uinput node ``O_RDWR``, although the kernel
+        only needs write access for the setup ioctls and event injection.
+        Installs still carrying the original udev rule (``MODE=0620``,
+        write-only for the ``input`` group) therefore fail ``UInput()``
+        with EACCES and fall back to ungrabbed monitoring, where the
+        dictation shortcut also reaches the focused app. Opening the node
+        ``O_WRONLY`` keeps key suppression working there.
+        """
+
+        def __init__(
+            self,
+            events: Optional[dict[int, Sequence[int]]],
+            name: str,
+            bustype: int,
+            devnode: str = "/dev/uinput",
+        ) -> None:
+            self.name: str = name
+            self.vendor: int = 0x1
+            self.product: int = 0x1
+            self.version: int = 0x1
+            self.bustype: int = bustype
+            self.phys: str = "py-evdev-uinput"
+            self.devnode: str = devnode
+            self._verify()
+            self.fd = os.open(devnode, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                absinfo, prepared_events = self._prepare_events(events)
+            except Exception:
+                os.close(self.fd)
+                raise
+            # A failing _uinput helper destroys the device and closes fd
+            # itself (uinput.c on_err), so the calls below need no cleanup.
+            _uinput.set_phys(self.fd, self.phys)
+            for event_type, code in prepared_events:
+                _uinput.enable(self.fd, event_type, code)
+            _uinput.setup(
+                self.fd,
+                name,
+                self.vendor,
+                self.product,
+                self.version,
+                bustype,
+                absinfo,
+                ecodes.ecodes.get("FF_MAX_EFFECTS", 96),
+            )
+            _uinput.create(self.fd)
+            try:
+                self.device = self._find_device(self.fd)
+            except Exception:
+                _uinput.close(self.fd)
+                raise
+
+        # EventIO.need_write insists on O_RDWR; a write-only uinput fd
+        # still takes writes, so emit through _uinput.write directly.
+        def write(self, etype: int, code: int, value: int) -> None:
+            _uinput.write(self.fd, etype, code, value)
+
+        def write_event(self, event: InputEvent) -> None:
+            if hasattr(event, "event"):
+                event = event.event
+            _uinput.write(self.fd, event.type, event.code, event.value)
+
+        def syn(self) -> None:
+            _uinput.write(self.fd, ecodes.EV_SYN, ecodes.SYN_REPORT, 0)
+
+else:
+    _WriteOnlyUInput = None  # type: ignore
 
 # Map modifier key names to evdev key codes
 MODIFIER_KEY_CODES: dict[str, set[int]] = {
@@ -793,7 +888,7 @@ class EvdevDeviceHub:
         # to them, and grabbing is what lets the shortcut reach us at all
         # when a remapper has already grabbed the physical device.
         device_name = str(getattr(device, "name", "") or "")
-        if device_path in self._clone_paths or device_name.endswith(" (vocalinux)"):
+        if device_path in self._clone_paths or device_name.endswith(_CLONE_NAME_SUFFIX):
             logger.debug(f"Skipping Vocalinux clone device: {device_path} ({device_name})")
             try:
                 device.close()
@@ -884,11 +979,28 @@ class EvdevDeviceHub:
             }
             for event_type in (ecodes.EV_SYN, ecodes.EV_FF, ecodes.EV_REP):
                 capabilities.pop(event_type, None)
-            return UInput(
-                events=capabilities,
-                name=f"{device.name} (vocalinux)",
-                bustype=ecodes.BUS_VIRTUAL,
-            )
+            name = _clone_device_name(device)
+            try:
+                return UInput(
+                    events=capabilities,
+                    name=name,
+                    bustype=ecodes.BUS_VIRTUAL,
+                )
+            except OSError as e:
+                # evdev's _uinput.open insists on O_RDWR (its failure has no
+                # errno), but uinput only needs write access. Installs that
+                # still carry the original write-only udev rule (MODE=0620)
+                # get a working clone through an O_WRONLY fd instead of
+                # silently falling back to ungrabbed monitoring, where the
+                # dictation shortcut also reaches the focused app.
+                if e.errno not in (None, errno.EACCES, errno.EPERM):
+                    raise
+                logger.debug(f"O_RDWR /dev/uinput refused ({e}); retrying write-only")
+                return _WriteOnlyUInput(
+                    events=capabilities,
+                    name=name,
+                    bustype=ecodes.BUS_VIRTUAL,
+                )
         except (OSError, IOError, TypeError, ValueError, UInputError) as e:
             if not self._uinput_warned:
                 self._uinput_warned = True
@@ -1422,10 +1534,10 @@ class EvdevKeyboardBackend(KeyboardBackend):
             # so a press is withheld rather than dropped outright — a later
             # non-target press replays it (composition), while a release
             # after a real gesture stays consumed (the clone never saw it).
-            withheld = self._withheld_modifier.get(fd)
-            if event.value == 1 and withheld is not None:
+            withheld = self._withheld_modifier.setdefault(fd, {})
+            if event.value == 1:
                 withheld[event.code] = [event, False]
-            elif event.value == 0 and withheld is not None:
+            elif event.value == 0:
                 entry = withheld.pop(event.code, None)
                 if entry is not None and entry[1]:
                     # Replayed as composition — the clone believes the

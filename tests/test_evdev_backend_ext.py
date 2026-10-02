@@ -11,11 +11,12 @@ This module tests:
 - _monitor_devices() thread
 """
 
+import contextlib
 import errno
 import os
 import threading
 import time
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
@@ -25,6 +26,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     MODIFIER_KEY_CODES,
     EvdevDeviceHub,
     EvdevKeyboardBackend,
+    _clone_device_name,
     device_has_key,
     device_has_modifier_key,
     ecodes,
@@ -1150,20 +1152,76 @@ class TestEvdevGrabAndForwarding:
         device.grab.assert_not_called()
         assert backend.devices == []
 
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_open_falls_back_when_uinput_unavailable(self, mock_input_device, mock_uinput):
+    def test_open_falls_back_when_uinput_unavailable(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
         """Without /dev/uinput the device still works ungrabbed (keys leak)."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
         mock_input_device.return_value = device
         mock_uinput.side_effect = OSError("uinput denied")
+        mock_write_only.side_effect = OSError(errno.EACCES, "uinput denied")
 
         backend = EvdevKeyboardBackend()
         opened = backend._open_keyboard_device("/dev/input/event0")
 
         assert opened is True
+        mock_write_only.assert_called_once()
+        device.grab.assert_not_called()
+        assert backend._forwarders == {}
+        assert device in backend.devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_retries_uinput_write_only_on_eacces(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
+        """An O_RDWR refusal retries O_WRONLY so the device still gets grabbed.
+
+        Installs carrying the original write-only udev rule (MODE=0620)
+        denied evdev's O_RDWR open of /dev/uinput; a write-only descriptor
+        satisfies the kernel and keeps key suppression working.
+        """
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        mock_uinput.side_effect = OSError("could not open uinput device in write mode")
+        forwarder = MagicMock()
+        forwarder.device.path = "/dev/input/event20"
+        mock_write_only.return_value = forwarder
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        mock_write_only.assert_called_once()
+        device.grab.assert_called_once()
+        assert backend._forwarders[10] is forwarder
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_does_not_retry_write_only_on_other_oserror(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
+        """A UInput failure with a real errno is not a permission retry."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        mock_uinput.side_effect = OSError(errno.EIO, "i/o error")
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        mock_write_only.assert_not_called()
         device.grab.assert_not_called()
         assert backend._forwarders == {}
         assert device in backend.devices
@@ -1607,12 +1665,18 @@ class TestEvdevGrabAndForwarding:
         assert backend._forwarders == {}
 
     def test_monitor_forwards_survivors_during_syn_dropped(self):
-        """Mid-drop: shortcut keys are eaten, surviving other keys forwarded."""
+        """Mid-drop: a withheld modifier press replays ahead of other keys.
+
+        RIGHTALT surviving with KEY_A reads as AltGr composition, not a
+        gesture, so the withheld press is replayed before the letter —
+        the app sees exactly what the user typed.
+        """
         backend = EvdevKeyboardBackend()
         device = MagicMock()
         device.fileno.return_value = 10
         forwarder = MagicMock()
         backend._forwarders = {10: forwarder}
+        backend._forwarded_held = {10: set()}
         backend._dropped_devices = {10}
         shortcut_event = self._key_event(100, 1)  # KEY_RIGHTALT press
         other_event = self._key_event(30, 1)  # KEY_A
@@ -1643,7 +1707,33 @@ class TestEvdevGrabAndForwarding:
             backend._monitor_devices()
 
         backend._handle_key_event.assert_not_called()
-        forwarder.write_event.assert_called_once_with(other_event)
+        assert forwarder.write_event.call_args_list == [
+            call(shortcut_event),
+            call(other_event),
+        ]
+
+    def test_pure_modifier_press_withheld_lazily(self) -> None:
+        """Production path: the withheld map is created on first modifier event.
+
+        The AltGr-replay machinery only works if the per-fd map exists; it
+        used to be populated by nothing in production, so withheld presses
+        were silently dropped and composition lost its modifier.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        forwarder = MagicMock()
+        backend._forwarders[fd] = forwarder
+        backend._forwarded_held[fd] = set()
+
+        press = self._key_event(100, 1)
+        key_e = self._key_event(18, 1)
+
+        assert backend._event_is_shortcut(fd, press) is True
+        assert 100 in backend._withheld_modifier[fd]
+
+        assert backend._event_is_shortcut(fd, key_e) is False
+        forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[fd]
 
     def test_pure_modifier_press_stays_consumed(self) -> None:
         """A real PTT hold never reaches the application."""
@@ -1745,6 +1835,98 @@ class TestEvdevGrabAndForwarding:
         backend._resync_clone_key_state(fd, device)
 
         assert backend._withheld_modifier[fd] == {}
+
+
+class TestWriteOnlyUInput:
+    """The write-only clone drives the real _uinput setup on an O_WRONLY fd."""
+
+    @contextlib.contextmanager
+    def _built_uinput(self, fd: int = 42):
+        """Instantiate the real _WriteOnlyUInput with os/evdev calls mocked."""
+        from vocalinux.ui.keyboard_backends import evdev_backend as eb
+
+        device = MagicMock()
+        with (
+            patch.object(eb._WriteOnlyUInput, "_verify"),
+            patch.object(eb.os, "open", return_value=fd) as mock_open,
+            patch.object(eb._uinput, "set_phys") as set_phys,
+            patch.object(eb._uinput, "enable") as enable,
+            patch.object(eb._uinput, "setup") as setup,
+            patch.object(eb._uinput, "create") as create,
+            patch.object(eb._WriteOnlyUInput, "_find_device", return_value=device),
+            patch.object(eb._uinput, "write") as write,
+        ):
+            uinput = eb._WriteOnlyUInput(events={1: [30]}, name="kbd (vocalinux)", bustype=0x06)
+            yield uinput, mock_open, set_phys, enable, setup, create, write, device
+
+    def test_opens_wronly_and_runs_setup(self) -> None:
+        """Constructor opens O_WRONLY and performs the full uinput setup."""
+        with self._built_uinput(fd=42) as (
+            uinput,
+            mock_open,
+            set_phys,
+            enable,
+            setup,
+            create,
+            _,
+            device,
+        ):
+            mock_open.assert_called_once_with("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+            set_phys.assert_called_once_with(42, "py-evdev-uinput")
+            enable.assert_called_once_with(42, 1, 30)
+            assert setup.call_args[0][0] == 42
+            create.assert_called_once_with(42)
+            assert uinput.fd == 42
+            assert uinput.device is device
+
+    def test_emits_through_uinput_write(self) -> None:
+        """write/write_event/syn bypass need_write's O_RDWR check."""
+        import evdev as real_evdev
+
+        with self._built_uinput(fd=42) as (uinput, _, _, _, _, _, write, _):
+            uinput.write(1, 30, 1)
+            uinput.write_event(real_evdev.InputEvent(0, 0, 1, 30, 0))
+            uinput.syn()
+
+        assert write.call_args_list == [
+            call(42, 1, 30, 1),
+            call(42, 1, 30, 0),
+            call(42, 0, 0, 0),  # EV_SYN / SYN_REPORT
+        ]
+
+    def test_failed_event_prep_closes_descriptor(self) -> None:
+        """A failure before the _uinput calls still releases our fd."""
+        from vocalinux.ui.keyboard_backends import evdev_backend as eb
+
+        with (
+            patch.object(eb._WriteOnlyUInput, "_verify"),
+            patch.object(eb.os, "open", return_value=42),
+            patch.object(eb.os, "close") as mock_close,
+            patch.object(
+                eb._WriteOnlyUInput, "_prepare_events", side_effect=TypeError("bad events")
+            ),
+        ):
+            with pytest.raises(TypeError):
+                eb._WriteOnlyUInput(events=None, name="kbd (vocalinux)", bustype=0x06)
+
+        mock_close.assert_called_once_with(42)
+
+    def test_clone_device_name_caps_encoded_bytes(self) -> None:
+        """A long multibyte device name truncates by bytes, keeping the suffix."""
+        device = MagicMock()
+        device.name = "\u2328" * 40  # 3 bytes each, 120 bytes total
+
+        name = _clone_device_name(device)
+
+        assert name.endswith(" (vocalinux)")
+        assert len(name.encode("utf-8")) <= 79
+
+    def test_clone_device_name_keeps_short_names(self) -> None:
+        """Ordinary names keep the full base plus suffix."""
+        device = MagicMock()
+        device.name = "AT Translated Set 2 keyboard"
+
+        assert _clone_device_name(device) == "AT Translated Set 2 keyboard (vocalinux)"
 
 
 class TestSharedEvdevDeviceLayer:
