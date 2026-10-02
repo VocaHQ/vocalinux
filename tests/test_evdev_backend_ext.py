@@ -15,7 +15,7 @@ import errno
 import os
 import threading
 import time
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
@@ -1150,20 +1150,76 @@ class TestEvdevGrabAndForwarding:
         device.grab.assert_not_called()
         assert backend.devices == []
 
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_open_falls_back_when_uinput_unavailable(self, mock_input_device, mock_uinput):
+    def test_open_falls_back_when_uinput_unavailable(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
         """Without /dev/uinput the device still works ungrabbed (keys leak)."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
         mock_input_device.return_value = device
         mock_uinput.side_effect = OSError("uinput denied")
+        mock_write_only.side_effect = OSError(errno.EACCES, "uinput denied")
 
         backend = EvdevKeyboardBackend()
         opened = backend._open_keyboard_device("/dev/input/event0")
 
         assert opened is True
+        mock_write_only.assert_called_once()
+        device.grab.assert_not_called()
+        assert backend._forwarders == {}
+        assert device in backend.devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_retries_uinput_write_only_on_eacces(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
+        """An O_RDWR refusal retries O_WRONLY so the device still gets grabbed.
+
+        Installs carrying the original write-only udev rule (MODE=0620)
+        denied evdev's O_RDWR open of /dev/uinput; a write-only descriptor
+        satisfies the kernel and keeps key suppression working.
+        """
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        mock_uinput.side_effect = OSError("could not open uinput device in write mode")
+        forwarder = MagicMock()
+        forwarder.device.path = "/dev/input/event20"
+        mock_write_only.return_value = forwarder
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        mock_write_only.assert_called_once()
+        device.grab.assert_called_once()
+        assert backend._forwarders[10] is forwarder
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._WriteOnlyUInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    def test_open_does_not_retry_write_only_on_other_oserror(
+        self, mock_input_device, mock_uinput, mock_write_only
+    ):
+        """A UInput failure with a real errno is not a permission retry."""
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.info.bustype = 0x03
+        mock_input_device.return_value = device
+        mock_uinput.side_effect = OSError(errno.EIO, "i/o error")
+
+        backend = EvdevKeyboardBackend()
+        opened = backend._open_keyboard_device("/dev/input/event0")
+
+        assert opened is True
+        mock_write_only.assert_not_called()
         device.grab.assert_not_called()
         assert backend._forwarders == {}
         assert device in backend.devices
@@ -1607,12 +1663,18 @@ class TestEvdevGrabAndForwarding:
         assert backend._forwarders == {}
 
     def test_monitor_forwards_survivors_during_syn_dropped(self):
-        """Mid-drop: shortcut keys are eaten, surviving other keys forwarded."""
+        """Mid-drop: a withheld modifier press replays ahead of other keys.
+
+        RIGHTALT surviving with KEY_A reads as AltGr composition, not a
+        gesture, so the withheld press is replayed before the letter —
+        the app sees exactly what the user typed.
+        """
         backend = EvdevKeyboardBackend()
         device = MagicMock()
         device.fileno.return_value = 10
         forwarder = MagicMock()
         backend._forwarders = {10: forwarder}
+        backend._forwarded_held = {10: set()}
         backend._dropped_devices = {10}
         shortcut_event = self._key_event(100, 1)  # KEY_RIGHTALT press
         other_event = self._key_event(30, 1)  # KEY_A
@@ -1643,7 +1705,33 @@ class TestEvdevGrabAndForwarding:
             backend._monitor_devices()
 
         backend._handle_key_event.assert_not_called()
-        forwarder.write_event.assert_called_once_with(other_event)
+        assert forwarder.write_event.call_args_list == [
+            call(shortcut_event),
+            call(other_event),
+        ]
+
+    def test_pure_modifier_press_withheld_lazily(self) -> None:
+        """Production path: the withheld map is created on first modifier event.
+
+        The AltGr-replay machinery only works if the per-fd map exists; it
+        used to be populated by nothing in production, so withheld presses
+        were silently dropped and composition lost its modifier.
+        """
+        backend = EvdevKeyboardBackend(shortcut="right_alt+right_alt")
+        fd = 10
+        forwarder = MagicMock()
+        backend._forwarders[fd] = forwarder
+        backend._forwarded_held[fd] = set()
+
+        press = self._key_event(100, 1)
+        key_e = self._key_event(18, 1)
+
+        assert backend._event_is_shortcut(fd, press) is True
+        assert 100 in backend._withheld_modifier[fd]
+
+        assert backend._event_is_shortcut(fd, key_e) is False
+        forwarder.write_event.assert_called_once_with(press)
+        assert 100 in backend._forwarded_held[fd]
 
     def test_pure_modifier_press_stays_consumed(self) -> None:
         """A real PTT hold never reaches the application."""
