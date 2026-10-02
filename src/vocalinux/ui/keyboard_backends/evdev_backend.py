@@ -93,13 +93,15 @@ _CLONE_NAME_SUFFIX = " (vocalinux)"
 def _clone_device_name(device: InputDevice) -> str:
     """Clone name that keeps the suffix rescan checks rely on.
 
-    The kernel stores at most ``_uinput.maxnamelen - 1`` name bytes, so a
-    long physical-device name is shortened instead of letting the suffix
-    be truncated off.
+    The kernel stores at most ``_uinput.maxnamelen - 1`` name *bytes*, so
+    the base is truncated after encoding — a long multibyte device name
+    can otherwise push the suffix past the kernel's cut, and rescan would
+    no longer recognize (and skip) the clone.
     """
     base = str(getattr(device, "name", "") or "")
-    limit = _uinput.maxnamelen - 1 - len(_CLONE_NAME_SUFFIX)
-    return f"{base[:limit]}{_CLONE_NAME_SUFFIX}"
+    limit = _uinput.maxnamelen - 1 - len(_CLONE_NAME_SUFFIX)  # suffix is ASCII
+    base = base.encode("utf-8", errors="replace")[:limit].decode("utf-8", errors="ignore")
+    return f"{base}{_CLONE_NAME_SUFFIX}"
 
 
 if EVDEV_AVAILABLE:
@@ -132,10 +134,14 @@ if EVDEV_AVAILABLE:
             self.devnode: str = devnode
             self._verify()
             self.fd = os.open(devnode, os.O_WRONLY | os.O_NONBLOCK)
-            # On failure the _uinput helpers already destroyed the device
-            # and closed fd, so there is nothing to clean up here.
+            try:
+                absinfo, prepared_events = self._prepare_events(events)
+            except Exception:
+                os.close(self.fd)
+                raise
+            # A failing _uinput helper destroys the device and closes fd
+            # itself (uinput.c on_err), so the calls below need no cleanup.
             _uinput.set_phys(self.fd, self.phys)
-            absinfo, prepared_events = self._prepare_events(events)
             for event_type, code in prepared_events:
                 _uinput.enable(self.fd, event_type, code)
             _uinput.setup(
