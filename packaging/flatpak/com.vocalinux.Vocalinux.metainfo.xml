@@ -107,7 +107,7 @@
   <releases>
     <release version="0.18.0" date="2026-10-02">
       <description>
-        <p>Minor: in-app Dictation Pad for Wayland-safe dictation, PipeWire capture with system-audio sources, RemoteDesktop portal text injection, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing script hook, floating dictation overlay, audio ducking while dictating, and the dictation hotkey grabbed so it stops leaking into the focused app. This Flatpak still ships whisper.cpp only.</p>
+        <p>Minor: in-app Dictation Pad for Wayland-safe dictation, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing script hook, floating dictation overlay, audio ducking while dictating, and the dictation hotkey grabbed so it stops leaking into the focused app. PipeWire/system-audio capture and the RemoteDesktop portal injection backend are native-install paths; this Flatpak still ships whisper.cpp only.</p>
       </description>
     </release>
     <release version="0.17.0" date="2026-09-16">

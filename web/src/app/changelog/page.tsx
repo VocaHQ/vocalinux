@@ -460,7 +460,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-06-30",
+    dateModified: "2026-10-02",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

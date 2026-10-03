@@ -126,7 +126,7 @@ export default function DesktopReliabilityPage() {
     headline: "Linux Desktop Dictation Reliability",
     description:
       "Reliability improvements in Vocalinux for IBus, Wayland, suspend/resume, keyboard layout preservation, and text injection.",
-    dateModified: "2026-06-11",
+    dateModified: "2026-10-02",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
