@@ -55,6 +55,11 @@ const reliabilityFeatures = [
 
 const releaseMap = [
   {
+    version: "v0.18.0",
+    highlights:
+      "Dictation Pad for Wayland-safe dictation, evdev hotkey grab so the shortcut stops leaking into the focused app, PipeWire capture with system-audio sources, RemoteDesktop portal injection, per-language shortcuts and layout-follow, tray dictation history, TinyDiarize file transcription, opt-in D-Bus activation, custom dictionary with corrections, postprocessing hook, floating overlay, audio ducking, GNOME Wayland layout-switching fix, Vosk OOM guard, cancellable model downloads, AUR -bin AppImage package, self-hosted Flatpak remote, and snap hardware-observe.",
+  },
+  {
     version: "v0.17.0",
     highlights:
       "Faster Whisper and Parakeet engines, Speech Model simple setup, first-run system language, Snap ydotool/uinput, workflow Flatpak bundles, XWayland clipboard paste, xprop WM_CLASS instead of crashing xdotool, HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages, and PTT tray/audio cue fixes.",
@@ -121,7 +126,7 @@ export default function DesktopReliabilityPage() {
     headline: "Linux Desktop Dictation Reliability",
     description:
       "Reliability improvements in Vocalinux for IBus, Wayland, suspend/resume, keyboard layout preservation, and text injection.",
-    dateModified: "2026-06-11",
+    dateModified: "2026-10-02",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

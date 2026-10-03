@@ -20,7 +20,7 @@ The installer detects a running instance, updates in place, preserves configurat
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.17.0
+git checkout v0.18.0
 ./install.sh
 ```
 
@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.17.0, sideload `vocalinux_0.17.0_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.17.0_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
+| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.18.0, sideload `vocalinux_0.18.0_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.18.0_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -70,6 +70,52 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.0
+
+0.18.0 is a **minor** on the stable line. Default engine is still whisper.cpp. The headline fix is a grab of the dictation hotkey so the shortcut stops leaking into the app under it. Alongside it is a set of Wayland-native paths: an in-app Dictation Pad that keeps text off the fragile injection routes entirely, PipeWire capture (microphone and system audio), and a RemoteDesktop portal injection backend. Dictation gains per-language shortcuts, a tray history menu, a floating overlay, and audio ducking. Long-requested contributor work lands here too: D-Bus activation for compositor global shortcuts, bilingual language candidates, a postprocessing script hook, a custom dictionary with corrections, and file transcription with speaker labels.
+
+### 0.18 series highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Dictation Pad** | In-app window that receives dictation; you copy text out by hand, so Wayland injection quirks cannot touch it (#887, fixes #726) |
+| **Hotkey suppression** | evdev grabs the dictation shortcut and forwards everything else through a uinput clone; the key no longer types into the focused app (#873, #893, fixes #871) |
+| **PipeWire capture** | Mic and system-audio sources through the native PipeWire path, not just PortAudio (#889, #883, fixes #751, #760) |
+| **RemoteDesktop injection** | Wayland text injection through the RemoteDesktop portal, no ydotoold needed (#885, fixes #750) |
+| **Per-language shortcuts + history** | A dictation shortcut per language, layout-follow while dictating, and recent dictations in the tray menu (#880, #837, #487, fixes #805, #821) |
+| **File transcription with speakers** | `--transcribe-file` with TinyDiarize per-speaker labels, plus a transcript viewer (#884, fixes #756) |
+| **D-Bus activation** | Opt-in D-Bus methods so compositor global shortcuts (and scripts) can start dictation (#568, fixes #761) |
+| **Custom dictionary** | Terms bias plus transcript corrections from one file (#890) |
+
+### Also in v0.18.0
+
+- Postprocessing script hook pipes transcriptions through a user command (#479 by @karottenreibe)
+- Bilingual dictation: configurable second-language Whisper candidates, with deferred settings edits (#424 by @juanfradb)
+- Optional verified Orukeet model for the Parakeet engine (#840 by @Nathan-Roll1)
+- Keep recording while an idle-unloaded model reloads instead of dropping the utterance (#851 by @mre31)
+- Floating glowing dictation overlay and lowering of other audio while dictating (#516, #861)
+- `config.json` can pin the text-injection backend (#649 by @HashimAbdulaziz, fixes #476 reported by @waldemar-p)
+- Alt+Shift and Win+Space layout switching keeps working on GNOME Wayland (#876, fixes #848 reported by @hopsayer)
+- Shortcut recorder learns unmapped F19/F24 and XF86-aliased F13-F23 (#844, fixes #843 reported by @bisgardo)
+- Vosk refuses to load a model that would exceed available memory instead of tripping the OOM killer (#850 by @AmirF194, fixes #676 reported by @hopsayer)
+- IBus guard no longer flips GNOME/X11 to a US layout (#827 by @AmirF194)
+- Model downloads cancel cleanly even when the fetch stalls, and the download dialog shows verifying instead of a stalled 100% (#888, #864 by @guilhermefeitosa66, fixes #679, #863)
+- Settings: scrollable category list, Dictation Tone grayed while sound effects are off, Test Dictation textbox artifact and missing transcription fixed, speech-model follow-ups (#886, #877, #853, #836, fixes #678, #849, #847, #720, #834)
+- Update checker falls back when GitHub API rate-limits instead of erroring (#846, fixes #845 reported by @lmstud)
+- Audio: stop passing an explicit index when zero devices enumerate; View Logs closes via the titlebar X (#891, #892)
+- Snap gains `hardware-observe` so hotkeys can read input devices (#858, fixes #857 reported by @RhysU)
+- Installer installs hash-pinned dependencies and build tools, and is split into sourced modules with a generated distro package map (#856, #862, #872 by @sesav)
+- AUR `vocalinux-bin` ships the AppImage with per-arch digests; releases publish a signed self-hosted Flatpak OSTree remote; a snap-promote workflow gates stable promotion (#879, #875, #881, fixes #817, #785, #783)
+- VocaGateway can run locally from Settings → Advanced (podman-first) (#774)
+- Dependency advisories cleared and workflow tokens scoped to repository reads (#869, #865, #866 by @Mr-Sunglasses, #870)
+- Settings dialog consolidated: guard flags and widget construction in one place each (#878, fixes #793)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp plus the same engine matrix as 0.17.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0).
 
 ---
 
