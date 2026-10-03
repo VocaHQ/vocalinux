@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.18.0" date="2026-10-02">
+      <description>
+        <p>Minor: in-app Dictation Pad for Wayland-safe dictation, PipeWire capture with system-audio sources, RemoteDesktop portal text injection, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing script hook, floating dictation overlay, audio ducking while dictating, and the dictation hotkey grabbed so it stops leaking into the focused app. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.17.0" date="2026-09-16">
       <description>
         <p>Minor: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, searchable open language picker, localized punctuation commands, bare function-key push-to-talk, Snap packaging with ydotool/uinput, Flatpak bundles attached by the release workflow, and XWayland/layout paste plus settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages). This Flatpak still ships whisper.cpp only.</p>
