@@ -140,6 +140,20 @@ install-gate distro="debian:12":
     fi
     docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-test.sh"
 
+# Run the public remote-bootstrap shape against controlled local release tags.
+# The bootstrap is piped outside a checkout, then clones, hands off to, installs,
+# updates, and rejects a broken tagged tree. Ubuntu is deliberate: the six-distro
+# local gate owns package-map coverage; this gate owns revision and handoff logic.
+remote-install-gate:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
+    if [ "$COMMON" != "$PWD/.git" ]; then
+        ARGS+=(-v "$COMMON:$COMMON:ro")
+    fi
+    docker run "${ARGS[@]}" ubuntu:24.04 bash "$PWD/scripts/remote-install-test.sh"
+
 # Check that a published release verifies as published: manifest, provenance,
 # notes and PyPI digests. Needs gh, downloads nothing.
 # Usage: `just verify-release` for the latest, or `just verify-release v0.17.0`

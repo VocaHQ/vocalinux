@@ -91,6 +91,7 @@ just appimage      # build the AppImage in its pinned base image (needs docker)
 just appimage-boot fedora:42   # boot that AppImage in a distro container
 just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
+just remote-install-gate  # run piped bootstrap + tagged handoff/install in Ubuntu
 just verify-release  # check a published release as published (needs gh)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
@@ -121,7 +122,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | Installer build tools | `[dependency-groups].installer-build` exports to `requirements/installer-build.txt`. Bootstrap uses hashed wheels on new and reused venvs; source builds use these tools without build isolation. Its setuptools `>=83` floor keeps the pinned installer tools patched; do not add it to `[build-system]` (Arch). Backend rebuilds select pywhispercpp's complete hash block from `runtime.txt` via `scripts/installer_requirements.py`, with `--no-deps` so they cannot replace the runtime |
 | Installer Whisper export | Compiled universally from Python 3.11, constrained by `runtime.txt` and `installer-build.txt` to keep shared pins consistent. Uses a `+cpu` torch pin and best-match index resolution so the CPU index's older copies of shared packages do not downgrade the runtime |
-| Remote installer | After cloning, hand off to the tagged `install.sh` with the original arguments and remote venv path. The installer and its exports must come from the same revision, including when the tag predates the pinned installer |
+| Remote installer | After cloning, hand off to the tagged `install.sh` with the original arguments and remote venv path. The installer and its exports must come from the same revision, including when the tag predates the pinned installer. `just remote-install-gate` tests latest resolution, explicit tags, initial clone, fetch/update, handoff, and fail-closed tagged trees |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
 | One export per extra | Every extra in `pyproject.toml` needs a hash-pinned `requirements/<extra>.txt` (underscores become dashes), written by a `uv export` line in `just lock`. `install.sh` installs six of them, so an extra with no export is an install path with nothing pinned, which is how `[parakeet]`, `[faster_whisper]` and `[vosk]` reached users. `tests/test_dependency_exports.py` enumerates the extras and the installer's call sites rather than trusting the recipe to stay complete; `docs` is the one exemption and it carries its reason in `EXPORT_EXEMPT` |
 | Exports match the lock | `just export-check` re-runs every `uv export` line in `just lock` and fails if a committed export is behind `uv.lock`. It reads those lines out of the recipe, so an export added there is checked without touching `scripts/check_exports.py`, and it runs under `UV_OFFLINE=1`: `uv export` reads the lock and nothing else. The lint job runs it, because an export named in the recipe and never regenerated is a snapshot, not a pin. `uv pip compile` targets are out of scope by design (they resolve against live indexes) |

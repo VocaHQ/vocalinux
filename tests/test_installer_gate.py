@@ -15,6 +15,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSTALLER = REPO_ROOT / "install.sh"
 GATE_SH = REPO_ROOT / "scripts" / "install-test.sh"
+REMOTE_GATE_SH = REPO_ROOT / "scripts" / "remote-install-test.sh"
 MATRIX = REPO_ROOT / ".github" / "workflows" / "distro-test-matrix.yml"
 JUSTFILE = REPO_ROOT / "justfile"
 
@@ -37,6 +38,10 @@ def _matrix_text() -> str:
 
 def _gate_text() -> str:
     return GATE_SH.read_text(encoding="utf-8")
+
+
+def _remote_gate_text() -> str:
+    return REMOTE_GATE_SH.read_text(encoding="utf-8")
 
 
 def _without_comments(text: str) -> str:
@@ -198,6 +203,76 @@ def test_the_gate_is_runnable_locally():
     justfile = JUSTFILE.read_text(encoding="utf-8")
     assert re.search(r"^install-gate distro=", justfile, re.M)
     assert "scripts/install-test.sh" in justfile
+
+
+def test_remote_gate_runs_the_piped_bootstrap_in_ci() -> None:
+    """Remote mode needs its own job: the distro matrix deliberately enters
+    local mode by running inside an extracted project tree."""
+    block = _job_block(_matrix_text(), "remote-install")
+    assert "needs: syntax" in block
+    assert "ubuntu:24.04" in block
+    assert "scripts/remote-install-test.sh" in block
+    assert re.search(r"^\s*docker run", block, re.M)
+    assert not re.search(r"^\s*continue-on-error:\s*true", block, re.M)
+
+    remote = _without_comments(_remote_gate_text())
+    assert re.search(r"cat '\$BOOTSTRAP' \| env [\s\S]*bash -s --", remote)
+    assert "--skip-system-deps" not in remote
+
+
+def test_remote_gate_uses_distinct_real_git_tags() -> None:
+    """A bootstrap and tagged tree with identical contents could stay green
+    after handoff disappeared. Fixture markers make the selected revision and
+    execution of its installer independently observable."""
+    remote = _remote_gate_text()
+    assert re.search(r'git -C "\$REPO" archive HEAD \| tar -x', remote)
+    assert 'git clone -q --bare "$FIXTURE_TREE" "$FIXTURE_BARE"' in remote
+    assert "safe.directory '$FIXTURE_BARE'" in remote
+    assert "url.'file://$FIXTURE_BARE'.insteadOf" in remote
+    assert "REMOTE_INSTALL_TEST_MARKER_FILE" in remote
+    assert 'assert_checked_out "$LATEST_TAG"' in remote
+    assert 'assert_checked_out "$UPDATE_TAG"' in remote
+    assert 'assert_tagged_installer_ran "$LATEST_TAG"' in remote
+    assert 'assert_tagged_installer_ran "$UPDATE_TAG"' in remote
+    assert "bootstrap-fell-through" in remote
+
+
+def test_remote_gate_covers_resolution_clone_fetch_and_failures() -> None:
+    """The complete public control flow, not merely the handoff helper, is the
+    regression boundary. Network package installs remain real."""
+    remote = _without_comments(_remote_gate_text())
+    assert "REMOTE_INSTALL_TEST_API_MODE" in remote
+    assert re.search(r"run_bootstrap success --auto --skip-models", remote)
+    assert re.search(r'run_bootstrap fail [^\n]*--tag="\$UPDATE_TAG"', remote)
+    assert "expect_bootstrap_failure 3 fail 'No release tag available:'" in remote
+    assert "--tag=v0.0.0-remote-e2e-missing" in remote
+    assert re.search(r'expect_bootstrap_failure 1 fail [\s\S]*--tag="\$BROKEN_TAG"', remote)
+    assert 'rm "$FIXTURE_TREE/install.d/models.sh"' in remote
+    assert re.search(r'expect_bootstrap_failure 3 fail [\s\S]*--tag="\$BROKEN_EXPORT_TAG"', remote)
+    assert 'rm "$FIXTURE_TREE/requirements/installer-build.txt"' in remote
+    assert "exec /usr/bin/curl" in remote
+
+
+def test_remote_gate_smokes_remote_specific_outputs() -> None:
+    """Remote mode changes both the venv and activation-helper locations; an
+    exit-zero-only gate would not prove the handoff preserved either one."""
+    remote = _remote_gate_text()
+    for construct in (
+        r'VENV="\$INSTALL_HOME/\.local/share/vocalinux/venv"',
+        r'\[ -x "\$INSTALL_HOME/\.local/bin/activate-vocalinux\.sh" \]',
+        r'\[ -x "\$INSTALL_HOME/\.local/bin/vocalinux" \]',
+        r'"engine": "remote_api"',
+        r'\[ -f "\$REMOTE_CLONE/src/vocalinux/utils/model_checksums\.txt" \]',
+        r"'\$INSTALL_HOME/\.local/bin/vocalinux' --version",
+        r"^assert EVDEV_AVAILABLE or PYNPUT_AVAILABLE",
+    ):
+        assert re.search(construct, remote, re.M), f"remote smoke no longer asserts {construct}"
+
+
+def test_remote_gate_is_runnable_locally() -> None:
+    justfile = JUSTFILE.read_text(encoding="utf-8")
+    assert re.search(r"^remote-install-gate:", justfile, re.M)
+    assert "scripts/remote-install-test.sh" in justfile
 
 
 def test_the_smoke_checks_what_the_installer_claims_to_have_created():

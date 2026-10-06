@@ -90,3 +90,23 @@ jobs:
             -v "$PWD:$PWD:ro" -e REPO="$PWD" \
             "${{ matrix.container }}" \
             bash "$PWD/scripts/install-test.sh"
+
+  remote-install:
+    name: Remote tagged install on ubuntu:24.04
+    runs-on: ubuntu-latest
+    needs: syntax
+    # Two full installs exercise initial clone/latest resolution and the
+    # existing-clone fetch/explicit-tag path. Negative bootstrap cases are fast.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+      - name: Run the remote tagged-install gate
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:$PWD:ro" -e REPO="$PWD" \
+            ubuntu:24.04 \
+            bash "$PWD/scripts/remote-install-test.sh"
