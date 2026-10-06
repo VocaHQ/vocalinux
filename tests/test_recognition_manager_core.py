@@ -730,8 +730,8 @@ class TestWhispercppInitialization(unittest.TestCase):
                     return_value=(mock_backend, {}),
                 ):
                     with patch("os.path.exists", return_value=True):
-                        with patch("os.stat") as mock_stat:
-                            mock_stat.return_value.st_size = 1000000
+                        # Keep file-type checks in shutil.which working on Python 3.13.
+                        with patch("os.path.getsize", return_value=1000000):
                             # Should convert invalid model to "tiny"
                             manager = SpeechRecognitionManager(
                                 engine="whisper_cpp", model_size="invalid", defer_download=True
