@@ -32,6 +32,12 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Shortcut modes: push-to-talk default (hold Right Alt / Option); toggle available; left/right modifier distinction; configurable modifier+key combos
 - Searchable language combobox; delete unused downloaded speech models from Settings
 - Optional voice commands with localized punctuation phrases for common languages; Silero neural VAD with amplitude fallback
+- Dictation Pad: in-app window that receives dictation for manual copy-out; the Wayland-safe path that skips text injection entirely
+- Per-language dictation shortcuts, optional follow of the active keyboard layout, and a tray history menu with recent dictations
+- Floating dictation overlay, optional lowering of other audio while dictating, and custom dictionary terms bias plus transcript corrections
+- Audio capture via PipeWire (microphone and system-audio sources) or PortAudio; Wayland text injection via IBus, wtype, ydotool, or the RemoteDesktop portal
+- Opt-in D-Bus activation so compositor global shortcuts and scripts can start dictation
+- File transcription with per-speaker labels (`--transcribe-file` / tray), powered by TinyDiarize
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
 - In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available

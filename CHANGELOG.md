@@ -12,11 +12,11 @@ Release history for Vocalinux.
 
 ## Current stable
 
-**[v0.17.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0)** (2026-09-16)
+**[v0.18.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0)** (2026-10-02)
 
-Minor on the stable line: Faster Whisper and Parakeet local engines, Speech Model simple setup, first-run system language, Snap packaging with ydotool/`uinput` (GitHub `.snap` for sideload while Store review is pending), Flatpak bundles attached by the release workflow, and injection/settings/audio fixes (HDA analog mics at native layout, native GTK OS dark/light, English-only models no longer trap other languages).
+Minor on the stable line: in-app Dictation Pad for Wayland-safe dictation, PipeWire capture with system-audio sources, RemoteDesktop portal text injection, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing scripts, a floating dictation overlay, and audio ducking while dictating. The dictation hotkey is grabbed and suppressed so it stops leaking into the focused app. Packaging gains a `vocalinux-bin` AUR package, a self-hosted Flatpak remote, and a gated snap-promote workflow.
 
-See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0170) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0).
+See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0180) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0).
 
 ## Earlier versions
 
