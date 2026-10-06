@@ -15,6 +15,32 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.0",
+    date: "2026-10-02",
+    type: "stable",
+    highlights: [
+      "Dictation Pad: in-app window receives dictation and you copy text out by hand, so Wayland injection quirks cannot touch it (PR #887, fixes #726)",
+      "Hotkey suppression: evdev grabs the dictation shortcut and forwards everything else through a uinput clone; the key no longer types into the focused app, and still works when /dev/uinput is write-only (PR #873, #893, fixes #871)",
+      "PipeWire capture path with microphone and system-audio sources (PR #889, #883, fixes #751, #760)",
+      "RemoteDesktop portal text injection on Wayland, no ydotoold needed (PR #885, fixes #750)",
+      "Per-language dictation shortcuts, follow the active keyboard layout while dictating, and recent dictations in the tray menu (PR #880, #837, #487, fixes #805, #821)",
+      "File transcription with TinyDiarize per-speaker labels via --transcribe-file and the tray (PR #884, fixes #756)",
+      "Opt-in D-Bus activation so compositor global shortcuts and scripts can start dictation (PR #568, fixes #761)",
+      "Combined custom dictionary with transcript corrections, postprocessing script hook, bilingual dictation candidates (PR #890, #479, #424)",
+      "Floating glowing dictation overlay, lower other audio while dictating, keep recording while an idle model reloads (PR #516, #861, #851)",
+      "config.json can pin the text-injection backend (PR #649, fixes #476)",
+      "GNOME Wayland: Alt+Shift and Win+Space layout switching keeps working; IBus guard no longer flips GNOME/X11 to a US layout (PR #876, #827, fixes #848)",
+      "Shortcut recorder learns unmapped F19/F24 and XF86-aliased F13-F23 (PR #844, fixes #843)",
+      "Vosk refuses a model that would exceed available memory instead of tripping the OOM killer (PR #850, fixes #676)",
+      "Model downloads cancel stalled fetches; the download dialog shows verifying instead of a stalled 100% (PR #888, #864, fixes #679, #863)",
+      "Update checker falls back when GitHub API rate-limits (PR #846, fixes #845)",
+      "Settings: scrollable category list, Dictation Tone grayed while sounds are off, Test Dictation artifact and missing transcription fixed (PR #886, #877, #853, fixes #678, #849, #847, #720)",
+      "AUR vocalinux-bin ships the AppImage with per-arch digests; releases publish a signed self-hosted Flatpak remote; snap-promote workflow gates stable promotion; snap gains hardware-observe (PR #879, #875, #881, #858, fixes #817, #785, #783, #857)",
+      "Installer: hash-pinned dependencies and build tools, sourced modules, generated distro package map (PR #856, #862, #872)",
+      "Optional verified Orukeet model for Parakeet; VocaGateway runs locally from Settings > Advanced (PR #840, #774)",
+    ],
+  },
+  {
     version: "v0.17.0",
     date: "2026-09-16",
     type: "stable",
@@ -434,7 +460,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-06-30",
+    dateModified: "2026-10-02",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
