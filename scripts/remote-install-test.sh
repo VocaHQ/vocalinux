@@ -25,6 +25,10 @@ REMOTE_CLONE="$INSTALL_HOME/.local/share/vocalinux-install"
 VENV="$INSTALL_HOME/.local/share/vocalinux/venv"
 TAG_MARKER="$INSTALL_HOME/tagged-installer-marker"
 TAG_ARGS="$INSTALL_HOME/tagged-installer-args"
+BOOTSTRAP_PID="$INSTALL_HOME/bootstrap-pid"
+TAG_PID="$INSTALL_HOME/tagged-installer-pid"
+PIP_MONITOR="$WORK/pip-monitor"
+PIP_CALL_LOG="$INSTALL_HOME/pip-calls.log"
 EXPECTED_ARGS="$WORK/expected-args"
 RUN_LOG="$WORK/bootstrap.log"
 FALLTHROUGH_MARKER="$INSTALL_HOME/bootstrap-fell-through"
@@ -70,6 +74,7 @@ instrument_fixture_installer() {
 if [ "\${VOCALINUX_REMOTE_INSTALL:-no}" = yes ] && [ -n "\${REMOTE_INSTALL_TEST_MARKER_FILE:-}" ]; then
   printf '%s\n' '$marker' >"\$REMOTE_INSTALL_TEST_MARKER_FILE"
   printf '%s\\0' "\$@" >"\$REMOTE_INSTALL_TEST_ARGS_FILE"
+  printf '%s\n' "\$\$" >"\$REMOTE_INSTALL_TEST_TAG_PID_FILE"
 fi
 EOF
   tail -n +2 "$installer" >>"$rewritten"
@@ -104,7 +109,7 @@ run_bootstrap() {
     printf -v quoted_args '%s %q' "$quoted_args" "$arg"
   done
 
-  rm -f "$TAG_MARKER" "$TAG_ARGS" "$FALLTHROUGH_MARKER"
+  rm -f "$TAG_MARKER" "$TAG_ARGS" "$FALLTHROUGH_MARKER" "$BOOTSTRAP_PID" "$TAG_PID"
   printf '%s\0' "$@" "--venv-dir=$VENV" >"$EXPECTED_ARGS"
 
   # exec during handoff can close the pipe before cat finishes (SIGPIPE).
@@ -116,6 +121,10 @@ run_bootstrap() {
       REMOTE_INSTALL_TEST_LATEST_TAG='$LATEST_TAG' \
       REMOTE_INSTALL_TEST_MARKER_FILE='$TAG_MARKER' \
       REMOTE_INSTALL_TEST_ARGS_FILE='$TAG_ARGS' \
+      REMOTE_INSTALL_TEST_BOOTSTRAP_PID_FILE='$BOOTSTRAP_PID' \
+      REMOTE_INSTALL_TEST_TAG_PID_FILE='$TAG_PID' \
+      PYTHONPATH='$PIP_MONITOR' \
+      REMOTE_INSTALL_TEST_PIP_LOG='${REMOTE_INSTALL_TEST_PIP_LOG:-}' \
       bash -s --$quoted_args" 2>&1 | tee "$RUN_LOG"
 }
 
@@ -153,8 +162,15 @@ assert_tagged_installer_ran() {
     || fail "installer marker is '$(cat "$TAG_MARKER")', expected '$tag'"
   cmp -s "$EXPECTED_ARGS" "$TAG_ARGS" \
     || fail "tagged installer arguments differ from original arguments plus remote venv"
+  [ -s "$BOOTSTRAP_PID" ] && [ -s "$TAG_PID" ] && cmp -s "$BOOTSTRAP_PID" "$TAG_PID" \
+    || fail "tagged installer did not preserve the bootstrap PID through exec"
   [ ! -e "$FALLTHROUGH_MARKER" ] \
     || fail "bootstrap continued after handoff instead of execing the tagged installer"
+}
+
+assert_no_pip_calls() {
+  [ -f "$PIP_CALL_LOG" ] && [ ! -s "$PIP_CALL_LOG" ] \
+    || fail "pip ran before the missing-export failure"
 }
 
 smoke_install() {
@@ -222,13 +238,17 @@ chmod 0440 "/etc/sudoers.d/$INSTALL_USER"
 
 echo "== Build distinct tagged fixtures from this commit =="
 rm -rf "$WORK"
-mkdir -p "$FIXTURE_TREE" "$FAKE_BIN" "$RUN_DIR"
+mkdir -p "$FIXTURE_TREE" "$FAKE_BIN" "$RUN_DIR" "$PIP_MONITOR"
 git config --global --add safe.directory '*'
 git -C "$REPO" rev-parse --verify HEAD >/dev/null \
   || fail "$REPO is not a git checkout; the fixture needs this commit"
 git -C "$REPO" archive HEAD | tar -x -C "$FIXTURE_TREE"
 # Use the same committed snapshot for both sides, even with a dirty worktree.
-cp "$FIXTURE_TREE/install.sh" "$BOOTSTRAP"
+head -n1 "$FIXTURE_TREE/install.sh" >"$BOOTSTRAP"
+cat >>"$BOOTSTRAP" <<'EOF'
+printf '%s\n' "$$" >"$REMOTE_INSTALL_TEST_BOOTSTRAP_PID_FILE"
+EOF
+tail -n +2 "$FIXTURE_TREE/install.sh" >>"$BOOTSTRAP"
 git -C "$FIXTURE_TREE" init -q -b fixture
 git -C "$FIXTURE_TREE" config user.name "Vocalinux remote install gate"
 git -C "$FIXTURE_TREE" config user.email "remote-install-gate@invalid"
@@ -268,6 +288,19 @@ done
 exec /usr/bin/curl "$@"
 EOF
 chmod 0755 "$FAKE_BIN/curl" "$BOOTSTRAP"
+cat >"$PIP_MONITOR/sitecustomize.py" <<'PY'
+"""Observe pip CLI calls without replacing the real interpreter or pip."""
+import os
+import sys
+
+log = os.environ.get("REMOTE_INSTALL_TEST_PIP_LOG")
+argv = sys.orig_argv
+module_call = any(argv[i:i + 2] == ["-m", "pip"] for i in range(len(argv)))
+script_call = any(os.path.basename(arg).split(".")[0] in ("pip", "pip3") for arg in argv)
+if log and (module_call or script_call):
+    with open(log, "a", encoding="utf-8") as handle:
+        handle.write(repr(argv) + "\n")
+PY
 chown -R "$INSTALL_USER:$INSTALL_USER" "$RUN_DIR"
 chmod -R a+rX "$WORK"
 
@@ -309,10 +342,17 @@ assert_checked_out "$BROKEN_TAG"
 assert_tagged_installer_ran "$BROKEN_TAG"
 
 echo "== Fail before pip when the selected tag lacks a required export =="
-expect_bootstrap_failure 3 fail "Missing or empty pinned requirements: $REMOTE_CLONE/requirements/installer-build.txt" \
+# Prove the observer works with the same interpreter before asserting absence.
+su - "$INSTALL_USER" -c \
+  "env PYTHONPATH='$PIP_MONITOR' REMOTE_INSTALL_TEST_PIP_LOG='$PIP_CALL_LOG' '$VENV/bin/python' -m pip --version"
+[ -s "$PIP_CALL_LOG" ] || fail "pip call observer did not record the probe"
+: >"$PIP_CALL_LOG"
+REMOTE_INSTALL_TEST_PIP_LOG="$PIP_CALL_LOG" \
+  expect_bootstrap_failure 3 fail "Missing or empty pinned requirements: $REMOTE_CLONE/requirements/installer-build.txt" \
   --auto --skip-models --engine=remote_api \
   --tag="$BROKEN_EXPORT_TAG"
 assert_checked_out "$BROKEN_EXPORT_TAG"
 assert_tagged_installer_ran "$BROKEN_EXPORT_TAG"
+assert_no_pip_calls
 
 echo "PASS: remote bootstrap selects, installs, updates, and fails closed on tagged trees"
