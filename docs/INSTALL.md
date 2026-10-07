@@ -6,6 +6,7 @@ How to install Vocalinux on Linux. Short overview: [project README](../README.md
 |------|-------------|
 | [Recommended installer](#recommended-installer) | Most users |
 | [AppImage](#appimage) | Portable binary; no system package install |
+| [Distro packages (.deb / .rpm)](#distro-packages-deb--rpm) | Debian 12+, Ubuntu 24.04+, Fedora |
 | [AUR](#arch-linux-aur) | Arch / Manjaro |
 | [Flatpak](#flatpak) | Release `.flatpak` or local build |
 | [Snap](#snap-ubuntu-snap-store) | Ubuntu Snap Store (`--edge`) or GitHub `.snap` |
@@ -90,6 +91,22 @@ chmod +x Vocalinux-*-x86_64.AppImage   # or aarch64
 Built against glibc 2.35, so it starts on Debian 12+, Ubuntu 22.04+, Fedora 36+, Arch, and Tumbleweed. Older bases (RHEL 9, Debian 11, Ubuntu 20.04) are below that AppImage floor. The installer and PyPI package still require a distro that ships Python 3.11+, so they are not a workaround for Debian 11 or Ubuntu 20.04.
 
 Still needs host text-injection tools (`xdotool` on X11; `wtype` / `ydotool` / clipboard tools on Wayland). Current AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver (`vulkaninfo --summary`). Prefer the installer when you want system deps, a CUDA build, and models set up automatically.
+
+## Distro packages (.deb / .rpm)
+
+From [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases), pick the file matching your distro and CPU:
+
+```bash
+# Debian / Ubuntu (amd64; arm64 files are attached too)
+sudo apt install ./vocalinux_*_amd64.deb
+
+# Fedora (x86_64; aarch64 files are attached too)
+sudo dnf install ./vocalinux-*.x86_64.rpm
+```
+
+These are thin packages: Python, GTK, PyGObject and the AppIndicator typelib come from the distribution, and `apt`/`dnf` resolves them. `xdotool`, `wtype`, `ydotool`, the clipboard tools and IBus are `Recommends`, matching the optional feature set of the other paths. Only `pywhispercpp` and `pynput` are vendored inside the package — `pywhispercpp` is packaged by neither distro and `pynput` is missing on Fedora. They land under `/usr/lib/vocalinux/vendor`, on `sys.path` via the `vocalinux` launcher.
+
+The `.deb` needs a distro that ships Python 3.11+: Debian 12+ and Ubuntu 24.04+ (Ubuntu 22.04 ships 3.10). whisper.cpp runs on CPU in these packages — the PyPI wheel, not the Vulkan build the AppImage carries. There is no auto-update: a new release is a new package install. A PPA and a COPR are not published yet.
 
 ## Arch Linux (AUR)
 
