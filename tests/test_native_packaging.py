@@ -120,7 +120,7 @@ def _exported_versions() -> dict:
     }
 
 
-def test_vendored_set_matches_build_sh_and_runtime_pins():
+def test_vendored_set_matches_build_sh_and_runtime_pins() -> None:
     """The vendored wheels are exactly the pinned ones: anything else vendored
     drifts from the lock, anything not vendored goes undeclared."""
     build = BUILD_SH.read_text(encoding="utf-8")
@@ -137,7 +137,7 @@ def test_vendored_set_matches_build_sh_and_runtime_pins():
     ), f"build.sh vendors {vendor_names}, expected {set(VENDORED)}"
 
 
-def test_vendored_packages_are_not_declared_as_distro_deps():
+def test_vendored_packages_are_not_declared_as_distro_deps() -> None:
     """A vendored name declared as a dep either fails dependency resolution
     (pynput does not exist on Fedora) or shadows the vendored copy."""
     deb, rpm = _deb_dep_names(), _rpm_dep_names()
@@ -148,7 +148,7 @@ def test_vendored_packages_are_not_declared_as_distro_deps():
         assert name not in deb and name not in rpm
 
 
-def test_every_project_dependency_is_covered_in_both_formats():
+def test_every_project_dependency_is_covered_in_both_formats() -> None:
     """pyproject.toml dependencies must be either vendored or satisfied by a
     declared distro package in each format — a miss is an uninstallable
     package or an import failure at first run."""
@@ -166,7 +166,7 @@ def test_every_project_dependency_is_covered_in_both_formats():
     assert not missing_rpm, f"deps with no rpm coverage: {missing_rpm}"
 
 
-def test_distro_substrate_is_a_hard_dependency():
+def test_distro_substrate_is_a_hard_dependency() -> None:
     """Interpreter, PyGObject, GTK and the AppIndicator typelib are what the
     app cannot start without; the smoke proves only what the package pulls."""
     deb, rpm = _deb_dep_names(), _rpm_dep_names()
@@ -188,7 +188,7 @@ def test_distro_substrate_is_a_hard_dependency():
         assert name in rpm, f"{name} missing from rpm depends"
 
 
-def test_python_floor_matches_requires_python():
+def test_python_floor_matches_requires_python() -> None:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     floor = re.search(r">=\s*(\d+\.\d+)", data["project"]["requires-python"]).group(1)
     deps = _nfpm()["overrides"]
@@ -205,14 +205,14 @@ def test_python_floor_matches_requires_python():
     assert versions == sorted(versions, key=lambda v: tuple(map(int, v.split("."))))
 
 
-def test_host_tools_are_recommended_in_both_formats():
+def test_host_tools_are_recommended_in_both_formats() -> None:
     deps = _nfpm()["overrides"]
     for tool in HOST_TOOLS:
         assert tool in deps["deb"]["recommends"], f"{tool} missing from deb recommends"
         assert tool in deps["rpm"]["recommends"], f"{tool} missing from rpm recommends"
 
 
-def test_the_pins_are_digests_rather_than_names():
+def test_the_pins_are_digests_rather_than_names() -> None:
     for name, (kind, value, source) in _pins().items():
         if kind == "sha256":
             assert re.fullmatch(r"[0-9a-f]{64}", value), f"{name}: not a sha256"
@@ -228,7 +228,7 @@ def test_the_pins_are_digests_rather_than_names():
             raise AssertionError(f"{name}: unknown pin kind {kind!r}")
 
 
-def test_every_download_goes_through_the_verifying_helper():
+def test_every_download_goes_through_the_verifying_helper() -> None:
     """Same contract as the AppImage gate: an unpinned download is a build
     nobody can reproduce."""
     build = BUILD_SH.read_text(encoding="utf-8")
@@ -243,7 +243,7 @@ def test_every_download_goes_through_the_verifying_helper():
         assert name in pinned, f"build.sh fetches '{name}', which {PINS.name} does not pin"
 
 
-def test_docker_build_uses_the_pinned_base_image():
+def test_docker_build_uses_the_pinned_base_image() -> None:
     text = DOCKER_BUILD_SH.read_text(encoding="utf-8")
     assert 'awk \'$1=="base-image"' in text
     pins = _pins()
@@ -251,7 +251,7 @@ def test_docker_build_uses_the_pinned_base_image():
     assert pins["base-image"][1].startswith("docker.io/library/debian@sha256:")
 
 
-def test_nfpm_contents_and_launcher_env_agree():
+def test_nfpm_contents_and_launcher_env_agree() -> None:
     """The launcher and the import smoke must point at where the payload tree
     actually lands."""
     text = BUILD_SH.read_text(encoding="utf-8")
@@ -272,7 +272,7 @@ def test_nfpm_contents_and_launcher_env_agree():
     assert "deb" in packagers and "rpm" in packagers, "license placement must differ per format"
 
 
-def test_smoke_gate_covers_both_formats():
+def test_smoke_gate_covers_both_formats() -> None:
     smoke = SMOKE_SH.read_text(encoding="utf-8")
     assert "debian|ubuntu)" in smoke, "smoke must install the .deb on Debian-family images"
     assert "fedora)" in smoke, "smoke must install the .rpm on Fedora"
@@ -284,7 +284,7 @@ def test_smoke_gate_covers_both_formats():
     ), "pynput raises ImportError without a display; check presence, not import"
 
 
-def test_release_workflow_builds_and_attaches_both_arches():
+def test_release_workflow_builds_and_attaches_both_arches() -> None:
     text = RELEASE_YML.read_text(encoding="utf-8")
     assert "build-native:" in text and "build-native-arm64:" in text
     assert "ubuntu-24.04-arm" in text
@@ -293,7 +293,7 @@ def test_release_workflow_builds_and_attaches_both_arches():
     assert "dist/*.deb dist/*.rpm" in text
 
 
-def test_checksums_cover_the_packages():
+def test_checksums_cover_the_packages() -> None:
     text = RELEASE_YML.read_text(encoding="utf-8")
     publish = re.search(r"publish-checksums:.*?(?=\n  [a-z])", text, re.S)
     assert publish, "publish-checksums job not found"
@@ -307,7 +307,7 @@ def test_checksums_cover_the_packages():
     ), "SHA256SUMS must cover .deb and .rpm"
 
 
-def test_wayland_input_group_is_documented():
+def test_wayland_input_group_is_documented() -> None:
     """The packages cannot run usermod, and `sg input` only helps users
     already listed in /etc/group: a fresh Wayland install leaves the default
     hotkey dead unless the docs name the step."""
@@ -322,7 +322,7 @@ def test_wayland_input_group_is_documented():
     ), "the release notes' .deb/.rpm block must document the same step"
 
 
-def test_pipeline_gates_the_packages():
+def test_pipeline_gates_the_packages() -> None:
     text = PIPELINE_YML.read_text(encoding="utf-8")
     assert "- 'packaging/native/**'" in text, "changes filter must watch packaging/native"
     assert "native-build:" in text and "native-smoke:" in text
