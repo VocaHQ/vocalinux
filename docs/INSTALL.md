@@ -251,13 +251,24 @@ Switch engines in Settings → Speech Model (Advanced), or edit `~/.config/vocal
 
 ## Uninstall
 
+From a source checkout, `./uninstall.sh` removes the install and that checkout's `venv/`, `build/`, `dist/`, and Python bytecode. `--keep-config` and `--keep-data` leave `~/.config/vocalinux` and `~/.local/share/vocalinux` in place.
+
 ```bash
 ./uninstall.sh
 ./uninstall.sh --keep-config
 ./uninstall.sh --keep-data
 ```
 
-Manual cleanup:
+The website command downloads this same script and runs it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/uninstall.sh -o /tmp/vul.sh
+bash /tmp/vul.sh
+```
+
+That removes Vocalinux from your home directory (config, data, launchers, desktop entry, icons). It does not delete `venv/`, `build/`, `dist/`, or `.pyc` files in the directory where you ran it.
+
+From the source checkout, the equivalent by hand:
 
 ```bash
 rm -rf venv ~/.config/vocalinux ~/.local/share/vocalinux
