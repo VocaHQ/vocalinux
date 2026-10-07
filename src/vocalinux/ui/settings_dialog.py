@@ -315,6 +315,15 @@ FOLLOW_LAYOUT_ENGINES = ("whisper", "whisper_cpp", "faster_whisper", "remote_api
 #: explicit Download confirmation; every other key applies and saves as usual.
 _MODEL_SPEC_KEYS = ("engine", "model_size", "model_variant", "language")
 
+#: Engine attributes a Settings edit can update live with the same clamping
+#: ``reconfigure()`` applies — minus its recording cancel and any model
+#: reload. Every other key (all ``whispercpp_*`` load-time params) stays
+#: saved-only while a download is staged (#894).
+_LIVE_ENGINE_SETTINGS = {
+    "vad_sensitivity": lambda value: max(1, min(5, int(value))),
+    "silence_timeout": lambda value: max(0.5, min(5.0, float(value))),
+}
+
 
 def _is_following_layout(dialog: Any) -> bool:
     """Whether the follow-keyboard-layout mode is on for this dialog (#821).
@@ -8940,25 +8949,28 @@ class SettingsDialog(Gtk.Dialog):
                 }
                 # Edits outside the spec are not part of the staging: apply
                 # and persist them so VAD, timeouts and advanced params are
-                # not dropped while a download is staged. Only keys the
-                # engine takes live go to reconfigure — every whispercpp_*
-                # kwarg forces a model reload, so those load-time params stay
-                # saved-only until the Download apply or the next start.
+                # not dropped while a download is staged. Not reconfigure() —
+                # it cancels a buffered recording and waits on its worker
+                # here on the GTK thread, and every whispercpp_* kwarg forces
+                # a model reload. Live-set only what actually changed; the
+                # load-time params stay saved-only until the Download apply
+                # or the next start.
                 non_model_settings = {
                     key: value for key, value in settings.items() if key not in _MODEL_SPEC_KEYS
                 }
-                live_settings = {
-                    key: value
-                    for key, value in non_model_settings.items()
-                    if not key.startswith("whispercpp_")
-                }
                 applied = True
-                if live_settings:
+                for key, clamp in _LIVE_ENGINE_SETTINGS.items():
+                    if key not in non_model_settings:
+                        continue
                     try:
-                        self.speech_engine.reconfigure(**live_settings)
-                    except Exception as e:
-                        logger.error(f"Failed to apply non-model settings: {e}")
+                        live_value = clamp(non_model_settings[key])
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"Invalid {key} while staging: {e}")
                         applied = False
+                        continue
+                    if getattr(self.speech_engine, key, None) == live_value:
+                        continue
+                    setattr(self.speech_engine, key, live_value)
                 if non_model_settings and applied:
                     self._save_selected_settings(non_model_settings)
                 self._update_model_info()
