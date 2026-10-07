@@ -13,8 +13,8 @@
 # the original arguments plus the remote venv path, then a second run's
 # fetch+reset over the existing clone.
 #
-# The remote is a local mirror so the gate answers for *this commit*: HEAD is
-# published as an opaque tag name and VOCALINUX_REPO_URL points the bootstrap at
+# The remote is a local mirror so the gate answers for *this commit*: the tag
+# is published from HEAD's tree and VOCALINUX_REPO_URL points the bootstrap at
 # it. A gate that cloned the public repo would install the last release, not
 # the checkout under test. The tag's own install.sh is the bootstrap: the #701
 # guardrail allows the bootstrap to come from main, and this commit's copy is
@@ -25,7 +25,7 @@
 # selection under test). Not --skip-system-deps: the per-distro package
 # installation is the point.
 #
-# Fail closed: after the install, the clone's HEAD must equal the tag commit —
+# Fail closed: after the install, the clone's tree must equal HEAD's tree —
 # the #701 guardrail that installer, sourced modules and requirement exports
 # all come from the selected tag is only as strong as that equality.
 set -euo pipefail
@@ -109,16 +109,26 @@ id -u "$INSTALL_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$INSTALL_USER"
 echo "$INSTALL_USER ALL=(ALL) NOPASSWD: ALL" >"/etc/sudoers.d/$INSTALL_USER"
 chmod 0440 "/etc/sudoers.d/$INSTALL_USER"
 
-echo "== Publish HEAD as tag $GATE_TAG in a local mirror =="
+echo "== Publish HEAD's tree as tag $GATE_TAG in a local mirror =="
 # safe.directory: the mounted checkout and, for a linked worktree, its mounted
 # common gitdir are owned by another uid.
 git config --global --add safe.directory '*'
-EXPECTED_SHA="$(git -C "$REPO" rev-parse HEAD)" \
+# CI checks out with fetch-depth 1, and a shallow boundary commit can neither
+# be pushed nor fetched into a ref ("shallow update not allowed"). The tag
+# therefore carries an orphan commit built from HEAD's tree: a root commit is
+# not a shallow root, and tree equality below still binds the gate to this
+# commit's exact contents.
+SOURCE_TREE="$(git -C "$REPO" rev-parse 'HEAD^{tree}')" \
   || fail "$REPO is not a git checkout; the gate publishes the tag from git"
+git clone --quiet --depth 1 "file://$REPO" /tmp/gate-source
+# commit-tree needs an identity the bare container does not carry.
+EXPECTED_SHA="$(GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@local \
+  GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@local \
+  git -C /tmp/gate-source commit-tree "$SOURCE_TREE" -m "remote-install gate")"
 git init --bare "$MIRROR" >/dev/null
-git -C "$REPO" push "$MIRROR" "HEAD:refs/tags/$GATE_TAG" >/dev/null
-[ "$(git -C "$MIRROR" rev-parse "$GATE_TAG^{commit}")" = "$EXPECTED_SHA" ] \
-  || fail "the mirror's $GATE_TAG does not resolve to HEAD"
+git -C /tmp/gate-source push "$MIRROR" "$EXPECTED_SHA:refs/tags/$GATE_TAG" >/dev/null
+[ "$(git -C "$MIRROR" rev-parse "$GATE_TAG^{tree}")" = "$SOURCE_TREE" ] \
+  || fail "the mirror's $GATE_TAG does not carry HEAD's tree"
 # The installer clones as $INSTALL_USER, and git refuses a root-owned remote
 # for anyone else as "dubious ownership".
 chown -R "$INSTALL_USER:$INSTALL_USER" "$MIRROR"
@@ -139,13 +149,18 @@ run_remote_install() {
 assert_remote_install() {
   echo "== Assert: the clone is exactly the selected tag =="
   [ -d "$CLONE_DIR/.git" ] || fail "remote install left no clone at $CLONE_DIR"
-  local cloned_sha
+  local cloned_sha cloned_tree
   cloned_sha="$(git -C "$CLONE_DIR" rev-parse HEAD)" \
     || fail "the clone at $CLONE_DIR is not a git checkout"
   [ "$cloned_sha" = "$EXPECTED_SHA" ] || fail \
     "installed from the wrong revision: clone HEAD is $cloned_sha, $GATE_TAG is $EXPECTED_SHA"
   [ "$(git -C "$CLONE_DIR" rev-parse "$GATE_TAG^{commit}" 2>/dev/null || true)" = "$EXPECTED_SHA" ] \
     || fail "the clone does not carry the selected tag ref $GATE_TAG"
+  # The tag's commit is an orphan; tree equality is the check that installer,
+  # modules and exports are this commit's files and not a neighbour revision's.
+  cloned_tree="$(git -C "$CLONE_DIR" rev-parse 'HEAD^{tree}')"
+  [ "$cloned_tree" = "$SOURCE_TREE" ] || fail \
+    "the clone's tree $cloned_tree is not HEAD's tree $SOURCE_TREE"
 
   # The artifacts the #701 guardrail names: the tagged installer, its sourced
   # modules, and the exports pip installs with --require-hashes.
