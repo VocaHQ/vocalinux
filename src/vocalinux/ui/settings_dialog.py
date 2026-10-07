@@ -58,6 +58,14 @@ from ..utils.model_choice import (
     size_for_priority,
 )
 from ..utils.paths import models_dir  # noqa: E402
+from ..utils.proxy import (  # noqa: E402
+    DEFAULT_PROXY_MODE,
+    DEFAULT_PROXY_PROTOCOL,
+    default_port_for_protocol,
+    normalize_proxy_mode,
+    normalize_proxy_protocol,
+    requests_proxies,
+)
 from ..utils.system_language import (  # noqa: E402
     LANGUAGE_FOLLOWS_LAYOUT,
     language_for_active_layout,
@@ -2707,6 +2715,7 @@ class SettingsDialog(Gtk.Dialog):
             SettingsPage("application", "Application", "preferences-system-symbolic"),
             SettingsPage("advanced", "Advanced", "applications-engineering-symbolic"),
             SettingsPage("post-processing", "Post-Processing", "utilities-terminal-symbolic"),
+            SettingsPage("proxy", "Proxy", "preferences-system-network-proxy-symbolic"),
             SettingsPage("about", "About", "help-about-symbolic"),
         ]
         pages_by_name = {page.name: page for page in self._pages}
@@ -2722,6 +2731,7 @@ class SettingsDialog(Gtk.Dialog):
         self.general_tab = pages_by_name["application"].box
         self.advanced_tab = pages_by_name["advanced"].box
         self.post_processing_tab = pages_by_name["post-processing"].box
+        self.proxy_tab = pages_by_name["proxy"].box
         self.about_tab = pages_by_name["about"].box
 
         # Each page is wrapped in a vertical ScrolledWindow: without one, the
@@ -2817,6 +2827,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_general_section()
         self._build_advanced_section()
         self._build_post_processing_section()
+        self._build_proxy_section()
         self._build_about_section()
         self._build_sidebar_footer(sidebar_box)
 
@@ -6209,6 +6220,249 @@ class SettingsDialog(Gtk.Dialog):
         _set_accessible_name(button, tooltip)
         button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
         return button
+
+    def _build_proxy_section(self) -> None:
+        """Build the Proxy page: Off / System / Manual modes (#655).
+
+        The mode applies to model downloads and update checks. The manual
+        rows stay visible but insensitive unless the mode is Manual.
+        """
+        self.proxy_group = PreferencesGroup(
+            title="Proxy",
+            description=(
+                "Route model downloads and update checks through a proxy. "
+                "Useful in regions where the model hosts are unreachable."
+            ),
+            keywords=("proxy", "network", "socks5", "https"),
+        )
+
+        self.proxy_mode_combo = Gtk.ComboBoxText()
+        _style_combo(self.proxy_mode_combo)
+        _combo_chrome(
+            self.proxy_mode_combo,
+            tooltip="How Vocalinux connects to model hosts and update checks",
+        )
+        self.proxy_mode_combo.append("off", "Off")
+        self.proxy_mode_combo.append("system", "System")
+        self.proxy_mode_combo.append("manual", "Manual")
+        mode_row = PreferenceRow(
+            title="Mode",
+            subtitle=(
+                "System uses the *_proxy environment variables and the GNOME "
+                "proxy settings; Manual uses the server configured below"
+            ),
+            widget=self.proxy_mode_combo,
+            keywords=("mode",),
+        )
+        self.proxy_group.add_row(mode_row)
+        self.proxy_tab.pack_start(self.proxy_group, False, False, 0)
+
+        self.proxy_manual_group = PreferencesGroup(
+            title="Manual Proxy",
+            description="Applied when the mode above is set to Manual.",
+        )
+
+        self.proxy_protocol_combo = Gtk.ComboBoxText()
+        _style_combo(self.proxy_protocol_combo)
+        _combo_chrome(
+            self.proxy_protocol_combo,
+            tooltip="SOCKS5 or an HTTPS (HTTP CONNECT) proxy",
+        )
+        self.proxy_protocol_combo.append("socks5", "SOCKS5")
+        self.proxy_protocol_combo.append("https", "HTTPS")
+        protocol_row = PreferenceRow(
+            title="Protocol",
+            subtitle="SOCKS5 or an HTTPS (HTTP CONNECT) proxy",
+            widget=self.proxy_protocol_combo,
+            keywords=("protocol", "socks5", "https"),
+        )
+        self.proxy_manual_group.add_row(protocol_row)
+
+        self.proxy_host_entry = Gtk.Entry()
+        self.proxy_host_entry.set_placeholder_text("127.0.0.1 or proxy.example.com")
+        self.proxy_host_entry.set_tooltip_text("Proxy server hostname or IP address")
+        self.proxy_host_entry.set_size_request(_CONTROL_WIDTH, -1)
+        host_row = PreferenceRow(
+            title="Host",
+            subtitle="Proxy server hostname or IP address",
+            widget=self.proxy_host_entry,
+            keywords=("host", "server"),
+        )
+        self.proxy_manual_group.add_row(host_row)
+
+        self.proxy_port_spin = _new_spin(
+            1,
+            65535,
+            1,
+            0,
+            tooltip="Proxy server port (SOCKS5 default 1080, HTTPS often 8080)",
+        )
+        port_row = PreferenceRow(
+            title="Port",
+            subtitle="Proxy server port",
+            widget=self.proxy_port_spin,
+            keywords=("port",),
+        )
+        self.proxy_manual_group.add_row(port_row)
+
+        self.proxy_username_entry = Gtk.Entry()
+        self.proxy_username_entry.set_placeholder_text("(optional)")
+        self.proxy_username_entry.set_tooltip_text("Proxy username (optional)")
+        self.proxy_username_entry.set_size_request(_CONTROL_WIDTH, -1)
+        username_row = PreferenceRow(
+            title="Username",
+            subtitle="Proxy username (optional)",
+            widget=self.proxy_username_entry,
+            keywords=("username", "auth"),
+        )
+        self.proxy_manual_group.add_row(username_row)
+
+        self.proxy_password_entry = Gtk.Entry()
+        self.proxy_password_entry.set_placeholder_text("(optional)")
+        self.proxy_password_entry.set_visibility(False)
+        self.proxy_password_entry.set_tooltip_text(
+            "Proxy password (optional); stored in config.json in plaintext, "
+            "the same as the remote API key"
+        )
+        self.proxy_password_entry.set_size_request(_CONTROL_WIDTH, -1)
+        password_row = PreferenceRow(
+            title="Password",
+            subtitle="Proxy password (optional)",
+            widget=self.proxy_password_entry,
+            keywords=("password", "auth"),
+        )
+        self.proxy_manual_group.add_row(password_row)
+
+        self.proxy_test_btn = Gtk.Button(label="Test Connection")
+        self.proxy_test_btn.set_tooltip_text(
+            "Check that the Hugging Face model host is reachable with these settings"
+        )
+        self.proxy_test_btn.connect("clicked", self._on_test_proxy_connection)
+        test_row = PreferenceRow(
+            title="Connection Test",
+            subtitle="Verify the Hugging Face model host is reachable",
+            widget=self.proxy_test_btn,
+            keywords=("test", "connection"),
+        )
+        self.proxy_manual_group.add_row(test_row)
+        self.proxy_tab.pack_start(self.proxy_manual_group, False, False, 0)
+
+        # Status line under the groups, matching the remote server section
+        self.proxy_status_label = Gtk.Label(label="", use_markup=True, xalign=0)
+        self.proxy_status_label.set_margin_start(16)
+        self.proxy_status_label.set_margin_top(4)
+        self.proxy_status_label.get_style_context().add_class("status-info")
+        self.proxy_tab.pack_start(self.proxy_status_label, False, False, 0)
+
+        # Load saved values into the widgets
+        proxy_settings = self.config_manager.get_settings().get("proxy", {})
+        saved_mode = normalize_proxy_mode(proxy_settings.get("mode"))
+        if not self.proxy_mode_combo.set_active_id(saved_mode):
+            self.proxy_mode_combo.set_active_id(DEFAULT_PROXY_MODE)
+        saved_protocol = normalize_proxy_protocol(proxy_settings.get("protocol"))
+        if not self.proxy_protocol_combo.set_active_id(saved_protocol):
+            self.proxy_protocol_combo.set_active_id(DEFAULT_PROXY_PROTOCOL)
+        saved_host = proxy_settings.get("host", "")
+        if saved_host:
+            self.proxy_host_entry.set_text(str(saved_host))
+        try:
+            saved_port = int(proxy_settings.get("port") or 0)
+        except (TypeError, ValueError):
+            saved_port = 0
+        if saved_port < 1 or saved_port > 65535:
+            saved_port = default_port_for_protocol(saved_protocol)
+        self.proxy_port_spin.set_value(saved_port)
+        saved_username = proxy_settings.get("username", "")
+        if saved_username:
+            self.proxy_username_entry.set_text(str(saved_username))
+        saved_password = proxy_settings.get("password", "")
+        if saved_password:
+            self.proxy_password_entry.set_text(str(saved_password))
+
+        self.proxy_mode_combo.connect("changed", self._on_proxy_mode_changed)
+        self.proxy_protocol_combo.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_host_entry.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_port_spin.connect("value-changed", self._on_proxy_settings_changed)
+        self.proxy_username_entry.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_password_entry.connect("changed", self._on_proxy_settings_changed)
+
+        self._update_proxy_sensitivity()
+
+    def _on_proxy_mode_changed(self, widget: Gtk.Widget) -> None:
+        """Persist the proxy mode and gate the manual rows on it."""
+        if _handlers_suppressed(self):
+            return
+        self._save_proxy_settings()
+        self._update_proxy_sensitivity()
+
+    def _on_proxy_settings_changed(self, widget: Gtk.Widget) -> None:
+        """Persist the manual proxy fields as they are edited."""
+        if _handlers_suppressed(self):
+            return
+        self._save_proxy_settings()
+
+    def _save_proxy_settings(self) -> None:
+        """Write the proxy widgets to the ``proxy`` config section."""
+        self.config_manager.set(
+            "proxy", "mode", self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE
+        )
+        self.config_manager.set(
+            "proxy",
+            "protocol",
+            self.proxy_protocol_combo.get_active_id() or DEFAULT_PROXY_PROTOCOL,
+        )
+        self.config_manager.set("proxy", "host", self.proxy_host_entry.get_text().strip())
+        self.config_manager.set("proxy", "port", int(self.proxy_port_spin.get_value()))
+        self.config_manager.set("proxy", "username", self.proxy_username_entry.get_text().strip())
+        self.config_manager.set("proxy", "password", self.proxy_password_entry.get_text())
+        self.config_manager.save_config()
+
+    def _update_proxy_sensitivity(self) -> None:
+        """Gray out the manual fields unless the mode is Manual."""
+        manual = (self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE) == "manual"
+        self.proxy_manual_group.set_sensitive(manual)
+
+    def _on_test_proxy_connection(self, widget: Gtk.Widget) -> None:
+        """Fetch the Hugging Face model repo through the configured proxy."""
+        self.proxy_test_btn.set_sensitive(False)
+        self.proxy_test_btn.set_label("Testing...")
+        self.proxy_status_label.set_markup("<i>Connecting...</i>")
+
+        config = {
+            "mode": self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE,
+            "protocol": self.proxy_protocol_combo.get_active_id() or DEFAULT_PROXY_PROTOCOL,
+            "host": self.proxy_host_entry.get_text().strip(),
+            "port": int(self.proxy_port_spin.get_value()),
+            "username": self.proxy_username_entry.get_text().strip(),
+            "password": self.proxy_password_entry.get_text(),
+        }
+
+        def test_connection(config: dict = config) -> None:
+            try:
+                import requests
+
+                response = requests.get(
+                    "https://huggingface.co/api/models/ggerganov/whisper.cpp",
+                    headers={"User-Agent": f"vocalinux/{__version__}"},
+                    timeout=10,
+                    proxies=requests_proxies(config),
+                )
+                GLib.idle_add(
+                    self.proxy_status_label.set_markup,
+                    "<span foreground='#26a269'>✓ huggingface.co reachable "
+                    f"(status={response.status_code})</span>",
+                )
+            except Exception as e:
+                error_msg = str(e)[:80]
+                GLib.idle_add(
+                    self.proxy_status_label.set_markup,
+                    f"<span foreground='#c01c28'>✗ Connection failed: {error_msg}</span>",
+                )
+
+            GLib.idle_add(self.proxy_test_btn.set_sensitive, True)
+            GLib.idle_add(self.proxy_test_btn.set_label, "Test Connection")
+
+        threading.Thread(target=test_connection, daemon=True).start()
 
     def _build_about_section(self):
         """Build the About page using the same PreferenceRow cards as other pages."""
