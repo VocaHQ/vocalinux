@@ -64,13 +64,21 @@ jobs:
           python -m build
           ls -la dist/
 
-      # glslc is built from the pinned shaderc commit inside the container -
-      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      # glslc and the pywhispercpp Vulkan rebuild are native artifacts. Neither
+      # depends on this commit: the id script keys them to the base image,
+      # tool_checksums.txt, and the pywhispercpp pin.
+      - name: AppImage native cache id
+        id: native-cache
+        run: |
+          set -euo pipefail
+          id="$(bash packaging/appimage/native-cache-id.sh)"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       - name: Cache AppImage build tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/vocalinux-appimage
-          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+          key: appimage-native-${{ runner.arch }}-${{ steps.native-cache.outputs.id }}
 
       - name: Build AppImage (x86_64)
         env:
@@ -275,13 +283,21 @@ jobs:
           python -m build
           ls -la dist/
 
-      # glslc is built from the pinned shaderc commit inside the container -
-      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      # glslc and the pywhispercpp Vulkan rebuild are native artifacts. Neither
+      # depends on this commit: the id script keys them to the base image,
+      # tool_checksums.txt, and the pywhispercpp pin.
+      - name: AppImage native cache id
+        id: native-cache
+        run: |
+          set -euo pipefail
+          id="$(bash packaging/appimage/native-cache-id.sh)"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       - name: Cache AppImage build tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/vocalinux-appimage
-          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+          key: appimage-native-${{ runner.arch }}-${{ steps.native-cache.outputs.id }}
 
       - name: Build AppImage (aarch64)
         env:
