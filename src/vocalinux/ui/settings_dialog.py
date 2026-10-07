@@ -8881,7 +8881,7 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_title.show()
         self.model_info_subtitle.show()
 
-    def _auto_apply_settings(self, allow_download: bool = False):
+    def _auto_apply_settings(self, allow_download: bool = False) -> None:
         """Automatically apply settings when changed.
 
         A picker change stages a model spec; it never confirms a download.
@@ -8938,15 +8938,28 @@ class SettingsDialog(Gtk.Dialog):
                     "model_variant": settings.get("model_variant", ""),
                     "language": self.language,
                 }
-                # Edits outside the spec are not part of the staging: persist
-                # them so VAD, timeouts and advanced params are not dropped
-                # while a download is staged. No engine call — a reconfigure
-                # reloads the model whenever whispercpp_* keys are present,
-                # which is exactly the work staging exists to defer.
+                # Edits outside the spec are not part of the staging: apply
+                # and persist them so VAD, timeouts and advanced params are
+                # not dropped while a download is staged. Only keys the
+                # engine takes live go to reconfigure — every whispercpp_*
+                # kwarg forces a model reload, so those load-time params stay
+                # saved-only until the Download apply or the next start.
                 non_model_settings = {
                     key: value for key, value in settings.items() if key not in _MODEL_SPEC_KEYS
                 }
-                if non_model_settings:
+                live_settings = {
+                    key: value
+                    for key, value in non_model_settings.items()
+                    if not key.startswith("whispercpp_")
+                }
+                applied = True
+                if live_settings:
+                    try:
+                        self.speech_engine.reconfigure(**live_settings)
+                    except Exception as e:
+                        logger.error(f"Failed to apply non-model settings: {e}")
+                        applied = False
+                if non_model_settings and applied:
                     self._save_selected_settings(non_model_settings)
                 self._update_model_info()
                 return
