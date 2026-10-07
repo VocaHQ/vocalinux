@@ -261,6 +261,10 @@ def test_nfpm_contents_and_launcher_env_agree():
         assert "/usr/lib/vocalinux/vendor" in where
     assert "/usr/bin/vocalinux" in text and "/usr/bin/vocalinux-gui" in text
     assert "pywhispercpp.libs" in text and "pywhispercpp.libs" in smoke
+    # Arguments keep their boundaries: $* into an unquoted exec re-splits a
+    # path like "Meeting notes.wav" before argparse sees it (PR #913).
+    assert '"$@"' in text and "QUOTED_ARGS" in text
+    assert "EXEC_CMD" not in text
     contents = _nfpm()["contents"]
     tree = [c for c in contents if c.get("type") == "tree"]
     assert len(tree) == 1 and tree[0]["dst"] == "/"
@@ -301,6 +305,21 @@ def test_checksums_cover_the_packages():
     assert re.search(
         r"sha256sum -- .*\*\.deb.*\*\.rpm", block
     ), "SHA256SUMS must cover .deb and .rpm"
+
+
+def test_wayland_input_group_is_documented():
+    """The packages cannot run usermod, and `sg input` only helps users
+    already listed in /etc/group: a fresh Wayland install leaves the default
+    hotkey dead unless the docs name the step."""
+    install_md = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    section = install_md.split("## Distro packages", 1)[1].split("\n## ", 1)[0]
+    assert (
+        "usermod -aG input" in section
+    ), "INSTALL.md's .deb/.rpm section must document the Wayland input-group step"
+    release = RELEASE_YML.read_text(encoding="utf-8")
+    assert (
+        "usermod -aG input" in release
+    ), "the release notes' .deb/.rpm block must document the same step"
 
 
 def test_pipeline_gates_the_packages():

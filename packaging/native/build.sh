@@ -106,8 +106,9 @@ done
 # Same environment install.sh's wrapper establishes: the vendored
 # pywhispercpp.libs on LD_LIBRARY_PATH, user site-packages off so they cannot
 # shadow the distro modules, and sg input so evdev hotkeys work on Wayland
-# before the user is in the input group. vocalinux-gui exists because the
-# wheel declares a gui-script of that name; on Linux it runs the same entry.
+# when the user is already in the input group but the session has not picked
+# up the membership yet. vocalinux-gui exists because the wheel declares a
+# gui-script of that name; on Linux it runs the same entry.
 write_launcher() {
     local path="$1"
     cat > "$path" <<'LAUNCHER_EOF'
@@ -123,12 +124,18 @@ if [ -d "$VOCALINUX_VENDOR/pywhispercpp.libs" ]; then
     export LD_LIBRARY_PATH
 fi
 export PYTHONNOUSERSITE PYTHONPATH="/usr/lib/vocalinux/app:$VOCALINUX_VENDOR${PYTHONPATH:+:$PYTHONPATH}"
-EXEC_CMD="/usr/bin/python3 -m vocalinux.main $*"
 if grep -q "^input:.*\b$(whoami)\b" /etc/group 2>/dev/null \
     && ! groups | grep -q "\binput\b" && command -v sg >/dev/null 2>&1; then
-    exec sg input -c "$EXEC_CMD"
+    # sg(1) takes a single command string, so each argument is re-quoted for
+    # the inner shell; joining $* would re-split paths containing spaces.
+    QUOTED_ARGS=""
+    for arg in "$@"; do
+        arg="$(printf %s "$arg" | sed "s/'/'\\\\''/g")"
+        QUOTED_ARGS="$QUOTED_ARGS '$arg'"
+    done
+    exec sg input -c "/usr/bin/python3 -m vocalinux.main$QUOTED_ARGS"
 fi
-exec $EXEC_CMD
+exec /usr/bin/python3 -m vocalinux.main "$@"
 LAUNCHER_EOF
     chmod 755 "$path"
 }

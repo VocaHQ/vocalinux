@@ -108,6 +108,14 @@ These are thin packages: Python, GTK, PyGObject and the AppIndicator typelib com
 
 The `.deb` needs a distro that ships Python 3.11+: Debian 12+ and Ubuntu 24.04+ (Ubuntu 22.04 ships 3.10). whisper.cpp runs on CPU in these packages — the PyPI wheel, not the Vulkan build the AppImage carries. There is no auto-update: a new release is a new package install. A PPA and a COPR are not published yet.
 
+On Wayland, the default Right Alt shortcut reads keyboard devices through evdev, so your user needs `input` group membership or the hotkey is silently disabled:
+
+```bash
+sudo usermod -aG input $USER   # then log out and back in
+```
+
+Joining `input` grants read access to every keyboard and pointer device — X11 needs none of this. The launcher re-execs through `sg input` when `/etc/group` already lists the membership but the current session has not picked it up, so an `usermod` between package install and next login applies without a reboot. The source installer does this step for you; the packages cannot.
+
 ## Arch Linux (AUR)
 
 ```bash

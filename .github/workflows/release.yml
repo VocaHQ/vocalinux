@@ -273,6 +273,10 @@ jobs:
             Fedora). whisper.cpp runs on CPU in these packages; the Vulkan build is the
             AppImage. A PPA and a COPR are not published yet.
 
+            On Wayland the default Right Alt hotkey uses evdev: `sudo usermod -aG input $USER`,
+            then log out and back in (the `input` group can read every keyboard and pointer
+            device; X11 needs nothing).
+
             ${{ steps.flatpak_notes.outputs.flatpak }}
 
             ### Snap
