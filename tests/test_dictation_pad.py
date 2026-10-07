@@ -840,8 +840,6 @@ class TestDictationPadShelving(unittest.TestCase):
     def test_init_gtk_window_floats_and_watches_shelving(self) -> None:
         """Window construction pins the pad and subscribes shelving events."""
         window = MagicMock()
-        gtk_mock = sys.modules["gi.repository"].Gtk
-        gtk_mock.Window.return_value = window
 
         tree = ast.parse(_pad_source())
         func_node = next(
@@ -856,7 +854,11 @@ class TestDictationPadShelving(unittest.TestCase):
         exec(compile(ast.fix_missing_locations(module), "<test>", "exec"), namespace)
 
         fake_self = MagicMock()
-        namespace["_init_gtk_window"](fake_self)
+        # gi.repository is a shared session mock; scope the Window return value
+        # so no other test inherits this window or its recorded calls.
+        gtk_window = sys.modules["gi.repository"].Gtk.Window
+        with patch.object(gtk_window, "return_value", window):
+            namespace["_init_gtk_window"](fake_self)
 
         window.set_keep_above.assert_called_once_with(True)
         window.stick.assert_called_once()
