@@ -310,6 +310,11 @@ def _model_specialization_display_name(model_name: str) -> str:
 #: attribute, so tests driving the methods against a Mock still reach it.
 FOLLOW_LAYOUT_ENGINES = ("whisper", "whisper_cpp", "faster_whisper", "remote_api")
 
+#: Selected-setting keys that make up the model spec. While a spec that needs a
+#: download is staged (#894), these stay out of the saved config until the
+#: explicit Download confirmation; every other key applies and saves as usual.
+_MODEL_SPEC_KEYS = ("engine", "model_size", "model_variant", "language")
+
 
 def _is_following_layout(dialog: Any) -> bool:
     """Whether the follow-keyboard-layout mode is on for this dialog (#821).
@@ -2656,6 +2661,10 @@ class SettingsDialog(Gtk.Dialog):
         # Cached so Mock-driven tests and early calls read a real bool.
         self._follow_layout_active = False
         self._applying_settings = False  # Flag to prevent recursive settings application
+        # The last Advanced picker spec that needs a download and is still
+        # unconfirmed: picker rebuilds keep offering it instead of falling back
+        # to the saved model, and a real apply or resync clears it (#894).
+        self._staged_model_spec: Optional[dict] = None
         self._advanced_prompt_dirty = False
         self._language_candidates_dirty = False
         # Deferred text edits stashed when the dialog closes mid-apply; persisted
@@ -7772,11 +7781,22 @@ class SettingsDialog(Gtk.Dialog):
                         combo_id = size if engine == "faster_whisper" else size.capitalize()
                         self.model_combo.append(combo_id, display_text)
 
-                # Determine which model to select
+                # Determine which model to select. A staged spec wins over the
+                # saved model so a rebuild (e.g. a language change) keeps the
+                # unconfirmed pick instead of snapping back to the saved one.
                 saved_model = saved_model_for_engine.lower()
                 valid_models = [m.lower() for m in ENGINE_MODELS.get(engine, [])]
 
-                if saved_model in valid_models:
+                staged = self._staged_model_spec
+                staged_model = None
+                if isinstance(staged, dict) and staged.get("engine") == engine:
+                    candidate = str(staged.get("model_size") or "").lower()
+                    if candidate in valid_models:
+                        staged_model = candidate
+
+                if staged_model:
+                    selected = staged_model
+                elif saved_model in valid_models:
                     selected = saved_model
                 elif downloaded_models:
                     selected = downloaded_models[0]
@@ -7827,7 +7847,16 @@ class SettingsDialog(Gtk.Dialog):
         recommended_model, _ = self._get_recommended_whispercpp_model_for_language()
         recommended_size = get_whispercpp_model_size(recommended_model)
 
-        saved_model = self._resolve_saved_whispercpp_variant(saved_model_for_engine)
+        staged = self._staged_model_spec
+        staged_model = ""
+        if isinstance(staged, dict) and staged.get("engine") == "whisper_cpp":
+            staged_model = str(staged.get("model_size") or "")
+        if staged_model in WHISPERCPP_MODEL_INFO:
+            # The staged spec survives rebuilds until its Download confirmation
+            # or a real apply (#894); it wins over the saved seed.
+            saved_model = staged_model
+        else:
+            saved_model = self._resolve_saved_whispercpp_variant(saved_model_for_engine)
         if saved_model not in WHISPERCPP_MODEL_INFO:
             saved_model = (
                 recommended_model if recommended_model in WHISPERCPP_MODEL_INFO else "tiny"
@@ -8903,6 +8932,34 @@ class SettingsDialog(Gtk.Dialog):
                 # Staging, not confirming: leave the staged spec in the pickers
                 # and the saved one in the config, and repaint the info card so
                 # its Download action offers the explicit confirmation (#894).
+                self._staged_model_spec = {
+                    "engine": engine,
+                    "model_size": model_name,
+                    "model_variant": settings.get("model_variant", ""),
+                    "language": self.language,
+                }
+                # Edits outside the spec are not part of the staging: apply and
+                # save them normally so VAD, timeouts and advanced params are
+                # not dropped while a download is staged.
+                non_model_settings = {
+                    key: value for key, value in settings.items() if key not in _MODEL_SPEC_KEYS
+                }
+                if non_model_settings:
+
+                    def apply_non_model_settings() -> None:
+                        try:
+                            self._apply_settings_internal(
+                                non_model_settings,
+                                raise_errors=True,
+                                apply_generation=apply_generation,
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to auto-apply settings: {e}")
+                        finally:
+                            GLib.idle_add(self._finish_auto_apply)
+
+                    threading.Thread(target=apply_non_model_settings, daemon=True).start()
+                    worker_holds_guard = True
                 self._update_model_info()
                 return
 
@@ -9102,6 +9159,9 @@ class SettingsDialog(Gtk.Dialog):
         for key, value in advanced_settings.items():
             self.config_manager.set("advanced", key, value)
         self.config_manager.save_settings()
+        if any(key in settings for key in _MODEL_SPEC_KEYS):
+            # A real spec just persisted, so nothing is staged anymore (#894).
+            self._staged_model_spec = None
 
     def get_selected_settings(self) -> dict[str, Any]:
         """Return the currently selected settings from the UI."""

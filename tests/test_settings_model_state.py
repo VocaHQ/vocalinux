@@ -67,6 +67,9 @@ def _dialog_stub() -> Mock:
     dialog.language = "en-us"
     dialog._last_non_parakeet_language = None
     dialog._engine_for_language_memory = None
+    # A Mock attribute is not a dict, which keeps the staged-spec lookups on the
+    # saved-model fallback; tests that exercise staging set this themselves.
+    dialog._staged_model_spec = None
     # The real attribute is an enum member; a bare "idle" string would compare
     # unequal and send every test down the stop_recognition + sleep(0.5) branch.
     dialog.speech_engine.state = RecognitionState.IDLE
@@ -793,14 +796,18 @@ def test_settings_releases_the_engine_once_the_download_is_over(
     dialog.speech_engine.end_download.assert_called_once_with()
 
 
-def test_a_picker_change_only_stages_a_missing_model(settings_dialog, dialog_class):
+def test_a_picker_change_only_stages_a_missing_model(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """#894: a spec that is not on disk must not start downloading on its own.
 
-    Pickers stage the spec; nothing applies and nothing is resynced away, so
-    the next pick keeps composing instead of fighting a modal.
+    Pickers stage the spec; nothing downloads and nothing is resynced away, so
+    the next pick keeps composing instead of fighting a modal. Edits outside
+    the spec are not part of it and still apply.
     """
     dialog = _dialog_stub()
     _download_setup(dialog)
+    dialog.get_selected_settings.return_value["vad_sensitivity"] = 2
 
     with (
         patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
@@ -812,14 +819,24 @@ def test_a_picker_change_only_stages_a_missing_model(settings_dialog, dialog_cla
 
     modal_class.assert_not_called()
     dialog.speech_engine.try_begin_download.assert_not_called()
-    dialog._apply_settings_internal.assert_not_called()
-    dialog._save_selected_settings.assert_not_called()
+    # The spec keys are staged, not applied; edits outside it still apply.
+    dialog._apply_settings_internal.assert_called_once()
+    applied = dialog._apply_settings_internal.call_args.args[0]
+    assert applied == {"vad_sensitivity": 2}
+    assert dialog._staged_model_spec == {
+        "engine": "whisper_cpp",
+        "model_size": "small",
+        "model_variant": "",
+        "language": "en-us",
+    }
     dialog._resync_model_ui_from_config.assert_not_called()
     dialog._resync_engine_ui_if_unapplied.assert_not_called()
     dialog._update_model_info.assert_called_once_with()
 
 
-def test_staging_several_specs_still_downloads_none(settings_dialog, dialog_class):
+def test_staging_several_specs_still_downloads_none(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """Each field of the spec can flip without a single download starting."""
     dialog = _dialog_stub()
     _download_setup(dialog)
@@ -838,7 +855,9 @@ def test_staging_several_specs_still_downloads_none(settings_dialog, dialog_clas
     dialog._apply_settings_internal.assert_not_called()
 
 
-def test_a_download_allowed_apply_still_downloads(settings_dialog, dialog_class):
+def test_a_download_allowed_apply_still_downloads(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """The simple questions keep the instant apply-and-download flow."""
     dialog = _dialog_stub()
     _download_setup(dialog)
@@ -855,7 +874,7 @@ def test_a_download_allowed_apply_still_downloads(settings_dialog, dialog_class)
     modal_class.assert_called_once()
 
 
-def test_the_download_button_confirms_the_staged_spec(dialog_class):
+def test_the_download_button_confirms_the_staged_spec(dialog_class: type[Any]) -> None:
     """The info card's Download action is the one explicit confirmation."""
     dialog = _dialog_stub()
 
@@ -865,7 +884,9 @@ def test_the_download_button_confirms_the_staged_spec(dialog_class):
 
 
 @pytest.mark.parametrize("entry", ["_auto_apply_settings", "apply_settings"])
-def test_a_finished_download_repaints_the_model_info_card(settings_dialog, dialog_class, entry):
+def test_a_finished_download_repaints_the_model_info_card(
+    settings_dialog: Any, dialog_class: type[Any], entry: str
+) -> None:
     """A completed download must not leave the card on the pre-download render.
 
     Without the repaint, the card keeps the amber size line and, since #894,
@@ -901,7 +922,9 @@ def _update_model_info_stub(dialog_class: type[Any]) -> Mock:
     return dialog
 
 
-def test_the_info_card_offers_download_for_a_missing_model(settings_dialog, dialog_class):
+def test_the_info_card_offers_download_for_a_missing_model(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """An undownloaded spec shows the confirm action on the info card."""
     dialog = _update_model_info_stub(dialog_class)
 
@@ -915,7 +938,9 @@ def test_the_info_card_offers_download_for_a_missing_model(settings_dialog, dial
     dialog.model_download_button.set_visible.assert_called_once_with(True)
 
 
-def test_the_info_card_offers_no_download_for_a_downloaded_model(settings_dialog, dialog_class):
+def test_the_info_card_offers_no_download_for_a_downloaded_model(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
     """An already-downloaded spec never prompts (#894 acceptance)."""
     dialog = _update_model_info_stub(dialog_class)
 
