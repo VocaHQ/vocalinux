@@ -1,10 +1,12 @@
 """The AppImage reuses its pywhispercpp Vulkan build only when the pins match.
 
 The compile does not depend on the Vocalinux commit. The cache id is the base
-image, tool_checksums.txt, and the pywhispercpp pin — not the git SHA and not
-the Actions run id. A tree without libggml-vulkan.so is a CPU wheel and is
-not cached.
+image, tool_checksums.txt, the pinned cmake and ninja, the Vulkan flags, and
+the pywhispercpp pin. It is not the git SHA and not the Actions run id. A tree
+without libggml-vulkan.so is a CPU wheel and is not cached.
 """
+
+from __future__ import annotations
 
 import os
 import re
@@ -19,12 +21,13 @@ CACHE_SH = APPIMAGE / "native-cache.sh"
 BUILD_SH = APPIMAGE / "build.sh"
 PINS = APPIMAGE / "tool_checksums.txt"
 INSTALL_SH = REPO_ROOT / "install.sh"
+TOOLS = REPO_ROOT / "requirements" / "appimage-tools.txt"
 WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 APPIMAGE_WORKFLOWS = ("unified-pipeline.yml", "release.yml", "nightly.yml")
 NATIVE_KEY = "appimage-native-${{ runner.arch }}-${{ steps.native-cache.outputs.id }}"
 
 
-def _run(args, env=None):
+def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         args,
         check=False,
@@ -34,7 +37,7 @@ def _run(args, env=None):
     )
 
 
-def _cache_id(pins: Path, install: Path, extra=None) -> str:
+def _cache_id(pins: Path, install: Path, extra: dict[str, str] | None = None) -> str:
     env = os.environ.copy()
     env["VOCALINUX_PINS"] = str(pins)
     env["VOCALINUX_INSTALL_SH"] = str(install)
@@ -45,7 +48,7 @@ def _cache_id(pins: Path, install: Path, extra=None) -> str:
     return result.stdout.strip()
 
 
-def _source(body: str, env=None):
+def _source(body: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     script = "set -euo pipefail\nsource " + shlex.quote(str(CACHE_SH)) + "\n" + body + "\n"
     return _run(["bash", "-c", script], env=env)
 
@@ -60,7 +63,7 @@ def _flip_pin_value(text: str, name: str) -> str:
     return text[: match.start(2)] + value[:-1] + replacement + text[match.end(2) :]
 
 
-def test_native_cache_id_tracks_base_image_pins_and_pywhispercpp(tmp_path):
+def test_native_cache_id_tracks_base_image_pins_and_pywhispercpp(tmp_path: Path) -> None:
     pins_text = PINS.read_text(encoding="utf-8")
     install_text = INSTALL_SH.read_text(encoding="utf-8")
     pins = tmp_path / "tool_checksums.txt"
@@ -95,11 +98,41 @@ def test_native_cache_id_tracks_base_image_pins_and_pywhispercpp(tmp_path):
     assert with_sha == with_other == bumped_id
 
 
-def test_native_cache_id_does_not_read_the_commit_or_the_run():
+def test_native_cache_id_tracks_build_tools_and_compile_flags(tmp_path: Path) -> None:
+    baseline = _cache_id(PINS, INSTALL_SH)
+    tools = tmp_path / "appimage-tools.txt"
+    tools_text = TOOLS.read_text(encoding="utf-8")
+    tools.write_text(tools_text.replace("cmake", "cmake-other", 1), encoding="utf-8")
+    changed_tools = _cache_id(PINS, INSTALL_SH, extra={"VOCALINUX_APPIMAGE_TOOLS": str(tools)})
+    assert changed_tools != baseline
+
+    commented = tmp_path / "build-comment.sh"
+    build_text = BUILD_SH.read_text(encoding="utf-8")
+    commented.write_text(
+        build_text.replace("# GPU:", "# GPU: unchanged flags\n# GPU:", 1), encoding="utf-8"
+    )
+    assert _cache_id(PINS, INSTALL_SH, extra={"VOCALINUX_BUILD_SH": str(commented)}) == baseline
+
+    flagged = tmp_path / "build-flags.sh"
+    flagged.write_text(
+        build_text.replace(
+            "CMAKE_BUILD_WITH_INSTALL_RPATH=ON",
+            "CMAKE_BUILD_WITH_INSTALL_RPATH=OFF",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    assert _cache_id(PINS, INSTALL_SH, extra={"VOCALINUX_BUILD_SH": str(flagged)}) != baseline
+
+
+def test_native_cache_id_does_not_read_the_commit_or_the_run() -> None:
     text = ID_SCRIPT.read_text(encoding="utf-8")
     assert "base-image" in text
     assert "PYWHISPERCPP_VERSION" in text
     assert 'sha256sum "$pins"' in text
+    assert 'sha256sum "$tools"' in text
+    assert "appimage-tools.txt" in text
+    assert "CMAKE_ARGS=" in text
     for banned in (
         "GITHUB_SHA",
         "github.sha",
@@ -111,7 +144,7 @@ def test_native_cache_id_does_not_read_the_commit_or_the_run():
         assert banned not in text, banned
 
 
-def test_publish_refuses_a_cpu_only_tree_and_leaves_no_cache(tmp_path):
+def test_publish_refuses_a_cpu_only_tree_and_leaves_no_cache(tmp_path: Path) -> None:
     site = tmp_path / "site"
     site.mkdir()
     (site / "pywhispercpp").mkdir()
@@ -126,7 +159,28 @@ def test_publish_refuses_a_cpu_only_tree_and_leaves_no_cache(tmp_path):
     assert list((tmp_path / "cache").glob(".pywhispercpp-staging-*")) == []
 
 
-def test_restore_refuses_a_cpu_tree_without_touching_the_prefix(tmp_path):
+def test_publish_keeps_the_previous_cache_when_a_copy_fails(tmp_path: Path) -> None:
+    site = tmp_path / "built"
+    (site / "pywhispercpp").mkdir(parents=True)
+    (site / "pywhispercpp" / "secret").write_text("full", encoding="utf-8")
+    (site / "libggml-vulkan.so").write_bytes(b"new")
+    os.chmod(site / "pywhispercpp", 0)
+    dest = tmp_path / "cache" / "tree"
+    dest.mkdir(parents=True)
+    (dest / "libggml-vulkan.so").write_bytes(b"old-good")
+    try:
+        result = _source(
+            "pywhispercpp_cache_publish " + shlex.quote(str(site)) + " " + shlex.quote(str(dest))
+        )
+    finally:
+        os.chmod(site / "pywhispercpp", 0o755)
+    assert result.returncode != 0
+    assert "Failed to copy" in result.stderr
+    assert (dest / "libggml-vulkan.so").read_bytes() == b"old-good"
+    assert list((tmp_path / "cache").glob(".pywhispercpp-staging-*")) == []
+
+
+def test_restore_refuses_a_cpu_tree_without_touching_the_prefix(tmp_path: Path) -> None:
     src = tmp_path / "cache"
     src.mkdir()
     (src / "_pywhispercpp.cpython-312-x86_64-linux-gnu.so").write_bytes(b"cpu")
@@ -141,7 +195,7 @@ def test_restore_refuses_a_cpu_tree_without_touching_the_prefix(tmp_path):
     assert (site / "_pywhispercpp.cpython-312-x86_64-linux-gnu.so").exists() is False
 
 
-def test_publish_and_restore_round_trip_the_vulkan_tree_only(tmp_path):
+def test_publish_and_restore_round_trip_the_vulkan_tree_only(tmp_path: Path) -> None:
     site = tmp_path / "built"
     (site / "pywhispercpp").mkdir(parents=True)
     (site / "pywhispercpp" / "marker.txt").write_text("vulkan-package", encoding="utf-8")
@@ -188,11 +242,76 @@ def test_publish_and_restore_round_trip_the_vulkan_tree_only(tmp_path):
     assert not (restored / "numpy" / "nope.txt").exists()
 
 
-def test_native_cache_dir_binds_the_arch_to_that_id(tmp_path):
+def _quote(path: Path) -> str:
+    return shlex.quote(str(path))
+
+
+def test_a_cache_hit_does_not_run_the_compile_command(tmp_path: Path) -> None:
+    site = tmp_path / "built"
+    (site / "pywhispercpp").mkdir(parents=True)
+    (site / "libggml-vulkan.so").write_bytes(b"vulkan-bytes")
+    cache = tmp_path / "cache" / "tree"
+    published = _source("pywhispercpp_cache_publish " + _quote(site) + " " + _quote(cache))
+    assert published.returncode == 0, published.stderr
+    fresh = tmp_path / "prefix"
+    fresh.mkdir()
+    marker = tmp_path / "compiled"
+    reused = tmp_path / "reused"
+    result = _source(
+        "on_reuse() { printf reused > "
+        + _quote(reused)
+        + "; }\n"
+        + "compile() { printf compiled > "
+        + _quote(marker)
+        + "; }\n"
+        + "pywhispercpp_restore_or_run "
+        + _quote(cache)
+        + " "
+        + _quote(fresh)
+        + " on_reuse compile"
+    )
+    assert result.returncode == 0, result.stderr
+    assert reused.read_text(encoding="utf-8") == "reused"
+    assert not marker.exists()
+    assert (fresh / "libggml-vulkan.so").read_bytes() == b"vulkan-bytes"
+    assert "Rebuilding pywhispercpp with Vulkan" not in result.stdout
+
+
+def test_a_failed_restore_runs_the_compile_command(tmp_path: Path) -> None:
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "libggml-vulkan.so").write_bytes(b"vulkan-bytes")
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("file", encoding="utf-8")
+    site = blocker / "site"
+    marker = tmp_path / "compiled"
+    reused = tmp_path / "reused"
+    result = _source(
+        "on_reuse() { printf reused > "
+        + _quote(reused)
+        + "; }\n"
+        + "compile() { printf compiled > "
+        + _quote(marker)
+        + "; }\n"
+        + "pywhispercpp_restore_or_run "
+        + _quote(cache)
+        + " "
+        + _quote(site)
+        + " on_reuse compile"
+    )
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text(encoding="utf-8") == "compiled"
+    assert not reused.exists()
+    assert "compiling again" in result.stderr
+
+
+def test_native_cache_dir_binds_the_arch_to_that_id(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["VOCALINUX_APPIMAGE_CACHE"] = str(tmp_path / "cache")
     env.pop("VOCALINUX_PINS", None)
     env.pop("VOCALINUX_INSTALL_SH", None)
+    env.pop("VOCALINUX_APPIMAGE_TOOLS", None)
+    env.pop("VOCALINUX_BUILD_SH", None)
     result = _source("pywhispercpp_native_cache_dir x86_64", env=env)
     assert result.returncode == 0, result.stderr
     expected = _cache_id(PINS, INSTALL_SH)
@@ -207,20 +326,24 @@ def test_native_cache_dir_binds_the_arch_to_that_id(tmp_path):
     )
 
 
-def test_build_reuses_the_cached_vulkan_tree_before_compiling():
+def test_build_reuses_the_cached_vulkan_tree_before_compiling() -> None:
     text = BUILD_SH.read_text(encoding="utf-8")
     match = re.search(r"\nrebuild_pywhispercpp_vulkan\(\) \{(.+?)\n\}\n", text, re.S)
     assert match, "rebuild_pywhispercpp_vulkan disappeared"
     body = match.group(1)
-    assert body.index("VOCALINUX_APPIMAGE_SKIP_VULKAN") < body.index("pywhispercpp_cache_restore")
-    assert body.index("pywhispercpp_cache_restore") < body.index("GGML_VULKAN=1")
-    missing_lib = body.index("did not produce libggml-vulkan.so")
-    assert missing_lib < body.index("pywhispercpp_cache_publish")
-    assert "pywhispercpp_native_cache_dir" in body
+    assert body.index("VOCALINUX_APPIMAGE_SKIP_VULKAN") < body.index("pywhispercpp_restore_or_run")
+    assert "GGML_VULKAN=1" not in body
+    assert "_compile_pywhispercpp_vulkan" in body
+    compile_fn = re.search(r"\n_compile_pywhispercpp_vulkan\(\) \{(.+?)\n\}\n", text, re.S)
+    assert compile_fn, "the compile path disappeared"
+    compile_body = compile_fn.group(1)
+    assert "GGML_VULKAN=1" in compile_body
+    missing_lib = compile_body.index("did not produce libggml-vulkan.so")
+    assert missing_lib < compile_body.index("pywhispercpp_cache_publish")
     assert "native-cache.sh" in text
 
 
-def test_appimage_workflows_share_one_native_cache_key():
+def test_appimage_workflows_share_one_native_cache_key() -> None:
     """CI, Nightly, and Release have to miss together when a pin changes, and
     hit together otherwise. A key that includes the commit never hits."""
     keys = []

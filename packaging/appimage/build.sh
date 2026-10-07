@@ -427,31 +427,10 @@ copy_whisper_native_libs_to_usr_lib() {
   done < <(find "$APPDIR/usr" \( -name 'libggml*.so*' -o -name 'libwhisper.so*' \) ! -path '*/usr/lib/*' 2>/dev/null || true)
 }
 
-rebuild_pywhispercpp_vulkan() {
-  local require_vulkan="${VOCALINUX_APPIMAGE_REQUIRE_VULKAN:-0}"
-  if [ "${VOCALINUX_APPIMAGE_SKIP_VULKAN:-0}" = "1" ]; then
-    echo "== Skipping pywhispercpp Vulkan rebuild (VOCALINUX_APPIMAGE_SKIP_VULKAN=1) =="
-    return 0
-  fi
-
-  # The Vocalinux wheel was installed above and is not part of this cache.
-  # A hit still replaces the CPU pywhispercpp wheel the lock just installed.
-  local cache_dir site vk_lib
-  cache_dir="$(pywhispercpp_native_cache_dir "$ARCH")"
-  site="$APPDIR/usr/lib/python${PY_VER}/site-packages"
-  if pywhispercpp_cache_has_vulkan "$cache_dir"; then
-    echo "== Reusing pywhispercpp Vulkan build (${cache_dir##*/}) =="
-    if pywhispercpp_cache_restore "$cache_dir" "$site"; then
-      vk_lib="$(find "$APPDIR/usr" -name 'libggml-vulkan.so*' 2>/dev/null | head -1 || true)"
-      if [ -n "$vk_lib" ]; then
-        echo "  found $vk_lib"
-        copy_whisper_native_libs_to_usr_lib
-        return 0
-      fi
-    fi
-    echo "Cached Vulkan build could not be restored; compiling again." >&2
-  fi
-
+# The miss path of rebuild_pywhispercpp_vulkan. require_vulkan, cache_dir, and
+# site are locals of that caller; bash shows them to this function.
+_compile_pywhispercpp_vulkan() {
+  local vk_lib
   if ! has_vulkan_build_deps; then
     echo "Vulkan build deps missing (libvulkan-dev plus a C++ compiler)." >&2
     if [ "$require_vulkan" = "1" ]; then
@@ -519,6 +498,23 @@ rebuild_pywhispercpp_vulkan() {
   if ! pywhispercpp_cache_publish "$site" "$cache_dir"; then
     echo "Warning: Vulkan build succeeded but was not cached for the next run." >&2
   fi
+}
+
+rebuild_pywhispercpp_vulkan() {
+  local require_vulkan="${VOCALINUX_APPIMAGE_REQUIRE_VULKAN:-0}"
+  if [ "${VOCALINUX_APPIMAGE_SKIP_VULKAN:-0}" = "1" ]; then
+    echo "== Skipping pywhispercpp Vulkan rebuild (VOCALINUX_APPIMAGE_SKIP_VULKAN=1) =="
+    return 0
+  fi
+
+  # The Vocalinux wheel was installed above and is not part of this cache.
+  # A hit still replaces the CPU pywhispercpp wheel the lock just installed,
+  # and it does not run _compile_pywhispercpp_vulkan.
+  local cache_dir site
+  cache_dir="$(pywhispercpp_native_cache_dir "$ARCH")"
+  site="$APPDIR/usr/lib/python${PY_VER}/site-packages"
+  pywhispercpp_restore_or_run "$cache_dir" "$site" copy_whisper_native_libs_to_usr_lib \
+    _compile_pywhispercpp_vulkan
 }
 
 echo "== Copying GObject-Introspection typelibs (not handled by linuxdeploy-plugin-gtk) =="
