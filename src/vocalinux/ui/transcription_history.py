@@ -104,6 +104,10 @@ class TranscriptionHistory:
         # audio capture began, so text decoded from speech captured before
         # this point can be refused however late it arrives.
         self._cleared_at = 0.0
+        if self._store_path:
+            # A crash between the temp write and the rename leaves deleted or
+            # stale transcripts behind; sweep them before anything reads.
+            self._sweep_stale_store_temps()
         if self._persist and self._enabled:
             self._load_store()
         elif self._store_path:
@@ -322,11 +326,13 @@ class TranscriptionHistory:
         with self._lock:
             self._epoch += 1
             self._cleared_at = time.monotonic()
-            if not self._entries:
-                return
+            had_entries = bool(self._entries)
             self._entries.clear()
+            # Write even when memory was already empty: records that failed
+            # to load are still on disk, and Clear must drop them too.
             self._write_store()
-        self._notify()
+        if had_entries:
+            self._notify()
 
     def __len__(self) -> int:
         with self._lock:
@@ -358,24 +364,38 @@ class TranscriptionHistory:
         if not self._store_path:
             return
         try:
-            with open(self._store_path, "r", encoding="utf-8") as handle:
-                lines = handle.read().splitlines()
+            with open(self._store_path, "rb") as handle:
+                raw_lines = handle.read().splitlines()
         except FileNotFoundError:
             return
         except OSError as e:
             logger.warning("Could not read transcription history store %s: %s", self._store_path, e)
             return
         skipped = 0
-        for line in lines:
+        loaded = 0
+        for raw in raw_lines:
+            try:
+                line = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                # A damaged line must not keep the valid ones, or the app,
+                # from loading.
+                skipped += 1
+                continue
             entry = self._entry_from_json(line)
             if entry is None:
                 if line.strip():
                     skipped += 1
                 continue
+            loaded += 1
             self._entries.append(entry)
             self._next_id = max(self._next_id, entry["id"])
         if skipped:
             logger.warning("Skipped %d malformed line(s) in %s", skipped, self._store_path)
+        if skipped or loaded > len(self._entries):
+            # The file is not an exact mirror of memory — malformed lines, or
+            # a cap lowered since the file was written trimmed entries — so
+            # rewrite it now instead of letting stale text sit on disk.
+            self._write_store()
 
     @staticmethod
     def _entry_from_json(line: str) -> Optional[Dict[str, Any]]:
@@ -429,6 +449,37 @@ class TranscriptionHistory:
                 self._store_path,
                 e,
             )
+
+    def _sweep_stale_store_temps(self) -> None:
+        """Delete temp files abandoned by a crash mid-write.
+
+        ``_write_store`` drafts to ``.history-*.tmp`` next to the store, so a
+        process that dies between mkstemp and the rename leaves transcript
+        text on disk in a file nothing reads again.
+        """
+        if not self._store_path:
+            return
+        directory = os.path.dirname(self._store_path)
+        try:
+            names = os.listdir(directory)
+        except OSError as e:
+            logger.warning(
+                "Could not list transcription history directory %s: %s",
+                directory,
+                e,
+            )
+            return
+        for name in names:
+            if not (name.startswith(".history-") and name.endswith(".tmp")):
+                continue
+            try:
+                os.unlink(os.path.join(directory, name))
+            except OSError as e:
+                logger.warning(
+                    "Could not remove stale transcription history temp %s: %s",
+                    name,
+                    e,
+                )
 
     def _remove_store(self) -> None:
         """Delete the persisted store; a missing file is fine."""

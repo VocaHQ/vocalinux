@@ -433,6 +433,48 @@ class TestTranscriptionHistoryPersistence(unittest.TestCase):
         history = TranscriptionHistory(persist=True, store_path=self.store_path)
         self.assertEqual(history.get_all(), ["also good", "good"])
 
+    def test_invalid_utf8_line_is_skipped(self) -> None:
+        """A damaged line must not block startup or hide the valid ones."""
+        with open(self.store_path, "wb") as handle:
+            handle.write(b'{"id": 1, "text": "good"}\n')
+            handle.write(b'{"id": 2, "text": "bad \xff\xfe"}\n')
+            handle.write(b'{"id": 3, "text": "also good"}\n')
+
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(history.get_all(), ["also good", "good"])
+
+    def test_load_rewrites_store_to_match_memory(self) -> None:
+        """Skipped lines and a lowered cap leave the file mirroring memory."""
+        with open(self.store_path, "w", encoding="utf-8") as handle:
+            for index in range(1, 8):
+                handle.write(json.dumps({"id": index, "text": f"s{index}"}) + "\n")
+            handle.write("not json\n")
+
+        TranscriptionHistory(max_items=3, persist=True, store_path=self.store_path)
+        self.assertEqual([r["text"] for r in self._read_records()], ["s5", "s6", "s7"])
+
+    def test_clear_writes_store_even_when_memory_is_empty(self) -> None:
+        """Clear also truncates a store whose records never made it to memory."""
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(len(history), 0)
+        history.clear()
+        self.assertEqual(self._read_records(), [])
+
+    def test_abandoned_temp_files_are_swept(self) -> None:
+        """A crash mid-write must not leave transcript text behind."""
+        stale = os.path.join(self._tmp.name, ".history-dead.tmp")
+        with open(stale, "w", encoding="utf-8") as handle:
+            handle.write('{"id": 1, "text": "deleted"}\n')
+        TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertFalse(os.path.exists(stale))
+
+    def test_abandoned_temp_files_are_swept_when_not_persisting(self) -> None:
+        stale = os.path.join(self._tmp.name, ".history-dead.tmp")
+        with open(stale, "w", encoding="utf-8") as handle:
+            handle.write('{"id": 1, "text": "deleted"}\n')
+        TranscriptionHistory(persist=False, store_path=self.store_path)
+        self.assertFalse(os.path.exists(stale))
+
     def test_load_honors_max_items(self) -> None:
         with open(self.store_path, "w", encoding="utf-8") as handle:
             for index in range(1, 8):
