@@ -205,8 +205,19 @@ echo ""
 # Parse command line arguments
 KEEP_CONFIG="no"
 KEEP_DATA="no"
-VENV_DIR="venv"
 NON_INTERACTIVE="no"
+
+# Repo-relative cleanup is only safe when this script lives in a source checkout.
+# The website command is `curl ... -o /tmp/vul.sh && bash /tmp/vul.sh`, so $PWD is
+# the user's directory and must not be walked.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_CHECKOUT=""
+VENV_DIR=""
+if [[ -f "$SCRIPT_DIR/pyproject.toml" && -d "$SCRIPT_DIR/src/vocalinux" ]] \
+    && grep -q 'name = "vocalinux"' "$SCRIPT_DIR/pyproject.toml" 2>/dev/null; then
+    SOURCE_CHECKOUT="$SCRIPT_DIR"
+    VENV_DIR="$SCRIPT_DIR/venv"
+fi
 
 # Detect if running non-interactively
 if [ ! -t 0 ]; then
@@ -237,7 +248,10 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --keep-config     Keep configuration files"
             echo "  --keep-data       Keep application data (models, etc.)"
-            echo "  --venv-dir=PATH   Specify custom virtual environment directory (default: venv)"
+            echo "  --venv-dir=PATH   Virtual environment to remove. Absolute, or relative to a"
+            echo "                    source checkout. Default: <checkout>/venv when this script"
+            echo "                    lives in a Vocalinux tree; otherwise only the curl install"
+            echo "                    at ~/.local/share/vocalinux/venv is removed."
             echo "  -y, --yes         Non-interactive mode (no confirmation prompts)"
             echo "  --help            Show this help message"
             exit 0
@@ -249,6 +263,18 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# A relative path is the checkout's venv, never $PWD. `bash /tmp/vul.sh --venv-dir=venv`
+# from $HOME must not delete ~/venv.
+if [[ -n "$VENV_DIR" && "$VENV_DIR" != /* ]]; then
+    if [[ -n "$SOURCE_CHECKOUT" ]]; then
+        VENV_DIR="$SOURCE_CHECKOUT/$VENV_DIR"
+    else
+        print_error "Refusing relative --venv-dir outside a source checkout: $VENV_DIR"
+        print_error "Pass an absolute path. A curl uninstall already removes ~/.local/share/vocalinux/venv."
+        exit 1
+    fi
+fi
 
 # Define XDG directories
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vocalinux"
@@ -264,7 +290,11 @@ CURL_VENV_DIR="$HOME/.local/share/vocalinux/venv"
 CURL_BIN_DIR="$HOME/.local/bin"
 
 echo "Uninstallation options:"
-echo "- Local virtual environment: $VENV_DIR"
+if [[ -n "$VENV_DIR" ]]; then
+    echo "- Local virtual environment: $VENV_DIR"
+else
+    echo "- Local virtual environment: (none; this script is not in a source checkout)"
+fi
 echo "- Curl-installed venv: $CURL_VENV_DIR"
 echo "- Curl-installed repo: $CURL_INSTALL_DIR"
 echo
@@ -300,8 +330,10 @@ remove_virtual_environment() {
         }
     fi
     
-    # Remove local venv (if running from repo)
-    if [ -d "$VENV_DIR" ]; then
+    # Checkout venv only. A curl install is removed via CURL_VENV_DIR below.
+    if [[ -z "$VENV_DIR" ]]; then
+        print_info "No source-checkout virtual environment to remove."
+    elif [ -d "$VENV_DIR" ]; then
         print_info "Removing local virtual environment..."
         safe_remove "$VENV_DIR" "local virtual environment directory"
     else
@@ -337,8 +369,11 @@ remove_curl_install_files() {
 
 # Function to remove application files
 remove_application_files() {
-    # Remove local activation script (if running from repo)
-    safe_remove "activate-vocalinux.sh" "local activation script"
+    # Only the copy inside a source checkout. A relative path would delete
+    # whatever activate-vocalinux.sh happens to sit in $PWD.
+    if [[ -n "$SOURCE_CHECKOUT" ]]; then
+        safe_remove "$SOURCE_CHECKOUT/activate-vocalinux.sh" "local activation script"
+    fi
 
     # Remove launcher wrappers in ~/.local/bin created by install.sh. These are
     # regular files in a repo/dev install and may be symlinks in a curl install;
@@ -393,34 +428,61 @@ remove_config_and_data() {
     safe_remove "$IBUS_DATA_DIR" "IBus runtime data directory"
 }
 
-# Function to clean up build artifacts
+# Clean build artifacts inside a Vocalinux source checkout.
+# $1 must be an absolute directory. A relative path would follow the caller's
+# working directory ($HOME, when the website command runs this script from
+# /tmp). -xdev stays on one filesystem. -prune removes a directory without
+# find walking back into it afterwards.
 cleanup_build_artifacts() {
+    local root="$1"
+    local egg_info_status=0
+
+    # A relative path would follow the caller's working directory. A checkout
+    # that an earlier step already removed (the curl clone) is not an error.
+    if [[ "$root" != /* ]]; then
+        print_error "Refusing to clean build artifacts outside a source checkout."
+        return 1
+    fi
+    if [[ ! -d "$root" ]]; then
+        print_info "Source checkout already removed; skipping build-artifact cleanup."
+        return 0
+    fi
+
     print_info "Cleaning up build artifacts..."
-    
-    # Remove Python package build directories
-    safe_remove "build/" "build directory"
-    safe_remove "dist/" "distribution directory"
-    safe_remove "*.egg-info/" "egg-info directory"
-    
-    # Find and remove egg-info directories in src
-    find src -name "*.egg-info" -type d -exec rm -rf {} \; 2>/dev/null || {
+
+    safe_remove "$root/build" "build directory"
+    safe_remove "$root/dist" "distribution directory"
+
+    # vocalinux metadata lives in src/ (setuptools src layout) and sometimes as
+    # *.egg-info at the checkout root. Do not search the whole tree: .venv is
+    # a separate dev environment and its egg-info has to stay.
+    find "$root/src" -xdev -name "*.egg-info" -type d -prune -exec rm -rf {} + \
+        2>/dev/null || egg_info_status=1
+    find "$root" -xdev -mindepth 1 -maxdepth 1 -name "*.egg-info" -type d \
+        -prune -exec rm -rf {} + 2>/dev/null || egg_info_status=1
+    if [[ "$egg_info_status" -ne 0 ]]; then
         print_warning "Failed to remove some egg-info directories."
+    fi
+
+    # -prune on .venv: same reason. Bytecode under the project is removed;
+    # the dev environment is not. The parens keep -xdev on both sides of -o.
+    find "$root" -xdev \( \
+        -name .venv -prune -o \
+        \( -name "__pycache__" -o -name ".pytest_cache" \) -type d -prune -exec rm -rf {} + \
+    \) 2>/dev/null || {
+        print_warning "Failed to remove some cache directories."
     }
-    
-    # Find and remove __pycache__ directories
-    find . -name "__pycache__" -type d -exec rm -rf {} \; 2>/dev/null || {
-        print_warning "Failed to remove some __pycache__ directories."
-    }
-    
-    # Clean up any temporary or generated files
+
     print_info "Cleaning up temporary files..."
-    find . -name "*.pyc" -delete 2>/dev/null
-    find . -name "*.pyo" -delete 2>/dev/null
-    find . -name ".pytest_cache" -type d -exec rm -rf {} \; 2>/dev/null
-    find . -name ".coverage" -delete 2>/dev/null
-    
-    # Remove wrapper script if it exists
-    safe_remove "vocalinux-run.py" "wrapper script"
+    # -delete implies -depth, which disables -prune, so .venv would be walked.
+    find "$root" -xdev \( \
+        -name .venv -prune -o \
+        \( -name "*.pyc" -o -name "*.pyo" -o -name ".coverage" \) -type f -exec rm -f {} + \
+    \) 2>/dev/null || {
+        print_warning "Failed to remove some temporary files."
+    }
+
+    safe_remove "$root/vocalinux-run.py" "wrapper script"
 }
 
 # Function to verify uninstallation
@@ -429,7 +491,7 @@ verify_uninstallation() {
     local ISSUES=0
     
     # Check if local virtual environment still exists
-    if [ -d "$VENV_DIR" ]; then
+    if [[ -n "$VENV_DIR" && -d "$VENV_DIR" ]]; then
         print_warning "Local virtual environment still exists: $VENV_DIR"
         ((ISSUES++))
     fi
@@ -541,10 +603,17 @@ kill_vocalinux_processes
 
 # Perform uninstallation steps
 remove_virtual_environment
+# Clean the checkout before remove_curl_install_files. A script that lives in
+# ~/.local/share/vocalinux-install is both the checkout and the curl clone, and
+# that step deletes the directory.
+if [[ -n "$SOURCE_CHECKOUT" ]]; then
+    cleanup_build_artifacts "$SOURCE_CHECKOUT"
+else
+    print_info "Not running from a source checkout; skipping build-artifact cleanup."
+fi
 remove_curl_install_files
 remove_application_files
 remove_config_and_data
-cleanup_build_artifacts
 
 # Verify uninstallation
 verify_uninstallation
