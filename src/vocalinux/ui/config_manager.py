@@ -205,7 +205,11 @@ DEFAULT_CONFIG = {
     },
     "history": {
         "enabled": True,  # Keep recent dictation snippets in the tray menu
-        "max_items": 10,  # How many snippets to retain (in-memory only, cleared on quit)
+        "max_items": 10,  # How many snippets to retain
+        # Also save snippets to $XDG_DATA_HOME/vocalinux/history.jsonl so they
+        # survive restarts. Off by default: dictated text must not silently
+        # accumulate on disk unless the user asks for it (#758).
+        "persist": False,
     },
     "post_processing": {
         "script_path": "",  # Path to executable; empty = disabled

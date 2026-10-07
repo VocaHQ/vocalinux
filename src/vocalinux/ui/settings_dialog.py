@@ -2601,6 +2601,7 @@ class SettingsDialog(Gtk.Dialog):
         hotkey_listener_update_callback: Optional[Callable[[], None]] = None,
         language_shortcuts_update_callback: Optional[Callable[[], None]] = None,
         history_update_callback: Optional[Callable[[], None]] = None,
+        history_clear_callback: Optional[Callable[[], None]] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -2618,6 +2619,7 @@ class SettingsDialog(Gtk.Dialog):
         self.hotkey_listener_update_callback = hotkey_listener_update_callback
         self.language_shortcuts_update_callback = language_shortcuts_update_callback
         self.history_update_callback = history_update_callback
+        self.history_clear_callback = history_clear_callback
         # Per-language shortcut rows (#805): a dict of row widgets per binding,
         # populated by _build_language_shortcuts_section.
         self._language_shortcut_rows: list[dict] = []
@@ -3348,8 +3350,8 @@ class SettingsDialog(Gtk.Dialog):
         history_group = PreferencesGroup(
             title="Transcription History",
             description="Recent dictation snippets are kept in memory and shown "
-            "in the tray menu. Nothing is written to disk; history clears on quit. "
-            "Changes take effect after restarting Vocalinux.",
+            "in the tray menu. History clears on quit unless Keep on Disk is on, "
+            "which saves them to history.jsonl under the Vocalinux data directory.",
         )
 
         self.history_enabled_switch = Gtk.Switch()
@@ -3373,6 +3375,32 @@ class SettingsDialog(Gtk.Dialog):
         )
         history_group.add_row(history_max_items_row)
 
+        self.history_persist_switch = Gtk.Switch()
+        self.history_persist_switch.set_tooltip_text(
+            "Save snippets to disk so they survive restarts (off by default for privacy)"
+        )
+        history_persist_row = PreferenceRow(
+            title="Keep on Disk",
+            subtitle="Save snippets to history.jsonl in the data directory across restarts",
+            widget=self.history_persist_switch,
+            keywords=("persist", "save", "disk", "transcript"),
+        )
+        history_group.add_row(history_persist_row)
+
+        self.history_clear_button = Gtk.Button(label="Clear")
+        self.history_clear_button.set_tooltip_text(
+            "Delete every saved snippet, including any written to disk"
+        )
+        _style_action_button(self.history_clear_button)
+        self.history_clear_button.connect("clicked", self._on_history_clear_clicked)
+        history_clear_row = PreferenceRow(
+            title="Clear History",
+            subtitle="Remove every saved snippet now",
+            widget=self.history_clear_button,
+            keywords=("delete", "erase", "wipe", "transcript"),
+        )
+        history_group.add_row(history_clear_row)
+
         self.general_tab.pack_start(history_group, False, False, 0)
 
         self.autostart_switch.connect("state-set", self._on_autostart_toggled)
@@ -3381,6 +3409,7 @@ class SettingsDialog(Gtk.Dialog):
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
         self.history_enabled_switch.connect("state-set", self._on_history_enabled_toggled)
         self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
+        self.history_persist_switch.connect("state-set", self._on_history_persist_toggled)
 
     def _build_dictionary_section(self) -> None:
         """Build the Custom Dictionary page for terms and transcript corrections."""
@@ -4305,6 +4334,28 @@ class SettingsDialog(Gtk.Dialog):
         self.config_manager.save_settings()
         if self.history_update_callback:
             self.history_update_callback()
+
+    def _on_history_persist_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Handle toggle of the keep-on-disk switch."""
+        if self._initializing or self._applying_settings:
+            return False
+
+        persist = bool(state)
+        logger.info(f"Transcription history persistence toggled: {persist}")
+        self.config_manager.set("history", "persist", persist)
+        self.config_manager.save_settings()
+        if self.history_update_callback:
+            self.history_update_callback()
+        return False
+
+    def _on_history_clear_clicked(self, widget: Gtk.Button) -> None:
+        """Handle click of the clear-history button."""
+        if self._initializing or self._applying_settings:
+            return
+
+        logger.info("Clear history requested from settings")
+        if self.history_clear_callback:
+            self.history_clear_callback()
 
     def _on_autostart_toggled(self, widget, state):
         """Handle toggle of the autostart switch."""
@@ -7376,6 +7427,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.history_enabled_switch.set_active(history_enabled)
         self.history_max_items_spin.set_value(history_max_items)
+        self.history_persist_switch.set_active(bool(history_settings.get("persist", False)))
 
         disable_internal_hotkey = self.config_manager.get_bool(
             "shortcuts", "disable_internal_hotkey", False

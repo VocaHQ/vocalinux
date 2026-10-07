@@ -2,7 +2,11 @@
 Tests for the in-memory transcription history.
 """
 
+import json
+import os
+import tempfile
 import unittest
+from typing import List
 
 from vocalinux.ui.transcription_history import DEFAULT_MAX_ITEMS, TranscriptionHistory
 
@@ -296,6 +300,158 @@ class TestTranscriptionHistory(unittest.TestCase):
         history = TranscriptionHistory()
         history.set_enabled(False)
         self.assertGreater(history.cleared_at, 0.0)
+
+
+class TestTranscriptionHistoryPersistence(unittest.TestCase):
+    """Persistence of snippets to a JSONL store under the data directory (#758)."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.store_path = os.path.join(self._tmp.name, "history.jsonl")
+
+    def _read_records(self) -> List[dict]:
+        """Parse the store file into a list of records (oldest first)."""
+        with open(self.store_path, "r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle.read().splitlines() if line.strip()]
+
+    def test_persist_round_trip(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("first")
+        history.add("second")
+        history.add("third")
+
+        reloaded = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(reloaded.get_all(), ["third", "second", "first"])
+        self.assertEqual(len(reloaded), 3)
+
+    def test_persist_records_metadata_when_available(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("hello", duration=2.5, language="en-us", model="whisper_cpp/base")
+
+        records = self._read_records()
+        self.assertEqual(len(records), 1)
+        record = records[0]
+        self.assertEqual(record["text"], "hello")
+        self.assertEqual(record["duration"], 2.5)
+        self.assertEqual(record["language"], "en-us")
+        self.assertEqual(record["model"], "whisper_cpp/base")
+        self.assertIn("timestamp", record)
+        self.assertIn("id", record)
+
+    def test_persist_writes_one_json_object_per_line(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("one")
+        history.add("two")
+
+        with open(self.store_path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+        self.assertEqual(len(lines), 2)
+        for line in lines:
+            self.assertIsInstance(json.loads(line), dict)
+
+    def test_ids_continue_from_loaded_entries(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        first = history.add("one")
+        reloaded = TranscriptionHistory(persist=True, store_path=self.store_path)
+        second = reloaded.add("two")
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first, second)
+        self.assertTrue(reloaded.extend_entry(first, "tail"))
+        self.assertEqual(reloaded.get_all(), ["two", "one tail"])
+
+    def test_clear_truncates_store(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("a")
+        history.add("b")
+        history.clear()
+        self.assertTrue(os.path.exists(self.store_path))
+        with open(self.store_path, "r", encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "")
+
+    def test_disabled_writes_nothing(self) -> None:
+        history = TranscriptionHistory(enabled=False, persist=True, store_path=self.store_path)
+        self.assertIsNone(history.add("ignored"))
+        self.assertFalse(os.path.exists(self.store_path))
+
+    def test_set_enabled_false_removes_store(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("a")
+        self.assertTrue(os.path.exists(self.store_path))
+        history.set_enabled(False)
+        self.assertFalse(os.path.exists(self.store_path))
+        self.assertFalse(history.persist_enabled)
+
+    def test_persist_off_writes_nothing(self) -> None:
+        history = TranscriptionHistory(persist=False, store_path=self.store_path)
+        history.add("a")
+        self.assertFalse(os.path.exists(self.store_path))
+
+    def test_set_persist_off_removes_store(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("a")
+        history.set_persist(False)
+        self.assertFalse(os.path.exists(self.store_path))
+
+    def test_set_persist_on_writes_current_entries(self) -> None:
+        history = TranscriptionHistory(persist=False, store_path=self.store_path)
+        history.add("a")
+        history.set_persist(True)
+        self.assertEqual([r["text"] for r in self._read_records()], ["a"])
+
+    def test_persist_without_store_path_is_refused(self) -> None:
+        history = TranscriptionHistory(persist=True)
+        self.assertFalse(history.persist_enabled)
+        history.add("a")
+        history.set_persist(True)
+        self.assertFalse(history.persist_enabled)
+
+    def test_stale_store_removed_when_not_persisting(self) -> None:
+        with open(self.store_path, "w", encoding="utf-8") as handle:
+            handle.write('{"id": 1, "text": "old"}\n')
+        TranscriptionHistory(persist=False, store_path=self.store_path)
+        self.assertFalse(os.path.exists(self.store_path))
+
+    def test_malformed_lines_are_skipped(self) -> None:
+        with open(self.store_path, "w", encoding="utf-8") as handle:
+            handle.write('{"id": 1, "text": "good"}\n')
+            handle.write("not json\n")
+            handle.write('{"text": "missing id"}\n')
+            handle.write('{"id": "x", "text": "bad id"}\n')
+            handle.write('["a", "list"]\n')
+            handle.write("\n")
+            handle.write('{"id": 2, "text": "also good", "language": "en-us"}\n')
+
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(history.get_all(), ["also good", "good"])
+
+    def test_load_honors_max_items(self) -> None:
+        with open(self.store_path, "w", encoding="utf-8") as handle:
+            for index in range(1, 8):
+                handle.write(json.dumps({"id": index, "text": f"s{index}"}) + "\n")
+
+        history = TranscriptionHistory(max_items=3, persist=True, store_path=self.store_path)
+        self.assertEqual(history.get_all(), ["s7", "s6", "s5"])
+
+    def test_extend_latest_updates_store(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        history.add("one")
+        history.extend_latest("tail")
+        self.assertEqual([r["text"] for r in self._read_records()], ["one tail"])
+
+    def test_trim_updates_store(self) -> None:
+        history = TranscriptionHistory(max_items=3, persist=True, store_path=self.store_path)
+        for text in ["a", "b", "c", "d"]:
+            history.add(text)
+        self.assertEqual([r["text"] for r in self._read_records()], ["b", "c", "d"])
+        history.set_max_items(2)
+        self.assertEqual([r["text"] for r in self._read_records()], ["c", "d"])
+
+    def test_missing_store_loads_empty(self) -> None:
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(history.get_all(), [])
+        history.add("a")
+        self.assertEqual(history.get_all(), ["a"])
 
 
 if __name__ == "__main__":
