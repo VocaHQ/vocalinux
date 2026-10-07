@@ -72,13 +72,39 @@ def _make_checkout(root: Path) -> Path:
     return checkout
 
 
+def _write_stub(path: Path, body: str) -> None:
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o755)
+
+
 def _run(script: Path, cwd: Path, home: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run uninstall.sh against a fake home, without the host's pgrep or kill.
+
+    The uninstaller looks up this uid's processes and can TERM then KILL a
+    running Vocalinux. A stub earlier on PATH records the call and matches
+    nothing, so the suite cannot stop the app a developer has open.
+    """
+    bin_dir = home.parent / "uninstall-test-bin"
+    bin_dir.mkdir(exist_ok=True)
+    pgrep_log = home.parent / "pgrep.log"
+    kill_log = home.parent / "kill.log"
+    _write_stub(
+        bin_dir / "pgrep",
+        "#!/bin/sh\n" 'printf \'%s\\n\' "$*" >> "$VOCALINUX_TEST_PGREP_LOG"\n' "exit 1\n",
+    )
+    _write_stub(
+        bin_dir / "kill",
+        "#!/bin/sh\n" 'printf \'%s\\n\' "$*" >> "$VOCALINUX_TEST_KILL_LOG"\n' "exit 0\n",
+    )
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env["PATH"] = os.pathsep.join((str(bin_dir), env.get("PATH", "")))
+    env["VOCALINUX_TEST_PGREP_LOG"] = str(pgrep_log)
+    env["VOCALINUX_TEST_KILL_LOG"] = str(kill_log)
     env.pop("XDG_DATA_HOME", None)
     env.pop("XDG_CONFIG_HOME", None)
     env.pop("VIRTUAL_ENV", None)
-    return subprocess.run(
+    result = subprocess.run(
         ["bash", str(script), "-y", *args],
         cwd=cwd,
         env=env,
@@ -88,6 +114,12 @@ def _run(script: Path, cwd: Path, home: Path, *args: str) -> subprocess.Complete
         stdin=subprocess.DEVNULL,
         check=False,
     )
+    if "Checking for running Vocalinux processes" in result.stdout:
+        logged = pgrep_log.read_text(encoding="utf-8") if pgrep_log.is_file() else ""
+        assert "vocalinux" in logged, "uninstall.sh did not use the test pgrep stub"
+    if kill_log.is_file():
+        assert kill_log.read_text(encoding="utf-8").strip() == ""
+    return result
 
 
 def _output(result: subprocess.CompletedProcess[str]) -> str:
@@ -187,6 +219,63 @@ def test_source_checkout_cleans_itself_and_leaves_the_caller_alone(tmp_path: Pat
     assert not (checkout / "src" / "pkg.egg-info").exists()
     assert not (checkout / "activate-vocalinux.sh").exists()
     assert not (checkout / "vocalinux-run.py").exists()
+
+
+def test_dev_venv_records_survive_checkout_cleanup(tmp_path: Path) -> None:
+    """`.venv` is the dev environment. Uninstall must not strip its metadata."""
+    home = tmp_path / "home"
+    home.mkdir()
+    checkout = _make_checkout(tmp_path)
+    _decoy_tree(checkout)
+    dev_egg = checkout / ".venv" / "lib" / "python3.12" / "site-packages" / "dep.egg-info"
+    dev_egg.mkdir(parents=True)
+    (dev_egg / "PKG-INFO").write_text("Metadata-Version: 2.1\n", encoding="utf-8")
+    dev_cache = checkout / ".venv" / "lib" / "python3.12" / "site-packages" / "dep" / "__pycache__"
+    dev_cache.mkdir(parents=True)
+    (dev_cache / "mod.cpython-312.pyc").write_bytes(b"pyc")
+    (checkout / ".venv" / ".coverage").write_text("keep", encoding="utf-8")
+    (checkout / "vocalinux.egg-info").mkdir()
+    (checkout / "vocalinux.egg-info" / "PKG-INFO").write_text("name\n", encoding="utf-8")
+
+    result = _run(checkout / "uninstall.sh", tmp_path, home)
+
+    assert result.returncode == 0, _output(result)
+    assert "Failed to remove some" not in _output(result)
+    assert (dev_egg / "PKG-INFO").is_file()
+    assert (dev_cache / "mod.cpython-312.pyc").is_file()
+    assert (checkout / ".venv" / ".coverage").is_file()
+    assert not (checkout / "src" / "pkg.egg-info").exists()
+    assert not (checkout / "vocalinux.egg-info").exists()
+    assert not (checkout / "proj" / "pkg" / "__pycache__").exists()
+    assert not (checkout / ".coverage").exists()
+
+
+def test_curl_clone_uninstall_does_not_print_a_cleanup_error(tmp_path: Path) -> None:
+    """The cloned repo is a checkout, and uninstall deletes that same directory."""
+    home = tmp_path / "home"
+    cwd = tmp_path / "cwd"
+    home.mkdir()
+    cwd.mkdir()
+    (cwd / "notes.txt").write_text("keep", encoding="utf-8")
+    clone = home / ".local" / "share" / "vocalinux-install"
+    (clone / "src" / "vocalinux").mkdir(parents=True)
+    (clone / "pyproject.toml").write_text('[project]\nname = "vocalinux"\n', encoding="utf-8")
+    (clone / "src" / "vocalinux" / "__init__.py").write_text("", encoding="utf-8")
+    (clone / "src" / "vocalinux.egg-info").mkdir()
+    (clone / "build").mkdir()
+    (clone / "build" / "out").write_text("build", encoding="utf-8")
+    _write_script(clone / "uninstall.sh")
+
+    result = _run(clone / "uninstall.sh", cwd, home)
+
+    assert result.returncode == 0, _output(result)
+    output = _output(result)
+    assert "Refusing to clean build artifacts" not in output
+    assert "[ERROR]" not in output
+    assert "Failed to remove some" not in output
+    assert "Uninstallation completed successfully" in result.stdout
+    assert not clone.exists()
+    assert (cwd / "notes.txt").read_text(encoding="utf-8") == "keep"
 
 
 def test_running_inside_the_checkout_still_cleans_it(tmp_path: Path) -> None:

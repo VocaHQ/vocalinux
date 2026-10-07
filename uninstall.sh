@@ -435,10 +435,17 @@ remove_config_and_data() {
 # find walking back into it afterwards.
 cleanup_build_artifacts() {
     local root="$1"
+    local egg_info_status=0
 
-    if [[ "$root" != /* || ! -d "$root" ]]; then
+    # A relative path would follow the caller's working directory. A checkout
+    # that an earlier step already removed (the curl clone) is not an error.
+    if [[ "$root" != /* ]]; then
         print_error "Refusing to clean build artifacts outside a source checkout."
         return 1
+    fi
+    if [[ ! -d "$root" ]]; then
+        print_info "Source checkout already removed; skipping build-artifact cleanup."
+        return 0
     fi
 
     print_info "Cleaning up build artifacts..."
@@ -446,16 +453,32 @@ cleanup_build_artifacts() {
     safe_remove "$root/build" "build directory"
     safe_remove "$root/dist" "distribution directory"
 
-    find "$root" -xdev -name "*.egg-info" -type d -prune -exec rm -rf {} + 2>/dev/null || {
+    # vocalinux metadata lives in src/ (setuptools src layout) and sometimes as
+    # *.egg-info at the checkout root. Do not search the whole tree: .venv is
+    # a separate dev environment and its egg-info has to stay.
+    find "$root/src" -xdev -name "*.egg-info" -type d -prune -exec rm -rf {} + \
+        2>/dev/null || egg_info_status=1
+    find "$root" -xdev -mindepth 1 -maxdepth 1 -name "*.egg-info" -type d \
+        -prune -exec rm -rf {} + 2>/dev/null || egg_info_status=1
+    if [[ "$egg_info_status" -ne 0 ]]; then
         print_warning "Failed to remove some egg-info directories."
-    }
+    fi
 
-    find "$root" -xdev \( -name "__pycache__" -o -name ".pytest_cache" \) -type d -prune -exec rm -rf {} + 2>/dev/null || {
+    # -prune on .venv: same reason. Bytecode under the project is removed;
+    # the dev environment is not. The parens keep -xdev on both sides of -o.
+    find "$root" -xdev \( \
+        -name .venv -prune -o \
+        \( -name "__pycache__" -o -name ".pytest_cache" \) -type d -prune -exec rm -rf {} + \
+    \) 2>/dev/null || {
         print_warning "Failed to remove some cache directories."
     }
 
     print_info "Cleaning up temporary files..."
-    find "$root" -xdev \( -name "*.pyc" -o -name "*.pyo" -o -name ".coverage" \) -delete 2>/dev/null || {
+    # -delete implies -depth, which disables -prune, so .venv would be walked.
+    find "$root" -xdev \( \
+        -name .venv -prune -o \
+        \( -name "*.pyc" -o -name "*.pyo" -o -name ".coverage" \) -type f -exec rm -f {} + \
+    \) 2>/dev/null || {
         print_warning "Failed to remove some temporary files."
     }
 
@@ -580,14 +603,17 @@ kill_vocalinux_processes
 
 # Perform uninstallation steps
 remove_virtual_environment
-remove_curl_install_files
-remove_application_files
-remove_config_and_data
+# Clean the checkout before remove_curl_install_files. A script that lives in
+# ~/.local/share/vocalinux-install is both the checkout and the curl clone, and
+# that step deletes the directory.
 if [[ -n "$SOURCE_CHECKOUT" ]]; then
     cleanup_build_artifacts "$SOURCE_CHECKOUT"
 else
     print_info "Not running from a source checkout; skipping build-artifact cleanup."
 fi
+remove_curl_install_files
+remove_application_files
+remove_config_and_data
 
 # Verify uninstallation
 verify_uninstallation
