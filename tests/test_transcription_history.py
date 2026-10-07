@@ -4,9 +4,17 @@ Tests for the in-memory transcription history.
 
 import json
 import os
-import tempfile
+import sys
 import unittest
+from tempfile import TemporaryDirectory
 from typing import List
+
+# test_recognition_manager / test_speech_recognition replace sys.modules
+# ["tempfile"] with a MagicMock at import time and never put it back. Bind
+# TemporaryDirectory from the real stdlib module even when that happens.
+if not isinstance(TemporaryDirectory, type):
+    sys.modules.pop("tempfile", None)
+    from tempfile import TemporaryDirectory
 
 from vocalinux.ui.transcription_history import DEFAULT_MAX_ITEMS, TranscriptionHistory
 
@@ -306,7 +314,7 @@ class TestTranscriptionHistoryPersistence(unittest.TestCase):
     """Persistence of snippets to a JSONL store under the data directory (#758)."""
 
     def setUp(self) -> None:
-        self._tmp = tempfile.TemporaryDirectory()
+        self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.store_path = os.path.join(self._tmp.name, "history.jsonl")
 
