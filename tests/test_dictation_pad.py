@@ -8,9 +8,12 @@ Important: these tests must not import real GTK / tray_indicator into
 sys.modules — that breaks later tests that mock gi (see CI isolation).
 """
 
+import ast
 import os
+import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from vocalinux.ui.config_manager import DEFAULT_CONFIG, ConfigManager
@@ -799,6 +802,132 @@ class TestDictationPadFacade(unittest.TestCase):
             self.assertFalse(pad.handle_action("select_all"))
             self.assertFalse(pad.handle_action("nonexistent"))
         finally:
+            pad.destroy()
+
+
+def _pad_source() -> str:
+    """Read dictation_pad.py so GTK-facing methods can be exec'd under fake gi."""
+    path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "src",
+        "vocalinux",
+        "ui",
+        "dictation_pad.py",
+    )
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def _fake_gdk() -> SimpleNamespace:
+    """Gdk enums the pad handlers read, with real GDK numeric values."""
+    return SimpleNamespace(
+        WindowState=SimpleNamespace(WITHDRAWN=1, ICONIFIED=2),
+        VisibilityState=SimpleNamespace(UNOBSCURED=0, PARTIAL=1, FULLY_OBSCURED=2),
+    )
+
+
+class TestDictationPadShelving(unittest.TestCase):
+    """
+    Compositor-shelving handling for the pad window (issue #896).
+
+    On GNOME/Wayland an idle, fully covered toplevel gets shelved by the
+    compositor: it stays in the window list but draws nothing and accepts
+    no input. The pad counters that by floating above other windows,
+    tracking iconify/obscure state events, and re-presenting on show.
+    """
+
+    def test_init_gtk_window_floats_and_watches_shelving(self) -> None:
+        """Window construction pins the pad and subscribes shelving events."""
+        window = MagicMock()
+        gtk_mock = sys.modules["gi.repository"].Gtk
+        gtk_mock.Window.return_value = window
+
+        tree = ast.parse(_pad_source())
+        func_node = next(
+            node
+            for cls in tree.body
+            if isinstance(cls, ast.ClassDef) and cls.name == "DictationPad"
+            for node in cls.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_init_gtk_window"
+        )
+        module = ast.Module(body=[func_node], type_ignores=[])
+        namespace: dict = {"_PAD_WIDTH": 480, "_PAD_HEIGHT": 360}
+        exec(compile(ast.fix_missing_locations(module), "<test>", "exec"), namespace)
+
+        fake_self = MagicMock()
+        namespace["_init_gtk_window"](fake_self)
+
+        window.set_keep_above.assert_called_once_with(True)
+        window.stick.assert_called_once()
+        window.add_events.assert_called_once()
+        connected = {call.args[0] for call in window.connect.call_args_list}
+        self.assertIn("window-state-event", connected)
+        self.assertIn("visibility-notify-event", connected)
+
+    def test_window_state_event_tracks_shelving(self) -> None:
+        """ICONIFIED or WITHDRAWN in new_window_state marks the pad shelved."""
+        pad = _pad_without_gtk()
+        try:
+            pad._Gdk = _fake_gdk()
+            widget = MagicMock()
+
+            pad._on_window_state_event(widget, SimpleNamespace(new_window_state=2))
+            self.assertTrue(pad._window_iconified)
+
+            pad._on_window_state_event(widget, SimpleNamespace(new_window_state=0))
+            self.assertFalse(pad._window_iconified)
+
+            pad._on_window_state_event(widget, SimpleNamespace(new_window_state=1))
+            self.assertTrue(pad._window_iconified)
+        finally:
+            pad.destroy()
+
+    def test_show_pad_deiconifies_shelved_window(self) -> None:
+        """A visible but iconified pad is restored before it is presented."""
+        pad = _pad_without_gtk()
+        try:
+            pad._gtk_ready = True
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+            pad._Gtk = MagicMock()
+
+            pad._window_iconified = True
+            pad.show_pad()
+            pad._window.deiconify.assert_called_once()
+            pad._window.present_with_time.assert_called_once()
+
+            pad._window.reset_mock()
+            pad._window_iconified = False
+            pad.show_pad()
+            pad._window.deiconify.assert_not_called()
+            pad._window.present_with_time.assert_called_once()
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_visibility_notify_repaints_only_after_obscured(self) -> None:
+        """Return from full occlusion forces one fresh draw, once."""
+        pad = _pad_without_gtk()
+        try:
+            pad._Gdk = _fake_gdk()
+            pad._window = MagicMock()
+            widget = MagicMock()
+            obscured = SimpleNamespace(state=2)  # FULLY_OBSCURED
+            visible = SimpleNamespace(state=0)  # UNOBSCURED
+
+            pad._on_visibility_notify(widget, visible)
+            pad._window.queue_draw.assert_not_called()
+
+            pad._on_visibility_notify(widget, obscured)
+            pad._on_visibility_notify(widget, visible)
+            pad._window.queue_draw.assert_called_once()
+
+            pad._window.reset_mock()
+            pad._on_visibility_notify(widget, visible)
+            pad._window.queue_draw.assert_not_called()
+        finally:
+            pad._window = None
             pad.destroy()
 
 

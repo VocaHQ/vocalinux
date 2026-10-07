@@ -209,6 +209,11 @@ class DictationPad:
         self._gtk_ready = False
         self._syncing_capture_check = False
         self._syncing_widget = False
+        # Compositor-side shelving state, tracked from window-state-event /
+        # visibility-notify-event so show_pad can un-shelf a pad the window
+        # manager parked while it was idle.
+        self._window_iconified = False
+        self._window_obscured = False
         # Monotonic tag stamped on every queued widget op. A Clear (or a full
         # refresh) bumps it, so appends still waiting in the GTK idle queue
         # can tell they are stale and must not resurrect removed text.
@@ -245,6 +250,18 @@ class DictationPad:
         # Closing only hides: the pad keeps its buffer for the whole session
         # and must not take the app down with it.
         window.connect("delete-event", self._on_delete_event)
+
+        # The pad is a utility window users dictate into while working in
+        # other apps: keep it floating above and pinned to every workspace.
+        # Without this, a covered pad on GNOME Wayland gets shelved by the
+        # compositor once it sits idle, and comes back as an untargetable
+        # ghost: still listed in the window list but invisible and dead to
+        # input (#896).
+        window.set_keep_above(True)
+        window.stick()
+        window.add_events(Gdk.EventMask.VISIBILITY_NOTIFY_MASK)
+        window.connect("window-state-event", self._on_window_state_event)
+        window.connect("visibility-notify-event", self._on_visibility_notify)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         outer.set_margin_start(12)
@@ -341,6 +358,13 @@ class DictationPad:
         self._sync_capture_check()
         if not self._window.get_visible():
             self._window.show_all()
+        elif self._window_iconified:
+            # The window manager shelved the pad (iconified/withdrawn) while
+            # it stayed mapped: ask it to restore before presenting.
+            try:
+                self._window.deiconify()
+            except _ui_errors() as e:
+                logger.debug("Could not restore dictation pad: %s", e)
         try:
             self._window.present_with_time(self._Gtk.get_current_event_time())
         except _ui_errors():
@@ -587,6 +611,30 @@ class DictationPad:
         if self._window is not None:
             self._window.hide()
         return True
+
+    def _on_window_state_event(self, _widget: Any, event: Any) -> bool:
+        """Track the window manager shelving the pad (iconified/withdrawn)."""
+        shelved = self._Gdk.WindowState.ICONIFIED | self._Gdk.WindowState.WITHDRAWN
+        self._window_iconified = bool(event.new_window_state & shelved)
+        return False
+
+    def _on_visibility_notify(self, _widget: Any, event: Any) -> bool:
+        """Repaint the pad when the compositor reports it visible again.
+
+        GTK3 on Wayland marks a shelved toplevel fully obscured; when it
+        comes back the last committed buffer may be stale, so force one
+        fresh draw instead of trusting what is on screen.
+        """
+        if event.state == self._Gdk.VisibilityState.FULLY_OBSCURED:
+            self._window_obscured = True
+        elif self._window_obscured:
+            self._window_obscured = False
+            if self._window is not None:
+                try:
+                    self._window.queue_draw()
+                except _ui_errors() as e:
+                    logger.debug("Could not repaint dictation pad: %s", e)
+        return False
 
     def _on_capture_toggled(self, widget: Any) -> None:
         """Persist the pad's own capture checkbox."""
