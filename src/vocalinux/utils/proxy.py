@@ -117,6 +117,17 @@ def default_port_for_protocol(protocol: Any) -> int:
     return DEFAULT_HTTPS_PROXY_PORT
 
 
+def _bracket_ipv6_host(host: str) -> str:
+    """Wrap a bare IPv6 literal in brackets for URL building.
+
+    ``::1`` must become ``[::1]`` before ``:port`` is appended; hostnames and
+    already-bracketed literals pass through.
+    """
+    if host.startswith("[") or ":" not in host:
+        return host
+    return f"[{host}]"
+
+
 def manual_proxy_url(config: Optional[Mapping[str, Any]] = None) -> Optional[str]:
     """Return the manual proxy URL, or None when no host is configured.
 
@@ -133,7 +144,8 @@ def manual_proxy_url(config: Optional[Mapping[str, Any]] = None) -> Optional[str
             auth += ":" + quote(cfg["password"], safe="")
         auth += "@"
     port = cfg["port"] or default_port_for_protocol(cfg["protocol"])
-    return f"{scheme}://{auth}{cfg['host']}:{port}"
+    host = _bracket_ipv6_host(cfg["host"])
+    return f"{scheme}://{auth}{host}:{port}"
 
 
 def _env_declares_proxy(env: Optional[Mapping[str, str]] = None) -> bool:
@@ -217,7 +229,8 @@ def _gnome_system_proxy() -> Optional[Dict[str, Any]]:
 
     https_host, https_port = _host_port("https")
     if https_host:
-        return {"url": f"http://{https_host}:{https_port}", "no_proxy": no_proxy}
+        host = _bracket_ipv6_host(https_host)
+        return {"url": f"http://{host}:{https_port}", "no_proxy": no_proxy}
 
     http_host, http_port = _host_port("http")
     if http_host:
@@ -233,11 +246,13 @@ def _gnome_system_proxy() -> Optional[Dict[str, Any]]:
                 if password:
                     auth += ":" + quote(password, safe="")
                 auth += "@"
-        return {"url": f"http://{auth}{http_host}:{http_port}", "no_proxy": no_proxy}
+        host = _bracket_ipv6_host(http_host)
+        return {"url": f"http://{auth}{host}:{http_port}", "no_proxy": no_proxy}
 
     socks_host, socks_port = _host_port("socks")
     if socks_host:
-        return {"url": f"socks5h://{socks_host}:{socks_port}", "no_proxy": no_proxy}
+        host = _bracket_ipv6_host(socks_host)
+        return {"url": f"socks5h://{host}:{socks_port}", "no_proxy": no_proxy}
     return None
 
 

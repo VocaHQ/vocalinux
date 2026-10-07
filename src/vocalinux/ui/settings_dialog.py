@@ -6438,9 +6438,9 @@ class SettingsDialog(Gtk.Dialog):
         }
 
         def test_connection(config: dict = config) -> None:
-            try:
-                import requests
+            import requests
 
+            try:
                 response = requests.get(
                     "https://huggingface.co/api/models/ggerganov/whisper.cpp",
                     headers={"User-Agent": f"vocalinux/{__version__}"},
@@ -6452,8 +6452,9 @@ class SettingsDialog(Gtk.Dialog):
                     "<span foreground='#26a269'>✓ huggingface.co reachable "
                     f"(status={response.status_code})</span>",
                 )
-            except Exception as e:
-                error_msg = str(e)[:80]
+            except requests.RequestException as exc:
+                logger.warning("Proxy connection test against huggingface.co failed: %s", exc)
+                error_msg = GLib.markup_escape_text(str(exc)[:80])
                 GLib.idle_add(
                     self.proxy_status_label.set_markup,
                     f"<span foreground='#c01c28'>✗ Connection failed: {error_msg}</span>",

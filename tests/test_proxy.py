@@ -96,6 +96,14 @@ class TestManualProxyUrl:
         url = manual_proxy_url(_manual_config(port=99999))
         assert url == "socks5h://proxy.example.com:1080"
 
+    def test_ipv6_host_is_bracketed(self) -> None:
+        url = manual_proxy_url(_manual_config(host="::1"))
+        assert url == "socks5h://[::1]:1080"
+
+    def test_ipv6_host_already_bracketed_passes_through(self) -> None:
+        url = manual_proxy_url(_manual_config(host="[2001:db8::1]"))
+        assert url == "socks5h://[2001:db8::1]:1080"
+
 
 class TestEffectiveProxyConfig:
     def test_reads_saved_section(self) -> None:
