@@ -27,6 +27,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     EvdevDeviceHub,
     EvdevKeyboardBackend,
     _clone_device_name,
+    _find_keyboard_devices_from_evdev,
     device_has_key,
     device_has_modifier_key,
     ecodes,
@@ -143,6 +144,115 @@ B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
             with patch("os.path.exists", return_value=False):
                 result = find_keyboard_devices()
                 assert "/dev/input/event0" not in result
+
+    def test_find_keyboard_devices_skips_relative_pointer(self):
+        """A device emitting REL_X/Y motion is a mouse, not a keyboard (#900)."""
+        mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+I: Bus=0003 Vendor=046d Product=c08b Version=0110
+N: Name="Logitech G502 HERO Gaming Mouse"
+H: Handlers=mouse0 event5
+B: KEY=1f0000 0 0 0 0
+B: REL=143
+B: MSC=10
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == ["/dev/input/event0"]
+
+    def test_find_keyboard_devices_skips_absolute_pointer(self):
+        """ABS_X/Y devices (touchpads, tablets) are also pointers."""
+        mock_proc_content = """I: Bus=0018 Vendor=04f3 Product=0033 Version=0500
+N: Name="Elan Touchpad"
+H: Handlers=mouse0 event1
+B: KEY=ff000000000000 0 0 0
+B: ABS=273000000000003
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == []
+
+    def test_find_keyboard_devices_keeps_wheel_only_device(self):
+        """REL_WHEEL without X/Y motion does not mark a device as a pointer."""
+        mock_proc_content = """I: Bus=0005 Vendor=046d Product=b331 Version=0030
+N: Name="Wireless Keyboard"
+H: Handlers=kbd event3
+B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: REL=100
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == ["/dev/input/event3"]
+
+    def test_find_keyboard_devices_pointer_axes_split_bitmap(self):
+        """Pointer axes are read from the low word of a multi-word bitmap."""
+        mock_proc_content = """I: Bus=0003 Vendor=046d Product=c52b Version=1201
+N: Name="Logitech USB Receiver"
+H: Handlers=mouse0 event4
+B: KEY=ffff0000 0 0 0 0
+B: REL=0 0 143
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == []
+
+
+class TestFindKeyboardDevicesFromEvdev:
+    """Test _find_keyboard_devices_from_evdev() discovery and filtering."""
+
+    def _devices(self, caps_by_path: dict[str, dict]) -> dict[str, MagicMock]:
+        devices = {}
+        for path, caps in caps_by_path.items():
+            device = MagicMock()
+            device.capabilities.return_value = caps
+            device.name = f"fake-{path}"
+            devices[path] = device
+        return devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.evdev")
+    def test_discovers_keyboards(self, mock_evdev, mock_input_device):
+        """A plain keyboard device is reported."""
+        devices = self._devices({"/dev/input/event0": {ecodes.EV_KEY: [ecodes.KEY_A]}})
+        mock_evdev.list_devices.return_value = list(devices)
+        mock_input_device.side_effect = lambda path: devices[path]
+        assert _find_keyboard_devices_from_evdev() == ["/dev/input/event0"]
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.evdev")
+    def test_skips_pointer_devices(self, mock_evdev, mock_input_device):
+        """Mice/tablets with EV_KEY buttons are skipped, keyboards kept."""
+        caps = {
+            "/dev/input/event0": {ecodes.EV_KEY: [ecodes.KEY_A]},
+            # Mouse-style node: keyboard keys plus pointer motion.
+            "/dev/input/event1": {
+                ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL],
+                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
+            },
+            # Tablet/touchpad: absolute pointer axes (AbsInfo tuples).
+            "/dev/input/event2": {
+                ecodes.EV_KEY: [ecodes.KEY_A],
+                ecodes.EV_ABS: [(ecodes.ABS_X, MagicMock()), (ecodes.ABS_Y, MagicMock())],
+            },
+            # Keyboard with a wheel: relative axis but no X/Y motion.
+            "/dev/input/event3": {
+                ecodes.EV_KEY: [ecodes.KEY_A],
+                ecodes.EV_REL: [ecodes.REL_WHEEL],
+            },
+        }
+        devices = self._devices(caps)
+        mock_evdev.list_devices.return_value = list(caps)
+        mock_input_device.side_effect = lambda path: devices[path]
+        assert _find_keyboard_devices_from_evdev() == [
+            "/dev/input/event0",
+            "/dev/input/event3",
+        ]
 
 
 class TestDeviceHasModifierKey:

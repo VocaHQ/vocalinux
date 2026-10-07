@@ -25,7 +25,7 @@ import select
 import threading
 import time
 import weakref
-from typing import Any, Optional, Sequence, TextIO
+from typing import Any, Mapping, Optional, Sequence, TextIO
 
 # Try to import evdev
 try:
@@ -253,6 +253,10 @@ def find_keyboard_devices() -> list[str]:
     """
     Find all keyboard input devices.
 
+    Devices that emit pointer motion (REL_X/Y or ABS_X/Y) are excluded:
+    a mouse is not a keyboard, and monitoring one proxies all cursor
+    movement through the reader thread (cursor stutter, #900).
+
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
     confinement: raw-input grants /dev/input/event*, while hardware-observe
@@ -277,32 +281,105 @@ def find_keyboard_devices() -> list[str]:
         return fallback
 
 
+# Bits 0 and 1 of a REL or ABS capability bitmap: REL_X|REL_Y or
+# ABS_X|ABS_Y — pointer motion. A keyboard never reports both; devices
+# that do are mice, trackpads or tablets, and monitoring one meant
+# grabbing it and piping all cursor movement through the reader thread,
+# which showed up as periodic cursor stutter (#900).
+_POINTER_AXIS_BITS = 0x3
+
+
+def _bitmap_has_any_bit(hex_bitmap: str) -> bool:
+    """True when any word of a /proc capability bitmap has a bit set."""
+    try:
+        return any(int(word, 16) for word in hex_bitmap.split())
+    except ValueError:
+        return False
+
+
+def _bitmap_low_bits(hex_bitmap: str) -> int:
+    """Low word (bits 0-63) of a /proc capability bitmap, or 0.
+
+    Bitmaps print most-significant word first, so axis bits 0..63 live in
+    the last word on the line.
+    """
+    words = hex_bitmap.split()
+    if not words:
+        return 0
+    try:
+        return int(words[-1], 16)
+    except ValueError:
+        return 0
+
+
+def _proc_block_has_pointer_axes(device: dict[str, Any]) -> bool:
+    """True when a parsed /proc device block reports pointer motion axes."""
+    return (
+        _bitmap_low_bits(device.get("rel", "")) & _POINTER_AXIS_BITS == _POINTER_AXIS_BITS
+        or _bitmap_low_bits(device.get("abs", "")) & _POINTER_AXIS_BITS == _POINTER_AXIS_BITS
+    )
+
+
 def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
-    """Parse an open /proc/bus/input/devices stream for event KEY devices."""
+    """Parse an open /proc/bus/input/devices stream for event KEY devices.
+
+    Devices that emit pointer motion (REL_X/Y or ABS_X/Y) are skipped:
+    mice and tablets report EV_KEY bits for their buttons, but grabbing
+    them proxies every cursor movement through this reader.
+    """
     keyboard_devices: list[str] = []
-    current_device = None
+    device: Optional[dict[str, Any]] = None
+
+    def finish_device() -> None:
+        nonlocal device
+        if device is None:
+            return
+        if _bitmap_has_any_bit(device.get("key", "")):
+            if _proc_block_has_pointer_axes(device):
+                logger.debug(
+                    "Skipping pointer device during keyboard discovery: "
+                    f"{device.get('name', '?')} ({device.get('handlers', [])})"
+                )
+            else:
+                for handler in device.get("handlers", []):
+                    if handler.startswith("event"):
+                        device_path = f"/dev/input/{handler}"
+                        if os.path.exists(device_path):
+                            keyboard_devices.append(device_path)
+        device = None
+
     with proc_file as f:
         for line in f:
             line = line.rstrip("\n")
             if line.startswith("I: Bus="):
-                current_device = {"handlers": []}
-            elif line.startswith("H: Handlers=") and current_device is not None:
-                handlers = line.split("=", 1)[1].strip()
-                current_device["handlers"] = handlers.split()
-            elif line.startswith("B: KEY=") and current_device is not None:
-                # Check if this device has keyboard keys (bit 0 is set)
-                key_bits = line.split("=", 1)[1].strip()
-                # The first hex digit after KEY= contains keyboard capability
-                # If it's not 0, 1, or ffffffffff, it has keyboard keys
-                if key_bits and key_bits != "0":
-                    # Check if event handler exists
-                    for handler in current_device.get("handlers", []):
-                        if handler.startswith("event"):
-                            device_path = f"/dev/input/{handler}"
-                            if os.path.exists(device_path):
-                                keyboard_devices.append(device_path)
-                current_device = None
+                finish_device()
+                device = {}
+            elif device is not None:
+                if line.startswith("N: Name="):
+                    device["name"] = line.split("=", 1)[1].strip().strip('"')
+                elif line.startswith("H: Handlers="):
+                    device["handlers"] = line.split("=", 1)[1].strip().split()
+                elif line.startswith("B: KEY="):
+                    device["key"] = line.split("=", 1)[1].strip()
+                elif line.startswith("B: REL="):
+                    device["rel"] = line.split("=", 1)[1].strip()
+                elif line.startswith("B: ABS="):
+                    device["abs"] = line.split("=", 1)[1].strip()
+        finish_device()
     return keyboard_devices
+
+
+def _capabilities_have_pointer_axes(capabilities: Mapping[int, Sequence[int]]) -> bool:
+    """True when the device reports REL_X+REL_Y or ABS_X+ABS_Y pointer axes."""
+    rel_codes = capabilities.get(ecodes.EV_REL, ())
+    if ecodes.REL_X in rel_codes and ecodes.REL_Y in rel_codes:
+        return True
+    # capabilities() reports EV_ABS entries as (code, AbsInfo) pairs.
+    abs_codes = {
+        entry[0] if isinstance(entry, (tuple, list)) else entry
+        for entry in capabilities.get(ecodes.EV_ABS, ())
+    }
+    return ecodes.ABS_X in abs_codes and ecodes.ABS_Y in abs_codes
 
 
 def _find_keyboard_devices_from_evdev() -> list[str]:
@@ -322,9 +399,16 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
             device = InputDevice(path)
             try:
                 capabilities = device.capabilities()
+                device_name = str(getattr(device, "name", "") or "")
             finally:
                 device.close()
         except (OSError, IOError, TypeError, ValueError):
+            continue
+
+        if capabilities and _capabilities_have_pointer_axes(capabilities):
+            # Mice/tablets also report EV_KEY for their buttons; monitoring
+            # a pointer pipes all cursor movement through this reader.
+            logger.debug(f"Skipping pointer device during keyboard discovery: {device_name}")
             continue
 
         # Prefer devices that look like keyboards: EV_KEY with a common letter
