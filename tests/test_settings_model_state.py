@@ -819,10 +819,10 @@ def test_a_picker_change_only_stages_a_missing_model(
 
     modal_class.assert_not_called()
     dialog.speech_engine.try_begin_download.assert_not_called()
-    # The spec keys are staged, not applied; edits outside it still apply.
-    dialog._apply_settings_internal.assert_called_once()
-    applied = dialog._apply_settings_internal.call_args.args[0]
-    assert applied == {"vad_sensitivity": 2}
+    # The spec keys are staged, not applied; edits outside it still save —
+    # straight to the config, never through a model-reloading reconfigure.
+    dialog._apply_settings_internal.assert_not_called()
+    dialog._save_selected_settings.assert_called_once_with({"vad_sensitivity": 2})
     assert dialog._staged_model_spec == {
         "engine": "whisper_cpp",
         "model_size": "small",

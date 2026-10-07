@@ -8938,28 +8938,16 @@ class SettingsDialog(Gtk.Dialog):
                     "model_variant": settings.get("model_variant", ""),
                     "language": self.language,
                 }
-                # Edits outside the spec are not part of the staging: apply and
-                # save them normally so VAD, timeouts and advanced params are
-                # not dropped while a download is staged.
+                # Edits outside the spec are not part of the staging: persist
+                # them so VAD, timeouts and advanced params are not dropped
+                # while a download is staged. No engine call — a reconfigure
+                # reloads the model whenever whispercpp_* keys are present,
+                # which is exactly the work staging exists to defer.
                 non_model_settings = {
                     key: value for key, value in settings.items() if key not in _MODEL_SPEC_KEYS
                 }
                 if non_model_settings:
-
-                    def apply_non_model_settings() -> None:
-                        try:
-                            self._apply_settings_internal(
-                                non_model_settings,
-                                raise_errors=True,
-                                apply_generation=apply_generation,
-                            )
-                        except Exception as e:
-                            logger.error(f"Failed to auto-apply settings: {e}")
-                        finally:
-                            GLib.idle_add(self._finish_auto_apply)
-
-                    threading.Thread(target=apply_non_model_settings, daemon=True).start()
-                    worker_holds_guard = True
+                    self._save_selected_settings(non_model_settings)
                 self._update_model_info()
                 return
 
