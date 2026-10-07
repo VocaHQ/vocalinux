@@ -4695,6 +4695,15 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
 
+        # Picking a spec only stages it; this button is the explicit
+        # confirmation that turns the staged spec into a download (#894).
+        self.model_download_button = Gtk.Button(label="Download")
+        self.model_download_button.get_style_context().add_class("suggested-action")
+        self.model_download_button.set_halign(Gtk.Align.START)
+        self.model_download_button.set_no_show_all(True)
+        self.model_download_button.connect("clicked", self._on_download_model_clicked)
+        self.model_info_card.pack_start(self.model_download_button, False, False, 0)
+
         # The recommendation used to be a plain label, which left the panel stating
         # the right answer while the pickers kept the wrong one (#778).
         self.model_recommendation_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -8631,7 +8640,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.config_manager.set("speech_recognition", "simple_second_language", second or "")
         self._update_simple_visibility()
-        self._auto_apply_settings()
+        # A simple answer resolves to a complete spec, so its pick keeps the
+        # instant apply-and-download flow the Advanced pickers no longer get.
+        self._auto_apply_settings(allow_download=True)
 
     def _commit_or_restore_simple_language_entry(self) -> bool:
         """Resolve text typed into the simple language box, or restore the last pick."""
@@ -8807,6 +8818,9 @@ class SettingsDialog(Gtk.Dialog):
         else:
             status = f"<span foreground='#e5a50a'>Download ~{_format_size(info['size_mb'])}</span>"
         self.model_info_subtitle.set_markup(f"{extra_info} · {status}")
+        # The confirm action follows the displayed spec: offered only while it
+        # names a model that is not on disk (#894).
+        self.model_download_button.set_visible(not is_downloaded)
 
         target = recommended
         message = None
@@ -8838,8 +8852,16 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_title.show()
         self.model_info_subtitle.show()
 
-    def _auto_apply_settings(self):
-        """Automatically apply settings when changed."""
+    def _auto_apply_settings(self, allow_download: bool = False):
+        """Automatically apply settings when changed.
+
+        A picker change stages a model spec; it never confirms a download.
+        ``allow_download`` is passed only by the simple questions, whose each
+        answer resolves to a complete spec, so their pick keeps the existing
+        apply-and-download flow. Every other caller leaves a missing model
+        staged: the pickers keep it, the info card offers Download, and only
+        ``apply_settings`` (that button, or Test) starts the transfer (#894).
+        """
         if _handlers_suppressed(self):
             return
 
@@ -8876,6 +8898,13 @@ class SettingsDialog(Gtk.Dialog):
 
             # Check if model needs to be downloaded
             missing_model = _undownloaded_model_info(self.language, engine, model_name)
+
+            if missing_model is not None and not allow_download:
+                # Staging, not confirming: leave the staged spec in the pickers
+                # and the saved one in the config, and repaint the info card so
+                # its Download action offers the explicit confirmation (#894).
+                self._update_model_info()
+                return
 
             if missing_model is not None:
                 if not self.speech_engine.try_begin_download():
@@ -9465,6 +9494,16 @@ For now, the engine has been reverted to VOSK."""
         self.engine_combo.set_active_id("Vosk")
         self._populate_model_options()
         self._update_engine_specific_ui()
+
+    def _on_download_model_clicked(self, _button: Any) -> None:
+        """Confirm the staged model spec and start its download (#894).
+
+        The pickers only stage a specification; this is the one explicit
+        confirmation that turns it into a transfer. It goes through
+        ``apply_settings`` so the engine claim, the modal progress dialog, and
+        the post-download apply behave exactly like any other confirmed apply.
+        """
+        self.apply_settings()
 
     def apply_settings(self) -> bool:
         """Apply the selected settings."""

@@ -423,7 +423,7 @@ def test_download_path_resyncs_when_the_apply_reports_failure(settings_dialog, d
         patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
         patch.object(settings_dialog.threading, "Thread", _InlineThread),
     ):
-        dialog_class._auto_apply_settings(dialog)
+        dialog_class._auto_apply_settings(dialog, allow_download=True)
 
     modal = modal_class.return_value
     scheduled = [(func, args) for func, args in idle_calls]
@@ -450,7 +450,7 @@ def test_download_path_resyncs_when_the_download_is_cancelled(settings_dialog, d
         patch.object(settings_dialog, "GLib", _glib_stub(idle_calls)),
         patch.object(settings_dialog.threading, "Thread", _InlineThread),
     ):
-        dialog_class._auto_apply_settings(dialog)
+        dialog_class._auto_apply_settings(dialog, allow_download=True)
 
     modal = modal_class.return_value
     assert (dialog._idle_resync_model_ui_from_config, ()) in idle_calls
@@ -473,7 +473,7 @@ def test_modal_close_resyncs_an_engine_that_never_applied(settings_dialog, dialo
         patch.object(settings_dialog, "GLib", MagicMock()),
         patch.object(settings_dialog.threading, "Thread", _InlineThread),
     ):
-        dialog_class._auto_apply_settings(dialog)
+        dialog_class._auto_apply_settings(dialog, allow_download=True)
 
     dialog._resync_engine_ui_if_unapplied.assert_called_once()
 
@@ -761,7 +761,10 @@ def test_settings_refuses_a_download_while_the_tray_holds_the_engine(
         patch.object(settings_dialog, "GLib", MagicMock()),
         patch.object(settings_dialog.threading, "Thread", _InlineThread),
     ):
-        getattr(dialog_class, entry)(dialog)
+        if entry == "_auto_apply_settings":
+            dialog_class._auto_apply_settings(dialog, allow_download=True)
+        else:
+            dialog_class.apply_settings(dialog)
 
     modal_class.assert_not_called()
     dialog._apply_settings_internal.assert_not_called()
@@ -781,10 +784,123 @@ def test_settings_releases_the_engine_once_the_download_is_over(
         patch.object(settings_dialog, "GLib", MagicMock()),
         patch.object(settings_dialog.threading, "Thread", _InlineThread),
     ):
-        getattr(dialog_class, entry)(dialog)
+        if entry == "_auto_apply_settings":
+            dialog_class._auto_apply_settings(dialog, allow_download=True)
+        else:
+            dialog_class.apply_settings(dialog)
 
     dialog.speech_engine.try_begin_download.assert_called_once_with()
     dialog.speech_engine.end_download.assert_called_once_with()
+
+
+def test_a_picker_change_only_stages_a_missing_model(settings_dialog, dialog_class):
+    """#894: a spec that is not on disk must not start downloading on its own.
+
+    Pickers stage the spec; nothing applies and nothing is resynced away, so
+    the next pick keeps composing instead of fighting a modal.
+    """
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog") as modal_class,
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        dialog_class._auto_apply_settings(dialog)
+
+    modal_class.assert_not_called()
+    dialog.speech_engine.try_begin_download.assert_not_called()
+    dialog._apply_settings_internal.assert_not_called()
+    dialog._save_selected_settings.assert_not_called()
+    dialog._resync_model_ui_from_config.assert_not_called()
+    dialog._resync_engine_ui_if_unapplied.assert_not_called()
+    dialog._update_model_info.assert_called_once_with()
+
+
+def test_staging_several_specs_still_downloads_none(settings_dialog, dialog_class):
+    """Each field of the spec can flip without a single download starting."""
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog") as modal_class,
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        for _flip in range(3):
+            dialog_class._auto_apply_settings(dialog)
+
+    modal_class.assert_not_called()
+    dialog.speech_engine.try_begin_download.assert_not_called()
+    dialog._apply_settings_internal.assert_not_called()
+
+
+def test_a_download_allowed_apply_still_downloads(settings_dialog, dialog_class):
+    """The simple questions keep the instant apply-and-download flow."""
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog") as modal_class,
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        dialog_class._auto_apply_settings(dialog, allow_download=True)
+
+    dialog.speech_engine.try_begin_download.assert_called_once_with()
+    modal_class.assert_called_once()
+
+
+def test_the_download_button_confirms_the_staged_spec(dialog_class):
+    """The info card's Download action is the one explicit confirmation."""
+    dialog = _dialog_stub()
+
+    dialog_class._on_download_model_clicked(dialog, None)
+
+    dialog.apply_settings.assert_called_once_with()
+
+
+def _update_model_info_stub(dialog_class: type[Any]) -> Mock:
+    """Enough widget state for the real ``_update_model_info`` on whisper.cpp."""
+    dialog = _dialog_stub()
+    _bind_real(dialog, dialog_class, "_update_model_info")
+    dialog.engine_combo.get_active_text.return_value = "whisper.cpp"
+    dialog._get_selected_whispercpp_model.return_value = "small"
+    dialog._get_recommended_whispercpp_model_for_language.return_value = ("small", "fits")
+    dialog._downloaded_alternative_for.return_value = None
+    return dialog
+
+
+def test_the_info_card_offers_download_for_a_missing_model(settings_dialog, dialog_class):
+    """An undownloaded spec shows the confirm action on the info card."""
+    dialog = _update_model_info_stub(dialog_class)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "detect_compute_backend", return_value=("cpu", {})),
+        patch.object(settings_dialog, "get_backend_display_name", return_value="CPU"),
+    ):
+        dialog._update_model_info()
+
+    dialog.model_download_button.set_visible.assert_called_once_with(True)
+
+
+def test_the_info_card_offers_no_download_for_a_downloaded_model(settings_dialog, dialog_class):
+    """An already-downloaded spec never prompts (#894 acceptance)."""
+    dialog = _update_model_info_stub(dialog_class)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=True),
+        patch.object(settings_dialog, "detect_compute_backend", return_value=("cpu", {})),
+        patch.object(settings_dialog, "get_backend_display_name", return_value="CPU"),
+    ):
+        dialog._update_model_info()
+
+    dialog.model_download_button.set_visible.assert_called_once_with(False)
 
 
 def _dialog_for_engine_ui(engine_text: str):
