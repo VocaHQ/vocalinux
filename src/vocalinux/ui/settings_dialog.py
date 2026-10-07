@@ -8984,6 +8984,10 @@ class SettingsDialog(Gtk.Dialog):
                 # Whatever ended the modal — cancel, failure, or a path not
                 # covered above — the pickers must not outlive the config.
                 self._resync_engine_ui_if_unapplied()
+                # Repaint the info card too: after a success it still showed the
+                # pre-download render (amber size line, Download action) until
+                # some other change repainted it (#894 follow-up).
+                self._update_model_info()
                 return
 
             logger.info(f"Auto-applying settings: {settings}")
@@ -9588,6 +9592,9 @@ For now, the engine has been reverted to VOSK."""
 
             self._populate_model_options()
             self._resync_engine_ui_if_unapplied()
+            # Same repaint as the auto-apply path: a finished download must not
+            # leave the card offering a Download for the model just fetched.
+            self._update_model_info()
             return True
 
         return self._apply_settings_internal(settings)

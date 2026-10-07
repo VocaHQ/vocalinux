@@ -864,6 +864,32 @@ def test_the_download_button_confirms_the_staged_spec(dialog_class):
     dialog.apply_settings.assert_called_once_with()
 
 
+@pytest.mark.parametrize("entry", ["_auto_apply_settings", "apply_settings"])
+def test_a_finished_download_repaints_the_model_info_card(settings_dialog, dialog_class, entry):
+    """A completed download must not leave the card on the pre-download render.
+
+    Without the repaint, the card keeps the amber size line and, since #894,
+    a Download action for the model that was just fetched. The cancel path
+    already repaints via ``_idle_resync_model_ui_from_config``; success needs
+    its own.
+    """
+    dialog = _dialog_stub()
+    _download_setup(dialog)
+
+    with (
+        patch.object(settings_dialog, "is_whispercpp_model_downloaded", return_value=False),
+        patch.object(settings_dialog, "ModelDownloadDialog"),
+        patch.object(settings_dialog, "GLib", MagicMock()),
+        patch.object(settings_dialog.threading, "Thread", _InlineThread),
+    ):
+        if entry == "_auto_apply_settings":
+            dialog_class._auto_apply_settings(dialog, allow_download=True)
+        else:
+            dialog_class.apply_settings(dialog)
+
+    dialog._update_model_info.assert_called_once()
+
+
 def _update_model_info_stub(dialog_class: type[Any]) -> Mock:
     """Enough widget state for the real ``_update_model_info`` on whisper.cpp."""
     dialog = _dialog_stub()
