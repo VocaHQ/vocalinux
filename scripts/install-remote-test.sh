@@ -259,6 +259,20 @@ assert_remote_install
 echo "== Run 2: re-run over the existing clone (fetch + reset) =="
 # The second bootstrap sees $CLONE_DIR/.git and updates it instead of cloning:
 # the arm a user re-running curl|bash takes on every release after the first.
+# Move the clone off the tag and drop its local tag ref first: a run that only
+# had to notice the right commit was already checked out would pass even if
+# the fetch and reset were both no-ops.
+AWAY_SHA="$(su - "$INSTALL_USER" -c "cd '$CLONE_DIR' && \
+  GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@local \
+  GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@local \
+  git commit-tree 'HEAD^{tree}' -p HEAD -m moved")"
+su - "$INSTALL_USER" -c "git -C '$CLONE_DIR' reset --hard '$AWAY_SHA' \
+  && git -C '$CLONE_DIR' update-ref -d 'refs/tags/$GATE_TAG'" \
+  || fail "could not move the clone off $GATE_TAG for the re-run arm"
+[ "$(git -C "$CLONE_DIR" rev-parse HEAD)" = "$AWAY_SHA" ] \
+  || fail "the clone did not move off $GATE_TAG; the re-run proves nothing"
+[ -z "$(git -C "$CLONE_DIR" tag -l "$GATE_TAG")" ] \
+  || fail "the clone kept refs/tags/$GATE_TAG; the re-run proves nothing"
 run_remote_install || fail "the remote install exited non-zero over the existing clone"
 grep -l "Updating existing clone" "$INSTALL_HOME"/.local/state/vocalinux/install-*.log >/dev/null 2>&1 \
   || fail "no install log shows 'Updating existing clone'; the fetch arm did not run"
