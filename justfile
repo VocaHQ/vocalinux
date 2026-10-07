@@ -140,6 +140,23 @@ install-gate distro="debian:12":
     fi
     docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-test.sh"
 
+# Run install.sh's remote path end to end in a distro container, as the CI gate
+# does: bootstrap outside a checkout, tag selection, clone/fetch of a mirror
+# published from HEAD, handoff to the tagged installer. Answers "does the
+# public curl|bash path install this commit" (needs docker). Same worktree
+# handling as install-gate above.
+#
+# Usage: `just remote-install-gate` for debian:12, or `just remote-install-gate fedora:42`
+remote-install-gate distro="debian:12":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
+    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
+    if [ "$COMMON" != "$PWD/.git" ]; then
+        ARGS+=(-v "$COMMON:$COMMON:ro")
+    fi
+    docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-remote-test.sh"
+
 # Check that a published release verifies as published: manifest, provenance,
 # notes and PyPI digests. Needs gh, downloads nothing.
 # Usage: `just verify-release` for the latest, or `just verify-release v0.17.0`
