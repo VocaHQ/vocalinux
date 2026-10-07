@@ -443,6 +443,15 @@ class TestTranscriptionHistoryPersistence(unittest.TestCase):
         history = TranscriptionHistory(persist=True, store_path=self.store_path)
         self.assertEqual(history.get_all(), ["also good", "good"])
 
+    def test_lone_surrogate_text_is_skipped(self) -> None:
+        """A record JSON can parse but UTF-8 cannot write must not block startup."""
+        with open(self.store_path, "w", encoding="utf-8") as handle:
+            handle.write('{"id": 1, "text": "\\ud800"}\n')
+            handle.write('{"id": 2, "text": "good"}\n')
+
+        history = TranscriptionHistory(persist=True, store_path=self.store_path)
+        self.assertEqual(history.get_all(), ["good"])
+
     def test_load_rewrites_store_to_match_memory(self) -> None:
         """Skipped lines and a lowered cap leave the file mirroring memory."""
         with open(self.store_path, "w", encoding="utf-8") as handle:

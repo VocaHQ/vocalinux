@@ -409,6 +409,13 @@ class TranscriptionHistory:
         text = record.get("text")
         if not isinstance(text, str) or not text.strip():
             return None
+        try:
+            text.encode("utf-8")
+        except UnicodeEncodeError:
+            # json.loads accepts lone surrogates, but the UTF-8 store cannot
+            # write them back; reject the record instead of letting the
+            # startup rewrite raise.
+            return None
         raw_id = record.get("id")
         if not isinstance(raw_id, int) or isinstance(raw_id, bool) or raw_id <= 0:
             return None
@@ -443,7 +450,7 @@ class TranscriptionHistory:
             finally:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
-        except OSError as e:
+        except (OSError, UnicodeError) as e:
             logger.warning(
                 "Could not write transcription history store %s: %s",
                 self._store_path,
