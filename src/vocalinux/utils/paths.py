@@ -47,3 +47,15 @@ def is_within_directory(path: str, directory: str, *, allow_root: bool = False) 
     if rel == ".":
         return allow_root
     return True
+
+
+def collapse_repeated_extension(path: str, extension: str) -> str:
+    """Drop a duplicated extension suffix like ``name.txt.txt`` -> ``name.txt``.
+
+    Some save dialogs (notably portal-based ones) append the active filter's
+    extension even when the typed name already ends with it.
+    """
+    doubled = extension + extension
+    if path.lower().endswith(doubled):
+        return path[: -len(extension)]
+    return path
