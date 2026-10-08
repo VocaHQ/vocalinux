@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
@@ -424,6 +424,8 @@ def main():
         logger.warning("After installing, log out and back in (or restart GNOME Shell).")
 
     # Now it's safe to import GTK-dependent modules
+    import os
+
     from .common_types import RecognitionState
     from .custom_dictionary import CustomDictionaryManager
     from .speech_recognition import recognition_manager
@@ -437,6 +439,7 @@ def main():
         TranscriptionHistory,
         sanitize_max_items,
     )
+    from .utils.paths import data_dir
 
     # Initialize logging manager early
     initialize_logging()
@@ -537,6 +540,9 @@ def main():
     # A hand-edited config.json can hold a non-numeric or out-of-range value;
     # sanitize on load so a bad preference cannot abort startup.
     history_max_items = sanitize_max_items(history_settings.get("max_items", DEFAULT_MAX_ITEMS))
+    # Opt-in on-disk record of snippets (#758). Off by default: dictated
+    # text stays memory-only unless the user asks for it to persist.
+    history_persist = bool(history_settings.get("persist", False))
 
     dictionary_file = getattr(args, "dictionary_file", None)
     transient_terms_path = (
@@ -599,12 +605,37 @@ def main():
         # Initialize action handler
         action_handler = ActionHandler(text_system)
 
-        # Transcription history: an in-memory, newest-first list of recent
-        # dictation snippets surfaced in the tray menu. One snippet == one
-        # dictation session (everything said between start and stop).
+        # Transcription history: a newest-first list of recent dictation
+        # snippets surfaced in the tray menu. One snippet == one dictation
+        # session (everything said between start and stop). Memory-only by
+        # default; history.persist mirrors it to history.jsonl under the
+        # data directory so snippets survive restarts (#758).
         transcription_history = TranscriptionHistory(
-            max_items=history_max_items, enabled=history_enabled
+            max_items=history_max_items,
+            enabled=history_enabled,
+            persist=history_persist,
+            store_path=os.path.join(data_dir(), "history.jsonl"),
         )
+
+        def _history_record_fields() -> Dict[str, Any]:
+            """Optional details stored with a persisted snippet (#758).
+
+            Language and model come off the engine; commit sites that know
+            the session bounds add duration themselves.
+            """
+            fields: Dict[str, Any] = {}
+            language = getattr(speech_engine, "_session_language", None) or getattr(
+                speech_engine, "language", None
+            )
+            if language:
+                fields["language"] = language
+            engine = getattr(speech_engine, "engine", "")
+            model_size = getattr(speech_engine, "model_size", "")
+            model = "/".join(str(part) for part in (engine, model_size) if part)
+            if model:
+                fields["model"] = model
+            return fields
+
         # Segments dictated during the open session, joined and committed to
         # history when the session ends (state returns to IDLE). Each entry
         # keeps the monotonic time its audio capture began: a history.clear()
@@ -641,6 +672,17 @@ def main():
         # committed since, so one session's stragglers can never leak into a
         # newer entry or split across several snippets.
         ended_worker_snippets: dict[threading.Thread, tuple[int, int]] = {}
+        # Record fields (language, model) captured when a session opens, so a
+        # snippet committed after the engine has already moved on still
+        # carries the language that produced its audio (#758).
+        session_record_fields: Optional[Dict[str, Any]] = None
+        # Fields of the most recently ended session, for late deliveries that
+        # open their own snippet: they belong to that session, not the live
+        # one the engine is already configured for.
+        ended_session_fields: Dict[str, Any] = {}
+        # Per-worker copy of those fields, mirroring ended_worker_snippets:
+        # a straggler keeps its own session's language across sessions.
+        ended_worker_fields: dict[threading.Thread, Dict[str, Any]] = {}
         # Every worker that has delivered in-session segments; a delivery on
         # a thread never associated with a session is treated as the
         # just-ended session's trailing decode, while a worker seen producing
@@ -732,7 +774,7 @@ def main():
             across a clear is still recoverable.
             """
             nonlocal session_worker, latest_snippet_id, latest_snippet_epoch
-            nonlocal session_workers_seen, ended_worker_snippets
+            nonlocal session_workers_seen, ended_worker_snippets, ended_worker_fields
             if not transcription_history.enabled:
                 return
             segment = _normalize_segment_text(segment)
@@ -749,6 +791,7 @@ def main():
                 ended_worker_snippets = {
                     w: s for w, s in ended_worker_snippets.items() if w.is_alive()
                 }
+                ended_worker_fields = {w: f for w, f in ended_worker_fields.items() if w.is_alive()}
                 if started_at <= transcription_history.cleared_at:
                     # Captured before the last clear — must not re-enter.
                     return
@@ -809,11 +852,17 @@ def main():
                     return
                 # Otherwise the late segments are the session's only output
                 # and form their own snippet, which its worker keeps owning.
-                snippet_id = transcription_history.add(segment, expected_epoch=ended_session_epoch)
+                # The fields come from the session that produced the audio,
+                # not the one the engine may already have moved on to.
+                owner_fields = ended_worker_fields.get(worker, ended_session_fields)
+                snippet_id = transcription_history.add(
+                    segment, expected_epoch=ended_session_epoch, **owner_fields
+                )
                 if snippet_id is not None:
                     latest_snippet_id = snippet_id
                     latest_snippet_epoch = ended_session_epoch
                     ended_worker_snippets[worker] = (snippet_id, ended_session_epoch)
+                    ended_worker_fields[worker] = owner_fields
                     session_workers_seen.add(worker)
 
         def inject_transcription(text_to_inject: str, to_pad: Optional[bool] = None) -> None:
@@ -1191,6 +1240,7 @@ def main():
             """
             nonlocal session_open, session_worker, latest_snippet_id
             nonlocal ended_session_epoch, session_started_floor, latest_snippet_epoch
+            nonlocal session_record_fields, ended_session_fields
             if state in (RecognitionState.IDLE, RecognitionState.ERROR):
                 if state == RecognitionState.IDLE:
                     with pending_jobs_lock:
@@ -1208,6 +1258,12 @@ def main():
                     session_open = False
                     closing_worker = session_worker
                     session_worker = None
+                    # Snapshot before re-reading the engine: the fields belong
+                    # to the session being closed, and the live values could
+                    # already describe a reconfigure that landed mid-close.
+                    closing_fields = session_record_fields or _history_record_fields()
+                    session_record_fields = None
+                    ended_session_fields = closing_fields
                     ended_session_epoch = transcription_history.epoch
                     # Only segments captured after the last clear() join the
                     # snippet — speech captured before it is gone for good,
@@ -1223,9 +1279,18 @@ def main():
                     # segments still trickling out of the worker; a session
                     # that produced no text leaves no entry to merge into.
                     latest_snippet_id = transcription_history.add(
-                        joined, expected_epoch=ended_session_epoch
+                        joined,
+                        expected_epoch=ended_session_epoch,
+                        duration=(
+                            time.monotonic() - session_started_floor
+                            if session_started_floor
+                            else None
+                        ),
+                        **closing_fields,
                     )
                     latest_snippet_epoch = ended_session_epoch
+                    if closing_worker is not None:
+                        ended_worker_fields[closing_worker] = closing_fields
                     if latest_snippet_id is not None and closing_worker is not None:
                         ended_worker_snippets[closing_worker] = (
                             latest_snippet_id,
@@ -1237,7 +1302,13 @@ def main():
                         session_open = True
                         leftover_worker = session_worker
                         session_worker = None
+                        # Leftover segments belong to the displaced session;
+                        # grab its fields before the new session re-captures.
+                        leftover_fields = session_record_fields or ended_session_fields
+                        if leftover_worker is not None:
+                            ended_worker_fields[leftover_worker] = leftover_fields
                         session_started_floor = time.monotonic()
+                        session_record_fields = _history_record_fields()
                         # Segments left over by a session that ended without a
                         # closing state commit as their own snippet rather
                         # than leaking into the new session's — still only
@@ -1256,6 +1327,7 @@ def main():
                                     if started_at > cleared_at
                                 ),
                                 expected_epoch=stray_epoch,
+                                **leftover_fields,
                             )
                             latest_snippet_epoch = stray_epoch
                             if latest_snippet_id is not None and leftover_worker is not None:

@@ -464,8 +464,10 @@ class TrayIndicator:
             return
         enabled = self.config_manager.get_bool("history", "enabled", True)
         max_items = self.config_manager.get_int("history", "max_items", DEFAULT_MAX_ITEMS)
+        persist = self.config_manager.get_bool("history", "persist", False)
         self.transcription_history.set_max_items(max_items)
         self.transcription_history.set_enabled(enabled)
+        self.transcription_history.set_persist(persist)
 
     def _stop_language_shortcut_managers(self) -> None:
         """Stop every per-language listener and drop the managers."""
@@ -1293,6 +1295,13 @@ class TrayIndicator:
     def _on_clear_history_clicked(self, widget: Gtk.MenuItem) -> None:
         """Clear all stored snippets."""
         logger.debug("Clear history clicked")
+        self.clear_transcription_history()
+
+    def clear_transcription_history(self) -> None:
+        """Wipe every stored snippet, on disk as well as in memory.
+
+        Shared by the tray menu item and the Settings clear button.
+        """
         if self.transcription_history is not None:
             self.transcription_history.clear()
 
@@ -1335,6 +1344,7 @@ class TrayIndicator:
             hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
             language_shortcuts_update_callback=self.refresh_language_shortcuts,
             history_update_callback=self._apply_history_settings,
+            history_clear_callback=self.clear_transcription_history,
         )
         dialog.connect("response", self._on_settings_dialog_response)
         dialog.connect("destroy", self._on_settings_dialog_destroyed)
