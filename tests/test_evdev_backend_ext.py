@@ -54,7 +54,7 @@ H: Handlers=
         mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="AT Translated Set 2 keyboard"
 H: Handlers=sysrq kbd event0
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 """
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
@@ -66,7 +66,7 @@ B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
         mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="AT Translated Set 2 keyboard"
 H: Handlers=sysrq kbd event0
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 I: Bus=0018 Vendor=04f3 Product=0033 Version=0500
 N: Name="Elan Touchpad"
 H: Handlers=mouse0 event1
@@ -126,7 +126,7 @@ B: KEY=0
         mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="Device with no event"
 H: Handlers=kbd
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 """
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             result = find_keyboard_devices()
@@ -138,7 +138,7 @@ B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
         mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="AT Translated Set 2 keyboard"
 H: Handlers=sysrq kbd event0
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 """
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=False):
@@ -150,7 +150,7 @@ B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
         mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="AT Translated Set 2 keyboard"
 H: Handlers=sysrq kbd event0
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 I: Bus=0003 Vendor=046d Product=c08b Version=0110
 N: Name="Logitech G502 HERO Gaming Mouse"
 H: Handlers=mouse0 event5
@@ -181,7 +181,7 @@ B: ABS=273000000000003
         mock_proc_content = """I: Bus=0005 Vendor=046d Product=b331 Version=0030
 N: Name="Wireless Keyboard"
 H: Handlers=kbd event3
-B: KEY=10000 7ff 202100 3953b001 68ffe0 1 20000 2000000000000 0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 B: REL=100
 """
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
@@ -201,6 +201,43 @@ B: REL=0 0 143
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
                 assert result == []
+
+    def test_find_keyboard_devices_skips_button_only_devices(self) -> None:
+        """Devices whose KEY bitmap has no real keyboard key are not keyboards (#915)."""
+        mock_proc_content = """I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="Power Button"
+H: Handlers=kbd event4
+B: KEY=1000000000000 0
+I: Bus=0019 Vendor=0000 Product=0003 Version=0000
+N: Name="Sleep Button"
+H: Handlers=kbd event5
+B: KEY=4000 0 0
+I: Bus=0019 Vendor=0000 Product=0006 Version=0000
+N: Name="Video Bus"
+H: Handlers=kbd event6
+B: KEY=3f000300000000 0 0 0 0
+I: Bus=0019 Vendor=17aa Product=5054 Version=4101
+N: Name="ThinkPad Extra Buttons"
+H: Handlers=kbd event7 rfkill
+B: KEY=40040002000000 c00017 21004000 300600 400028000000 0
+I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
+I: Bus=0003 Vendor=046d Product=c08b Version=0110
+N: Name="Logitech G502 HERO Gaming Mouse Keyboard"
+H: Handlers=sysrq kbd event8
+B: KEY=ff 0 0 0 38000000
+I: Bus=0006 Vendor=0000 Product=0000 Version=0001
+N: Name="ydotoold virtual device"
+H: Handlers=kbd mouse0 event9
+B: KEY=ffff0000 0 0 38000000
+B: REL=143
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == ["/dev/input/event0", "/dev/input/event8"]
 
 
 class TestFindKeyboardDevicesFromEvdev:

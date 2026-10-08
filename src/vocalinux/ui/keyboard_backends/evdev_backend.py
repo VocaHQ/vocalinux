@@ -288,11 +288,45 @@ def find_keyboard_devices() -> list[str]:
 # which showed up as periodic cursor stutter (#900).
 _POINTER_AXIS_BITS = 0x3
 
+# Key codes only real keyboards report: the modifiers plus KEY_A — the
+# same set the evdev fallback requires. Button-only devices (power/sleep
+# buttons, the ACPI video bus, vendor hotkey blocks) never have one, so
+# they stop being grabbed and cloned too (#915).
+_KEYBOARD_KEY_CODES = frozenset(
+    {
+        KEY_LEFTCTRL,
+        KEY_RIGHTCTRL,
+        KEY_LEFTALT,
+        KEY_RIGHTALT,
+        KEY_LEFTSHIFT,
+        KEY_RIGHTSHIFT,
+        KEY_LEFTMETA,
+        KEY_RIGHTMETA,
+        30,  # KEY_A
+    }
+)
+
 
 def _bitmap_has_any_bit(hex_bitmap: str) -> bool:
     """True when any word of a /proc capability bitmap has a bit set."""
     try:
         return any(int(word, 16) for word in hex_bitmap.split())
+    except ValueError:
+        return False
+
+
+def _bitmap_has_code(hex_bitmap: str, code: int) -> bool:
+    """True when bit ``code`` is set in a /proc capability bitmap.
+
+    Bitmaps print most-significant word first, so bit ``code`` lives in
+    word ``len(words) - 1 - code // 64``.
+    """
+    words = hex_bitmap.split()
+    word_index = len(words) - 1 - (code // 64)
+    if word_index < 0:
+        return False
+    try:
+        return bool(int(words[word_index], 16) & (1 << (code % 64)))
     except ValueError:
         return False
 
@@ -320,12 +354,25 @@ def _proc_block_has_pointer_axes(device: dict[str, Any]) -> bool:
     )
 
 
+def _proc_block_has_keyboard_keys(device: dict[str, Any]) -> bool:
+    """True when the block's KEY bitmap has a real keyboard key.
+
+    Any nonzero KEY bit used to qualify a block as a keyboard — but
+    touchpad buttons, power/sleep keys and ACPI hotkey blocks all report
+    EV_KEY codes too, so every one of them was grabbed and cloned (#915).
+    """
+    key_bitmap = device.get("key", "")
+    return any(_bitmap_has_code(key_bitmap, code) for code in _KEYBOARD_KEY_CODES)
+
+
 def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices.
 
-    Devices that emit pointer motion (REL_X/Y or ABS_X/Y) are skipped:
-    mice and tablets report EV_KEY bits for their buttons, but grabbing
-    them proxies every cursor movement through this reader.
+    Only blocks carrying a real keyboard key (a modifier or KEY_A, the
+    same rule the evdev fallback applies) qualify. Devices that emit
+    pointer motion (REL_X/Y or ABS_X/Y) are skipped: mice and tablets
+    report EV_KEY bits for their buttons, but grabbing them proxies
+    every cursor movement through this reader.
     """
     keyboard_devices: list[str] = []
     device: Optional[dict[str, Any]] = None
@@ -334,18 +381,23 @@ def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
         nonlocal device
         if device is None:
             return
-        if _bitmap_has_any_bit(device.get("key", "")):
-            if _proc_block_has_pointer_axes(device):
+        if not _proc_block_has_keyboard_keys(device):
+            if _bitmap_has_any_bit(device.get("key", "")):
                 logger.debug(
-                    "Skipping pointer device during keyboard discovery: "
+                    "Skipping non-keyboard device during keyboard discovery: "
                     f"{device.get('name', '?')} ({device.get('handlers', [])})"
                 )
-            else:
-                for handler in device.get("handlers", []):
-                    if handler.startswith("event"):
-                        device_path = f"/dev/input/{handler}"
-                        if os.path.exists(device_path):
-                            keyboard_devices.append(device_path)
+        elif _proc_block_has_pointer_axes(device):
+            logger.debug(
+                "Skipping pointer device during keyboard discovery: "
+                f"{device.get('name', '?')} ({device.get('handlers', [])})"
+            )
+        else:
+            for handler in device.get("handlers", []):
+                if handler.startswith("event"):
+                    device_path = f"/dev/input/{handler}"
+                    if os.path.exists(device_path):
+                        keyboard_devices.append(device_path)
         device = None
 
     with proc_file as f:
