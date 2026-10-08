@@ -105,6 +105,7 @@ from ..utils.whispercpp_model_info import is_model_downloaded as is_whispercpp_m
 from ..utils.whispercpp_model_info import (
     list_downloaded_models as list_downloaded_whispercpp_models,
 )
+from ..utils.whispercpp_model_info import on_disk_stand_in as whispercpp_on_disk_stand_in
 from ..version import __copyright__, __url__, __version__  # noqa: E402
 from .config_manager import (  # noqa: E402
     DEFAULT_CONFIG,
@@ -8883,26 +8884,7 @@ class SettingsDialog(Gtk.Dialog):
         language stands in instead; the info card still offers the better variant
         as a download, it just no longer forces it.
         """
-        if is_whispercpp_model_downloaded(variant):
-            return variant
-        wants_english = _language_is_english(language)
-        candidates = [
-            name
-            for name in get_whispercpp_model_variants(size)
-            if is_whispercpp_model_downloaded(name)
-            and (wants_english or not is_english_only_whispercpp_model(name))
-        ]
-        if not candidates:
-            return variant
-
-        def rank(name: str) -> tuple:
-            # Closest to what was derived: English-only first when English is
-            # wanted, the plain multilingual next, quantized ones last.
-            english_first = 0 if wants_english and is_english_only_whispercpp_model(name) else 1
-            quantized = 1 if "-q" in name else 0
-            return (english_first, quantized, name)
-
-        return min(candidates, key=rank)
+        return whispercpp_on_disk_stand_in(variant, size, _language_is_english(language))
 
     def _apply_simple_choice(self) -> None:
         """Drive the advanced controls from the simple questions.

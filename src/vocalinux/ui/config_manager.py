@@ -18,6 +18,7 @@ from ..utils.whispercpp_model_info import WHISPERCPP_MODEL_INFO, default_variant
 from ..utils.whispercpp_model_info import get_model_size as get_whispercpp_model_size
 from ..utils.whispercpp_model_info import is_dictation_model
 from ..utils.whispercpp_model_info import is_english_only_model as is_english_only_whispercpp_model
+from ..utils.whispercpp_model_info import on_disk_stand_in
 
 logger = logging.getLogger(__name__)
 
@@ -321,7 +322,13 @@ def _multilingual_sibling(model_name: str) -> str:
     return derived if derived in WHISPERCPP_MODEL_INFO else model_name
 
 
-def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_id: str) -> str:
+def resolve_whispercpp_variant(
+    saved_model: str,
+    pinned_variant: str,
+    language_id: str,
+    *,
+    prefer_on_disk: bool = False,
+) -> str:
     """Resolve the loadable whisper.cpp id for a saved size, pin, and language.
 
     A pin outranks everything except an English-only id when the language is not
@@ -330,16 +337,31 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
     plain ``{size}.en`` id is the language-derived default, not a leftover
     specialization. True leftover specializations (turbo, versioned large,
     quantized multilingual) are still honoured.
+
+    With ``prefer_on_disk`` a language-derived result stands down for a
+    downloaded same-size weight instead of forcing a fresh download (#916).
+    Pinned and leftover specialization picks are explicit choices: they are
+    returned verbatim and never swapped.
     """
     # The "layout" sentinel is deliberately not in the catalog, so it reads as
     # non-English here and derives the multilingual variant -- which is what a
     # mode that can land on any language needs (#821).
     language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
 
+    def stand_in(variant: str) -> str:
+        # Only language-derived results reach this helper; an explicit pick is
+        # returned verbatim below and never comes through here.
+        if not prefer_on_disk:
+            return variant
+        return on_disk_stand_in(variant, get_whispercpp_model_size(variant), language_is_english)
+
     pinned = pinned_variant.lower() if isinstance(pinned_variant, str) else ""
     if pinned in WHISPERCPP_MODEL_INFO and is_dictation_model(pinned):
         if not language_is_english and is_english_only_whispercpp_model(pinned):
-            return _multilingual_sibling(pinned)
+            # English-only weights cannot serve the language, so the pin is
+            # already overridden; the multilingual sibling is language-derived
+            # and a downloaded same-size weight may stand in for it.
+            return stand_in(_multilingual_sibling(pinned))
         return pinned
 
     saved = saved_model.lower() if isinstance(saved_model, str) else ""
@@ -355,13 +377,15 @@ def resolve_whispercpp_variant(saved_model: str, pinned_variant: str, language_i
         and saved != f"{size}.en"
     ):
         if not language_is_english and is_english_only_whispercpp_model(saved):
-            return _multilingual_sibling(saved)
+            return stand_in(_multilingual_sibling(saved))
         return saved
 
     derived = default_variant_for_size(size, language_is_english)
     if derived in WHISPERCPP_MODEL_INFO:
-        return derived
-    return saved if saved in WHISPERCPP_MODEL_INFO and is_dictation_model(saved) else "tiny"
+        return stand_in(derived)
+    return stand_in(
+        saved if saved in WHISPERCPP_MODEL_INFO and is_dictation_model(saved) else "tiny"
+    )
 
 
 class ConfigManager:
@@ -743,11 +767,14 @@ class ConfigManager:
 
         # Unpinned configs store the bare size; the engine still needs the
         # language-derived loadable id (and leftover ``{size}.en`` must not
-        # block a later language change).
+        # block a later language change). The derived default stands down for
+        # a downloaded same-size weight so headless startup does not demand a
+        # sibling download when a usable model is already on disk (#916).
         return resolve_whispercpp_variant(
             saved,
             self.get_model_variant_for_engine(engine),
             sr_config.get("language", "auto"),
+            prefer_on_disk=True,
         )
 
     def set_model_size_for_engine(self, engine: str, model_size: str):

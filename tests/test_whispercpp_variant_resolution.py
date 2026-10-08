@@ -15,6 +15,7 @@ import pytest
 
 import vocalinux.ui
 from vocalinux.ui.config_manager import ConfigManager, resolve_whispercpp_variant
+from vocalinux.utils import whispercpp_model_info
 
 
 @pytest.fixture(scope="module")
@@ -299,3 +300,92 @@ def test_pinned_save_persists_the_full_variant() -> None:
     assert sr_config["whisper_cpp_model_variant"] == "medium"
     assert sr_config["whisper_cpp_model_size"] == "medium"
     assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+
+
+# --- headless startup reuses what is on disk (#916) -----------------------
+#
+# The Settings picker's same-size stand-in never reached the startup path, so a
+# headless config could demand ggml-medium.en.bin while ggml-medium.bin of the
+# same size sat in the models directory. ``get_model_size_for_engine`` is the
+# single resolution point startup reads.
+
+
+def _manager(model_size: str, variant: str, language: str) -> ConfigManager:
+    manager = ConfigManager()
+    sr = manager.config["speech_recognition"]
+    sr["engine"] = "whisper_cpp"
+    sr["whisper_cpp_model_size"] = model_size
+    sr["whisper_cpp_model_variant"] = variant
+    sr["language"] = language
+    return manager
+
+
+def _downloaded(*names: str) -> Any:
+    """Patch only the disk probe; the real variant catalog stays in place."""
+    return patch.object(
+        whispercpp_model_info,
+        "is_model_downloaded",
+        side_effect=lambda name: name in names,
+    )
+
+
+def test_startup_uses_downloaded_same_size_weight_for_a_missing_en_sibling() -> None:
+    """The reported bug: ggml-medium.bin must stand in when medium.en is absent."""
+    manager = _manager("medium", "", "en-us")
+
+    with _downloaded("medium"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+
+
+def test_startup_keeps_the_en_preference_when_the_en_model_is_downloaded() -> None:
+    """An on-disk .en still wins: the stand-in never overrides what is present."""
+    manager = _manager("medium", "", "en-us")
+
+    with _downloaded("medium", "medium.en"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium.en"
+
+
+def test_startup_demands_the_derived_model_when_nothing_of_that_size_is_on_disk() -> None:
+    """No same-size weight on disk means the language-derived id and a download."""
+    manager = _manager("medium", "", "en-us")
+
+    with _downloaded("small"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium.en"
+
+
+def test_startup_never_stands_an_english_only_weight_in_for_another_language() -> None:
+    """Polish cannot use .en weights, so a missing multilingual stays a download."""
+    manager = _manager("medium", "", "pl")
+
+    with _downloaded("medium.en"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+
+
+def test_a_pinned_variant_is_never_swapped_for_a_same_size_stand_in() -> None:
+    """An explicit pin is a choice: it names the weights to fetch or load."""
+    manager = _manager("medium", "medium.en", "en-us")
+
+    with _downloaded("medium"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium.en"
+
+
+def test_a_stored_specialization_is_never_swapped_for_a_same_size_stand_in() -> None:
+    """A leftover quantized id in the size field is a deliberate pick too."""
+    manager = _manager("medium-q5_0", "", "en-us")
+
+    with _downloaded("medium"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium-q5_0"
+
+
+def test_the_plain_weight_stands_in_ahead_of_a_quantized_one() -> None:
+    """Same ranking as the picker: unquantized is closest to the derived variant."""
+    manager = _manager("medium", "", "en-us")
+
+    with _downloaded("medium-q5_0", "medium"):
+        assert manager.get_model_size_for_engine("whisper_cpp") == "medium"
+
+
+def test_resolution_without_the_disk_preference_still_derives_the_sibling() -> None:
+    """The picker path keeps deriving the language variant regardless of disk."""
+    with _downloaded("medium"):
+        assert resolve_whispercpp_variant("medium", "", "en-us") == "medium.en"

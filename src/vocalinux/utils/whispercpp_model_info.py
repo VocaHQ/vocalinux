@@ -540,6 +540,17 @@ def get_recommended_model() -> tuple[str, str]:
     return "tiny", "Default recommendation"
 
 
+def _model_file_path(model_name: str) -> str:
+    """Resolve the model file path without touching the filesystem."""
+    whispercpp_dir = os.path.join(models_dir(), "whispercpp")
+
+    model_info = WHISPERCPP_MODEL_INFO.get(model_name)
+    if model_info and model_info.get("url"):
+        return os.path.join(whispercpp_dir, os.path.basename(model_info["url"]))
+
+    return os.path.join(whispercpp_dir, f"ggml-{model_name}.bin")
+
+
 def get_model_path(model_name: str) -> str:
     """
     Get the path where a model should be stored.
@@ -550,19 +561,17 @@ def get_model_path(model_name: str) -> str:
     Returns:
         Path to the model file
     """
-    whispercpp_dir = os.path.join(models_dir(), "whispercpp")
-    os.makedirs(whispercpp_dir, exist_ok=True)
-
-    model_info = WHISPERCPP_MODEL_INFO.get(model_name)
-    if model_info and model_info.get("url"):
-        return os.path.join(whispercpp_dir, os.path.basename(model_info["url"]))
-
-    return os.path.join(whispercpp_dir, f"ggml-{model_name}.bin")
+    model_path = _model_file_path(model_name)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    return model_path
 
 
 def is_model_downloaded(model_name: str) -> bool:
     """
     Check if a whisper.cpp model is downloaded.
+
+    A read-only probe: it must not create the models directory, so it resolves
+    the file path without get_model_path's makedirs side effect.
 
     Args:
         model_name: Name of the model
@@ -570,8 +579,39 @@ def is_model_downloaded(model_name: str) -> bool:
     Returns:
         True if model exists, False otherwise
     """
-    model_path = get_model_path(model_name)
-    return os.path.exists(model_path)
+    return os.path.exists(_model_file_path(model_name))
+
+
+def on_disk_stand_in(variant: str, size: str, language_is_english: bool) -> str:
+    """Prefer a downloaded weight of the same size over fetching a sibling.
+
+    A resolved variant whose weights are absent stands down for a downloaded
+    same-size weight that can serve the language: an English-only weight
+    stands in only when English is wanted. The resolved variant itself wins
+    whenever it is already downloaded, so the ``.en`` preference and explicit
+    picks are kept whenever their files are present.
+    """
+    if is_model_downloaded(variant):
+        return variant
+
+    candidates = [
+        name
+        for name in get_model_variants(size)
+        if is_model_downloaded(name) and (language_is_english or not is_english_only_model(name))
+    ]
+    if not candidates:
+        return variant
+
+    def rank(name: str) -> tuple:
+        # Closest to what was derived: English-only first when English is
+        # wanted, the plain multilingual next, quantized ones last.
+        english_first = 0 if language_is_english and is_english_only_model(name) else 1
+        quantized = 1 if "-q" in name else 0
+        return (english_first, quantized, name)
+
+    chosen = min(candidates, key=rank)
+    logger.info("whisper.cpp model %s is not downloaded; using same-size %s", variant, chosen)
+    return chosen
 
 
 def list_downloaded_models() -> list[str]:
