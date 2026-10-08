@@ -802,10 +802,12 @@ jobs:
         working-directory: dist
         run: |
           set -euo pipefail
-          for pat in '*.whl' '*.tar.gz' '*.AppImage' '*.flatpak' '*.snap'; do
+          for pat in '*.whl' '*.tar.gz' '*.AppImage' '*.deb' '*.rpm' '*.flatpak' '*.snap'; do
             compgen -G "$pat" > /dev/null || { echo "missing artifact: $pat"; exit 1; }
           done
           test "$(compgen -G '*.AppImage' | wc -l)" -eq 2
+          test "$(compgen -G '*.deb' | wc -l)" -eq 2
+          test "$(compgen -G '*.rpm' | wc -l)" -eq 2
           test "$(compgen -G '*.flatpak' | wc -l)" -eq 2
 
       - name: Generate SHA256SUMS
