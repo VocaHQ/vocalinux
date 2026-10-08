@@ -26,6 +26,11 @@ _PAD_WIDTH = 480
 _PAD_HEIGHT = 360
 _COPIED_FEEDBACK_MS = 1200
 _UNDO_LIMIT = 200
+# Frame-callback watchdog for the Wayland shelving state (#896): a covered
+# toplevel stops receiving frame callbacks while the client still reports it
+# mapped. >1.5 s of silence on a visible window is treated as shelved.
+_SHELF_WATCH_MS = 2000
+_SHELF_STALE_US = 1_500_000
 
 
 def _ui_errors() -> tuple[type[BaseException], ...]:
@@ -209,6 +214,15 @@ class DictationPad:
         self._gtk_ready = False
         self._syncing_capture_check = False
         self._syncing_widget = False
+        # Compositor-side shelving state. _window_iconified is tracked from
+        # window-state-event (X11 minimize); _surface_shelved is detected by
+        # the frame-callback watchdog (Wayland shelving); _window_obscured is
+        # tracked from visibility-notify-event where GTK reports it.
+        self._window_iconified = False
+        self._window_obscured = False
+        self._surface_shelved = False
+        self._last_frame_ts = 0
+        self._shelf_watch_id: Optional[int] = None
         # Monotonic tag stamped on every queued widget op. A Clear (or a full
         # refresh) bumps it, so appends still waiting in the GTK idle queue
         # can tell they are stale and must not resurrect removed text.
@@ -245,6 +259,20 @@ class DictationPad:
         # Closing only hides: the pad keeps its buffer for the whole session
         # and must not take the app down with it.
         window.connect("delete-event", self._on_delete_event)
+
+        # The pad is a utility window users dictate into while working in
+        # other apps: float it above other windows and pin it to every
+        # workspace. On X11 that stops the window being fully covered at all.
+        # Wayland has no always-on-top protocol (both calls are no-ops there),
+        # so a covered idle pad gets shelved by the compositor — it stays in
+        # the window list but draws nothing and takes no input (#896). The
+        # frame-callback watchdog below detects that state; show_pad then
+        # recreates the surface to revive it.
+        window.set_keep_above(True)
+        window.stick()
+        window.add_events(Gdk.EventMask.VISIBILITY_NOTIFY_MASK)
+        window.connect("window-state-event", self._on_window_state_event)
+        window.connect("visibility-notify-event", self._on_visibility_notify)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         outer.set_margin_start(12)
@@ -287,6 +315,12 @@ class DictationPad:
         self._buffer.connect("insert-text", self._on_buffer_user_edit)
         self._buffer.connect("delete-range", self._on_buffer_user_edit)
         scrolled.add(self._textview)
+
+        # Frame-callback watchdog: each compositor frame callback stamps the
+        # clock; the timeout below flags a mapped window whose frames went
+        # cold as shelved so show_pad can revive it.
+        self._textview.add_tick_callback(self._on_frame_tick)
+        self._shelf_watch_id = GLib.timeout_add(_SHELF_WATCH_MS, self._shelf_watchdog)
 
         button_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         button_row.set_halign(Gtk.Align.END)
@@ -341,6 +375,25 @@ class DictationPad:
         self._sync_capture_check()
         if not self._window.get_visible():
             self._window.show_all()
+        elif self._surface_shelved:
+            # The compositor shelved the surface: present() alone cannot
+            # revive it (the activation request is ignored for a dead
+            # surface). Recreate it the way the user's manual Close + tray
+            # reopen does: hide() drops the wl_surface, show_all() maps a
+            # fresh one that the compositor treats as a live window.
+            try:
+                self._window.hide()
+                self._window.show_all()
+                self._surface_shelved = False
+            except _ui_errors() as e:
+                logger.debug("Could not recreate dictation pad surface: %s", e)
+        elif self._window_iconified:
+            # The window manager shelved the pad (iconified/withdrawn) while
+            # it stayed mapped: ask it to restore before presenting.
+            try:
+                self._window.deiconify()
+            except _ui_errors() as e:
+                logger.debug("Could not restore dictation pad: %s", e)
         try:
             self._window.present_with_time(self._Gtk.get_current_event_time())
         except _ui_errors():
@@ -362,6 +415,12 @@ class DictationPad:
             except _ui_errors():
                 pass
             self._copied_feedback_id = None
+        if self._shelf_watch_id is not None:
+            try:
+                self._GLib.source_remove(self._shelf_watch_id)
+            except _ui_errors():
+                pass
+            self._shelf_watch_id = None
         if self._window is not None:
             try:
                 self._window.destroy()
@@ -587,6 +646,53 @@ class DictationPad:
         if self._window is not None:
             self._window.hide()
         return True
+
+    def _on_window_state_event(self, _widget: Any, event: Any) -> bool:
+        """Track the window manager shelving the pad (iconified/withdrawn)."""
+        shelved = self._Gdk.WindowState.ICONIFIED | self._Gdk.WindowState.WITHDRAWN
+        self._window_iconified = bool(event.new_window_state & shelved)
+        return False
+
+    def _on_frame_tick(self, _widget: Any, _clock: Any) -> bool:
+        """Stamp the time of the last compositor frame callback."""
+        self._last_frame_ts = self._GLib.get_monotonic_time()
+        return True
+
+    def _shelf_watchdog(self) -> bool:
+        """Flag a mapped window whose frame callbacks went cold as shelved.
+
+        Wayland gives a GTK3 client no signal for shelving — the GdkWindow
+        still reports mapped and visible — but the compositor stops issuing
+        frame callbacks. Staleness is only meaningful after the first frame:
+        a window that never drew yet is not proof of shelving.
+        """
+        if self._window is None or not self._window.get_visible():
+            self._surface_shelved = False
+            return True
+        if self._last_frame_ts == 0:
+            return True
+        self._surface_shelved = (
+            self._GLib.get_monotonic_time() - self._last_frame_ts > _SHELF_STALE_US
+        )
+        return True
+
+    def _on_visibility_notify(self, _widget: Any, event: Any) -> bool:
+        """Repaint the pad when the compositor reports it visible again.
+
+        GTK3 on Wayland marks a shelved toplevel fully obscured; when it
+        comes back the last committed buffer may be stale, so force one
+        fresh draw instead of trusting what is on screen.
+        """
+        if event.state == self._Gdk.VisibilityState.FULLY_OBSCURED:
+            self._window_obscured = True
+        elif self._window_obscured:
+            self._window_obscured = False
+            if self._window is not None:
+                try:
+                    self._window.queue_draw()
+                except _ui_errors() as e:
+                    logger.debug("Could not repaint dictation pad: %s", e)
+        return False
 
     def _on_capture_toggled(self, widget: Any) -> None:
         """Persist the pad's own capture checkbox."""
