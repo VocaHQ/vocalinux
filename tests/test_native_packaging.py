@@ -39,6 +39,7 @@ DEB_PROVIDES = {
     "psutil": "python3-psutil",
     "evdev": "python3-evdev",
     "pyaudio": "python3-pyaudio",
+    "pysocks": "python3-socks",
     "xlib": "python3-xlib",
     "pygobject": "python3-gi",
 }
@@ -54,6 +55,7 @@ RPM_PROVIDES = {
     "psutil": "python3-psutil",
     "evdev": "python3-evdev",
     "pyaudio": "python3-pyaudio",
+    "pysocks": "python3-pysocks",
     "xlib": "python3-xlib",
     "pygobject": "python3-gobject",
 }

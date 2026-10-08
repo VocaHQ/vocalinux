@@ -66,6 +66,7 @@ overrides:
       - python3-psutil
       - python3-evdev
       - python3-pyaudio
+      - python3-socks
       - python3-xlib
     recommends:
       # Host tools the injectors fall back through; install.d documents the
@@ -95,6 +96,7 @@ overrides:
       - python3-psutil
       - python3-evdev
       - python3-pyaudio
+      - python3-pysocks
       - python3-xlib
     recommends:
       - xdotool
