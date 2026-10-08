@@ -90,13 +90,21 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      # glslc is built from the pinned shaderc commit inside the container -
-      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      # glslc and the pywhispercpp Vulkan rebuild are native artifacts. Neither
+      # depends on this commit: the id script keys them to the base image,
+      # tool_checksums.txt, and the pywhispercpp pin.
+      - name: AppImage native cache id
+        id: native-cache
+        run: |
+          set -euo pipefail
+          id="$(bash packaging/appimage/native-cache-id.sh)"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       - name: Cache AppImage build tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/vocalinux-appimage
-          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+          key: appimage-native-${{ runner.arch }}-${{ steps.native-cache.outputs.id }}
 
       - name: Build AppImage (x86_64)
         env:
@@ -249,6 +257,26 @@ jobs:
             ```
             Still requires `xdotool`/`wtype`/`ydotool` on the host for text injection, same as the PyPI path.
 
+            ### Distro packages (.deb / .rpm)
+            Download the package matching your distro and CPU (`amd64`/`x86_64`, or `arm64`/`aarch64`
+            attached shortly after this release is published):
+            ```bash
+            # Debian / Ubuntu
+            sudo apt install ./vocalinux_*_amd64.deb
+
+            # Fedora
+            sudo dnf install ./vocalinux-*.x86_64.rpm
+            ```
+            Thin packages: Python, GTK, PyGObject and the AppIndicator typelib come from the
+            distro, and `apt`/`dnf` resolves them. Only `pywhispercpp` and `pynput` are
+            vendored (the first is packaged by neither distro, the second is missing on
+            Fedora). whisper.cpp runs on CPU in these packages; the Vulkan build is the
+            AppImage. A PPA and a COPR are not published yet.
+
+            On Wayland the default Right Alt hotkey uses evdev: `sudo usermod -aG input $USER`,
+            then log out and back in (the `input` group can read every keyboard and pointer
+            device; X11 needs nothing).
+
             ${{ steps.flatpak_notes.outputs.flatpak }}
 
             ### Snap
@@ -305,13 +333,21 @@ jobs:
           name: python-dist
           path: dist
 
-      # glslc is built from the pinned shaderc commit inside the container -
-      # Ubuntu 22.04 packages none - and depends on nothing but that commit.
+      # glslc and the pywhispercpp Vulkan rebuild are native artifacts. Neither
+      # depends on this commit: the id script keys them to the base image,
+      # tool_checksums.txt, and the pywhispercpp pin.
+      - name: AppImage native cache id
+        id: native-cache
+        run: |
+          set -euo pipefail
+          id="$(bash packaging/appimage/native-cache-id.sh)"
+          echo "id=${id}" >> "$GITHUB_OUTPUT"
+
       - name: Cache AppImage build tools
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/vocalinux-appimage
-          key: appimage-tools-${{ runner.arch }}-${{ hashFiles('packaging/appimage/tool_checksums.txt') }}
+          key: appimage-native-${{ runner.arch }}-${{ steps.native-cache.outputs.id }}
 
       - name: Build AppImage (aarch64)
         env:
@@ -334,6 +370,104 @@ jobs:
         run: |
           gh release upload "${{ github.ref_name }}" \
             dist/*.AppImage \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  # The .deb and .rpm are thin: they depend on the distro's Python, GTK,
+  # PyGObject and typelibs and vendor only pywhispercpp and pynput (#600).
+  # nfpm builds both from one config inside the pinned Debian 12 image, and
+  # the same wheel PyPI ships is the payload.
+  build-native:
+    name: Build native packages (x86_64)
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      # Same reason the aarch64 AppImage downloads the artifact: one wheel,
+      # everywhere, or the checksums cannot describe what the packages hold.
+      - name: Download the built distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Build .deb and .rpm
+        run: |
+          bash packaging/native/docker-build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
+          ls -la dist/*.deb dist/*.rpm
+
+      - name: Upload the x86_64 packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-x86_64
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attach to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist/*.deb dist/*.rpm \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  build-native-arm64:
+    name: Build native packages (aarch64)
+    needs: build-and-release
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Extract version from tag
+        id: get_version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download the built distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-dist
+          path: dist
+
+      - name: Build .deb and .rpm (aarch64)
+        run: |
+          bash packaging/native/docker-build.sh dist/*.whl "${{ steps.get_version.outputs.VERSION }}" dist
+          ls -la dist/*.deb dist/*.rpm
+
+      - name: Upload the aarch64 packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: native-aarch64
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Attach to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" \
+            dist/*.deb dist/*.rpm \
             --repo ${{ github.repository }} \
             --clobber
 
@@ -640,12 +774,13 @@ jobs:
             --repo ${{ github.repository }} \
             --clobber
 
-  # Runs last because the aarch64 AppImage, both Flatpak bundles, and the snap
-  # land after the release is created: a checksum manifest that covers some of
-  # the files is worse than none, since the missing one looks like the tampered one.
+  # Runs last because the aarch64 AppImage, both Flatpak bundles, the native
+  # packages, and the snap land after the release is created: a checksum
+  # manifest that covers some of the files is worse than none, since the
+  # missing one looks like the tampered one.
   publish-checksums:
     name: Checksums and Provenance
-    needs: [build-and-release, build-appimage-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak, attach-snap]
+    needs: [build-and-release, build-appimage-arm64, build-native, build-native-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak, attach-snap]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -665,7 +800,7 @@ jobs:
           ls -la
           # Bare names, so `sha256sum -c` works in whatever directory the user
           # downloaded the release into.
-          sha256sum -- *.whl *.tar.gz *.AppImage *.flatpak *.snap | tee SHA256SUMS
+          sha256sum -- *.whl *.tar.gz *.AppImage *.deb *.rpm *.flatpak *.snap | tee SHA256SUMS
 
       # Attesting from the manifest rather than a second glob: the file we
       # publish and the set we attest cannot drift apart.

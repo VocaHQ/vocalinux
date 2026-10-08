@@ -105,6 +105,17 @@ appimage: build
 appimage-boot distro="debian:12":
     docker run --rm -v "$PWD/dist:/dist:ro" -v "$PWD/packaging/appimage:/pk:ro" {{distro}} bash /pk/boot-test.sh "/dist/$(basename "$(ls dist/*.AppImage)")"
 
+# Build the .deb and .rpm in the pinned container, as release.yml does (needs
+# docker). Thin packages: the distro supplies Python, GTK and the typelibs;
+# only pywhispercpp and pynput are vendored.
+native-packages: build
+    bash packaging/native/docker-build.sh dist/*.whl "$(grep -oP '__version__\s*=\s*"\K[^"]+' src/vocalinux/version.py)" dist
+
+# Install the built package in a matching distro container, as the CI matrix
+# does: debian:12 / ubuntu:24.04 exercise the .deb, fedora:42 the .rpm.
+native-smoke distro="debian:12":
+    docker run --rm -v "$PWD/dist:/out:ro" -v "$PWD/packaging/native:/pk:ro" {{distro}} bash /pk/smoke-test.sh
+
 # Build the AUR package from this checkout on current Arch, as the CI gate
 # does. Answers "does this commit build on Arch" — the tag tarball source= is
 # swapped for a git archive of HEAD (needs docker).
