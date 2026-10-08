@@ -7320,7 +7320,16 @@ class SettingsDialog(Gtk.Dialog):
         text_injection_settings = self.config_manager.get_settings().get("text_injection", {})
         history_settings = self.config_manager.get_settings().get("history", {})
 
-        autostart_enabled = general_settings.get("autostart", False)
+        # The login desktop entry can be added or removed outside the app; the
+        # real file state wins over the stored preference (previously synced by
+        # the tray menu's Start on Login item).
+        from . import autostart_manager
+
+        autostart_enabled = autostart_manager.is_autostart_enabled()
+        if autostart_enabled != general_settings.get("autostart", False):
+            self.config_manager.set("general", "autostart", autostart_enabled)
+            self.config_manager.save_settings()
+
         start_minimized = ui_settings.get("start_minimized", False)
         show_missing_tray_warning = ui_settings.get("show_missing_tray_warning", True)
         show_overlay = ui_settings.get("show_overlay", True)

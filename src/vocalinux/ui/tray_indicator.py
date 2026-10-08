@@ -179,7 +179,6 @@ class TrayIndicator:
         # settings toggle, resume) must keep honoring the fallback rather
         # than reapplying a disable_internal_hotkey setting D-Bus cannot serve.
         self._external_activation_unavailable = False
-        self._syncing_autostart_menu = False
         self._history_menu_item = None
 
         # Refresh the history submenu whenever the history changes. The change
@@ -584,12 +583,6 @@ class TrayIndicator:
             self._refresh_history_menu()
             self._add_menu_separator()
 
-        self._autostart_menu_item = self._add_menu_checkbox(
-            "Start on Login", self._on_autostart_toggled
-        )
-        self._update_autostart_checkbox()
-
-        self._add_menu_separator()
         if self.dictation_pad is not None:
             self._add_menu_item("Dictation Pad", self._on_dictation_pad_clicked)
         self._add_menu_item("Settings", self._on_settings_clicked)
@@ -606,7 +599,6 @@ class TrayIndicator:
         )
         self._update_menu_item.set_no_show_all(True)
         self._update_menu_item.hide()
-        self._add_menu_item("About", self._on_about_clicked)
         self._add_menu_item("Quit", self._on_quit_clicked)
 
         # Set the indicator menu
@@ -826,56 +818,6 @@ class TrayIndicator:
         """Add a separator to the indicator menu."""
         separator = Gtk.SeparatorMenuItem()
         self.menu.append(separator)
-
-    def _add_menu_checkbox(self, label: str, callback: Callable) -> Gtk.CheckMenuItem:
-        """
-        Add a checkbox menu item to the indicator menu.
-
-        Args:
-            label: The label for the menu item
-            callback: The callback function to call when the item is toggled
-
-        Returns:
-            The checkbox menu item
-        """
-        item = Gtk.CheckMenuItem.new_with_label(label)
-        item.connect("toggled", callback)
-        self.menu.append(item)
-        return item
-
-    def _update_autostart_checkbox(self):
-        """Update the autostart checkbox state based on current config."""
-        from . import autostart_manager
-
-        autostart_enabled = autostart_manager.is_autostart_enabled()
-        config_enabled = self.config_manager.get_bool("general", "autostart", False)
-        if config_enabled != autostart_enabled:
-            self.config_manager.set("general", "autostart", autostart_enabled)
-            self.config_manager.save_settings()
-
-        self._syncing_autostart_menu = True
-        self._autostart_menu_item.set_active(autostart_enabled)
-        self._syncing_autostart_menu = False
-
-    def _on_autostart_toggled(self, widget):
-        """Handle toggle of the Start on Login menu item."""
-        if self._syncing_autostart_menu:
-            return
-
-        enabled = widget.get_active()
-        logger.info(f"Autostart toggled: {enabled}")
-
-        from . import autostart_manager
-
-        if autostart_manager.set_autostart(enabled):
-            self.config_manager.set("general", "autostart", enabled)
-            self.config_manager.save_settings()
-            status = "enabled" if enabled else "disabled"
-            logger.info(f"Autostart {status}")
-        else:
-            self._syncing_autostart_menu = True
-            widget.set_active(not enabled)
-            self._syncing_autostart_menu = False
 
     def _on_recognition_state_changed(self, state: RecognitionState):
         """
@@ -1551,11 +1493,6 @@ class TrayIndicator:
 
         logger.debug("No changes needed - shortcut and mode unchanged")
         return True
-
-    def _on_about_clicked(self, widget):
-        """Handle click on the About menu item."""
-        logger.debug("About clicked")
-        self._show_settings_page("about")
 
     def _get_auto_pause_config(self):
         """Return (enabled, apps, poll_interval_seconds) for AutoPauseMonitor."""
