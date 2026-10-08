@@ -280,8 +280,8 @@ class TestTrayIndicator(unittest.TestCase):
             mock_dialog_instance.present_with_time.assert_called_once()
             mock_dialog_instance.navigate_to_page.assert_not_called()
 
-    def test_about_reuses_open_settings_dialog(self):
-        """About focuses the existing Settings window and switches to the About page."""
+    def test_update_available_reuses_open_settings_dialog(self):
+        """Update Available focuses the existing Settings window on the About page."""
         import vocalinux.ui.tray_indicator as tray_module
 
         mock_dialog_instance = MagicMock()
@@ -289,7 +289,7 @@ class TestTrayIndicator(unittest.TestCase):
 
         with patch.object(tray_module, "SettingsDialog", mock_dialog_class):
             self.tray_indicator._on_settings_clicked(None)
-            self.tray_indicator._on_about_clicked(None)
+            self.tray_indicator._on_update_available_clicked(None)
 
             mock_dialog_class.assert_called_once()
             mock_dialog_instance.navigate_to_page.assert_called_once_with("about")
@@ -312,13 +312,13 @@ class TestTrayIndicator(unittest.TestCase):
             second_dialog.show.assert_called_once()
             first_dialog.present_with_time.assert_not_called()
 
-    def test_about_dialog(self):
-        """Test About opens Settings focused on the About page."""
+    def test_update_available_opens_about_page(self):
+        """Test Update Available opens Settings focused on the About page."""
         with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
             mock_dialog_instance = MagicMock()
             mock_dialog_class.return_value = mock_dialog_instance
 
-            self.tray_indicator._on_about_clicked(None)
+            self.tray_indicator._on_update_available_clicked(None)
 
             mock_dialog_class.assert_called_once()
             kwargs = mock_dialog_class.call_args.kwargs
@@ -661,13 +661,13 @@ class TestTrayIndicator(unittest.TestCase):
                     self.tray_indicator.run()
                     mock_quit.assert_called_once()
 
-    def test_about_opens_settings_without_raising(self):
-        """Test About menu item opens settings even if dialog construction is mocked."""
+    def test_update_available_opens_settings_without_raising(self):
+        """Test Update Available opens settings even if dialog construction is mocked."""
         with patch("vocalinux.ui.tray_indicator.SettingsDialog") as mock_dialog_class:
             mock_dialog_instance = MagicMock()
             mock_dialog_class.return_value = mock_dialog_instance
 
-            self.tray_indicator._on_about_clicked(None)
+            self.tray_indicator._on_update_available_clicked(None)
 
             mock_dialog_instance.connect.assert_called()
             mock_dialog_instance.show.assert_called_once()

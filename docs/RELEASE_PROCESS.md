@@ -168,7 +168,8 @@ Use these rules for every GitHub Release body (and for the draft pasted into the
 5. `## Bug Fixes` - group by area (IBus, Installer, AUR, Text injection, …)
 6. Optional: `## Improvements`, `## Docs`, `## Packaging`
 7. `## Thanks` - external PR authors and issue reporters by `@handle`
-8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak, Snap
+8. `## Install / Upgrade` - `install.sh`, AUR, PyPI, **AppImage**, Flatpak, Snap,
+   `.deb` / `.rpm`
    (Store channels plus GitHub `.snap` sideload when Store review is pending)
 9. `### Verifying what you downloaded` (required, and easy to lose). `release.yml`
    generates it, with `sha256sum -c --ignore-missing SHA256SUMS` and
@@ -384,7 +385,8 @@ After pushing the tag, the GitHub Actions workflow will automatically:
 2. Build and attach AppImages for x86_64 and aarch64, both from that same wheel
 3. Create a GitHub Release with auto-generated notes
 4. Attach `SHA256SUMS` covering every GitHub asset (wheel, sdist, both AppImages,
-   both Flatpaks, the amd64 snap) and generate build provenance from that
+   both Flatpaks, the amd64 snap, the `.deb` and `.rpm` for both arches) and
+   generate build provenance from that
    manifest (runs after the aarch64 AppImage, both Flatpaks, and the snap land,
    so a partial manifest never gets published)
 5. Publish to PyPI via trusted publishing
@@ -407,8 +409,9 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
 
 - [ ] Verify GitHub Release was created correctly
 - [ ] Verify `SHA256SUMS` is attached and lists every GitHub asset (wheel, sdist,
-      both AppImages, both Flatpaks, the amd64 snap) - the release notes tell
-      users to run `sha256sum -c` against it
+      both AppImages, both Flatpaks, the amd64 snap, the `.deb` and `.rpm` for
+      both arches) - the release notes tell users to run `sha256sum -c`
+      against it
 - [ ] If the Store held the snap for `uinput` review, confirm the GitHub `.snap`
       is still attached and the notes document `snap install --dangerous`
 - [ ] After candidate QA (install, tray, mic, model download, typing into a real
