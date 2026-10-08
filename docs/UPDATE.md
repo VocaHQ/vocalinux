@@ -55,7 +55,13 @@ python3 -c "import vocalinux; print(vocalinux.version.__version__)"
 Clean reinstall (keeps config and models by default):
 
 ```bash
+# Source checkout
 ./uninstall.sh --keep-config --keep-data
+
+# Curl install (safe to run from any directory)
+curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/uninstall.sh -o /tmp/vul.sh
+bash /tmp/vul.sh --keep-config --keep-data
+
 curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
 bash /tmp/vl.sh
 ```

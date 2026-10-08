@@ -507,6 +507,10 @@ pyobjc-framework-quartz==12.2.2 ; sys_platform == 'darwin' \
     #   pynput
     #   pyobjc-framework-applicationservices
     #   pyobjc-framework-coretext
+pysocks==1.7.1 \
+    --hash=sha256:2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5 \
+    --hash=sha256:3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0
+    # via vocalinux
 python-xlib==0.33 ; 'linux' in sys_platform \
     --hash=sha256:55af7906a2c75ce6cb280a584776080602444f75815a7aff4d287bb2d7018b32 \
     --hash=sha256:c3534038d42e0df2f1392a1b30a15a4ff5fdc2b86cfa94f072bf11b10a164398

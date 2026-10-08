@@ -9,8 +9,8 @@
 # whatever that host happens to run.
 #
 # Honours VOCALINUX_APPIMAGE_REQUIRE_VULKAN / _SKIP_VULKAN like build.sh, and
-# keeps the glslc it has to build in VOCALINUX_APPIMAGE_CACHE
-# (~/.cache/vocalinux-appimage by default) so the next build reuses it.
+# keeps glslc and the pywhispercpp Vulkan build in VOCALINUX_APPIMAGE_CACHE
+# (~/.cache/vocalinux-appimage by default) so the next build reuses them.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../.." && pwd)"

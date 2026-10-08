@@ -133,20 +133,23 @@ def choose_artifact(name: str, version: str, digests: set[str]) -> tuple[str, st
         if a["packagetype"] == "bdist_wheel" and a["filename"].endswith("-none-any.whl")
     ]
     sdists = [a for a in artifacts if a["packagetype"] == "sdist"]
-    chosen = wheels or sdists
-    if not chosen:
+    candidates = wheels or sdists
+    if not candidates:
         raise SystemExit(
             f"{name} {version} publishes neither a universal wheel nor an sdist; "
             "the Flatpak cannot build it without an ABI-tagged wheel"
         )
-    picked = chosen[0]
-    sha = picked["digests"]["sha256"]
-    if sha not in digests:
+    # A release can publish more than one universal wheel (PySocks 1.7.1 ships
+    # py27 and py3 builds); take the first whose digest uv actually locked.
+    picked = next((a for a in candidates if a["digests"]["sha256"] in digests), None)
+    if picked is None:
+        first = candidates[0]
         raise SystemExit(
-            f"{name} {version}: PyPI serves {picked['filename']} with digest "
-            f"{sha}, which is not among the hashes uv locked. Re-run `just lock`."
+            f"{name} {version}: PyPI serves {first['filename']} with digest "
+            f"{first['digests']['sha256']}, which is not among the hashes uv "
+            "locked. Re-run `just lock`."
         )
-    return picked["url"], sha
+    return picked["url"], picked["digests"]["sha256"]
 
 
 def artifact_name(filename: str) -> str:

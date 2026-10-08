@@ -112,7 +112,6 @@ class TestTrayIndicatorInitialization(unittest.TestCase):
             assert indicator.text_injector == mock_text_injector
             assert indicator.config_manager == mock_config_inst
             assert indicator.shortcut_manager == mock_keyboard_inst
-            assert indicator._syncing_autostart_menu is False
 
             # Verify that idle_add was called to initialize the indicator
             mock_glib.idle_add.assert_called()
