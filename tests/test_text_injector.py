@@ -3028,6 +3028,40 @@ class TestCompositorIBusBridging(unittest.TestCase):
             injector = TextInjector()
         self.assertEqual(injector.wayland_tool, "portal")
 
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_auto_prefers_portal_over_daemonless_ydotool(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """KDE + unusable ydotool + no wtype: portal beats daemonless ydotool (#911).
+
+        The daemonless-ydotool branch would pick a backend that fails at
+        injection time (no /dev/uinput) while a working portal sits unused.
+        """
+        mock_which.side_effect = lambda cmd: {
+            "ydotool": "/usr/bin/ydotool",
+            "ydotoold": "/usr/bin/ydotoold",
+        }.get(cmd)
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=False),
+            patch.object(TextInjector, "_uinput_usable", return_value=False),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "portal")
+
 
 @contextlib.contextmanager
 def _fake_config(config: Any) -> Iterator[None]:

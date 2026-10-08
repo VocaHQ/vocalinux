@@ -1006,17 +1006,19 @@ class TextInjector:
             elif ydotool_available and self._ensure_ydotoold():
                 self.wayland_tool = "ydotool"
                 logger.info("Using ydotool for Wayland text injection")
+            elif portal_available:
+                # Reached only on KDE after ydotool proved unusable; on other
+                # desktops the earlier portal branch already fired. A daemonless
+                # ydotool must not outrank a working portal: it may fail at
+                # injection time (no /dev/uinput), while the portal delivers.
+                self._select_portal_backend(
+                    "Using the RemoteDesktop portal for Wayland text injection"
+                )
             elif ydotool_available and not wtype_available:
                 self.wayland_tool = "ydotool"
                 logger.warning(
                     "ydotoold not ready; using ydotool without daemon "
                     "(may fail or have latency/permission issues)"
-                )
-            elif portal_available:
-                # Reached only on KDE after ydotool proved unusable; on other
-                # desktops the earlier portal branch already fired.
-                self._select_portal_backend(
-                    "Using the RemoteDesktop portal for Wayland text injection"
                 )
             elif wtype_available:
                 self.wayland_tool = "wtype"
