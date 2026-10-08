@@ -2558,9 +2558,9 @@ class TestCompositorIBusBridging(unittest.TestCase):
             self.assertTrue(injector._wayland_compositor_bridges_ibus())
 
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
-    def test_kde_virtual_keyboard_enabled_parses_gdbus_true(self, mock_run):
-        """gdbus (<<true>>,) means VirtualKeyboard is enabled."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="(<<true>>,)\n", stderr="")
+    def test_kde_virtual_keyboard_enabled_parses_gdbus_true(self, mock_run: MagicMock) -> None:
+        """gdbus (<true>,) on 'available' means VirtualKeyboard is enabled (#911)."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="(<true>,)\n", stderr="")
         injector = self._bare_injector()
         self.assertTrue(injector._kde_virtual_keyboard_enabled())
         mock_run.assert_called_once()
@@ -2568,19 +2568,68 @@ class TestCompositorIBusBridging(unittest.TestCase):
         self.assertEqual(args[0], "gdbus")
         self.assertIn("org.kde.KWin", args)
         self.assertIn("/VirtualKeyboard", args)
+        # KWin 6 exposes the setting as 'available'; it must be queried first.
+        self.assertEqual(args[-1], "available")
 
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
-    def test_kde_virtual_keyboard_enabled_parses_gdbus_false(self, mock_run):
-        """gdbus (<<false>>,) means VirtualKeyboard is disabled."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="(<<false>>,)\n", stderr="")
+    def test_kde_virtual_keyboard_enabled_parses_gdbus_false(self, mock_run: MagicMock) -> None:
+        """gdbus (<false>,) means VirtualKeyboard is disabled."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="(<false>,)\n", stderr="")
         injector = self._bare_injector()
         self.assertFalse(injector._kde_virtual_keyboard_enabled())
+        mock_run.assert_called_once()
+        self.assertEqual(mock_run.call_args[0][0][-1], "available")
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_kde_virtual_keyboard_accepts_legacy_wrapped_true(self, mock_run: MagicMock) -> None:
+        """Plasma 5's doubly wrapped (<<true>>,) answer form is also accepted."""
+        mock_run.return_value = MagicMock(returncode=0, stdout="(<<true>>,)\n", stderr="")
+        injector = self._bare_injector()
+        self.assertTrue(injector._kde_virtual_keyboard_enabled())
+        mock_run.assert_called_once()
+        self.assertEqual(mock_run.call_args[0][0][-1], "available")
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_kde_virtual_keyboard_falls_back_to_enabled_property(self, mock_run: MagicMock) -> None:
+        """Plasma 5 has no 'available': 'enabled' is queried next (#911)."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="Error: UnknownProperty"),
+            MagicMock(returncode=0, stdout="(<<true>>,)\n", stderr=""),
+        ]
+        injector = self._bare_injector()
+        self.assertTrue(injector._kde_virtual_keyboard_enabled())
+        self.assertEqual(mock_run.call_count, 2)
+        self.assertEqual(mock_run.call_args_list[0][0][0][-1], "available")
+        self.assertEqual(mock_run.call_args_list[1][0][0][-1], "enabled")
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_kde_virtual_keyboard_enabled_property_false(self, mock_run: MagicMock) -> None:
+        """The 'enabled' fallback answering (<<false>>,) still means disabled."""
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stdout="", stderr="Error: UnknownProperty"),
+            MagicMock(returncode=0, stdout="(<<false>>,)\n", stderr=""),
+        ]
+        injector = self._bare_injector()
+        self.assertFalse(injector._kde_virtual_keyboard_enabled())
+        self.assertEqual(mock_run.call_count, 2)
+
+    @patch("vocalinux.text_injection.text_injector.subprocess.run")
+    def test_kde_virtual_keyboard_false_when_neither_property_exists(
+        self, mock_run: MagicMock
+    ) -> None:
+        """No readable answer from either property → treat as unbridged."""
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="Error: UnknownProperty")
+        injector = self._bare_injector()
+        self.assertFalse(injector._kde_virtual_keyboard_enabled())
+        self.assertEqual(mock_run.call_count, 2)
 
     @patch(
         "vocalinux.text_injection.text_injector.subprocess.run",
         side_effect=FileNotFoundError("gdbus"),
     )
-    def test_kde_virtual_keyboard_enabled_false_when_gdbus_missing(self, _mock_run):
+    def test_kde_virtual_keyboard_enabled_false_when_gdbus_missing(
+        self, _mock_run: MagicMock
+    ) -> None:
         """Missing gdbus → treat as unbridged (conservative)."""
         injector = self._bare_injector()
         self.assertFalse(injector._kde_virtual_keyboard_enabled())
@@ -2611,7 +2660,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
             "ydotool": "/usr/bin/ydotool",
             "ydotoold": "/usr/bin/ydotoold",
         }.get(cmd)
-        mock_run.return_value = MagicMock(returncode=0, stdout="(<<false>>,)\n", stderr="")
+        mock_run.return_value = MagicMock(returncode=0, stdout="(<false>,)\n", stderr="")
 
         with (
             patch.dict(
@@ -2659,7 +2708,7 @@ class TestCompositorIBusBridging(unittest.TestCase):
             "ydotool": "/usr/bin/ydotool",
             "ydotoold": "/usr/bin/ydotoold",
         }.get(cmd)
-        mock_run.return_value = MagicMock(returncode=0, stdout="(<<true>>,)\n", stderr="")
+        mock_run.return_value = MagicMock(returncode=0, stdout="(<true>,)\n", stderr="")
         mock_ibus_class.return_value = MagicMock()
 
         with patch.dict(
@@ -2864,6 +2913,154 @@ class TestCompositorIBusBridging(unittest.TestCase):
             ):
                 injector = TextInjector()
         self.assertEqual(injector.wayland_tool, "ydotool")
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_auto_prefers_ydotool_over_portal(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """KWin's portal scrambles letter case: on KDE, ydotool goes first (#911)."""
+        mock_which.side_effect = lambda cmd: {
+            "ydotool": "/usr/bin/ydotool",
+            "ydotoold": "/usr/bin/ydotoold",
+        }.get(cmd)
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=True),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "ydotool")
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_non_kde_auto_still_prefers_portal_over_ydotool(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """The ydotool-first reorder is KDE-only; other desktops keep the portal."""
+        mock_which.side_effect = lambda cmd: {
+            "ydotool": "/usr/bin/ydotool",
+            "ydotoold": "/usr/bin/ydotoold",
+        }.get(cmd)
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "GNOME",
+                    "XDG_SESSION_DESKTOP": "GNOME",
+                    "DESKTOP_SESSION": "gnome",
+                    "KDE_FULL_SESSION": "",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=True),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "portal")
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_auto_uses_portal_when_ydotool_missing(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """The KDE reorder needs ydotool installed; without it the portal still wins."""
+        mock_which.side_effect = lambda cmd: None
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "portal")
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_auto_uses_portal_when_ydotoold_unusable(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """On KDE the portal is still the fallback when ydotool cannot run (#911)."""
+        mock_which.side_effect = lambda cmd: {
+            "ydotool": "/usr/bin/ydotool",
+            "ydotoold": "/usr/bin/ydotoold",
+            "wtype": "/usr/bin/wtype",
+        }.get(cmd)
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=False),
+            patch.object(TextInjector, "_uinput_usable", return_value=False),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "portal")
+
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=False)
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_auto_prefers_portal_over_daemonless_ydotool(
+        self, mock_which: MagicMock, _mock_ibus: MagicMock
+    ) -> None:
+        """KDE + unusable ydotool + no wtype: portal beats daemonless ydotool (#911).
+
+        The daemonless-ydotool branch would pick a backend that fails at
+        injection time (no /dev/uinput) while a working portal sits unused.
+        """
+        mock_which.side_effect = lambda cmd: {
+            "ydotool": "/usr/bin/ydotool",
+            "ydotoold": "/usr/bin/ydotoold",
+        }.get(cmd)
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "XDG_SESSION_TYPE": "wayland",
+                    "WAYLAND_DISPLAY": "wayland-0",
+                    "XDG_CURRENT_DESKTOP": "KDE",
+                    "XDG_SESSION_DESKTOP": "KDE",
+                    "DESKTOP_SESSION": "plasma",
+                    "KDE_FULL_SESSION": "true",
+                },
+                clear=True,
+            ),
+            patch.object(TextInjector, "_portal_probe", return_value=True),
+            patch.object(TextInjector, "_is_ydotoold_running", return_value=False),
+            patch.object(TextInjector, "_uinput_usable", return_value=False),
+        ):
+            injector = TextInjector()
+        self.assertEqual(injector.wayland_tool, "portal")
 
 
 @contextlib.contextmanager
@@ -3107,7 +3304,11 @@ class TestForcedBackend(unittest.TestCase):
 
 
 class TestKdeSkipsInactiveIbus(unittest.TestCase):
-    """KDE without IBus as the session IM must not take the scoped IBus path (#752)."""
+    """KDE's scoped-IBus admission now hinges on KWin VirtualKeyboard (#752, #911).
+
+    A leftover ibus-daemon on KDE reports success while apps get nothing, so an
+    inactive IBus is only trusted when the VK bridge is confirmed on.
+    """
 
     @patch(
         "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
@@ -3122,10 +3323,10 @@ class TestKdeSkipsInactiveIbus(unittest.TestCase):
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     def test_kde_wayland_does_not_construct_ibus_injector(
         self,
-        mock_which,
-        mock_ibus_class,
-        *_args,
-    ):
+        mock_which: MagicMock,
+        mock_ibus_class: MagicMock,
+        *_args: MagicMock,
+    ) -> None:
         mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
         with patch.dict(
             "os.environ",
@@ -3137,6 +3338,47 @@ class TestKdeSkipsInactiveIbus(unittest.TestCase):
             },
             clear=True,
         ):
-            injector = TextInjector()
+            with patch.object(TextInjector, "_kde_virtual_keyboard_enabled", return_value=False):
+                TextInjector()
         mock_ibus_class.assert_not_called()
-        self.assertIsNone(injector._ibus_injector)
+
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_daemon_running",
+        return_value=True,
+    )
+    @patch(
+        "vocalinux.text_injection.text_injector.is_ibus_active_input_method",
+        return_value=False,
+    )
+    @patch("vocalinux.text_injection.text_injector.is_ibus_available", return_value=True)
+    @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
+    @patch("vocalinux.text_injection.text_injector.shutil.which")
+    def test_kde_wayland_with_virtual_keyboard_constructs_ibus_injector(
+        self,
+        mock_which: MagicMock,
+        mock_ibus_class: MagicMock,
+        *_args: MagicMock,
+    ) -> None:
+        """KDE + confirmed VK bridge + inactive IBus → scoped IBus path (#911).
+
+        With KWin VirtualKeyboard set to "IBus Wayland" the bare-xkb baseline is
+        safe: the bridge is exactly what the #752 exclusion was uncertain about.
+        """
+        mock_which.side_effect = lambda cmd: ("/usr/bin/wtype" if cmd == "wtype" else None)
+        mock_ibus_class.return_value = MagicMock()
+        with patch.dict(
+            "os.environ",
+            {
+                "XDG_SESSION_TYPE": "wayland",
+                "WAYLAND_DISPLAY": "wayland-0",
+                "XDG_CURRENT_DESKTOP": "KDE",
+                "KDE_FULL_SESSION": "true",
+            },
+            clear=True,
+        ):
+            with patch.object(TextInjector, "_kde_virtual_keyboard_enabled", return_value=True):
+                injector = TextInjector()
+        if injector._ibus_init_thread is not None:
+            injector._ibus_init_thread.join(timeout=5)
+        mock_ibus_class.assert_called_once()
+        self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_IBUS)
