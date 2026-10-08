@@ -540,6 +540,17 @@ def get_recommended_model() -> tuple[str, str]:
     return "tiny", "Default recommendation"
 
 
+def _model_file_path(model_name: str) -> str:
+    """Resolve the model file path without touching the filesystem."""
+    whispercpp_dir = os.path.join(models_dir(), "whispercpp")
+
+    model_info = WHISPERCPP_MODEL_INFO.get(model_name)
+    if model_info and model_info.get("url"):
+        return os.path.join(whispercpp_dir, os.path.basename(model_info["url"]))
+
+    return os.path.join(whispercpp_dir, f"ggml-{model_name}.bin")
+
+
 def get_model_path(model_name: str) -> str:
     """
     Get the path where a model should be stored.
@@ -550,19 +561,17 @@ def get_model_path(model_name: str) -> str:
     Returns:
         Path to the model file
     """
-    whispercpp_dir = os.path.join(models_dir(), "whispercpp")
-    os.makedirs(whispercpp_dir, exist_ok=True)
-
-    model_info = WHISPERCPP_MODEL_INFO.get(model_name)
-    if model_info and model_info.get("url"):
-        return os.path.join(whispercpp_dir, os.path.basename(model_info["url"]))
-
-    return os.path.join(whispercpp_dir, f"ggml-{model_name}.bin")
+    model_path = _model_file_path(model_name)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    return model_path
 
 
 def is_model_downloaded(model_name: str) -> bool:
     """
     Check if a whisper.cpp model is downloaded.
+
+    A read-only probe: it must not create the models directory, so it resolves
+    the file path without get_model_path's makedirs side effect.
 
     Args:
         model_name: Name of the model
@@ -570,8 +579,7 @@ def is_model_downloaded(model_name: str) -> bool:
     Returns:
         True if model exists, False otherwise
     """
-    model_path = get_model_path(model_name)
-    return os.path.exists(model_path)
+    return os.path.exists(_model_file_path(model_name))
 
 
 def on_disk_stand_in(variant: str, size: str, language_is_english: bool) -> str:
