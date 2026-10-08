@@ -202,6 +202,49 @@ B: REL=0 0 143
                 result = find_keyboard_devices()
                 assert result == []
 
+    def test_find_keyboard_devices_skips_multitouch_only_touchpad(self) -> None:
+        """A touchpad reporting only MT axes (no ABS_X/Y) is a pointer (#914)."""
+        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+N: Name="GXTP5100:00 27C6:01E9"
+H: Handlers=mouse0 event2
+B: PROP=85
+B: EV=1b
+B: KEY=10000 0 0 0 0
+B: ABS=60000000000000
+B: MSC=10
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == []
+
+    def test_find_keyboard_devices_skips_mixed_single_and_mt_touchpad(self) -> None:
+        """A touchpad with both ABS_X/Y and MT axes stays skipped."""
+        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+N: Name="GXTP5100:00 27C6:01E9"
+H: Handlers=mouse0 event2
+B: KEY=10000 0 0 0 0
+B: ABS=60000000000003
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == []
+
+    def test_find_keyboard_devices_mt_axes_32bit_words(self) -> None:
+        """On a 32-bit kernel the same MT axes print as two 32-bit words."""
+        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+N: Name="GXTP5100:00 27C6:01E9"
+H: Handlers=mouse0 event2
+B: KEY=10000 0 0 0 0
+B: ABS=600000 0
+"""
+        with patch("vocalinux.ui.keyboard_backends.evdev_backend._WORD_BITS", 32):
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                with patch("os.path.exists", return_value=True):
+                    result = find_keyboard_devices()
+                    assert result == []
+
 
 class TestFindKeyboardDevicesFromEvdev:
     """Test _find_keyboard_devices_from_evdev() discovery and filtering."""
@@ -244,6 +287,15 @@ class TestFindKeyboardDevicesFromEvdev:
             "/dev/input/event3": {
                 ecodes.EV_KEY: [ecodes.KEY_A],
                 ecodes.EV_REL: [ecodes.REL_WHEEL],
+            },
+            # Multitouch-only touchpad: MT position axes, no ABS_X/Y (#914).
+            # Carries a real key so only the MT check can drop it.
+            "/dev/input/event4": {
+                ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL, ecodes.BTN_LEFT],
+                ecodes.EV_ABS: [
+                    (ecodes.ABS_MT_POSITION_X, MagicMock()),
+                    (ecodes.ABS_MT_POSITION_Y, MagicMock()),
+                ],
             },
         }
         devices = self._devices(caps)
