@@ -86,6 +86,55 @@ export default function InstallGuidesPage() {
           </a>
           <a
             className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#distro-packages-deb--rpm"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">New</p>
+            <h3>Native packages</h3>
+            <p>
+              .deb for Debian 12+ and Ubuntu 24.04+. .rpm for Fedora.
+              x86_64 and aarch64 on every release.
+            </p>
+          </a>
+          <a
+            className="install-alt"
+            href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#flatpak"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">Auto-updates</p>
+            <h3>Flatpak</h3>
+            <p>
+              Install once from the VocaHQ remote and{" "}
+              <code>flatpak update</code> carries each stable release. Or
+              sideload the .flatpak bundle.
+            </p>
+          </a>
+          <a
+            className="install-alt"
+            href="https://snapcraft.io/vocalinux"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">Snap Store</p>
+            <h3>Snap</h3>
+            <p>
+              <code>snap install vocalinux --edge</code>. amd64 only for
+              now; a .snap is attached to every release too.
+            </p>
+          </a>
+          <a
+            className="install-alt"
+            href="https://aur.archlinux.org/packages/vocalinux"
+            rel="noopener noreferrer"
+          >
+            <p className="install-alt-kicker">Arch</p>
+            <h3>AUR</h3>
+            <p>
+              <code>yay -S vocalinux</code>, or vocalinux-bin for the
+              prebuilt package.
+            </p>
+          </a>
+          <a
+            className="install-alt"
             href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#from-source"
             rel="noopener noreferrer"
           >

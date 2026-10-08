@@ -22,7 +22,7 @@ const faqCategories = [
     questions: [
       {
         q: "How do I install Vocalinux?",
-        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection).",
+        a: "Run the one-liner installer: curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh | bash. The installer handles dependencies and configuration. You can also download an AppImage from GitHub Releases if you prefer a no-root portable binary (host xdotool/wtype/ydotool still required for text injection), or grab a .deb, .rpm, Snap, or Flatpak package for your distro.",
       },
       {
         q: "Which Linux distributions are supported?",
