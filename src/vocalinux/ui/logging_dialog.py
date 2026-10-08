@@ -21,6 +21,7 @@ gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
 
+from ..utils.paths import collapse_repeated_extension  # noqa: E402
 from .logging_manager import LogRecord, get_logging_manager  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -656,6 +657,9 @@ class LoggingDialog(Gtk.Dialog):
 
         if response == Gtk.ResponseType.OK:
             filepath = file_dialog.get_filename()
+            # Portal save dialogs append the filter extension even when the
+            # typed name already has it, producing "name.txt.txt".
+            filepath = collapse_repeated_extension(filepath, ".txt")
             success = self.logging_manager.export_logs(
                 filepath, level_filter=self.filter_level, module_filter=self.filter_module
             )

@@ -6154,6 +6154,10 @@ class SettingsDialog(Gtk.Dialog):
             subtitle="Context to steer transcription style",
             widget=prompt_scrolled,
         )
+        # A ListBoxRow grabs focus on click, which steals it back from the
+        # TextView before typing can start. The row is never activatable,
+        # so it does not need keyboard focus of its own.
+        initial_prompt_row.set_can_focus(False)
         initial_prompt_row.set_tooltip_text(initial_prompt_help)
         group.add_row(initial_prompt_row)
 

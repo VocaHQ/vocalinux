@@ -22,6 +22,7 @@ from ..speech_recognition.diarization import (  # noqa: E402
     format_timestamp,
     format_transcript,
 )
+from ..utils.paths import collapse_repeated_extension  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,9 @@ class TranscriptDialog(Gtk.Dialog):
         try:
             if chooser.run() == Gtk.ResponseType.OK:
                 path = chooser.get_filename()
+                # Portal save dialogs append the filter extension even when the
+                # typed name already has it, producing "name.txt.txt".
+                path = collapse_repeated_extension(path, ".txt")
                 try:
                     with open(path, "w", encoding="utf-8") as transcript_file:
                         transcript_file.write(self.transcript_text)
