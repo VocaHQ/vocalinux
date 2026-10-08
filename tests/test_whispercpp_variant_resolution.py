@@ -320,7 +320,7 @@ def _manager(model_size: str, variant: str, language: str) -> ConfigManager:
     return manager
 
 
-def _downloaded(*names: str):
+def _downloaded(*names: str) -> Any:
     """Patch only the disk probe; the real variant catalog stays in place."""
     return patch.object(
         whispercpp_model_info,
