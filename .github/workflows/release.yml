@@ -782,6 +782,11 @@ jobs:
     name: Checksums and Provenance
     needs: [build-and-release, build-appimage-arm64, build-native, build-native-arm64, build-flatpak-amd64, build-flatpak-arm64, attach-flatpak, attach-snap]
     runs-on: ubuntu-latest
+    # An attach-job failure must not skip checksums: this job hashes the build
+    # artifacts, which exist regardless of whether an upload to the release
+    # succeeded. A missing build artifact still fails the job via the guard
+    # below, so a partial manifest can never publish.
+    if: ${{ !cancelled() }}
     permissions:
       contents: write
       id-token: write
@@ -792,6 +797,18 @@ jobs:
         with:
           merge-multiple: true
           path: dist
+
+      - name: Require every expected artifact
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          for pat in '*.whl' '*.tar.gz' '*.AppImage' '*.deb' '*.rpm' '*.flatpak' '*.snap'; do
+            compgen -G "$pat" > /dev/null || { echo "missing artifact: $pat"; exit 1; }
+          done
+          test "$(compgen -G '*.AppImage' | wc -l)" -eq 2
+          test "$(compgen -G '*.deb' | wc -l)" -eq 2
+          test "$(compgen -G '*.rpm' | wc -l)" -eq 2
+          test "$(compgen -G '*.flatpak' | wc -l)" -eq 2
 
       - name: Generate SHA256SUMS
         working-directory: dist
@@ -1012,7 +1029,9 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist/*.snap
-          gh release upload "$TAG" dist/*.snap --clobber
+          gh release upload "$TAG" dist/*.snap \
+            --repo ${{ github.repository }} \
+            --clobber
 
   publish-snap:
     name: Publish Snap to Store
@@ -1062,7 +1081,7 @@ jobs:
           if [ "$status" -eq 0 ]; then
             exit 0
           fi
-          if grep -F -q "will need manual review" "$log" \
+          if grep -E -q "will need manual review|human review required" "$log" \
             && grep -F -q "allow-installation" "$log"; then
             echo "::warning::Snap Store queued a human review (allow-installation). The .snap is on the GitHub Release."
             exit 0
