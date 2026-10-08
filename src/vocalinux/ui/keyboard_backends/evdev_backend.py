@@ -253,9 +253,10 @@ def find_keyboard_devices() -> list[str]:
     """
     Find all keyboard input devices.
 
-    Devices that emit pointer motion (REL_X/Y or ABS_X/Y) are excluded:
-    a mouse is not a keyboard, and monitoring one proxies all cursor
-    movement through the reader thread (cursor stutter, #900).
+    Devices that emit pointer motion (REL_X/Y, ABS_X/Y, or multitouch
+    ABS_MT_POSITION_X/Y) are excluded: a mouse is not a keyboard, and
+    monitoring one proxies all cursor movement through the reader thread
+    (cursor stutter, #900; dead touchpad, #914).
 
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
@@ -288,6 +289,11 @@ def find_keyboard_devices() -> list[str]:
 # which showed up as periodic cursor stutter (#900).
 _POINTER_AXIS_BITS = 0x3
 
+# Bits 53 and 54 of an ABS bitmap: ABS_MT_POSITION_X|ABS_MT_POSITION_Y.
+# Multitouch-only touchpads and touchscreens (e.g. the Goodix GXTP5100 in
+# #914) can report the MT pair without the single-touch ABS_X/Y pair.
+_POINTER_MT_AXIS_BITS = 0x3 << 53
+
 
 def _bitmap_has_any_bit(hex_bitmap: str) -> bool:
     """True when any word of a /proc capability bitmap has a bit set."""
@@ -314,18 +320,21 @@ def _bitmap_low_bits(hex_bitmap: str) -> int:
 
 def _proc_block_has_pointer_axes(device: dict[str, Any]) -> bool:
     """True when a parsed /proc device block reports pointer motion axes."""
+    abs_bits = _bitmap_low_bits(device.get("abs", ""))
     return (
         _bitmap_low_bits(device.get("rel", "")) & _POINTER_AXIS_BITS == _POINTER_AXIS_BITS
-        or _bitmap_low_bits(device.get("abs", "")) & _POINTER_AXIS_BITS == _POINTER_AXIS_BITS
+        or abs_bits & _POINTER_AXIS_BITS == _POINTER_AXIS_BITS
+        or abs_bits & _POINTER_MT_AXIS_BITS == _POINTER_MT_AXIS_BITS
     )
 
 
 def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices.
 
-    Devices that emit pointer motion (REL_X/Y or ABS_X/Y) are skipped:
-    mice and tablets report EV_KEY bits for their buttons, but grabbing
-    them proxies every cursor movement through this reader.
+    Devices that emit pointer motion (REL_X/Y, ABS_X/Y or
+    ABS_MT_POSITION_X/Y) are skipped: mice and tablets report EV_KEY bits
+    for their buttons, but grabbing them proxies every cursor movement
+    through this reader.
     """
     keyboard_devices: list[str] = []
     device: Optional[dict[str, Any]] = None
@@ -370,7 +379,12 @@ def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
 
 
 def _capabilities_have_pointer_axes(capabilities: Mapping[int, Sequence[int]]) -> bool:
-    """True when the device reports REL_X+REL_Y or ABS_X+ABS_Y pointer axes."""
+    """True when the device reports pointer motion axes.
+
+    Covers REL_X+REL_Y, single-touch ABS_X+ABS_Y, and multitouch-only
+    ABS_MT_POSITION_X+ABS_MT_POSITION_Y (touchpads/touchscreens that
+    report no single-touch axes).
+    """
     rel_codes = capabilities.get(ecodes.EV_REL, ())
     if ecodes.REL_X in rel_codes and ecodes.REL_Y in rel_codes:
         return True
@@ -379,7 +393,9 @@ def _capabilities_have_pointer_axes(capabilities: Mapping[int, Sequence[int]]) -
         entry[0] if isinstance(entry, (tuple, list)) else entry
         for entry in capabilities.get(ecodes.EV_ABS, ())
     }
-    return ecodes.ABS_X in abs_codes and ecodes.ABS_Y in abs_codes
+    if ecodes.ABS_X in abs_codes and ecodes.ABS_Y in abs_codes:
+        return True
+    return ecodes.ABS_MT_POSITION_X in abs_codes and ecodes.ABS_MT_POSITION_Y in abs_codes
 
 
 def _find_keyboard_devices_from_evdev() -> list[str]:
