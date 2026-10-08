@@ -15,6 +15,26 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.1",
+    date: "2026-10-08",
+    type: "stable",
+    highlights: [
+      "Settings > Proxy page for model downloads and update checks behind SOCKS5 or HTTP CONNECT proxies, with optional auth (PR #909, fixes #655)",
+      "Opt-in JSONL transcript persistence: a transcript survives restarts and failed text injections instead of being lost (PR #907, fixes #758)",
+      "Native .deb and .rpm packages for Debian/Ubuntu and Fedora, x86_64 and aarch64, attached to the GitHub Release (PR #913)",
+      "Slimmer tray menu: Start on Login and About now live only in Settings (PR #905, fixes #654)",
+      "Speech Model Advanced pickers stage changes until you confirm Download instead of starting a fetch per click (PR #908, fixes #894)",
+      "Dictation Pad no longer ghosts away after sitting idle under a Wayland compositor (PR #912, fixes #896)",
+      "evdev keyboard discovery stops grabbing Logitech mice, Goodix touchpads, and power buttons as keyboards (PR #902, #917, #918, fixes #900, #914, #915)",
+      "KDE Plasma 6 Wayland: KWin VirtualKeyboard detection fixed, so dictated letter case stops scrambling (PR #919, fixes #911)",
+      "Text injection ends option parsing before typed text, so a chunk starting with a hyphen no longer truncates dictation (PR #922, fixes #921)",
+      "Startup reuses an on-disk same-size whisper.cpp weight instead of re-resolving it (PR #923, fixes #916)",
+      "uninstall.sh no longer deletes files in the directory you ran it from (PR #901, fixes #897)",
+      "Settings > Advanced Initial Prompt accepts typed input again, and transcript and log saves no longer double the .txt extension (PR #927)",
+      "deb declares python3-socks, rpm declares python3-pysocks; snap attach keeps checksums on failure; remote curl | bash install gated end to end (PR #920, #899, #906)",
+    ],
+  },
+  {
     version: "v0.18.0",
     date: "2026-10-02",
     type: "stable",
@@ -460,7 +480,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-10-02",
+    dateModified: "2026-10-08",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
