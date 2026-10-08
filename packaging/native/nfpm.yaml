@@ -1,0 +1,110 @@
+# One nfpm config for both the .deb and the .rpm.
+#
+# Do not run nfpm on this file directly: build.sh assembles the payload tree
+# this config expects (./payload and ./pkg-doc next to the directory it runs
+# nfpm from) and sets the VOCA_* variables the fields below expand.
+#
+# Packaging stays thin on purpose (#600): the interpreter, GTK, PyGObject and
+# the gi typelibs come from the distribution, and so do every Python
+# dependency the distros package. Only pywhispercpp and pynput are vendored —
+# pywhispercpp is not packaged by Debian or Fedora at all, and pynput is
+# missing from Fedora — both under /usr/lib/vocalinux/vendor/, on sys.path via
+# the launcher in /usr/bin/vocalinux. Vendoring the pywhispercpp wheel per
+# supported CPython is what keeps the package free of a bundled interpreter.
+#
+# Version: VOCA_VERSION is the tag without its leading v and without a
+# prerelease suffix; VOCA_PRERELEASE carries that suffix (empty for stable).
+# nfpm maps a prerelease to 0.19.0~beta-1, which orders before the stable
+# 0.19.0-1 in both formats.
+
+name: vocalinux
+arch: ${VOCA_ARCH}
+platform: linux
+version: ${VOCA_VERSION}
+release: 1
+prerelease: ${VOCA_PRERELEASE}
+section: utils
+priority: optional
+maintainer: "Jatin K Malik <jatinkrmalik@gmail.com>"
+description: |
+  Free, offline voice dictation for Linux. Hold the push-to-talk key,
+  transcribe speech locally (whisper.cpp by default), and type into the
+  focused window. GTK, PyGObject and the interpreter come from the
+  distribution; pywhispercpp and pynput are vendored under
+  /usr/lib/vocalinux/vendor because neither distro packages them.
+homepage: https://github.com/VocaHQ/vocalinux
+license: AGPL-3.0-only
+
+contents:
+  # The staged payload tree: /usr/lib/vocalinux/{app,vendor}, the launchers in
+  # /usr/bin, the desktop file and the hicolor icon. build.sh writes it.
+  - src: ./payload/
+    dst: /
+    type: tree
+
+  # License placement differs between the formats: Debian policy wants the
+  # copyright file under /usr/share/doc, Fedora marks /usr/share/licenses.
+  - src: ./pkg-doc/LICENSE
+    dst: /usr/share/doc/vocalinux/copyright
+    packager: deb
+  - src: ./pkg-doc/LICENSE
+    dst: /usr/share/licenses/vocalinux/LICENSE
+    packager: rpm
+
+overrides:
+  deb:
+    depends:
+      - python3 (>= 3.11)
+      - python3-gi
+      - python3-gi-cairo
+      - gir1.2-gtk-3.0
+      - gir1.2-ayatanaappindicator3-0.1
+      - python3-numpy
+      - python3-requests
+      - python3-tqdm
+      - python3-platformdirs
+      - python3-psutil
+      - python3-evdev
+      - python3-pyaudio
+      - python3-socks
+      - python3-xlib
+    recommends:
+      # Host tools the injectors fall back through; install.d documents the
+      # same set for install.sh. The app runs without them on degraded paths.
+      - xdotool
+      - wtype
+      - ydotool
+      - wl-clipboard
+      - xclip
+      - xsel
+      # IBus engine (Wayland text injection): typelib plus the daemon itself.
+      - gir1.2-ibus-1.0
+      - ibus
+      # Desktop notifications.
+      - gir1.2-notify-0.7
+  rpm:
+    depends:
+      - python3 >= 3.11
+      - python3-gobject
+      - python3-cairo
+      - gtk3
+      - libayatana-appindicator-gtk3
+      - python3-numpy
+      - python3-requests
+      - python3-tqdm
+      - python3-platformdirs
+      - python3-psutil
+      - python3-evdev
+      - python3-pyaudio
+      - python3-pysocks
+      - python3-xlib
+    recommends:
+      - xdotool
+      - wtype
+      - ydotool
+      - wl-clipboard
+      - xclip
+      - xsel
+      # ibus carries the IBus-1.0 typelib itself on Fedora.
+      - ibus
+      - libnotify

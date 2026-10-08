@@ -7,6 +7,7 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from ..version import __url__
+from .proxy import requests_proxies
 
 logger = logging.getLogger(__name__)
 
@@ -215,7 +216,7 @@ def _fetch_stable_from_releases_page(
         "User-Agent": "Vocalinux-UpdateChecker",
     }
     try:
-        response = requests.get(url, headers=headers, timeout=timeout)
+        response = requests.get(url, headers=headers, timeout=timeout, proxies=requests_proxies())
         final_url = getattr(response, "url", "") or ""
         parsed = urlparse(final_url)
         if (
@@ -258,7 +259,12 @@ def fetch_latest_release(
 
     try:
         if channel == "stable":
-            response = requests.get(f"{api_base}/releases/latest", headers=headers, timeout=timeout)
+            response = requests.get(
+                f"{api_base}/releases/latest",
+                headers=headers,
+                timeout=timeout,
+                proxies=requests_proxies(),
+            )
             if response.status_code == 404:
                 logger.warning("No latest release found for %s", api_base)
                 return None
@@ -279,6 +285,7 @@ def fetch_latest_release(
                 headers=headers,
                 params={"per_page": 30, "page": page},
                 timeout=timeout,
+                proxies=requests_proxies(),
             )
             if response.status_code in (403, 429):
                 logger.debug("GitHub API rate-limited or forbidden for %s", api_base)

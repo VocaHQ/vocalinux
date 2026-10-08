@@ -58,6 +58,14 @@ from ..utils.model_choice import (
     size_for_priority,
 )
 from ..utils.paths import models_dir  # noqa: E402
+from ..utils.proxy import (  # noqa: E402
+    DEFAULT_PROXY_MODE,
+    DEFAULT_PROXY_PROTOCOL,
+    default_port_for_protocol,
+    normalize_proxy_mode,
+    normalize_proxy_protocol,
+    requests_proxies,
+)
 from ..utils.system_language import (  # noqa: E402
     LANGUAGE_FOLLOWS_LAYOUT,
     language_for_active_layout,
@@ -309,6 +317,20 @@ def _model_specialization_display_name(model_name: str) -> str:
 #: Parakeet never consumes a catalog language at all. Module level, not a class
 #: attribute, so tests driving the methods against a Mock still reach it.
 FOLLOW_LAYOUT_ENGINES = ("whisper", "whisper_cpp", "faster_whisper", "remote_api")
+
+#: Selected-setting keys that make up the model spec. While a spec that needs a
+#: download is staged (#894), these stay out of the saved config until the
+#: explicit Download confirmation; every other key applies and saves as usual.
+_MODEL_SPEC_KEYS = ("engine", "model_size", "model_variant", "language")
+
+#: Engine attributes a Settings edit can update live with the same clamping
+#: ``reconfigure()`` applies — minus its recording cancel and any model
+#: reload. Every other key (all ``whispercpp_*`` load-time params) stays
+#: saved-only while a download is staged (#894).
+_LIVE_ENGINE_SETTINGS = {
+    "vad_sensitivity": lambda value: max(1, min(5, int(value))),
+    "silence_timeout": lambda value: max(0.5, min(5.0, float(value))),
+}
 
 
 def _is_following_layout(dialog: Any) -> bool:
@@ -2601,6 +2623,7 @@ class SettingsDialog(Gtk.Dialog):
         hotkey_listener_update_callback: Optional[Callable[[], None]] = None,
         language_shortcuts_update_callback: Optional[Callable[[], None]] = None,
         history_update_callback: Optional[Callable[[], None]] = None,
+        history_clear_callback: Optional[Callable[[], None]] = None,
     ):
         super().__init__(title="Vocalinux Settings", transient_for=parent, flags=0)
         # Force window decorations (title-bar close) on all WMs. An in-window
@@ -2618,6 +2641,7 @@ class SettingsDialog(Gtk.Dialog):
         self.hotkey_listener_update_callback = hotkey_listener_update_callback
         self.language_shortcuts_update_callback = language_shortcuts_update_callback
         self.history_update_callback = history_update_callback
+        self.history_clear_callback = history_clear_callback
         # Per-language shortcut rows (#805): a dict of row widgets per binding,
         # populated by _build_language_shortcuts_section.
         self._language_shortcut_rows: list[dict] = []
@@ -2656,6 +2680,10 @@ class SettingsDialog(Gtk.Dialog):
         # Cached so Mock-driven tests and early calls read a real bool.
         self._follow_layout_active = False
         self._applying_settings = False  # Flag to prevent recursive settings application
+        # The last Advanced picker spec that needs a download and is still
+        # unconfirmed: picker rebuilds keep offering it instead of falling back
+        # to the saved model, and a real apply or resync clears it (#894).
+        self._staged_model_spec: Optional[dict] = None
         self._advanced_prompt_dirty = False
         self._language_candidates_dirty = False
         # Deferred text edits stashed when the dialog closes mid-apply; persisted
@@ -2707,6 +2735,7 @@ class SettingsDialog(Gtk.Dialog):
             SettingsPage("application", "Application", "preferences-system-symbolic"),
             SettingsPage("advanced", "Advanced", "applications-engineering-symbolic"),
             SettingsPage("post-processing", "Post-Processing", "utilities-terminal-symbolic"),
+            SettingsPage("proxy", "Proxy", "preferences-system-network-proxy-symbolic"),
             SettingsPage("about", "About", "help-about-symbolic"),
         ]
         pages_by_name = {page.name: page for page in self._pages}
@@ -2722,6 +2751,7 @@ class SettingsDialog(Gtk.Dialog):
         self.general_tab = pages_by_name["application"].box
         self.advanced_tab = pages_by_name["advanced"].box
         self.post_processing_tab = pages_by_name["post-processing"].box
+        self.proxy_tab = pages_by_name["proxy"].box
         self.about_tab = pages_by_name["about"].box
 
         # Each page is wrapped in a vertical ScrolledWindow: without one, the
@@ -2817,6 +2847,7 @@ class SettingsDialog(Gtk.Dialog):
         self._build_general_section()
         self._build_advanced_section()
         self._build_post_processing_section()
+        self._build_proxy_section()
         self._build_about_section()
         self._build_sidebar_footer(sidebar_box)
 
@@ -3348,8 +3379,8 @@ class SettingsDialog(Gtk.Dialog):
         history_group = PreferencesGroup(
             title="Transcription History",
             description="Recent dictation snippets are kept in memory and shown "
-            "in the tray menu. Nothing is written to disk; history clears on quit. "
-            "Changes take effect after restarting Vocalinux.",
+            "in the tray menu. History clears on quit unless Keep on Disk is on, "
+            "which saves them to history.jsonl under the Vocalinux data directory.",
         )
 
         self.history_enabled_switch = Gtk.Switch()
@@ -3373,6 +3404,32 @@ class SettingsDialog(Gtk.Dialog):
         )
         history_group.add_row(history_max_items_row)
 
+        self.history_persist_switch = Gtk.Switch()
+        self.history_persist_switch.set_tooltip_text(
+            "Save snippets to disk so they survive restarts (off by default for privacy)"
+        )
+        history_persist_row = PreferenceRow(
+            title="Keep on Disk",
+            subtitle="Save snippets to history.jsonl in the data directory across restarts",
+            widget=self.history_persist_switch,
+            keywords=("persist", "save", "disk", "transcript"),
+        )
+        history_group.add_row(history_persist_row)
+
+        self.history_clear_button = Gtk.Button(label="Clear")
+        self.history_clear_button.set_tooltip_text(
+            "Delete every saved snippet, including any written to disk"
+        )
+        _style_action_button(self.history_clear_button)
+        self.history_clear_button.connect("clicked", self._on_history_clear_clicked)
+        history_clear_row = PreferenceRow(
+            title="Clear History",
+            subtitle="Remove every saved snippet now",
+            widget=self.history_clear_button,
+            keywords=("delete", "erase", "wipe", "transcript"),
+        )
+        history_group.add_row(history_clear_row)
+
         self.general_tab.pack_start(history_group, False, False, 0)
 
         self.autostart_switch.connect("state-set", self._on_autostart_toggled)
@@ -3381,6 +3438,7 @@ class SettingsDialog(Gtk.Dialog):
         self.show_overlay_switch.connect("state-set", self._on_show_overlay_toggled)
         self.history_enabled_switch.connect("state-set", self._on_history_enabled_toggled)
         self.history_max_items_spin.connect("value-changed", self._on_history_max_items_changed)
+        self.history_persist_switch.connect("state-set", self._on_history_persist_toggled)
 
     def _build_dictionary_section(self) -> None:
         """Build the Custom Dictionary page for terms and transcript corrections."""
@@ -4306,6 +4364,28 @@ class SettingsDialog(Gtk.Dialog):
         if self.history_update_callback:
             self.history_update_callback()
 
+    def _on_history_persist_toggled(self, widget: Gtk.Switch, state: bool) -> bool:
+        """Handle toggle of the keep-on-disk switch."""
+        if self._initializing or self._applying_settings:
+            return False
+
+        persist = bool(state)
+        logger.info(f"Transcription history persistence toggled: {persist}")
+        self.config_manager.set("history", "persist", persist)
+        self.config_manager.save_settings()
+        if self.history_update_callback:
+            self.history_update_callback()
+        return False
+
+    def _on_history_clear_clicked(self, widget: Gtk.Button) -> None:
+        """Handle click of the clear-history button."""
+        if self._initializing or self._applying_settings:
+            return
+
+        logger.info("Clear history requested from settings")
+        if self.history_clear_callback:
+            self.history_clear_callback()
+
     def _on_autostart_toggled(self, widget, state):
         """Handle toggle of the autostart switch."""
         if _handlers_suppressed(self):
@@ -4694,6 +4774,15 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_subtitle = Gtk.Label(xalign=0, wrap=True)
         self.model_info_subtitle.get_style_context().add_class("model-info-subtitle")
         self.model_info_card.pack_start(self.model_info_subtitle, False, False, 0)
+
+        # Picking a spec only stages it; this button is the explicit
+        # confirmation that turns the staged spec into a download (#894).
+        self.model_download_button = Gtk.Button(label="Download")
+        self.model_download_button.get_style_context().add_class("suggested-action")
+        self.model_download_button.set_halign(Gtk.Align.START)
+        self.model_download_button.set_no_show_all(True)
+        self.model_download_button.connect("clicked", self._on_download_model_clicked)
+        self.model_info_card.pack_start(self.model_download_button, False, False, 0)
 
         # The recommendation used to be a plain label, which left the panel stating
         # the right answer while the pickers kept the wrong one (#778).
@@ -5844,12 +5933,13 @@ class SettingsDialog(Gtk.Dialog):
         self._report_shortcut_apply_result(display_name, applied)
 
     def _build_sidebar_footer(self, sidebar_box: Gtk.Box):
-        """Build the sidebar footer: dictation status, test action, and Close.
+        """Build the sidebar footer: test output, status, test action, and Close.
 
         Always visible regardless of the selected page: recognition state,
         live microphone level, a dictation test button, and the dialog's
-        in-window Close button. Test output is revealed inline, so any
-        instant-applied change can be verified immediately.
+        in-window Close button. Test output leads the footer so the revealed
+        box grows into the empty sidebar space above the controls instead of
+        pushing them down (#677).
         """
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.set_margin_start(8)
@@ -5858,6 +5948,29 @@ class SettingsDialog(Gtk.Dialog):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         footer.get_style_context().add_class("sidebar-footer")
+
+        # Test transcription output, revealed while testing
+        self.test_output_revealer = Gtk.Revealer()
+        self.test_output_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_min_content_height(60)
+        scrolled_window.set_max_content_height(100)
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        # GTK3 default IN shadow draws a left etched stripe on GNOME/Wayland (#847).
+        scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)
+        scrolled_window.get_style_context().add_class("test-area")
+
+        self.test_textview = Gtk.TextView()
+        self.test_textview.set_editable(False)
+        self.test_textview.set_cursor_visible(False)
+        self.test_textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.test_textview.get_style_context().add_class("test-textview")
+        self.test_buffer = self.test_textview.get_buffer()
+        scrolled_window.add(self.test_textview)
+        self.test_output_revealer.add(scrolled_window)
+
+        footer.pack_start(self.test_output_revealer, False, False, 0)
 
         status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
@@ -5895,29 +6008,6 @@ class SettingsDialog(Gtk.Dialog):
         self.progress_info_label.set_line_wrap(True)
         self.audio_test_status = self.progress_info_label
         footer.pack_start(self.progress_info_label, False, False, 0)
-
-        # Test transcription output, revealed while testing
-        self.test_output_revealer = Gtk.Revealer()
-        self.test_output_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_min_content_height(60)
-        scrolled_window.set_max_content_height(100)
-        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        # GTK3 default IN shadow draws a left etched stripe on GNOME/Wayland (#847).
-        scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)
-        scrolled_window.get_style_context().add_class("test-area")
-
-        self.test_textview = Gtk.TextView()
-        self.test_textview.set_editable(False)
-        self.test_textview.set_cursor_visible(False)
-        self.test_textview.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.test_textview.get_style_context().add_class("test-textview")
-        self.test_buffer = self.test_textview.get_buffer()
-        scrolled_window.add(self.test_textview)
-        self.test_output_revealer.add(scrolled_window)
-
-        footer.pack_start(self.test_output_revealer, False, False, 0)
 
         # Separate Close from the dictation-test controls so it reads as
         # dialog chrome, not as part of Test Dictation (#651).
@@ -6209,6 +6299,250 @@ class SettingsDialog(Gtk.Dialog):
         _set_accessible_name(button, tooltip)
         button.connect("clicked", lambda *_args, dest=url: self._open_web_url(dest))
         return button
+
+    def _build_proxy_section(self) -> None:
+        """Build the Proxy page: Off / System / Manual modes (#655).
+
+        The mode applies to model downloads and update checks. The manual
+        rows stay visible but insensitive unless the mode is Manual.
+        """
+        self.proxy_group = PreferencesGroup(
+            title="Proxy",
+            description=(
+                "Route model downloads and update checks through a proxy. "
+                "Useful in regions where the model hosts are unreachable."
+            ),
+            keywords=("proxy", "network", "socks5", "https"),
+        )
+
+        self.proxy_mode_combo = Gtk.ComboBoxText()
+        _style_combo(self.proxy_mode_combo)
+        _combo_chrome(
+            self.proxy_mode_combo,
+            tooltip="How Vocalinux connects to model hosts and update checks",
+        )
+        self.proxy_mode_combo.append("off", "Off")
+        self.proxy_mode_combo.append("system", "System")
+        self.proxy_mode_combo.append("manual", "Manual")
+        mode_row = PreferenceRow(
+            title="Mode",
+            subtitle=(
+                "System uses the *_proxy environment variables and the GNOME "
+                "proxy settings; Manual uses the server configured below"
+            ),
+            widget=self.proxy_mode_combo,
+            keywords=("mode",),
+        )
+        self.proxy_group.add_row(mode_row)
+        self.proxy_tab.pack_start(self.proxy_group, False, False, 0)
+
+        self.proxy_manual_group = PreferencesGroup(
+            title="Manual Proxy",
+            description="Applied when the mode above is set to Manual.",
+        )
+
+        self.proxy_protocol_combo = Gtk.ComboBoxText()
+        _style_combo(self.proxy_protocol_combo)
+        _combo_chrome(
+            self.proxy_protocol_combo,
+            tooltip="SOCKS5 or an HTTPS (HTTP CONNECT) proxy",
+        )
+        self.proxy_protocol_combo.append("socks5", "SOCKS5")
+        self.proxy_protocol_combo.append("https", "HTTPS")
+        protocol_row = PreferenceRow(
+            title="Protocol",
+            subtitle="SOCKS5 or an HTTPS (HTTP CONNECT) proxy",
+            widget=self.proxy_protocol_combo,
+            keywords=("protocol", "socks5", "https"),
+        )
+        self.proxy_manual_group.add_row(protocol_row)
+
+        self.proxy_host_entry = Gtk.Entry()
+        self.proxy_host_entry.set_placeholder_text("127.0.0.1 or proxy.example.com")
+        self.proxy_host_entry.set_tooltip_text("Proxy server hostname or IP address")
+        self.proxy_host_entry.set_size_request(_CONTROL_WIDTH, -1)
+        host_row = PreferenceRow(
+            title="Host",
+            subtitle="Proxy server hostname or IP address",
+            widget=self.proxy_host_entry,
+            keywords=("host", "server"),
+        )
+        self.proxy_manual_group.add_row(host_row)
+
+        self.proxy_port_spin = _new_spin(
+            1,
+            65535,
+            1,
+            0,
+            tooltip="Proxy server port (SOCKS5 default 1080, HTTPS often 8080)",
+        )
+        port_row = PreferenceRow(
+            title="Port",
+            subtitle="Proxy server port",
+            widget=self.proxy_port_spin,
+            keywords=("port",),
+        )
+        self.proxy_manual_group.add_row(port_row)
+
+        self.proxy_username_entry = Gtk.Entry()
+        self.proxy_username_entry.set_placeholder_text("(optional)")
+        self.proxy_username_entry.set_tooltip_text("Proxy username (optional)")
+        self.proxy_username_entry.set_size_request(_CONTROL_WIDTH, -1)
+        username_row = PreferenceRow(
+            title="Username",
+            subtitle="Proxy username (optional)",
+            widget=self.proxy_username_entry,
+            keywords=("username", "auth"),
+        )
+        self.proxy_manual_group.add_row(username_row)
+
+        self.proxy_password_entry = Gtk.Entry()
+        self.proxy_password_entry.set_placeholder_text("(optional)")
+        self.proxy_password_entry.set_visibility(False)
+        self.proxy_password_entry.set_tooltip_text(
+            "Proxy password (optional); stored in config.json in plaintext, "
+            "the same as the remote API key"
+        )
+        self.proxy_password_entry.set_size_request(_CONTROL_WIDTH, -1)
+        password_row = PreferenceRow(
+            title="Password",
+            subtitle="Proxy password (optional)",
+            widget=self.proxy_password_entry,
+            keywords=("password", "auth"),
+        )
+        self.proxy_manual_group.add_row(password_row)
+
+        self.proxy_test_btn = Gtk.Button(label="Test Connection")
+        self.proxy_test_btn.set_tooltip_text(
+            "Check that the Hugging Face model host is reachable with these settings"
+        )
+        self.proxy_test_btn.connect("clicked", self._on_test_proxy_connection)
+        test_row = PreferenceRow(
+            title="Connection Test",
+            subtitle="Verify the Hugging Face model host is reachable",
+            widget=self.proxy_test_btn,
+            keywords=("test", "connection"),
+        )
+        self.proxy_manual_group.add_row(test_row)
+        self.proxy_tab.pack_start(self.proxy_manual_group, False, False, 0)
+
+        # Status line under the groups, matching the remote server section
+        self.proxy_status_label = Gtk.Label(label="", use_markup=True, xalign=0)
+        self.proxy_status_label.set_margin_start(16)
+        self.proxy_status_label.set_margin_top(4)
+        self.proxy_status_label.get_style_context().add_class("status-info")
+        self.proxy_tab.pack_start(self.proxy_status_label, False, False, 0)
+
+        # Load saved values into the widgets
+        proxy_settings = self.config_manager.get_settings().get("proxy", {})
+        saved_mode = normalize_proxy_mode(proxy_settings.get("mode"))
+        if not self.proxy_mode_combo.set_active_id(saved_mode):
+            self.proxy_mode_combo.set_active_id(DEFAULT_PROXY_MODE)
+        saved_protocol = normalize_proxy_protocol(proxy_settings.get("protocol"))
+        if not self.proxy_protocol_combo.set_active_id(saved_protocol):
+            self.proxy_protocol_combo.set_active_id(DEFAULT_PROXY_PROTOCOL)
+        saved_host = proxy_settings.get("host", "")
+        if saved_host:
+            self.proxy_host_entry.set_text(str(saved_host))
+        try:
+            saved_port = int(proxy_settings.get("port") or 0)
+        except (TypeError, ValueError):
+            saved_port = 0
+        if saved_port < 1 or saved_port > 65535:
+            saved_port = default_port_for_protocol(saved_protocol)
+        self.proxy_port_spin.set_value(saved_port)
+        saved_username = proxy_settings.get("username", "")
+        if saved_username:
+            self.proxy_username_entry.set_text(str(saved_username))
+        saved_password = proxy_settings.get("password", "")
+        if saved_password:
+            self.proxy_password_entry.set_text(str(saved_password))
+
+        self.proxy_mode_combo.connect("changed", self._on_proxy_mode_changed)
+        self.proxy_protocol_combo.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_host_entry.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_port_spin.connect("value-changed", self._on_proxy_settings_changed)
+        self.proxy_username_entry.connect("changed", self._on_proxy_settings_changed)
+        self.proxy_password_entry.connect("changed", self._on_proxy_settings_changed)
+
+        self._update_proxy_sensitivity()
+
+    def _on_proxy_mode_changed(self, widget: Gtk.Widget) -> None:
+        """Persist the proxy mode and gate the manual rows on it."""
+        if _handlers_suppressed(self):
+            return
+        self._save_proxy_settings()
+        self._update_proxy_sensitivity()
+
+    def _on_proxy_settings_changed(self, widget: Gtk.Widget) -> None:
+        """Persist the manual proxy fields as they are edited."""
+        if _handlers_suppressed(self):
+            return
+        self._save_proxy_settings()
+
+    def _save_proxy_settings(self) -> None:
+        """Write the proxy widgets to the ``proxy`` config section."""
+        self.config_manager.set(
+            "proxy", "mode", self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE
+        )
+        self.config_manager.set(
+            "proxy",
+            "protocol",
+            self.proxy_protocol_combo.get_active_id() or DEFAULT_PROXY_PROTOCOL,
+        )
+        self.config_manager.set("proxy", "host", self.proxy_host_entry.get_text().strip())
+        self.config_manager.set("proxy", "port", int(self.proxy_port_spin.get_value()))
+        self.config_manager.set("proxy", "username", self.proxy_username_entry.get_text().strip())
+        self.config_manager.set("proxy", "password", self.proxy_password_entry.get_text())
+        self.config_manager.save_config()
+
+    def _update_proxy_sensitivity(self) -> None:
+        """Gray out the manual fields unless the mode is Manual."""
+        manual = (self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE) == "manual"
+        self.proxy_manual_group.set_sensitive(manual)
+
+    def _on_test_proxy_connection(self, widget: Gtk.Widget) -> None:
+        """Fetch the Hugging Face model repo through the configured proxy."""
+        self.proxy_test_btn.set_sensitive(False)
+        self.proxy_test_btn.set_label("Testing...")
+        self.proxy_status_label.set_markup("<i>Connecting...</i>")
+
+        config = {
+            "mode": self.proxy_mode_combo.get_active_id() or DEFAULT_PROXY_MODE,
+            "protocol": self.proxy_protocol_combo.get_active_id() or DEFAULT_PROXY_PROTOCOL,
+            "host": self.proxy_host_entry.get_text().strip(),
+            "port": int(self.proxy_port_spin.get_value()),
+            "username": self.proxy_username_entry.get_text().strip(),
+            "password": self.proxy_password_entry.get_text(),
+        }
+
+        def test_connection(config: dict = config) -> None:
+            import requests
+
+            try:
+                response = requests.get(
+                    "https://huggingface.co/api/models/ggerganov/whisper.cpp",
+                    headers={"User-Agent": f"vocalinux/{__version__}"},
+                    timeout=10,
+                    proxies=requests_proxies(config),
+                )
+                GLib.idle_add(
+                    self.proxy_status_label.set_markup,
+                    "<span foreground='#26a269'>✓ huggingface.co reachable "
+                    f"(status={response.status_code})</span>",
+                )
+            except requests.RequestException as exc:
+                logger.warning("Proxy connection test against huggingface.co failed: %s", exc)
+                error_msg = GLib.markup_escape_text(str(exc)[:80])
+                GLib.idle_add(
+                    self.proxy_status_label.set_markup,
+                    f"<span foreground='#c01c28'>✗ Connection failed: {error_msg}</span>",
+                )
+
+            GLib.idle_add(self.proxy_test_btn.set_sensitive, True)
+            GLib.idle_add(self.proxy_test_btn.set_label, "Test Connection")
+
+        threading.Thread(target=test_connection, daemon=True).start()
 
     def _build_about_section(self):
         """Build the About page using the same PreferenceRow cards as other pages."""
@@ -7319,7 +7653,16 @@ class SettingsDialog(Gtk.Dialog):
         text_injection_settings = self.config_manager.get_settings().get("text_injection", {})
         history_settings = self.config_manager.get_settings().get("history", {})
 
-        autostart_enabled = general_settings.get("autostart", False)
+        # The login desktop entry can be added or removed outside the app; the
+        # real file state wins over the stored preference (previously synced by
+        # the tray menu's Start on Login item).
+        from . import autostart_manager
+
+        autostart_enabled = autostart_manager.is_autostart_enabled()
+        if autostart_enabled != general_settings.get("autostart", False):
+            self.config_manager.set("general", "autostart", autostart_enabled)
+            self.config_manager.save_settings()
+
         start_minimized = ui_settings.get("start_minimized", False)
         show_missing_tray_warning = ui_settings.get("show_missing_tray_warning", True)
         show_overlay = ui_settings.get("show_overlay", True)
@@ -7376,6 +7719,7 @@ class SettingsDialog(Gtk.Dialog):
 
         self.history_enabled_switch.set_active(history_enabled)
         self.history_max_items_spin.set_value(history_max_items)
+        self.history_persist_switch.set_active(bool(history_settings.get("persist", False)))
 
         disable_internal_hotkey = self.config_manager.get_bool(
             "shortcuts", "disable_internal_hotkey", False
@@ -7763,11 +8107,22 @@ class SettingsDialog(Gtk.Dialog):
                         combo_id = size if engine == "faster_whisper" else size.capitalize()
                         self.model_combo.append(combo_id, display_text)
 
-                # Determine which model to select
+                # Determine which model to select. A staged spec wins over the
+                # saved model so a rebuild (e.g. a language change) keeps the
+                # unconfirmed pick instead of snapping back to the saved one.
                 saved_model = saved_model_for_engine.lower()
                 valid_models = [m.lower() for m in ENGINE_MODELS.get(engine, [])]
 
-                if saved_model in valid_models:
+                staged = self._staged_model_spec
+                staged_model = None
+                if isinstance(staged, dict) and staged.get("engine") == engine:
+                    candidate = str(staged.get("model_size") or "").lower()
+                    if candidate in valid_models:
+                        staged_model = candidate
+
+                if staged_model:
+                    selected = staged_model
+                elif saved_model in valid_models:
                     selected = saved_model
                 elif downloaded_models:
                     selected = downloaded_models[0]
@@ -7818,7 +8173,16 @@ class SettingsDialog(Gtk.Dialog):
         recommended_model, _ = self._get_recommended_whispercpp_model_for_language()
         recommended_size = get_whispercpp_model_size(recommended_model)
 
-        saved_model = self._resolve_saved_whispercpp_variant(saved_model_for_engine)
+        staged = self._staged_model_spec
+        staged_model = ""
+        if isinstance(staged, dict) and staged.get("engine") == "whisper_cpp":
+            staged_model = str(staged.get("model_size") or "")
+        if staged_model in WHISPERCPP_MODEL_INFO:
+            # The staged spec survives rebuilds until its Download confirmation
+            # or a real apply (#894); it wins over the saved seed.
+            saved_model = staged_model
+        else:
+            saved_model = self._resolve_saved_whispercpp_variant(saved_model_for_engine)
         if saved_model not in WHISPERCPP_MODEL_INFO:
             saved_model = (
                 recommended_model if recommended_model in WHISPERCPP_MODEL_INFO else "tiny"
@@ -8631,7 +8995,9 @@ class SettingsDialog(Gtk.Dialog):
         )
         self.config_manager.set("speech_recognition", "simple_second_language", second or "")
         self._update_simple_visibility()
-        self._auto_apply_settings()
+        # A simple answer resolves to a complete spec, so its pick keeps the
+        # instant apply-and-download flow the Advanced pickers no longer get.
+        self._auto_apply_settings(allow_download=True)
 
     def _commit_or_restore_simple_language_entry(self) -> bool:
         """Resolve text typed into the simple language box, or restore the last pick."""
@@ -8807,6 +9173,9 @@ class SettingsDialog(Gtk.Dialog):
         else:
             status = f"<span foreground='#e5a50a'>Download ~{_format_size(info['size_mb'])}</span>"
         self.model_info_subtitle.set_markup(f"{extra_info} · {status}")
+        # The confirm action follows the displayed spec: offered only while it
+        # names a model that is not on disk (#894).
+        self.model_download_button.set_visible(not is_downloaded)
 
         target = recommended
         message = None
@@ -8838,8 +9207,16 @@ class SettingsDialog(Gtk.Dialog):
         self.model_info_title.show()
         self.model_info_subtitle.show()
 
-    def _auto_apply_settings(self):
-        """Automatically apply settings when changed."""
+    def _auto_apply_settings(self, allow_download: bool = False) -> None:
+        """Automatically apply settings when changed.
+
+        A picker change stages a model spec; it never confirms a download.
+        ``allow_download`` is passed only by the simple questions, whose each
+        answer resolves to a complete spec, so their pick keeps the existing
+        apply-and-download flow. Every other caller leaves a missing model
+        staged: the pickers keep it, the info card offers Download, and only
+        ``apply_settings`` (that button, or Test) starts the transfer (#894).
+        """
         if _handlers_suppressed(self):
             return
 
@@ -8876,6 +9253,45 @@ class SettingsDialog(Gtk.Dialog):
 
             # Check if model needs to be downloaded
             missing_model = _undownloaded_model_info(self.language, engine, model_name)
+
+            if missing_model is not None and not allow_download:
+                # Staging, not confirming: leave the staged spec in the pickers
+                # and the saved one in the config, and repaint the info card so
+                # its Download action offers the explicit confirmation (#894).
+                self._staged_model_spec = {
+                    "engine": engine,
+                    "model_size": model_name,
+                    "model_variant": settings.get("model_variant", ""),
+                    "language": self.language,
+                }
+                # Edits outside the spec are not part of the staging: apply
+                # and persist them so VAD, timeouts and advanced params are
+                # not dropped while a download is staged. Not reconfigure() —
+                # it cancels a buffered recording and waits on its worker
+                # here on the GTK thread, and every whispercpp_* kwarg forces
+                # a model reload. Live-set only what actually changed; the
+                # load-time params stay saved-only until the Download apply
+                # or the next start.
+                non_model_settings = {
+                    key: value for key, value in settings.items() if key not in _MODEL_SPEC_KEYS
+                }
+                applied = True
+                for key, clamp in _LIVE_ENGINE_SETTINGS.items():
+                    if key not in non_model_settings:
+                        continue
+                    try:
+                        live_value = clamp(non_model_settings[key])
+                    except (TypeError, ValueError) as e:
+                        logger.error(f"Invalid {key} while staging: {e}")
+                        applied = False
+                        continue
+                    if getattr(self.speech_engine, key, None) == live_value:
+                        continue
+                    setattr(self.speech_engine, key, live_value)
+                if non_model_settings and applied:
+                    self._save_selected_settings(non_model_settings)
+                self._update_model_info()
+                return
 
             if missing_model is not None:
                 if not self.speech_engine.try_begin_download():
@@ -8955,6 +9371,10 @@ class SettingsDialog(Gtk.Dialog):
                 # Whatever ended the modal — cancel, failure, or a path not
                 # covered above — the pickers must not outlive the config.
                 self._resync_engine_ui_if_unapplied()
+                # Repaint the info card too: after a success it still showed the
+                # pre-download render (amber size line, Download action) until
+                # some other change repainted it (#894 follow-up).
+                self._update_model_info()
                 return
 
             logger.info(f"Auto-applying settings: {settings}")
@@ -9069,6 +9489,9 @@ class SettingsDialog(Gtk.Dialog):
         for key, value in advanced_settings.items():
             self.config_manager.set("advanced", key, value)
         self.config_manager.save_settings()
+        if any(key in settings for key in _MODEL_SPEC_KEYS):
+            # A real spec just persisted, so nothing is staged anymore (#894).
+            self._staged_model_spec = None
 
     def get_selected_settings(self) -> dict[str, Any]:
         """Return the currently selected settings from the UI."""
@@ -9466,6 +9889,16 @@ For now, the engine has been reverted to VOSK."""
         self._populate_model_options()
         self._update_engine_specific_ui()
 
+    def _on_download_model_clicked(self, _button: Any) -> None:
+        """Confirm the staged model spec and start its download (#894).
+
+        The pickers only stage a specification; this is the one explicit
+        confirmation that turns it into a transfer. It goes through
+        ``apply_settings`` so the engine claim, the modal progress dialog, and
+        the post-download apply behave exactly like any other confirmed apply.
+        """
+        self.apply_settings()
+
     def apply_settings(self) -> bool:
         """Apply the selected settings."""
         if self._applying_settings:
@@ -9549,6 +9982,9 @@ For now, the engine has been reverted to VOSK."""
 
             self._populate_model_options()
             self._resync_engine_ui_if_unapplied()
+            # Same repaint as the auto-apply path: a finished download must not
+            # leave the card offering a Download for the model just fetched.
+            self._update_model_info()
             return True
 
         return self._apply_settings_internal(settings)

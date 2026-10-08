@@ -44,7 +44,7 @@ No Voca account is required. Models download once. After that, speech-to-text st
 - **Toggle or push-to-talk**: New installs default to hold Right Alt; existing configs keep their shortcut
 - **System tray + settings**: Searchable sidebar, Speech Model simple setup with Advanced as an island, status icons, audio feedback
 - **Start on login**: XDG autostart (desktop session, not a systemd service)
-- **Packaging**: install script, AppImage, AUR, PyPI, Snap (`--edge`), Flatpak (release bundles and local build; not on Flathub)
+- **Packaging**: install script, `.deb` / `.rpm`, AppImage, AUR, PyPI, Snap (`--edge`), Flatpak (release bundles and local build; not on Flathub)
 
 ## Screenshots
 
@@ -163,6 +163,10 @@ See [docs/AUR.md](docs/AUR.md).
 ### AppImage
 
 Download the `x86_64` or `aarch64` AppImage from [Releases](https://github.com/VocaHQ/vocalinux/releases), mark it executable, and run it. Built against glibc 2.35 (Debian 12+, Ubuntu 22.04+, Fedora 36+, Arch, Tumbleweed). Host text-injection tools (`xdotool` on X11; `wtype` / `ydotool` / clipboard tools on Wayland) are still required. Current AppImages rebuild whisper.cpp with Vulkan and use the host GPU driver. Prefer the installer when you want system deps, a CUDA build, and models set up automatically.
+
+### Distro packages (.deb / .rpm)
+
+Download the `.deb` (Debian 12+, Ubuntu 24.04+) or `.rpm` (Fedora) matching your CPU from [Releases](https://github.com/VocaHQ/vocalinux/releases) and install with `sudo apt install ./vocalinux_*.deb` or `sudo dnf install ./vocalinux-*.rpm`. Thin packages: Python and GTK come from the distro. No auto-update; CPU whisper.cpp. Details in [docs/INSTALL.md](docs/INSTALL.md).
 
 ### Flatpak (any distro)
 
@@ -351,12 +355,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the two-venv layout, `just` recipes, 
 
 ## Roadmap
 
-Shipped: graphical settings, multi-language support, whisper.cpp default, Vulkan GPU, Wayland/IBus, Flatpak packaging, AppImage, in-app update checker, Parakeet and Faster Whisper engines, Snap recipe.
+Shipped: graphical settings, multi-language support, whisper.cpp default, Vulkan GPU, Wayland/IBus, Flatpak packaging, AppImage, `.deb` / `.rpm` packages, in-app update checker, Parakeet and Faster Whisper engines, Snap recipe.
 
 Planned:
 
 - [ ] Application-specific voice commands
-- [ ] Debian/Ubuntu package (`.deb`)
 - [ ] User-customizable voice command map
 - [ ] Flathub publication (not currently listed; see #167)
 
