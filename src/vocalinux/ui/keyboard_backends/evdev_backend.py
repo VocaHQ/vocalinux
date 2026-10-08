@@ -90,6 +90,38 @@ else:
 # survive the kernel's uinput name-length truncation.
 _CLONE_NAME_SUFFIX = " (vocalinux)"
 
+# Name fragments remapper-created keyboards are known to use. Only a
+# fallback for systems where sysfs is unreadable (snap confinement): the
+# sysfs check in ``_is_virtual_keyboard`` catches every uinput-spawned
+# device regardless of name.
+_REMAPPER_DEVICE_NAMES = (
+    "keyd virtual",
+    "kmonad",
+    "kanata",
+    "xremap",
+    "interception",
+)
+
+
+def _is_virtual_keyboard(device_path: str, device_name: str) -> bool:
+    """True when the keyboard is a virtual device, not a real keyboard.
+
+    Devices spawned through uinput — key remappers (keyd, kmonad,
+    interception-tools), on-screen keyboards, accessibility injectors —
+    have no physical parent, so the kernel places them under
+    ``/devices/virtual/input``. Real devices live under bus-specific
+    paths (usb, i8042, ...). When sysfs is unavailable the name check
+    catches the common remappers.
+    """
+    sys_path = f"/sys/class/input/{os.path.basename(device_path)}/device"
+    try:
+        if os.path.exists(sys_path):
+            return "/devices/virtual/input/" in os.path.realpath(sys_path)
+    except OSError:
+        pass
+    name = device_name.lower()
+    return any(marker in name for marker in _REMAPPER_DEVICE_NAMES)
+
 
 def _clone_device_name(device: InputDevice) -> str:
     """Clone name that keeps the suffix rescan checks rely on.
@@ -1053,8 +1085,7 @@ class EvdevDeviceHub:
         # name suffix also covers clones of other Vocalinux processes whose
         # paths we never registered. Other virtual devices (key remappers,
         # accessibility keyboards) ARE monitored: users can bind shortcuts
-        # to them, and grabbing is what lets the shortcut reach us at all
-        # when a remapper has already grabbed the physical device.
+        # to them.
         device_name = str(getattr(device, "name", "") or "")
         if device_path in self._clone_paths or device_name.endswith(_CLONE_NAME_SUFFIX):
             logger.debug(f"Skipping Vocalinux clone device: {device_path} ({device_name})")
@@ -1064,22 +1095,35 @@ class EvdevDeviceHub:
                 logger.debug(f"Ignoring close failure for clone {device_path}: {e}")
             return False
 
-        # Exclusive grab hides the device from the compositor; the paired
-        # clone re-emits every event we do not consume so apps keep typing.
-        forwarder = self._create_forwarder(device)
-        if forwarder is not None:
-            try:
-                device.grab()
-            except (OSError, IOError) as e:
-                logger.warning(
-                    f"Cannot grab {device_path} ({e}); "
-                    "shortcut keys will also reach the focused app"
-                )
+        forwarder: Optional[UInput] = None
+        if _is_virtual_keyboard(device_path, device_name):
+            # A virtual keyboard is a remapper's output. Grabbing it
+            # starves the compositor of every event the remapper emits,
+            # and the paired clone is a new input device the remapper
+            # grabs in turn — keyd locks the whole keyboard this way
+            # (#930). Monitor it ungrabbed: its events still reach the
+            # listener, so shortcuts bound to it keep working. Only
+            # suppression is lost, which a grab could never provide anyway
+            # — the remapper re-emits on a device we cannot hold.
+            logger.debug(f"Monitoring virtual keyboard ungrabbed: {device_path} ({device_name})")
+        else:
+            # Exclusive grab hides the device from the compositor; the
+            # paired clone re-emits every event we do not consume so apps
+            # keep typing.
+            forwarder = self._create_forwarder(device)
+            if forwarder is not None:
                 try:
-                    forwarder.close()
-                except (OSError, IOError, RuntimeError) as e:
-                    logger.debug(f"Ignoring clone close failure for {device_path}: {e}")
-                forwarder = None
+                    device.grab()
+                except (OSError, IOError) as e:
+                    logger.warning(
+                        f"Cannot grab {device_path} ({e}); "
+                        "shortcut keys will also reach the focused app"
+                    )
+                    try:
+                        forwarder.close()
+                    except (OSError, IOError, RuntimeError) as e:
+                        logger.debug(f"Ignoring clone close failure for {device_path}: {e}")
+                    forwarder = None
 
         with self._devices_lock:
             if (
