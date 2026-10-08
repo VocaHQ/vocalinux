@@ -1861,8 +1861,12 @@ class TextInjector:
                         chunk = text[i : i + chunk_size]
                         chunk_num = (i // chunk_size) + 1
 
-                        # First try with clearmodifiers
-                        cmd = ["xdotool", "type", "--clearmodifiers", chunk]
+                        # First try with clearmodifiers. ``--`` ends option
+                        # parsing: a chunk that starts with '-' (a word
+                        # hyphenated across the chunk boundary) is typed
+                        # literally instead of read as a flag and rejected
+                        # (#921).
+                        cmd = ["xdotool", "type", "--clearmodifiers", "--", chunk]
                         logger.debug(f"Injecting chunk {chunk_num}/{total_chunks}: '{chunk}'")
 
                         subprocess.run(
@@ -2660,7 +2664,9 @@ class TextInjector:
                 raise _InjectionAborted
             chunk = text[i : i + chunk_size]
             if self.wayland_tool == "wtype":
-                cmd = ["wtype", chunk]
+                # ``--`` puts wtype in raw-text mode so a leading '-' is not
+                # parsed as an option.
+                cmd = ["wtype", "--", chunk]
                 # wtype types at compositor pace; the budget scales with the
                 # chunk length so only a wedged process can ever hit it.
                 type_timeout = max(5, len(chunk) * 0.05)
@@ -2668,7 +2674,8 @@ class TextInjector:
                 # Keep key-delay > 0 to avoid Shift-leak ("Can you" -> "CAN YOu").
                 # Low delay so fallback typing finishes quickly for long phrases.
                 key_delay = os.environ.get("VOCALINUX_YDOTOOL_KEY_DELAY", "2")
-                cmd = ["ydotool", "type", "--key-delay", key_delay, chunk]
+                # ``--`` ends ydotool's option parsing for the same reason.
+                cmd = ["ydotool", "type", "--key-delay", key_delay, "--", chunk]
                 type_timeout = max(5, len(chunk) * self._key_delay_seconds(key_delay) * 4)
             try:
                 subprocess.run(

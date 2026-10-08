@@ -271,7 +271,7 @@ class TestTextInjector(unittest.TestCase):
 
             # Verify wtype was called correctly
             self.mock_subprocess.assert_any_call(
-                ["wtype", "Hello world"],
+                ["wtype", "--", "Hello world"],
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -299,7 +299,7 @@ class TestTextInjector(unittest.TestCase):
             # Clipboard paste fails (no wl-copy/xclip/xsel in this mock); type fallback.
             # Default key-delay is 2 (overridable via VOCALINUX_YDOTOOL_KEY_DELAY).
             self.mock_subprocess.assert_any_call(
-                ["ydotool", "type", "--key-delay", "2", "Hello world"],
+                ["ydotool", "type", "--key-delay", "2", "--", "Hello world"],
                 check=True,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -820,7 +820,7 @@ class TestTextInjector(unittest.TestCase):
 
             calls = [c.args[0] for c in mock_run.call_args_list if c.args]
             self.assertTrue(
-                any(c[0] == "wtype" and c[1] == "café" for c in calls),
+                any(c[0] == "wtype" and c[-1] == "café" for c in calls),
                 "wtype should inject text directly",
             )
             self.assertFalse(
@@ -1785,6 +1785,67 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
             commands,
         )
         self.assertFalse(any("Escape" in command for command in commands))
+
+    def test_inject_with_xdotool_terminates_options_before_the_text(self) -> None:
+        """A chunk starting with '-' must type literally, not parse as a flag (#921).
+
+        Text is typed in 20-char chunks, so a word hyphenated across the
+        boundary produces a chunk like "-stickation". Without the end-of-options
+        marker `xdotool type` reads it as a flag, exits nonzero, and drops the
+        rest of the dictation.
+        """
+        injector = TextInjector.__new__(TextInjector)
+        injector.environment = DesktopEnvironment.X11
+
+        injector._inject_with_xdotool("this is a hyphenated-stickation")
+
+        type_calls = [
+            call.args[0]
+            for call in self.mock_subprocess.call_args_list
+            if call.args and call.args[0][:2] == ["xdotool", "type"]
+        ]
+        self.assertEqual(
+            type_calls,
+            [
+                ["xdotool", "type", "--clearmodifiers", "--", "this is a hyphenated"],
+                ["xdotool", "type", "--clearmodifiers", "--", "-stickation"],
+            ],
+        )
+
+    def test_inject_with_wtype_terminates_options_before_the_text(self) -> None:
+        """`wtype` gets the same marker: its raw-text mode types the rest (#921)."""
+        injector = TextInjector.__new__(TextInjector)
+        injector.wayland_tool = "wtype"
+        injector._wait_for_modifiers_released = lambda: None
+
+        injector._inject_with_wayland_tool("-leading dash")
+
+        type_calls = [
+            call.args[0]
+            for call in self.mock_subprocess.call_args_list
+            if call.args and call.args[0][:1] == ["wtype"]
+        ]
+        self.assertEqual(type_calls, [["wtype", "--", "-leading dash"]])
+
+    def test_inject_with_ydotool_terminates_options_before_the_text(self) -> None:
+        """`ydotool type` stops option parsing before the chunk as well (#921)."""
+        injector = TextInjector.__new__(TextInjector)
+        injector.wayland_tool = "ydotool"
+        injector._wait_for_modifiers_released = lambda: None
+        injector._ensure_ydotoold = lambda: True
+        injector._inject_via_clipboard_paste = lambda text, **kwargs: False
+
+        injector._inject_with_wayland_tool("-leading dash")
+
+        type_calls = [
+            call.args[0]
+            for call in self.mock_subprocess.call_args_list
+            if call.args and call.args[0][:2] == ["ydotool", "type"]
+        ]
+        self.assertEqual(len(type_calls), 1)
+        cmd = type_calls[0]
+        self.assertEqual(cmd[:3], ["ydotool", "type", "--key-delay"])
+        self.assertEqual(cmd[-2:], ["--", "-leading dash"])
 
     def test_inject_with_wayland_tool_ydotool(self):
         """Test text injection with ydotool."""
