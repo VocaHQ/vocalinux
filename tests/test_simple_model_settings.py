@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 import vocalinux.ui
+from vocalinux.utils import whispercpp_model_info
 from vocalinux.utils.model_choice import (
     ACCURATE,
     BALANCED,
@@ -634,15 +635,17 @@ def test_restoring_after_auto_detect_falls_back_to_a_real_language(settings_dial
 
 
 def _with_disk(settings_dialog, downloaded):
+    # The stand-in helper lives in whispercpp_model_info and reads its own
+    # module globals, so the disk state is patched there, not on the dialog.
     return (
         patch.object(
-            settings_dialog,
-            "is_whispercpp_model_downloaded",
+            whispercpp_model_info,
+            "is_model_downloaded",
             side_effect=lambda name: name in downloaded,
         ),
         patch.object(
-            settings_dialog,
-            "get_whispercpp_model_variants",
+            whispercpp_model_info,
+            "get_model_variants",
             return_value=["base", "base.en", "base-q5_1", "base.en-q5_1", "base-q8_0"],
         ),
     )
