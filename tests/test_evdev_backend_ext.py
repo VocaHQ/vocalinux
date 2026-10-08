@@ -154,10 +154,12 @@ B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
 I: Bus=0003 Vendor=046d Product=c08b Version=0110
 N: Name="Logitech G502 HERO Gaming Mouse"
 H: Handlers=mouse0 event5
-B: KEY=1f0000 0 0 0 0
+B: KEY=1f0000 0 0 0 38000000
 B: REL=143
 B: MSC=10
 """
+        # KEY carries real keyboard keys (bits 29-31) so only the pointer
+        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
@@ -168,9 +170,11 @@ B: MSC=10
         mock_proc_content = """I: Bus=0018 Vendor=04f3 Product=0033 Version=0500
 N: Name="Elan Touchpad"
 H: Handlers=mouse0 event1
-B: KEY=ff000000000000 0 0 0
+B: KEY=ff000000000000 0 0 38000000
 B: ABS=273000000000003
 """
+        # KEY carries real keyboard keys (bits 29-31) so only the pointer
+        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
@@ -194,9 +198,11 @@ B: REL=100
         mock_proc_content = """I: Bus=0003 Vendor=046d Product=c52b Version=1201
 N: Name="Logitech USB Receiver"
 H: Handlers=mouse0 event4
-B: KEY=ffff0000 0 0 0 0
+B: KEY=ffff0000 0 0 0 38000000
 B: REL=0 0 143
 """
+        # KEY carries real keyboard keys (bits 29-31) so only the pointer
+        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
@@ -238,6 +244,24 @@ B: REL=143
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
                 assert result == ["/dev/input/event0", "/dev/input/event8"]
+
+    def test_find_keyboard_devices_32bit_words(self) -> None:
+        """On a 32-bit kernel each bitmap word holds 32 bits, not 64.
+
+        KEY_RIGHTCTRL (code 97) sits in the fourth 32-bit word — the first
+        word printed. A 64-bit reading would look for it in word 1 and
+        miss the keyboard entirely.
+        """
+        mock_proc_content = """I: Bus=0019 Vendor=0000 Product=0001 Version=0000
+N: Name="GPIO keyboard"
+H: Handlers=kbd event2
+B: KEY=2 0 0 0
+"""
+        with patch("vocalinux.ui.keyboard_backends.evdev_backend._WORD_BITS", 32):
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                with patch("os.path.exists", return_value=True):
+                    result = find_keyboard_devices()
+                    assert result == ["/dev/input/event2"]
 
 
 class TestFindKeyboardDevicesFromEvdev:

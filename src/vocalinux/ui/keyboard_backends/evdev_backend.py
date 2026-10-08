@@ -20,6 +20,7 @@ to each registered backend for its own consumption decision.
 import errno
 import logging
 import os
+import platform
 import re
 import select
 import threading
@@ -307,43 +308,60 @@ _KEYBOARD_KEY_CODES = frozenset(
 )
 
 
+# Machines whose kernels print bitmap words as 32-bit unsigned longs;
+# everything else (x86_64, aarch64, ppc64*, riscv64, s390x, ...) is 64-bit.
+# On a 32-bit kernel bit N lives in a different word than on 64-bit, which
+# shifts where each key code or axis lands in the /proc bitmap.
+_32BIT_MACHINES = frozenset(
+    {
+        "armv5l",
+        "armv6l",
+        "armv7l",
+        "armv8l",
+        "i386",
+        "i486",
+        "i586",
+        "i686",
+        "mips",
+        "mipsel",
+        "ppc",
+        "riscv32",
+    }
+)
+_WORD_BITS = 32 if platform.machine() in _32BIT_MACHINES else 64
+
+
+def _bitmap_to_int(hex_bitmap: str) -> int:
+    """Integer value of a /proc capability bitmap, or 0 when unparseable.
+
+    Words print most-significant first; each holds ``_WORD_BITS`` bits.
+    """
+    value = 0
+    for shift, word in enumerate(reversed(hex_bitmap.split())):
+        try:
+            value |= int(word, 16) << (shift * _WORD_BITS)
+        except ValueError:
+            return 0
+    return value
+
+
 def _bitmap_has_any_bit(hex_bitmap: str) -> bool:
-    """True when any word of a /proc capability bitmap has a bit set."""
-    try:
-        return any(int(word, 16) for word in hex_bitmap.split())
-    except ValueError:
-        return False
+    """True when the /proc capability bitmap has a bit set."""
+    return _bitmap_to_int(hex_bitmap) != 0
 
 
 def _bitmap_has_code(hex_bitmap: str, code: int) -> bool:
-    """True when bit ``code`` is set in a /proc capability bitmap.
-
-    Bitmaps print most-significant word first, so bit ``code`` lives in
-    word ``len(words) - 1 - code // 64``.
-    """
-    words = hex_bitmap.split()
-    word_index = len(words) - 1 - (code // 64)
-    if word_index < 0:
-        return False
-    try:
-        return bool(int(words[word_index], 16) & (1 << (code % 64)))
-    except ValueError:
-        return False
+    """True when bit ``code`` is set in a /proc capability bitmap."""
+    return bool(_bitmap_to_int(hex_bitmap) & (1 << code))
 
 
 def _bitmap_low_bits(hex_bitmap: str) -> int:
-    """Low word (bits 0-63) of a /proc capability bitmap, or 0.
+    """Bits 0-63 of a /proc capability bitmap, or 0.
 
-    Bitmaps print most-significant word first, so axis bits 0..63 live in
-    the last word on the line.
+    On 64-bit kernels that is the last word; on 32-bit kernels it spans
+    the last two — ``_bitmap_to_int`` handles both.
     """
-    words = hex_bitmap.split()
-    if not words:
-        return 0
-    try:
-        return int(words[-1], 16)
-    except ValueError:
-        return 0
+    return _bitmap_to_int(hex_bitmap) & ((1 << 64) - 1)
 
 
 def _proc_block_has_pointer_axes(device: dict[str, Any]) -> bool:
