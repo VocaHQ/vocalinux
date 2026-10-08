@@ -52,19 +52,19 @@ class TestXdgHelpers:
 
 
 class TestCollapseRepeatedExtension:
-    def test_collapses_doubled_suffix(self):
+    def test_collapses_doubled_suffix(self) -> None:
         assert paths.collapse_repeated_extension("a.txt.txt", ".txt") == "a.txt"
 
-    def test_keeps_single_suffix(self):
+    def test_keeps_single_suffix(self) -> None:
         assert paths.collapse_repeated_extension("a.txt", ".txt") == "a.txt"
 
-    def test_keeps_no_suffix(self):
+    def test_keeps_no_suffix(self) -> None:
         assert paths.collapse_repeated_extension("a", ".txt") == "a"
 
-    def test_case_insensitive_match(self):
+    def test_case_insensitive_match(self) -> None:
         assert paths.collapse_repeated_extension("a.TXT.txt", ".txt") == "a.TXT"
 
-    def test_full_path(self):
+    def test_full_path(self) -> None:
         assert (
             paths.collapse_repeated_extension("/home/u/dir/log.txt.txt", ".txt")
             == "/home/u/dir/log.txt"
