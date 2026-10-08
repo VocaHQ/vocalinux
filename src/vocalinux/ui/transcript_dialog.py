@@ -242,7 +242,14 @@ class TranscriptDialog(Gtk.Dialog):
                 path = chooser.get_filename()
                 # Portal save dialogs append the filter extension even when the
                 # typed name already has it, producing "name.txt.txt".
-                path = collapse_repeated_extension(path, ".txt")
+                collapsed = collapse_repeated_extension(path, ".txt")
+                if (
+                    collapsed != path
+                    and os.path.exists(collapsed)
+                    and not self._confirm_replace(collapsed)
+                ):
+                    return
+                path = collapsed
                 try:
                     with open(path, "w", encoding="utf-8") as transcript_file:
                         transcript_file.write(self.transcript_text)
@@ -252,6 +259,22 @@ class TranscriptDialog(Gtk.Dialog):
                     self.status_label.set_text(f"Could not save: {error}")
         finally:
             chooser.destroy()
+
+    def _confirm_replace(self, path: str) -> bool:
+        """Ask before overwriting a file the chooser never confirmed."""
+        dialog = Gtk.MessageDialog(
+            transient_for=self,
+            modal=True,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text=f'"{os.path.basename(path)}" already exists.',
+        )
+        dialog.format_secondary_text("Do you want to replace it?")
+        dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
+        dialog.add_button("_Replace", Gtk.ResponseType.OK)
+        confirmed = dialog.run() == Gtk.ResponseType.OK
+        dialog.destroy()
+        return confirmed
 
     def _on_response(self, dialog: Gtk.Dialog, response_id: int) -> None:
         """Close destroys the dialog."""
