@@ -171,12 +171,12 @@ sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-**v0.18.0** ships ydotool and the `uinput` plug. That plug is super-privileged, so the Store held 0.18.0 for human review (`allow-installation`). Until a 0.18.0+ revision is listed, `snap info vocalinux` still shows **v0.16.2 (rev 7)** on edge. That revision has no `uinput` plug; `sudo snap connect vocalinux:uinput` fails.
+**v0.18.1** ships ydotool and the `uinput` plug. That plug is super-privileged, so the Store held 0.18.0 for human review (`allow-installation`). Until a 0.18.0+ revision is listed, `snap info vocalinux` still shows **v0.16.2 (rev 7)** on edge. That revision has no `uinput` plug; `sudo snap connect vocalinux:uinput` fails.
 
 Sideload the GitHub `.snap` (amd64) while the Store is waiting:
 
 ```bash
-sudo snap install --dangerous ./vocalinux_0.18.0_amd64.snap
+sudo snap install --dangerous ./vocalinux_0.18.1_amd64.snap
 sudo snap connect vocalinux:audio-record
 sudo snap connect vocalinux:raw-input
 sudo snap connect vocalinux:hardware-observe

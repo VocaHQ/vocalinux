@@ -20,7 +20,7 @@ The installer detects a running instance, updates in place, preserves configurat
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.18.0
+git checkout v0.18.1
 ./install.sh
 ```
 
@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.18.0, sideload `vocalinux_0.18.0_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.18.0_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
+| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.18.1, sideload `vocalinux_0.18.1_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.18.1_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -76,6 +76,39 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.1
+
+0.18.1 is a **patch** on the stable line. Default engine is still whisper.cpp. This one is a reliability release: most of it is fixes, and the new features are plumbing you will notice only when you need it. Settings gains a Proxy page so model downloads and update checks work behind SOCKS5 and HTTP proxies, and an opt-in switch that persists transcripts to disk so a failed injection stops meaning a lost sentence. Releases now attach native .deb and .rpm packages, and the tray menu drops Start on Login and About (both already lived in Settings).
+
+### 0.18.1 highlights
+
+| Feature | Description |
+|---------|-------------|
+| **Proxy settings** | New Settings -> Proxy page: off, system, or manual SOCKS5/HTTP CONNECT with optional auth; covers every model download and the update checker (#909, fixes #655) |
+| **Transcript persistence** | Opt-in JSONL history on disk; a transcript survives restarts and failed injections (#907, fixes #758) |
+| **Native packages** | Thin .deb and .rpm for Debian/Ubuntu and Fedora, x86_64 and aarch64, attached to the GitHub Release (#913, step 1 of #600) |
+| **Slimmer tray menu** | Start on Login and About removed from the tray; both already live in Settings (#905, fixes #654) |
+| **Staged model picker** | Speech Model Advanced pickers no longer start a download per click; changes stage until you confirm Download (#908, fixes #894) |
+| **Wayland pad fix** | Dictation Pad no longer ghosts away after sitting idle under a Wayland compositor (#912, fixes #896) |
+
+### Also in v0.18.1
+
+- Startup reuses an on-disk same-size whisper.cpp weight instead of re-resolving or re-downloading it (#923, fixes #916 reported by @blacxsnow)
+- Text injection ends option parsing before typed text, so a chunk starting with `-` no longer fails as an unrecognized option and truncates the dictation (#922, fixes #921)
+- KDE Plasma 6 Wayland: KWin VirtualKeyboard detection fixed, so dictated letter case stops scrambling (#919, fixes #911 reported by @blackde5ert)
+- evdev keyboard discovery tightened: pointer-motion devices, multitouch-only touchpads, and devices without a real keyboard key are no longer grabbed as keyboards, so hotkey enablement stops breaking Logitech mice and Goodix touchpads (#902, #917, #918, fixes #900 reported by @brainygamer, #914 reported by @pylame22, #915 reported by @uncletoxa)
+- Test Dictation transcription readout moved above its controls in the sidebar footer (#904, fixes #677 reported by @hopsayer)
+- `uninstall.sh` no longer deletes files in the directory you ran it from (#901, fixes #897 reported by @SilverChatte)
+- Settings > Advanced Initial Prompt accepts typed input again (clicks were being stolen by the enclosing row), and transcript and log saves no longer write a doubled `.txt.txt` name (#927)
+- Packaging: `.deb` declares `python3-socks` and `.rpm` declares `python3-pysocks` for SOCKS5 proxy support (#920)
+- CI: snap attach uses `--repo`, checksums still publish when an asset attach fails, the Vulkan pywhispercpp build is reused across runs, and the remote `curl | bash` install path is gated end to end (#899, #903, #906)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp only.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.1).
 
 ---
 
