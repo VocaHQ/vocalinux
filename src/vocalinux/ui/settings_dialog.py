@@ -5844,12 +5844,13 @@ class SettingsDialog(Gtk.Dialog):
         self._report_shortcut_apply_result(display_name, applied)
 
     def _build_sidebar_footer(self, sidebar_box: Gtk.Box):
-        """Build the sidebar footer: dictation status, test action, and Close.
+        """Build the sidebar footer: test output, status, test action, and Close.
 
         Always visible regardless of the selected page: recognition state,
         live microphone level, a dictation test button, and the dialog's
-        in-window Close button. Test output is revealed inline, so any
-        instant-applied change can be verified immediately.
+        in-window Close button. Test output leads the footer so the revealed
+        box grows into the empty sidebar space above the controls instead of
+        pushing them down (#677).
         """
         separator = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
         separator.set_margin_start(8)
@@ -5858,6 +5859,29 @@ class SettingsDialog(Gtk.Dialog):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         footer.get_style_context().add_class("sidebar-footer")
+
+        # Test transcription output, revealed while testing
+        self.test_output_revealer = Gtk.Revealer()
+        self.test_output_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
+
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_min_content_height(60)
+        scrolled_window.set_max_content_height(100)
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        # GTK3 default IN shadow draws a left etched stripe on GNOME/Wayland (#847).
+        scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)
+        scrolled_window.get_style_context().add_class("test-area")
+
+        self.test_textview = Gtk.TextView()
+        self.test_textview.set_editable(False)
+        self.test_textview.set_cursor_visible(False)
+        self.test_textview.set_wrap_mode(Gtk.WrapMode.WORD)
+        self.test_textview.get_style_context().add_class("test-textview")
+        self.test_buffer = self.test_textview.get_buffer()
+        scrolled_window.add(self.test_textview)
+        self.test_output_revealer.add(scrolled_window)
+
+        footer.pack_start(self.test_output_revealer, False, False, 0)
 
         status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
@@ -5895,29 +5919,6 @@ class SettingsDialog(Gtk.Dialog):
         self.progress_info_label.set_line_wrap(True)
         self.audio_test_status = self.progress_info_label
         footer.pack_start(self.progress_info_label, False, False, 0)
-
-        # Test transcription output, revealed while testing
-        self.test_output_revealer = Gtk.Revealer()
-        self.test_output_revealer.set_transition_type(Gtk.RevealerTransitionType.SLIDE_DOWN)
-
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_min_content_height(60)
-        scrolled_window.set_max_content_height(100)
-        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        # GTK3 default IN shadow draws a left etched stripe on GNOME/Wayland (#847).
-        scrolled_window.set_shadow_type(Gtk.ShadowType.NONE)
-        scrolled_window.get_style_context().add_class("test-area")
-
-        self.test_textview = Gtk.TextView()
-        self.test_textview.set_editable(False)
-        self.test_textview.set_cursor_visible(False)
-        self.test_textview.set_wrap_mode(Gtk.WrapMode.WORD)
-        self.test_textview.get_style_context().add_class("test-textview")
-        self.test_buffer = self.test_textview.get_buffer()
-        scrolled_window.add(self.test_textview)
-        self.test_output_revealer.add(scrolled_window)
-
-        footer.pack_start(self.test_output_revealer, False, False, 0)
 
         # Separate Close from the dictation-test controls so it reads as
         # dialog chrome, not as part of Test Dictation (#651).
