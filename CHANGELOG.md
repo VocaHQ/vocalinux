@@ -12,11 +12,11 @@ Release history for Vocalinux.
 
 ## Current stable
 
-**[v0.18.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0)** (2026-10-02)
+**[v0.19.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.19.0)** (2026-10-08)
 
-Minor on the stable line: in-app Dictation Pad for Wayland-safe dictation, PipeWire capture with system-audio sources, RemoteDesktop portal text injection, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing scripts, a floating dictation overlay, and audio ducking while dictating. The dictation hotkey is grabbed and suppressed so it stops leaking into the focused app. Packaging gains a `vocalinux-bin` AUR package, a self-hosted Flatpak remote, and a gated snap-promote workflow.
+Minor on the stable line: a Settings Proxy page for model downloads and update checks behind SOCKS5/HTTP proxies, opt-in JSONL transcript persistence so a failed injection no longer loses the text, .deb and .rpm release packages for Debian and Fedora, a slimmer tray menu (Start on Login and About now live only in Settings), and reliability fixes for the Dictation Pad on Wayland, evdev keyboard discovery, KDE Plasma 6 letter case, and a Speech Model picker that stages changes until you confirm the download.
 
-See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0180) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0).
+See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0190) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.19.0).
 
 ## Earlier versions
 

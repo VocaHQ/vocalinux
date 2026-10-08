@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.19.0" date="2026-10-08">
+      <description>
+        <p>Minor: Settings Proxy page for model downloads and update checks behind SOCKS5/HTTP proxies, opt-in JSONL transcript persistence so a failed injection no longer loses the text, .deb and .rpm release packages for Debian and Fedora, and a slimmer tray menu with Start on Login and About living in Settings. Dictation pad windows no longer ghost away under Wayland compositors, keyboard discovery stops grabbing mice, touchpads, and power buttons, KDE Plasma 6 Wayland letter case is fixed, and the Speech Model picker stages changes until Download is confirmed instead of starting a fetch per click. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.18.0" date="2026-10-02">
       <description>
         <p>Minor: in-app Dictation Pad for Wayland-safe dictation, per-language dictation shortcuts, tray dictation history, file transcription with speaker labels, opt-in D-Bus activation for compositor global shortcuts, custom dictionary with corrections, postprocessing script hook, floating dictation overlay, audio ducking while dictating, and the dictation hotkey grabbed so it stops leaking into the focused app. PipeWire/system-audio capture and the RemoteDesktop portal injection backend are native-install paths; this Flatpak still ships whisper.cpp only.</p>

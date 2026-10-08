@@ -40,6 +40,9 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - File transcription with per-speaker labels (`--transcribe-file` / tray), powered by TinyDiarize
 - Continuous dictation polish: capitalize after sentence punctuation; trailing space after each completed utterance
 - Optional auto-pause while configured apps run; optional idle model keep-alive unload
+- Optional JSONL persistence of transcription history to disk (off by default)
+- Settings Proxy page: outbound SOCKS5 or HTTP CONNECT proxy (optional auth) for model downloads and update checks
+- Speech Model Advanced pickers stage engine/size/variant/language changes until Download is confirmed
 - In-app update checker (stable/nightly) with tray notification when a newer GitHub release is available
 - Settings About page groups this app, VocaHQ family sites, and talk-to-us links (GitHub, Discord, X, email)
 - Optional disable of the missing-tray warning dialog
@@ -47,7 +50,7 @@ Offline-first Linux voice typing with real desktop integration (system tray, X11
 - Vulkan discrete GPU auto-select with manual device override in Advanced settings
 - Native GTK installs follow the OS dark/light preference unless `GTK_THEME` is already set
 - Wayland: IBus when `ibus-wayland` is running, including on compositors previously treated as unbridged
-- Packaging: install.sh (distro python3-gi required; no pip sdist of PyGObject), AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented); uv.lock pins Python deps; Justfile replaces Makefile
+- Packaging: install.sh (distro python3-gi required; no pip sdist of PyGObject), .deb/.rpm (x86_64/aarch64), AppImage (x86_64/aarch64), AUR, Flatpak (local/Flathub status as documented); uv.lock pins Python deps; Justfile replaces Makefile
 - No usage telemetry in the installed app
 - AGPL-3.0; marketing version string is tracked in site package/version surfaces
 - Website is Next.js marketing + SEO guides (static export); languages page documents per-engine support honestly

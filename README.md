@@ -33,7 +33,7 @@ Vocalinux turns speech into typed text in whatever app has focus. It is a free, 
 
 No Voca account is required. Models download once. After that, speech-to-text stays on your machine.
 
-**Current release:** [v0.18.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.0). Minor: Dictation Pad for Wayland-safe dictation, PipeWire capture with system-audio sources, RemoteDesktop portal typing, per-language shortcuts and dictation history, file transcription with speaker labels, and the dictation hotkey no longer leaking into the focused app. Details: [docs/UPDATE.md](docs/UPDATE.md).
+**Current release:** [v0.19.0](https://github.com/VocaHQ/vocalinux/releases/tag/v0.19.0). Minor: Settings Proxy page for downloads and update checks, opt-in transcript persistence to disk, .deb and .rpm release packages, a slimmer tray menu, and a round of Wayland, keyboard-discovery, and model-picker reliability fixes. Details: [docs/UPDATE.md](docs/UPDATE.md).
 
 ## Features
 
@@ -150,7 +150,7 @@ bash /tmp/vl.sh --auto --engine=vosk                # VOSK only
 bash /tmp/vl.sh --auto --engine=parakeet            # Parakeet (CPU)
 ```
 
-For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.18.0`.
+For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.19.0`.
 
 ### Arch Linux (AUR)
 
@@ -213,12 +213,12 @@ sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/
 sudo snap connect vocalinux:uinput         # native Wayland typing (ydotool)
 ```
 
-v0.18.0 includes ydotool and the `uinput` plug. The Store still has to finish review of that plug, so `snap info vocalinux` may still show **v0.16.2** (rev 7) on edge. That revision has no `uinput` plug; `snap connect vocalinux:uinput` fails until a 0.18.0+ revision is listed.
+v0.19.0 includes ydotool and the `uinput` plug. The Store still has to finish review of that plug, so `snap info vocalinux` may still show **v0.16.2** (rev 7) on edge. That revision has no `uinput` plug; `snap connect vocalinux:uinput` fails until a 0.18.0+ revision is listed.
 
 Until then, sideload the GitHub file:
 
 ```bash
-sudo snap install --dangerous ./vocalinux_0.18.0_amd64.snap
+sudo snap install --dangerous ./vocalinux_0.19.0_amd64.snap
 sudo snap connect vocalinux:uinput
 ```
 
