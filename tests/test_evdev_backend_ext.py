@@ -1365,7 +1365,7 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.os.path.exists")
     def test_open_monitors_remapper_virtual_device_ungrabbed(
-        self, mock_exists, mock_input_device, mock_uinput
+        self, mock_exists: Mock, mock_input_device: Mock, mock_uinput: Mock
     ) -> None:
         """Remapper virtual keyboards are monitored without a grab or clone.
 
@@ -1396,7 +1396,11 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.os.path.realpath")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.os.path.exists")
     def test_open_detects_virtual_keyboard_by_sysfs_path(
-        self, mock_exists, mock_realpath, mock_input_device, mock_uinput
+        self,
+        mock_exists: Mock,
+        mock_realpath: Mock,
+        mock_input_device: Mock,
+        mock_uinput: Mock,
     ) -> None:
         """A uinput-spawned keyboard is ungrabbed regardless of its name.
 
@@ -1425,7 +1429,11 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.os.path.realpath")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.os.path.exists")
     def test_open_grabs_keyboard_on_real_sysfs_path(
-        self, mock_exists, mock_realpath, mock_input_device, mock_uinput
+        self,
+        mock_exists: Mock,
+        mock_realpath: Mock,
+        mock_input_device: Mock,
+        mock_uinput: Mock,
     ) -> None:
         """A real sysfs path keeps suppression even for a remapper-ish name.
 
