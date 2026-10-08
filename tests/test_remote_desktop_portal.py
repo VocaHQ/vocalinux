@@ -695,7 +695,7 @@ class TestPortalInjectionPaths:
         ):
             injector._inject_with_wayland_tool("hello")
         # The portal typed "he" before failing; the fallback gets only "llo".
-        assert mock_run.call_args[0][0] == ["wtype", "llo"]
+        assert mock_run.call_args[0][0] == ["wtype", "--", "llo"]
 
     def test_backspace_retries_only_remaining_taps(self, monkeypatch: pytest.MonkeyPatch) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
