@@ -486,7 +486,9 @@ resolve_install_tag() {
 resolve_install_tag
 
 # Check if running from within the vocalinux repo or remotely (via curl)
-REPO_URL="https://github.com/VocaHQ/vocalinux.git"
+# VOCALINUX_REPO_URL overrides the clone source so the remote-install gate can
+# serve a tag from a local mirror; public installs use the repository below.
+REPO_URL="${VOCALINUX_REPO_URL:-https://github.com/VocaHQ/vocalinux.git}"
 INSTALL_DIR=""
 CLEANUP_ON_EXIT="${VOCALINUX_REMOTE_INSTALL:-no}"
 

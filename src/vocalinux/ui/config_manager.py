@@ -205,7 +205,11 @@ DEFAULT_CONFIG = {
     },
     "history": {
         "enabled": True,  # Keep recent dictation snippets in the tray menu
-        "max_items": 10,  # How many snippets to retain (in-memory only, cleared on quit)
+        "max_items": 10,  # How many snippets to retain
+        # Also save snippets to $XDG_DATA_HOME/vocalinux/history.jsonl so they
+        # survive restarts. Off by default: dictated text must not silently
+        # accumulate on disk unless the user asks for it (#758).
+        "persist": False,
     },
     "post_processing": {
         "script_path": "",  # Path to executable; empty = disabled
@@ -237,6 +241,20 @@ DEFAULT_CONFIG = {
         "channel": "stable",
         # Tag last announced via desktop notification (avoids re-notifying every 6h).
         "last_notified_version": "",
+    },
+    # Outbound proxy for model downloads and update checks (#655). "system"
+    # (the default) is the behavior the app always had: the *_proxy
+    # environment variables apply, with the GNOME org.gnome.system.proxy
+    # manual config as a fallback. "off" forces a direct connection and
+    # "manual" uses the fields below. The password sits in config.json in
+    # plaintext, the same as speech_recognition.remote_api_key.
+    "proxy": {
+        "mode": "system",  # "off", "system", or "manual"
+        "protocol": "socks5",  # "socks5" or "https" (HTTP CONNECT proxy)
+        "host": "",
+        "port": 1080,
+        "username": "",
+        "password": "",
     },
     # Optional local VocaGateway (podman/docker). Never flips the default engine.
     "gateway_embed": {

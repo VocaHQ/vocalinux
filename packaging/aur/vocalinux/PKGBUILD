@@ -24,6 +24,7 @@ depends=(
   'portaudio'
   'python-numpy'
   'python-requests'
+  'python-pysocks'
   'python-tqdm'
   'python-psutil'
   'python-evdev'
