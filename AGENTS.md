@@ -93,6 +93,7 @@ just native-packages  # build the .deb and .rpm in the pinned base image (needs 
 just native-smoke fedora:42  # install the built package in a distro container
 just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
+just remote-install-gate debian:12  # remote curl|bash path end to end against HEAD (needs docker)
 just verify-release  # check a published release as published (needs gh)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug

@@ -90,3 +90,32 @@ jobs:
             -v "$PWD:$PWD:ro" -e REPO="$PWD" \
             "${{ matrix.container }}" \
             bash "$PWD/scripts/install-test.sh"
+
+  # The install matrix gates the local path: it hands install.sh a checkout.
+  # A curl|bash user takes a different one — bootstrap outside a checkout, tag
+  # selection, clone, handoff to the tagged installer — which scripts/
+  # install-test.sh's own header admits it does not cover (#701). One container:
+  # the remote-only half (bootstrap, tag, handoff) is distro-agnostic, and the
+  # tagged installer's per-distro work is already covered by the matrix above.
+  install-remote:
+    name: remote install.sh on debian:12
+    runs-on: ubuntu-latest
+    needs: syntax
+    # Two sequential remote installs (fresh clone, then fetch+reset) plus a
+    # real package install on each.
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The gate publishes HEAD as a tag in its mirror; it needs the
+          # commit's objects, not history.
+          fetch-depth: 1
+
+      - name: Run the remote install path in debian:12
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$PWD:$PWD:ro" -e REPO="$PWD" \
+            debian:12 \
+            bash "$PWD/scripts/install-remote-test.sh"
