@@ -833,8 +833,9 @@ class TestDictationPadShelving(unittest.TestCase):
 
     On GNOME/Wayland an idle, fully covered toplevel gets shelved by the
     compositor: it stays in the window list but draws nothing and accepts
-    no input. The pad counters that by floating above other windows,
-    tracking iconify/obscure state events, and re-presenting on show.
+    no input, and present() alone cannot revive it. The pad counters that
+    by floating above other windows on X11, detecting the shelved state
+    via frame-callback staleness, and recreating the surface on show.
     """
 
     def test_init_gtk_window_floats_and_watches_shelving(self) -> None:
@@ -850,7 +851,7 @@ class TestDictationPadShelving(unittest.TestCase):
             if isinstance(node, ast.FunctionDef) and node.name == "_init_gtk_window"
         )
         module = ast.Module(body=[func_node], type_ignores=[])
-        namespace: dict = {"_PAD_WIDTH": 480, "_PAD_HEIGHT": 360}
+        namespace: dict = {"_PAD_WIDTH": 480, "_PAD_HEIGHT": 360, "_SHELF_WATCH_MS": 2000}
         exec(compile(ast.fix_missing_locations(module), "<test>", "exec"), namespace)
 
         fake_self = MagicMock()
@@ -866,6 +867,10 @@ class TestDictationPadShelving(unittest.TestCase):
         connected = {call.args[0] for call in window.connect.call_args_list}
         self.assertIn("window-state-event", connected)
         self.assertIn("visibility-notify-event", connected)
+        # Frame-callback watchdog: tick callback on the textview plus a
+        # recurring GLib timeout running _shelf_watchdog.
+        fake_self._textview.add_tick_callback.assert_called_once_with(fake_self._on_frame_tick)
+        fake_self._GLib.timeout_add.assert_called_once_with(2000, fake_self._shelf_watchdog)
 
     def test_window_state_event_tracks_shelving(self) -> None:
         """ICONIFIED or WITHDRAWN in new_window_state marks the pad shelved."""
@@ -907,6 +912,74 @@ class TestDictationPadShelving(unittest.TestCase):
         finally:
             pad._window = None
             pad.destroy()
+
+    def test_frame_tick_stamps_monotonic_time(self) -> None:
+        """Each compositor frame callback updates the liveness stamp."""
+        pad = _pad_without_gtk()
+        try:
+            pad._GLib = MagicMock()
+            pad._GLib.get_monotonic_time.return_value = 123_000_000
+            self.assertTrue(pad._on_frame_tick(MagicMock(), MagicMock()))
+            self.assertEqual(pad._last_frame_ts, 123_000_000)
+        finally:
+            pad.destroy()
+
+    def test_shelf_watchdog_flags_stale_surface(self) -> None:
+        """A visible window with dead frame callbacks is marked shelved."""
+        pad = _pad_without_gtk()
+        try:
+            pad._GLib = MagicMock()
+            pad._GLib.get_monotonic_time.return_value = 10_000_000
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+
+            pad._last_frame_ts = 0
+            pad._shelf_watchdog()
+            self.assertFalse(pad._surface_shelved)  # never drawn: not proof
+
+            pad._last_frame_ts = 8_800_000  # 1.2 s stale: still alive
+            pad._shelf_watchdog()
+            self.assertFalse(pad._surface_shelved)
+
+            pad._last_frame_ts = 8_000_000  # 2.0 s stale: shelved
+            pad._shelf_watchdog()
+            self.assertTrue(pad._surface_shelved)
+
+            pad._window.get_visible.return_value = False
+            pad._shelf_watchdog()
+            self.assertFalse(pad._surface_shelved)  # hidden: not shelved
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_show_pad_recreates_shelved_surface(self) -> None:
+        """A shelved pad is revived by hide+show_all, not present() alone."""
+        pad = _pad_without_gtk()
+        try:
+            pad._gtk_ready = True
+            pad._window = MagicMock()
+            pad._window.get_visible.return_value = True
+            pad._Gtk = MagicMock()
+            pad._surface_shelved = True
+
+            pad.show_pad()
+            pad._window.hide.assert_called_once()
+            pad._window.show_all.assert_called_once()
+            self.assertFalse(pad._surface_shelved)
+            pad._window.present_with_time.assert_called_once()
+            pad._window.deiconify.assert_not_called()
+        finally:
+            pad._window = None
+            pad.destroy()
+
+    def test_destroy_removes_shelf_watchdog(self) -> None:
+        """The watchdog timeout is removed when the pad is destroyed."""
+        pad = _pad_without_gtk()
+        pad._GLib = MagicMock()
+        pad._shelf_watch_id = 77
+        pad.destroy()
+        pad._GLib.source_remove.assert_any_call(77)
+        self.assertIsNone(pad._shelf_watch_id)
 
     def test_visibility_notify_repaints_only_after_obscured(self) -> None:
         """Return from full occlusion forces one fresh draw, once."""
