@@ -1,0 +1,23 @@
+# Pinned build inputs for packaging/native/build.sh.
+#
+# Same contract as packaging/appimage/tool_checksums.txt: everything the
+# package build downloads is pinned and verified here, so two builds of the
+# same commit cannot differ.
+#
+# Columns: name, kind, value, source — parseable by awk.
+#
+#   sha256   the file downloaded from <source> must hash to <value>
+#   docker   build inside image <value>; <source> records the tag it came from
+#   version  recorded for humans; the hash pins pin the artifacts themselves
+#
+# To bump nfpm: change the version in the <source> URLs, download the
+# tarballs, and replace <value> with `sha256sum` of each. The base image
+# digest comes from `docker buildx imagetools inspect debian:12` (use the
+# index digest, not a per-architecture one — the same line has to work on
+# x86_64 and aarch64).
+
+base-image              docker  docker.io/library/debian@sha256:2c037a04925515fdd6ea85ea14a682d0e79931f5e9f5d07b6dbfc6ba12f9e858  debian:12
+nfpm                    version 2.47.0                                                                                            https://github.com/goreleaser/nfpm/releases/tag/v2.47.0
+
+nfpm-x86_64             sha256  0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783  https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_x86_64.tar.gz
+nfpm-aarch64            sha256  1c0f5f2999b9a974bfb04fdb0cc3306096de530ac5dbb25d739cc5f5219c919c  https://github.com/goreleaser/nfpm/releases/download/v2.47.0/nfpm_2.47.0_Linux_arm64.tar.gz
