@@ -45,7 +45,8 @@
   wl-clipboard,
   xclip,
   xsel,
-  xorg,
+  xprop,
+  setxkbmap,
   pulseaudio,
   alsa-utils,
   src,
@@ -62,8 +63,8 @@ let
     wl-clipboard # wl-copy / wl-paste
     xclip
     xsel
-    xorg.xprop
-    xorg.setxkbmap
+    xprop
+    setxkbmap
     ibus
     libnotify # notify-send
     pulseaudio # paplay

@@ -50,10 +50,14 @@ and can skip the group lines entirely.
 
 ```nix
 {
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  inputs.home-manager.url = "github:nix-community/home-manager";
+  inputs.home-manager.inputs.nixpkgs.follows = "nixpkgs";
   inputs.vocalinux.url = "github:VocaHQ/vocalinux";
 
-  outputs = { home-manager, vocalinux, ... }: {
+  outputs = { nixpkgs, home-manager, vocalinux, ... }: {
     homeConfigurations.you = home-manager.lib.homeManagerConfiguration {
+      pkgs = nixpkgs.legacyPackages.x86_64-linux;
       modules = [
         vocalinux.homeManagerModules.vocalinux
         { programs.vocalinux.enable = true; }

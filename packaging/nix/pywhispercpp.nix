@@ -85,7 +85,9 @@ buildPythonPackage rec {
     platformdirs
   ];
 
-  pythonImportsCheck = [ "pywhispercpp" ];
+  # pywhispercpp.model pulls in the compiled _pywhispercpp extension, so
+  # checking all three proves the native binding loads, not just the package.
+  pythonImportsCheck = [ "pywhispercpp" "pywhispercpp.model" "_pywhispercpp" ];
 
   meta = {
     description = "Python bindings for whisper.cpp";
