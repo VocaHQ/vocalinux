@@ -10,6 +10,7 @@ How to install Vocalinux on Linux. Short overview: [project README](../README.md
 | [AUR](#arch-linux-aur) | Arch / Manjaro |
 | [Flatpak](#flatpak) | Release `.flatpak` or local build |
 | [Snap](#snap-ubuntu-snap-store) | Ubuntu Snap Store (`--edge`) or GitHub `.snap` |
+| [Nix](#nix--nixos) | Flake package, Home Manager, or the NixOS module |
 | [From source](#from-source) | Contributors or custom trees |
 | [Manual / PyPI](INSTALL_MANUAL.md) | Full control or pip-only workflows |
 | [Troubleshooting](TROUBLESHOOTING.md) | Tray, audio, injection, models |
@@ -184,6 +185,17 @@ sudo snap connect vocalinux:uinput
 ```
 
 `--dangerous` is required because this file is not a Store revision. It will not refresh from the Store. After Canonical grants `uinput`, switch to `sudo snap install vocalinux --edge` (or `snap refresh`).
+
+## Nix / NixOS
+
+The repo is a flake: GTK, PyGObject and the AppIndicator typelib come from nixpkgs, and `pywhispercpp` (absent from nixpkgs, same gap as Debian and Fedora) is built from its vendored PyPI sdist. The wrapped binary carries every injector and clipboard tool on PATH.
+
+```bash
+nix run github:VocaHQ/vocalinux        # try it
+nix profile install github:VocaHQ/vocalinux
+```
+
+On NixOS, `vocalinux.nixosModules.vocalinux` provides `programs.vocalinux.enable`, which installs the package and enables `hardware.uinput`. Add each dictating user to `input` and `uinput` for Wayland shortcuts and ydotool typing. Home Manager users get `vocalinux.homeManagerModules.vocalinux` with the same `programs.vocalinux` options — device permissions stay on the system side. Usage snippets and scope notes: [packaging/nix/README.md](../packaging/nix/README.md).
 
 ## From source
 
