@@ -20,10 +20,11 @@
 # guardrail allows the bootstrap to come from main, and this commit's copy is
 # what a merged PR would serve anyway.
 #
-# Flags the installer sees: --auto (no TTY), --skip-models (a model is 40-75 MB
+# Flags the installer sees: --auto, --skip-models (a model is 40-75 MB
 # per run and the download path is checksum-verified elsewhere), --tag (the
 # selection under test). Not --skip-system-deps: the per-distro package
-# installation is the point.
+# installation is the point. Run 1 is headless; run 2 pipes the bootstrap in
+# under a `script` pty so the real `curl | bash` fd-0 shape stays covered.
 #
 # Fail closed: after the install, the clone's tree must equal HEAD's tree —
 # the #701 guardrail that installer, sourced modules and requirement exports
@@ -146,6 +147,16 @@ run_remote_install() {
   su - "$INSTALL_USER" -c "cd '$INSTALL_HOME' && VOCALINUX_REPO_URL='file://$MIRROR' bash '$BOOTSTRAP' --auto --skip-models '--tag=$GATE_TAG'"
 }
 
+# The user's literal `curl | bash`: installer code reaches bash on a pipe while
+# a controlling terminal exists. `script` allocates that pty — a saved file on
+# stdin or a headless pipe takes the headless --auto branch instead, which is
+# exactly how the fd-0 redirect regression in #933 slipped through. bsdutils /
+# util-linux `script` is in the base package set of every gated distro.
+command -v script >/dev/null 2>&1 || fail "script(1) not found; needed to give the piped run a terminal"
+run_remote_install_piped() {
+  su - "$INSTALL_USER" -c "cd '$INSTALL_HOME' && VOCALINUX_REPO_URL='file://$MIRROR' script -qec \"cat '$BOOTSTRAP' | bash -s -- --auto --skip-models '--tag=$GATE_TAG'\" /dev/null"
+}
+
 assert_remote_install() {
   echo "== Assert: the clone is exactly the selected tag =="
   [ -d "$CLONE_DIR/.git" ] || fail "remote install left no clone at $CLONE_DIR"
@@ -256,9 +267,11 @@ run_remote_install || fail "the remote install exited non-zero on a fresh clone"
 echo "   install took $(( $(date +%s) - START ))s"
 assert_remote_install
 
-echo "== Run 2: re-run over the existing clone (fetch + reset) =="
+echo "== Run 2: re-run over the existing clone (fetch + reset), piped under a terminal =="
 # The second bootstrap sees $CLONE_DIR/.git and updates it instead of cloning:
-# the arm a user re-running curl|bash takes on every release after the first.
+# the arm a user re-running curl|bash takes on every release after the first —
+# served here literally through `cat | bash` on a pty so the terminal-backed
+# pipe keeps regression coverage (#933).
 # Move the clone off the tag and drop its local tag ref first: a run that only
 # had to notice the right commit was already checked out would pass even if
 # the fetch and reset were both no-ops.
@@ -273,7 +286,7 @@ su - "$INSTALL_USER" -c "git -C '$CLONE_DIR' reset --hard '$AWAY_SHA' \
   || fail "the clone did not move off $GATE_TAG; the re-run proves nothing"
 [ -z "$(git -C "$CLONE_DIR" tag -l "$GATE_TAG")" ] \
   || fail "the clone kept refs/tags/$GATE_TAG; the re-run proves nothing"
-run_remote_install || fail "the remote install exited non-zero over the existing clone"
+run_remote_install_piped || fail "the terminal-backed piped install exited non-zero over the existing clone"
 grep -l "Updating existing clone" "$INSTALL_HOME"/.local/state/vocalinux/install-*.log >/dev/null 2>&1 \
   || fail "no install log shows 'Updating existing clone'; the fetch arm did not run"
 assert_remote_install

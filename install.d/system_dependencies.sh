@@ -584,7 +584,7 @@ install_system_dependencies() {
             print_info "  https://github.com/VocaHQ/vocalinux/wiki"
             print_info ""
             if [[ "$NON_INTERACTIVE" != "yes" ]]; then
-                read -p "Continue anyway? (y/n) " -n 1 -r
+                read_prompt -p "Continue anyway? (y/n) " -n 1 -r
                 echo
                 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                     exit "$EXIT_USER_ABORT"
