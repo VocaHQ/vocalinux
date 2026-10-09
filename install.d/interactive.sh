@@ -109,7 +109,7 @@ EOF
     esac
     echo ""
 
-    read -p "Choose engine [1-5] (default: $DEFAULT_CHOICE): " ENGINE_CHOICE
+    read_prompt -p "Choose engine [1-5] (default: $DEFAULT_CHOICE): " ENGINE_CHOICE
     ENGINE_CHOICE=${ENGINE_CHOICE:-$DEFAULT_CHOICE}
 
     case "$ENGINE_CHOICE" in
@@ -224,7 +224,7 @@ EOF
             local DEFAULT_BACKEND="2"
         fi
 
-        read -p "Choose backend [1-2] (default: $DEFAULT_BACKEND): " BACKEND_CHOICE
+        read_prompt -p "Choose backend [1-2] (default: $DEFAULT_BACKEND): " BACKEND_CHOICE
         BACKEND_CHOICE=${BACKEND_CHOICE:-$DEFAULT_BACKEND}
 
         if [[ "$BACKEND_CHOICE" == "1" ]]; then
@@ -250,7 +250,7 @@ EOF
         echo "    • Faster Whisper:      faster-whisper-server --host 0.0.0.0 --port 8080"
         echo "    • Any OpenAI-compatible speech API"
         echo ""
-        read -p "Enter remote server URL (or leave blank to set later): " REMOTE_API_URL_INPUT
+        read_prompt -p "Enter remote server URL (or leave blank to set later): " REMOTE_API_URL_INPUT
         if [ -n "$REMOTE_API_URL_INPUT" ]; then
             REMOTE_API_URL="$REMOTE_API_URL_INPUT"
             REMOTE_DISPLAY="$REMOTE_API_URL"
@@ -276,7 +276,7 @@ EOF
     echo "     • Models download automatically on first use"
     echo ""
 
-    read -p "Download models now? [1-2] (default: 1): " MODELS_CHOICE
+    read_prompt -p "Download models now? [1-2] (default: 1): " MODELS_CHOICE
     MODELS_CHOICE=${MODELS_CHOICE:-1}
 
     if [[ "$MODELS_CHOICE" == "2" ]]; then
@@ -307,6 +307,6 @@ EOF
     echo "  Models: $MODELS_DISPLAY"
     echo "  Install Location: ${INSTALL_DIR:-\$HOME/.local/share/vocalinux}"
     echo ""
-    read -p "Press Enter to continue with installation, or Ctrl+C to cancel..."
+    read_prompt -p "Press Enter to continue with installation, or Ctrl+C to cancel..."
     echo ""
 }

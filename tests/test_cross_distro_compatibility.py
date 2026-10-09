@@ -198,7 +198,14 @@ class TestCrossDistroCompatibility:
     def test_noninteractive_tty_fallback_does_not_abort(self, install_sh_content):
         """Test that missing controlling TTY falls back to non-interactive mode."""
         assert "{ true < /dev/tty; } 2>/dev/null" in install_sh_content
-        assert "exec < /dev/tty" in install_sh_content
+        # stdin must stay on the pipe while bash reads the script from it;
+        # prompts reach the terminal through read_prompt instead (#933).
+        code = "\n".join(
+            line for line in install_sh_content.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert "exec < /dev/tty" not in code
+        assert "exec 0<" not in code
+        assert "read_prompt" in install_sh_content
         assert 'NON_INTERACTIVE="yes"' in install_sh_content
 
     def test_ci_workflow_uses_dynamic_detection(self, workflow_content):

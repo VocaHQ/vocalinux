@@ -42,6 +42,19 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Read one interactive answer. When the installer itself is piped to bash
+# (`curl ... | bash`), stdin still carries the script text to bash, so prompts
+# must pull from the controlling terminal explicitly. A global
+# `exec < /dev/tty` would close the pipe mid-script instead: bash loses the
+# rest of the installer and the download dies with "curl: (23)".
+read_prompt() {
+    if [ -t 0 ]; then
+        read "$@"
+    else
+        read "$@" < /dev/tty
+    fi
+}
+
 # The installer must build its venv from the *system* Python: distro PyGObject
 # (python3-gi / python3-gobject) is compiled for that interpreter only. When the
 # script starts inside an activated virtualenv — a shell left in uv's .venv
@@ -221,7 +234,7 @@ check_running_processes() {
         if [[ "$NON_INTERACTIVE" == "yes" ]]; then
             print_info "Non-interactive mode: stopping Vocalinux automatically..."
         else
-            read -p "Vocalinux must be stopped before installation. Kill running process(es)? (Y/n) " -n 1 -r
+            read_prompt -p "Vocalinux must be stopped before installation. Kill running process(es)? (Y/n) " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Nn]$ ]]; then
                 print_error "Cannot proceed with installation while Vocalinux is running."
@@ -285,24 +298,22 @@ WHISPERCPP_BACKEND=""
 WHISPERCPP_ALREADY_INSTALLED="false"
 REMOTE_API_URL=""
 
-# Detect if running non-interactively (e.g., via curl | bash)
-# If stdin is a pipe but /dev/tty exists, redirect stdin so user input works normally.
-# If no terminal is available at all (headless/CI), fall back to automatic mode.
-if [ ! -t 0 ]; then
-    if [ -e /dev/tty ] && [ -r /dev/tty ]; then
-        if { true < /dev/tty; } 2>/dev/null; then
-            exec < /dev/tty
-            INTERACTIVE_MODE="ask"
-        else
-            AUTO_MODE="yes"
-            INTERACTIVE_MODE="no"
-            NON_INTERACTIVE="yes"
-        fi
-    else
-        AUTO_MODE="yes"
-        INTERACTIVE_MODE="no"
-        NON_INTERACTIVE="yes"
-    fi
+# Detect if running non-interactively (e.g., via curl | bash).
+# stdin keeps carrying the script text to bash, so it must stay on the pipe:
+# redirecting fd 0 here closes the pipe mid-download (curl error 23) and makes
+# bash read the rest of the installer from the terminal as commands. Prompts
+# reach the user through /dev/tty instead (see read_prompt). With no terminal
+# at all (headless/CI), fall back to automatic mode.
+TERMINAL_PROMPTS="no"
+if [ -t 0 ]; then
+    TERMINAL_PROMPTS="yes"
+elif [ -e /dev/tty ] && [ -r /dev/tty ] && { true < /dev/tty; } 2>/dev/null; then
+    TERMINAL_PROMPTS="yes"
+    INTERACTIVE_MODE="ask"
+else
+    AUTO_MODE="yes"
+    INTERACTIVE_MODE="no"
+    NON_INTERACTIVE="yes"
 fi
 
 while [[ $# -gt 0 ]]; do
@@ -1257,7 +1268,7 @@ case "$DISTRO_FAMILY" in
         if [[ "$NON_INTERACTIVE" == "yes" ]]; then
             print_info "Non-interactive mode: continuing anyway..."
         else
-            read -p "Do you want to continue anyway? (y/n) " -n 1 -r
+            read_prompt -p "Do you want to continue anyway? (y/n) " -n 1 -r
             echo
             if [[ ! $REPLY =~ ^[Yy]$ ]]; then
                 exit "$EXIT_USER_ABORT"
@@ -1274,7 +1285,7 @@ if [[ "$INTERACTIVE_MODE" == "ask" ]]; then
     echo "  1. Interactive (recommended) - guided setup with recommendations"
     echo "  2. Automatic - quick install with defaults (whisper.cpp)"
     echo ""
-    read -p "Choose mode [1-2] (default: 1): " MODE_CHOICE
+    read_prompt -p "Choose mode [1-2] (default: 1): " MODE_CHOICE
     MODE_CHOICE=${MODE_CHOICE:-1}
 
     if [[ "$MODE_CHOICE" == "2" ]]; then
@@ -1291,7 +1302,7 @@ fi
 # Run interactive installation if selected
 if [[ "$INTERACTIVE_MODE" == "yes" ]]; then
     # Check if we have a TTY (required for interactive mode)
-    if [ ! -t 0 ]; then
+    if [[ "$TERMINAL_PROMPTS" != "yes" ]]; then
         print_error "Interactive mode requires a terminal (TTY)."
         print_error "Download and run the installer directly from a terminal:"
         print_error "  curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh && bash /tmp/vl.sh"
@@ -1467,7 +1478,7 @@ setup_virtual_environment() {
             source "$VENV_DIR/bin/activate" || { print_error "Failed to activate virtual environment"; exit "$EXIT_MISSING_DEPS"; }
             return 0
         else
-            read -p "Do you want to recreate it? (y/n) " -n 1 -r
+            read_prompt -p "Do you want to recreate it? (y/n) " -n 1 -r
             echo
             if [[ $REPLY =~ ^[Yy]$ ]]; then
                 print_info "Removing existing virtual environment..."
@@ -1819,7 +1830,7 @@ should_rebuild_whispercpp() {
         return 0
     fi
 
-    read -p "Rebuild/reinstall pywhispercpp? This can take several minutes. (y/N) " -n 1 -r
+    read_prompt -p "Rebuild/reinstall pywhispercpp? This can take several minutes. (y/N) " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         return 0
