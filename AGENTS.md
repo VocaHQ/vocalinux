@@ -35,7 +35,7 @@ Rules:
 |---|---|
 | Python | `>=3.11` (`requires-python` in `pyproject.toml`; CI: 3.11–3.14). Floor, classifiers, CI matrix and `install.sh` must agree — `tests/test_python_version_policy.py` |
 | GTK | GTK 3 via distro `python3-gi` (PyGObject). Never pip-install it |
-| uv | `>=0.12,<0.13` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth; CI runs `uv sync --locked` / `uv run --locked`, which fails on drift |
+| uv | `>=0.12,<0.13.3` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth; CI runs `uv sync --locked` / `uv run --locked`, which fails on drift |
 | just | https://just.systems or distro package `just` |
 | Format / lint / types | Black + isort (line length 100), flake8 (`E9,F63,F7,F82` only), mypy `src/` (targets 3.11). The three linters live in the `lint` dependency group, not the `dev` extra, so CI can install them without building the project |
 | Website | Next.js / TypeScript in `web/` — see `web/AGENTS.md` |
