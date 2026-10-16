@@ -82,6 +82,11 @@ class DesktopEnvironment:
         return DesktopEnvironment.UNKNOWN
 
 
+def _is_gnome_session() -> bool:
+    """Check if the current session is running under GNOME."""
+    return "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+
+
 def create_backend(
     preferred_backend: Optional[str] = None,
     shortcut: str = DEFAULT_SHORTCUT,
@@ -151,6 +156,21 @@ def create_backend(
             reason,
         )
         return None
+
+    # On GNOME's X11 session, mutter does not deliver physical key events
+    # through the XRecord extension that pynput's Listener relies on, so the
+    # listener starts cleanly but shortcuts stay dead (#954). evdev reads the
+    # kernel input devices directly, so prefer it here — but fall back to
+    # pynput when /dev/input is unusable rather than leaving shortcuts dead.
+    if env == DesktopEnvironment.X11 and _is_gnome_session() and EVDEV_AVAILABLE:
+        backend = EvdevKeyboardBackend(shortcut=shortcut, mode=mode)  # type: ignore
+        if backend.is_available():
+            logger.info("Using evdev backend for global shortcuts (GNOME X11)")
+            return backend
+        hint = backend.get_permission_hint()
+        if hint:
+            logger.warning(f"Evdev backend not usable on GNOME X11: {hint}")
+        logger.warning("Falling back to pynput; global shortcuts may not respond on GNOME X11")
 
     # Default to pynput for native X11 (or unknown)
     if PYNPUT_AVAILABLE:

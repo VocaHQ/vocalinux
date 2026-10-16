@@ -5,7 +5,9 @@ set -euo pipefail
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
+# cmake, g++, make and binutils rebuild the vendored libggml-cpu from the
+# pinned pywhispercpp sdist at the portable baseline in build.sh.
 apt-get install -y --no-install-recommends \
-    ca-certificates curl python3 python3-pip xz-utils
+    binutils ca-certificates cmake curl g++ make python3 python3-pip xz-utils
 
 exec bash "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/build.sh" "$@"

@@ -304,7 +304,7 @@ Pin the backend explicitly in `~/.config/vocalinux/config.json`:
 |---|---|
 | `auto` | Autodetect (default; autodetection may select IBus) |
 | `ibus` | IBus input method; on Wayland, bypasses compositor checks and may silently do nothing in native Wayland apps |
-| `portal` | RemoteDesktop portal (Wayland; the sandboxed path, asks for permission once, works under Flatpak) |
+| `portal` | RemoteDesktop portal (Wayland; the sandboxed path, asks for permission once, works under Flatpak and Snap) |
 | `wtype` | wtype virtual keyboard (Wayland) |
 | `ydotool` | ydotool uinput (Wayland; needs `ydotoold`) |
 | `xdotool` | xdotool (X11). On Wayland it only turns IBus off -- the Wayland tool is still picked automatically |

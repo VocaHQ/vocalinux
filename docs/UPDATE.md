@@ -38,7 +38,7 @@ git pull origin main
 |--------|---------|
 | AUR | `yay -S vocalinux` (or your AUR helper) |
 | AppImage | Download the new file from [Releases](https://github.com/VocaHQ/vocalinux/releases) |
-| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). Until Canonical lists 0.18.2, sideload `vocalinux_0.18.2_amd64.snap` from the GitHub Release (`sudo snap install --dangerous ./vocalinux_0.18.2_amd64.snap`), then `sudo snap connect vocalinux:uinput`. v0.16.2 rev 7 has no such plug. |
+| Snap | Store: `sudo snap refresh vocalinux` (`--edge` until stable is promoted). The recipe ships no `uinput` plug (the Store denied the grant); Wayland typing uses the RemoteDesktop portal. The GitHub `vocalinux_0.18.2_amd64.snap` still declares `uinput` for KDE users who want ydotool (`sudo snap install --dangerous`, then `sudo snap connect vocalinux:uinput`). |
 | Flatpak (release bundle) | Install the new `.flatpak` from Releases; bundles do not auto-update |
 | PyPI | Reinstall in the same venv after system packages are current |
 
@@ -200,7 +200,7 @@ See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.
 | **Searchable open picker** | Language list filters while open (#798) |
 | **Localized punctuation commands** | it/fr/de/es/pt/nl/pl/ru; English phrases still work (#642) |
 | **Bare F-keys** | F1–F24 are valid push-to-talk shortcuts (#815) |
-| **Snap** | Store listing, ydotool + `uinput` for native Wayland; GitHub `.snap` for sideload while Store review is pending (#519, #823, #822) |
+| **Snap** | Store listing, ydotool + `uinput` for native Wayland. The Store later denied the `uinput` grant, so the plug was dropped and Wayland typing moved to the RemoteDesktop portal (#519, #823, #822) |
 | **Flatpak on the tag** | Workflow attaches `.flatpak` assets and checksums them (#786) |
 
 ### Also in v0.17.0
@@ -260,7 +260,7 @@ See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.
 - **CI**: gate AUR PKGBUILD builds on every PR (#772 by @sesav)
 - **CI / docs**: test the distros the docs promise and fix docs drift (#773 by @sesav)
 - **Site**: VocaGateway family card is Beta; README logo, badges, and privacy copy (#765 by @jatinkrmalik, #764)
-- **Snap**: v0.16.2 `latest/edge` (rev 7) has no `uinput` plug. `sudo snap connect vocalinux:uinput` errors with `snap "vocalinux" has no plug named "uinput"`. Dictation only reaches XWayland apps. A later store snap ships ydotool and the plug; then `snap refresh` and `snap connect vocalinux:uinput` (#823)
+- **Snap**: v0.16.2 `latest/edge` (rev 7) has no `uinput` plug. `sudo snap connect vocalinux:uinput` errors with `snap "vocalinux" has no plug named "uinput"`. Dictation only reaches XWayland apps. (v0.17.0+ added the plug, but the Store denied it, so later revisions drop it again and type via the RemoteDesktop portal.) (#823)
 
 See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.16.2).
 

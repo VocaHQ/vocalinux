@@ -744,7 +744,9 @@ def main():
 
         def _normalize_segment_text(text: str) -> str:
             """Segment text as it is injected: stripped, auto-capitalized (Vosk)."""
-            normalized = text.lstrip().rstrip(" \t")
+            # Strip only horizontal whitespace: "new line" / "new paragraph"
+            # produce leading newlines a bare lstrip() would silently destroy.
+            normalized = text.lstrip(" \t").rstrip(" \t")
             # Auto-capitalize sentences if enabled (Vosk only - Whisper outputs proper casing)
             if (
                 normalized
@@ -1186,8 +1188,8 @@ def main():
             """Bridge between speech engine text events and the text injector.
 
             Called on the recognition thread with each finalised transcription
-            segment.  Strips leading whitespace and trailing spaces/tabs (but
-            preserves trailing newlines from voice commands), then hands the
+            segment.  Strips leading and trailing spaces/tabs (but preserves
+            newlines from voice commands), then hands the
             segment to the single post-processing worker — a pass-through when
             no script is configured — which applies the separator rules and
             injects via TextInjector in spoken order.

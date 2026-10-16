@@ -121,7 +121,9 @@ distributions:
 
   fedora:
     # cairo-devel is needed because the pinned pycairo builds from source.
-    system: [python3-pip, python3-gobject, gtk3, ibus-devel, gobject-introspection-devel, python3-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, wget, curl, unzip, vulkan-tools, vulkan-loader-devel, glslc, patchelf, xclip, xsel, wl-clipboard]
+    # gcc-c++/make compile the pywhispercpp sdist (the wheel SIGILLs on old CPUs)
+    # and the evdev/PyAudio sdists; python3-devel only guarantees gcc.
+    system: [python3-pip, python3-gobject, gtk3, ibus-devel, gobject-introspection-devel, python3-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, gcc-c++, make, wget, curl, unzip, vulkan-tools, vulkan-loader-devel, glslc, patchelf, xclip, xsel, wl-clipboard]
     appindicator: [libayatana-appindicator-gtk3, libappindicator-gtk3]
     text_input:
       xdotool: [xdotool]
@@ -165,7 +167,8 @@ distributions:
 
   alpine:
     # cairo-dev is needed because the pinned pycairo builds from source.
-    system: [py3-gobject3, py3-pip, gtk+3.0, py3-cairo, portaudio-dev, cairo-dev, py3-virtualenv, pkgconf, cmake, wget, curl, unzip, shaderc, patchelf, vulkan-tools, xclip, xsel, wl-clipboard]
+    # build-base compiles the pywhispercpp sdist and the evdev/PyAudio sdists.
+    system: [py3-gobject3, py3-pip, gtk+3.0, py3-cairo, portaudio-dev, cairo-dev, py3-virtualenv, pkgconf, cmake, build-base, wget, curl, unzip, shaderc, patchelf, vulkan-tools, xclip, xsel, wl-clipboard]
     text_input:
       xdotool: [xdotool]
       wtype: [wtype]
@@ -173,7 +176,8 @@ distributions:
 
   void:
     # cairo-devel is needed because the pinned pycairo builds from source.
-    system: [python3-pip, python3-gobject, gtk+3, libappindicator-gtk3, gobject-introspection, portaudio-devel, cairo-devel, python3-devel, pkg-config, cmake, wget, curl, unzip, shaderc, patchelf, Vulkan-Tools, xclip, xsel, wl-clipboard]
+    # base-devel compiles the pywhispercpp sdist and the evdev/PyAudio sdists.
+    system: [python3-pip, python3-gobject, gtk+3, libappindicator-gtk3, gobject-introspection, portaudio-devel, cairo-devel, python3-devel, pkg-config, cmake, base-devel, wget, curl, unzip, shaderc, patchelf, Vulkan-Tools, xclip, xsel, wl-clipboard]
     text_input:
       xdotool: [xdotool]
       wtype: [wtype]
@@ -181,15 +185,17 @@ distributions:
 
   solus:
     # cairo-devel is needed because the pinned pycairo builds from source.
-    system: [python3-pip, python3-gobject, gtk3, libappindicator, gobject-introspection-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, wget, curl, unzip, shaderc, patchelf, vulkan-tools, xclip, xsel, wl-clipboard]
+    # gcc/g++/make compile the pywhispercpp sdist and the evdev/PyAudio sdists.
+    system: [python3-pip, python3-gobject, gtk3, libappindicator, gobject-introspection-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, gcc, g++, make, wget, curl, unzip, shaderc, patchelf, vulkan-tools, xclip, xsel, wl-clipboard]
     text_input:
       xdotool: [xdotool]
       wtype: [wtype]
       ydotool: [ydotool]
 
   mageia:
-    # The existing installer deliberately follows Fedora's package inventory.
-    system: [python3-pip, python3-gobject, gtk3, ibus-devel, gobject-introspection-devel, python3-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, wget, curl, unzip, vulkan-tools, vulkan-loader-devel, glslc, patchelf, xclip, xsel, wl-clipboard]
+    # The existing installer deliberately follows Fedora's package inventory,
+    # including gcc-c++/make for the pywhispercpp sdist compile.
+    system: [python3-pip, python3-gobject, gtk3, ibus-devel, gobject-introspection-devel, python3-devel, portaudio-devel, cairo-devel, python3-virtualenv, pkg-config, cmake, gcc-c++, make, wget, curl, unzip, vulkan-tools, vulkan-loader-devel, glslc, patchelf, xclip, xsel, wl-clipboard]
     text_input:
       xdotool: [xdotool]
       wtype: [wtype]

@@ -397,8 +397,8 @@ After pushing the tag, the GitHub Actions workflow will automatically:
    docs/FLATPAK_REMOTE.md)
 8. Deploy the website to vocalinux.com
 9. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
-   `edge`/`candidate`. Store human review (for example `uinput` allow-installation)
-   must not block the GitHub `.snap`. `stable` does not auto-release (#783):
+   `edge`/`candidate`. Store human review (for example a super-privileged
+   `allow-installation` plug) must not block the GitHub `.snap`. `stable` does not auto-release (#783):
    after candidate QA, dispatch `snap-promote.yml`, which releases the
    candidate revision to `latest/stable`
 10. Mark as pre-release if version contains alpha/beta/rc
@@ -412,7 +412,7 @@ Monitor at: https://github.com/VocaHQ/vocalinux/actions
       both AppImages, both Flatpaks, the amd64 snap, the `.deb` and `.rpm` for
       both arches) - the release notes tell users to run `sha256sum -c`
       against it
-- [ ] If the Store held the snap for `uinput` review, confirm the GitHub `.snap`
+- [ ] If the Store holds the snap for human review, confirm the GitHub `.snap`
       is still attached and the notes document `snap install --dangerous`
 - [ ] After candidate QA (install, tray, mic, model download, typing into a real
       app), promote the snap to stable:

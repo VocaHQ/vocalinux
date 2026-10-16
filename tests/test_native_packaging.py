@@ -338,3 +338,46 @@ def test_pipeline_gates_the_packages() -> None:
     for distro in re.findall(r"- (\S+)", matrix.group(1)):
         family = distro.split(":")[0].split("/")[-1]
         assert family in smoke, f"smoke-test.sh has no recipe for {distro}"
+
+
+#: ggml SIMD options pinned off for the portable x86-64 baseline in every
+#: packaged pywhispercpp build (#957). GGML_NATIVE=OFF alone leaves each of
+#: these on while ggml's native default is on.
+PORTABLE_GGML_OPTIONS = (
+    "GGML_NATIVE",
+    "GGML_SSE42",
+    "GGML_AVX",
+    "GGML_AVX2",
+    "GGML_BMI2",
+    "GGML_FMA",
+    "GGML_F16C",
+)
+
+
+def test_vendored_libggml_cpu_is_rebuilt_at_the_portable_baseline() -> None:
+    """The pinned pywhispercpp wheels build.sh vendors carry a libggml-cpu
+    compiled for AVX2+FMA, which dies with SIGILL at model load on pre-Haswell
+    CPUs (#957). The package must rebuild just that library from the same
+    pinned sdist at the plain x86-64 baseline and swap it into the vendored
+    copies; without a toolchain in the container image that build cannot run."""
+    build = BUILD_SH.read_text(encoding="utf-8")
+    assert (
+        "--no-binary pywhispercpp" in build
+    ), "the baseline libggml-cpu must come from the hash-pinned sdist, not a wheel"
+    command_lines = [line for line in build.splitlines() if not line.lstrip().startswith("#")]
+    cmake_args = "\n".join(
+        line for line in command_lines if "-DGGML_" in line or "cmake -S" in line
+    )
+    for flag in PORTABLE_GGML_OPTIONS:
+        assert (
+            f"-D{flag}=OFF" in cmake_args
+        ), f"the vendored libggml-cpu rebuild does not pin {flag} off"
+    assert "libggml-cpu" in build and "find" in build, (
+        "the rebuild must swap into the vendored copies in place so the"
+        " wheels' NEEDED entries still resolve"
+    )
+    container = CONTAINER_BUILD_SH.read_text(encoding="utf-8")
+    for tool in ("cmake", "g++", "binutils"):
+        assert (
+            tool in container
+        ), f"container-build.sh installs no {tool}; the baseline rebuild fails"

@@ -1,7 +1,7 @@
 # Vocalinux Snap packaging
 #
 # First ship: strict confinement, default whisper.cpp engine path, GTK tray UI,
-# mic capture, model download, and text injection (ydotool/uinput, wtype, xdotool).
+# mic capture, model download, and text injection (RemoteDesktop portal, wtype, xdotool).
 # Informed by issue #48 and packaging/flatpak lessons on feat/flatpak-packaging.
 #
 # Build (from repo root, with snapcraft + LXD or Multipass):
@@ -26,13 +26,16 @@ description: |
     - System tray control and GTK settings
     - Offline dictation (models download on first use)
     - Microphone capture and short feedback tones
-    - Text injection via ydotool (native Wayland/X11), wtype, or xdotool
+    - Text injection via the Wayland RemoteDesktop portal, wtype, or xdotool
 
   Sandbox notes:
     - Global hotkeys need: sudo snap connect vocalinux:raw-input
       and sudo snap connect vocalinux:hardware-observe
-    - Native Wayland typing needs: sudo snap connect vocalinux:uinput
-      (v0.17.0 ships the plug; v0.16.2 edge (rev 7) has no uinput plug; refresh first)
+    - Native Wayland typing uses the RemoteDesktop portal: the compositor
+      asks once on first dictation. The snap ships no uinput plug and no
+      ydotool; the Store denied the super-privileged grant.
+    - KDE Plasma: KWin's portal can mistype letter case (KDE bug 489021);
+      set "Virtual Keyboard = IBus Wayland" so the IBus path delivers text.
     - Microphone may need: sudo snap connect vocalinux:audio-record
     - Config and models live under ~/snap/vocalinux/
 
@@ -65,10 +68,10 @@ apps:
       # Needed for /proc/bus/input/devices; not auto-connected:
       #   sudo snap connect vocalinux:hardware-observe
       - hardware-observe
-      # ydotool writes to /dev/uinput so dictation reaches native Wayland apps.
-      # Super-privileged: not auto-connected; user must:
-      #   sudo snap connect vocalinux:uinput
-      - uinput
+      # No uinput plug; the RemoteDesktop portal types on Wayland instead.
+      # The Store denied the super-privileged grant
+      # (https://forum.snapcraft.io/t/53528), and ydotool is not staged
+      # because it cannot reach /dev/uinput under confinement.
     common-id: com.vocalinux.Vocalinux
     desktop: usr/share/applications/vocalinux.desktop
     environment:
@@ -102,6 +105,14 @@ parts:
     source-type: local
     build-environment:
       - PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # pywhispercpp's PyPI wheel ships a libggml-cpu compiled for AVX2+FMA,
+      # which dies with SIGILL at model load on pre-Haswell CPUs (#957), so
+      # the pinned sdist is built instead of installing that wheel.
+      # GGML_NATIVE=OFF alone is not the portable baseline either: while
+      # ggml's native default is on it turns every GGML_* SIMD option on, so
+      # each one is pinned off for the plain x86-64 baseline.
+      - PIP_NO_BINARY: pywhispercpp
+      - CMAKE_ARGS: "-DGGML_NATIVE=OFF -DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"
     build-packages:
       - build-essential
       - cmake
@@ -122,7 +133,6 @@ parts:
       - pulseaudio-utils # paplay for start/stop UI sounds
       - xdotool
       - wtype # virtual-keyboard protocol (GNOME often rejects this)
-      - ydotool # uinput; reaches native Wayland apps (needs vocalinux:uinput)
       - x11-utils # xprop for XWayland WM_CLASS
       - xsel
       - xclip

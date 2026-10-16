@@ -1098,6 +1098,47 @@ class TestInjectText(unittest.TestCase):
             self.assertTrue(mock_run.called)
             self.assertTrue(result)
 
+    def test_inject_newline_only_segment_reaches_backend(self) -> None:
+        """A bare "\n" from "new line" is typed, not skipped as empty (#955)."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.X11)
+        with patch.object(obj, "_inject_with_xdotool") as mock_xdotool:
+            self.assertTrue(obj.inject_text("\n"))
+            mock_xdotool.assert_called_once_with("\n")
+            self.assertEqual(obj.last_typed_count, 1)
+
+    def test_inject_paragraph_break_segment_reaches_backend(self) -> None:
+        """A bare "\n\n" from "new paragraph" is typed, not skipped (#955)."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.X11)
+        with patch.object(obj, "_inject_with_xdotool") as mock_xdotool:
+            self.assertTrue(obj.inject_text("\n\n"))
+            mock_xdotool.assert_called_once_with("\n\n")
+            self.assertEqual(obj.last_typed_count, 2)
+
+    def test_inject_newline_segment_reaches_ibus(self) -> None:
+        """The IBus backend also receives a bare newline segment (#955)."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.X11_IBUS)
+        mock_ibus = MagicMock()
+        mock_ibus.inject_text.return_value = True
+        obj._ibus_injector = mock_ibus
+        self.assertTrue(obj.inject_text("\n"))
+        mock_ibus.inject_text.assert_called_once_with("\n")
+
+    def test_inject_empty_string_still_skipped(self) -> None:
+        """A truly empty segment is still a cheap no-op."""
+        from vocalinux.text_injection.text_injector import DesktopEnvironment
+
+        obj = _make_injector(DesktopEnvironment.X11)
+        with patch.object(obj, "_inject_with_xdotool") as mock_xdotool:
+            self.assertTrue(obj.inject_text(""))
+            mock_xdotool.assert_not_called()
+            self.assertEqual(obj.last_typed_count, 0)
+
 
 class TestLogWindowInfo(unittest.TestCase):
     def test_log_x11(self):

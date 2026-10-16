@@ -23,6 +23,19 @@ WORKFLOWS = REPO_ROOT / ".github" / "workflows"
 #: Workflows that build an AppImage, and so decide which distros it runs on.
 APPIMAGE_WORKFLOWS = ("unified-pipeline.yml", "release.yml", "nightly.yml")
 
+#: ggml SIMD options pinned off for the portable x86-64 baseline in every
+#: packaged pywhispercpp build (#957). GGML_NATIVE=OFF alone leaves each of
+#: these on while ggml's native default is on.
+PORTABLE_GGML_OPTIONS = (
+    "GGML_NATIVE",
+    "GGML_SSE42",
+    "GGML_AVX",
+    "GGML_AVX2",
+    "GGML_BMI2",
+    "GGML_FMA",
+    "GGML_F16C",
+)
+
 
 def _pins() -> dict:
     """name -> (kind, value, source) from tool_checksums.txt."""
@@ -255,14 +268,33 @@ def test_vulkan_rebuild_does_not_borrow_the_builders_instruction_set() -> None:
     """GGML_NATIVE is ggml's default and puts -march=native on libggml-cpu, so
     the AppImage inherits whichever instruction set the CI runner has. A runner
     with AVX-512 ships a binary that SIGILLs on any CPU without it (#938), and
-    the shared native cache then serves the same one to every later build. OFF
-    matches the portable baseline the PyPI wheel falls back to."""
+    the shared native cache then serves the same one to every later build.
+    OFF alone is not the portable baseline either: while the native default is
+    on, ggml turns every GGML_* SIMD option on, still compiling -mavx2 -mfma
+    and dying on pre-Haswell CPUs (#957), so each option must be pinned off."""
     text = BUILD_SH.read_text(encoding="utf-8")
     command_lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
-    cmake_args = re.findall(r'CMAKE_ARGS="([^"]*)"', "\n".join(command_lines))
-    assert any("-DGGML_NATIVE=OFF" in args for args in cmake_args), (
-        "the Vulkan rebuild must not compile with -march=native; the AppImage"
-        " runs on CPUs the runner's instruction set does not describe"
+    cmake_args = " ".join(re.findall(r'CMAKE_ARGS="([^"]*)"', "\n".join(command_lines)))
+    for flag in PORTABLE_GGML_OPTIONS:
+        assert f"-D{flag}=OFF" in cmake_args, (
+            f"the Vulkan rebuild does not pin {flag} off; the AppImage runs on"
+            " CPUs the runner's instruction set does not describe"
+        )
+
+
+def test_cpu_only_fallback_rebuilds_at_the_portable_baseline() -> None:
+    """The PyPI pywhispercpp wheel is itself the AVX2+FMA build that SIGILLs on
+    pre-Haswell CPUs (#957), so "keep the wheel" is no fallback: every CPU-only
+    exit of the Vulkan path must rebuild the sdist at the baseline instead."""
+    text = BUILD_SH.read_text(encoding="utf-8")
+    assert "_compile_pywhispercpp_baseline" in text, (
+        "no CPU-only baseline rebuild exists; the Vulkan fallbacks still keep" " the AVX2+FMA wheel"
+    )
+    command_lines = [line for line in text.splitlines() if not line.lstrip().startswith("#")]
+    calls = sum("_compile_pywhispercpp_baseline" in line for line in command_lines)
+    assert calls >= 3, (
+        "expected the baseline rebuild on every CPU-only fallback path, found"
+        f" only {calls - 1} call site(s)"
     )
 
 

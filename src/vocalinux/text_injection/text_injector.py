@@ -507,7 +507,9 @@ class TextInjector:
         start the daemon on demand when the app is granted device access.
         Host ydotool 0.1.x often works without a daemon; starting one is still
         safe when ydotoold is installed. The CLI still needs a writable
-        /dev/uinput (Snap: ``snap connect vocalinux:uinput``).
+        /dev/uinput (the v0.18.x GitHub sideload Snap declares the plug:
+        ``snap connect vocalinux:uinput``; the Store snap ships neither plug
+        nor ydotool).
         """
         if self._is_ydotoold_running():
             return True
@@ -594,7 +596,8 @@ class TextInjector:
         """How to grant ydotool access to ``/dev/uinput`` in this install."""
         if os.environ.get("SNAP"):
             return (
-                "ydotool cannot open /dev/uinput. For the Snap, run: "
+                "ydotool cannot open /dev/uinput. The Store snap ships no "
+                "uinput plug; only the v0.18.x GitHub sideload declares it: "
                 "sudo snap connect vocalinux:uinput"
             )
         return (
@@ -609,8 +612,9 @@ class TextInjector:
         if not os.environ.get("SNAP"):
             return
         logger.warning(
-            "Snap XWayland fallback only types into X11/XWayland apps. "
-            "Native Wayland apps need: sudo snap connect vocalinux:uinput"
+            "Snap XWayland fallback only types into X11/XWayland apps. The "
+            "Store snap ships no uinput plug; native Wayland typing needs the "
+            "RemoteDesktop portal or, on KDE, IBus Wayland."
         )
 
     @staticmethod
@@ -1608,7 +1612,10 @@ class TextInjector:
         """
         self.last_typed_count = 0
 
-        if not text or not text.strip():
+        # A segment carrying only spaces/tabs has no key to deliver and is
+        # skipped, but one holding a newline still types: "new line"
+        # produces a bare "\n" the backends send as Return (#955).
+        if not text or not text.strip(" \t"):
             logger.debug("Empty text provided, skipping injection")
             return True
 

@@ -52,8 +52,9 @@ prerelease tags, which never reach the remote.
    Actions):
    - `FLATPAK_GPG_PRIVATE_KEY` — the armored private key
    - `FLATPAK_GPG_PASSPHRASE` — optional
-   - `FLATPAK_REPO_TOKEN` — fine-grained PAT scoped to
-     `VocaHQ/vocalinux-flatpak` with Contents: read and write
+   - `FLATPAK_REPO_TOKEN` — a token with Contents: read and write on
+     `VocaHQ/vocalinux-flatpak`. The fine-grained PAT scoped to just that
+     repo is the recommended minimum; a broader classic PAT works too.
 5. **Variables (optional)** — same settings page, Variables tab:
    - `FLATPAK_REMOTE_REPO` — publish target (default
      `VocaHQ/vocalinux-flatpak`)

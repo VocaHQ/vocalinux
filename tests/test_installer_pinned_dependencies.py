@@ -130,6 +130,9 @@ def test_missing_pins_fail_before_pip(tmp_path: Path, kind: str) -> None:
 
 @pytest.mark.parametrize("backend", ["cpu", "vulkan", "cuda"])
 def test_rebuild_uses_only_locked_pywhispercpp(tmp_path: Path, backend: str) -> None:
+    """Every backend builds the pinned sdist. The PyPI wheel's libggml-cpu is
+    compiled for AVX2+FMA and SIGILLs on pre-Haswell CPUs (#957), so the CPU
+    path must compile like the GPU paths do, never install the wheel."""
     command = (
         "install_cpu_pywhispercpp log"
         if backend == "cpu"
@@ -141,6 +144,10 @@ def test_rebuild_uses_only_locked_pywhispercpp(tmp_path: Path, backend: str) -> 
     assert {"--require-hashes", "--no-deps", "--no-build-isolation", "--force-reinstall"} <= set(
         call
     )
+    no_binary = call[call.index("--no-binary") + 1]
+    assert (
+        no_binary == "pywhispercpp"
+    ), "installing the wheel ships the AVX2 build that SIGILLs on old CPUs"
     selected = (tmp_path / "pywhispercpp.txt").read_text()
     assert re.findall(r"^([\w.-]+)==", selected, re.M) == ["pywhispercpp"]
     lock = tomllib.loads((ROOT / "uv.lock").read_text())

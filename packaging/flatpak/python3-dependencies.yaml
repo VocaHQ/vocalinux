@@ -29,9 +29,12 @@ modules:
       # GGML_NATIVE is ggml's default and compiles libggml-cpu with
       # -march=native, so the package inherits whichever instruction set the
       # Flatpak builder has. An AVX-512 builder ships a binary that SIGILLs on
-      # any CPU without it (#938). OFF ships the portable baseline the PyPI
-      # wheel carries.
-      - PYWHISPERCPP_VERSION=1.5.0 NO_REPAIR=1 GGML_VULKAN=1 CMAKE_ARGS="-DGGML_NATIVE=OFF" pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}"
+      # any CPU without it (#938). GGML_NATIVE=OFF alone is not the portable
+      # baseline either: while the native default is on, ggml turns every
+      # GGML_* SIMD option on and still compiles -mavx2 -mfma, dying the same
+      # way on pre-Haswell CPUs (#957). Each option is pinned off for the
+      # plain x86-64 baseline.
+      - PYWHISPERCPP_VERSION=1.5.0 NO_REPAIR=1 GGML_VULKAN=1 CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF" pip3 install --verbose --exists-action=i --no-index --find-links="file://${PWD}"
         --prefix=${FLATPAK_DEST} "pywhispercpp" --no-build-isolation
       # whisper.cpp installs its shared libraries next to the extension module.
       # Symlink them onto the default loader path so the extension resolves them

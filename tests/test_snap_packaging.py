@@ -26,9 +26,11 @@ def test_snapcraft_recipe_and_gui_assets() -> None:
     assert "raw-input" in plugs
     assert "hardware-observe" in plugs
     assert "audio-record" in plugs
-    assert "uinput" in plugs
+    # The Store denied the super-privileged uinput grant; the plug (and the
+    # uinput-only ydotool) must stay out or every revision is held in review.
+    assert "uinput" not in plugs
     stage = doc["parts"]["vocalinux"].get("stage-packages") or []
-    assert "ydotool" in stage
+    assert "ydotool" not in stage
 
     recipe_text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
     assert "sudo snap connect vocalinux:raw-input" in recipe_text
@@ -65,8 +67,8 @@ def test_snap_docs_tell_users_to_connect_hardware_observe() -> None:
         assert "sudo snap connect vocalinux:hardware-observe" in text
 
 
-def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
-    """v0.16.2 edge (rev 7) has no uinput plug; the connect command must not stand alone."""
+def test_snap_docs_explain_typing_without_uinput_plug() -> None:
+    """The Store denied the uinput grant; docs must point at the portal, not a connect."""
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     install = (REPO_ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
     update = (REPO_ROOT / "docs" / "UPDATE.md").read_text(encoding="utf-8")
@@ -78,8 +80,8 @@ def test_snap_docs_warn_that_0162_has_no_uinput_plug() -> None:
         uinput_lines = "\n".join(line for line in text.splitlines() if "uinput" in line.lower())
         lowered = uinput_lines.lower()
         assert "uinput" in lowered
-        assert "0.16.2" in uinput_lines or "rev 7" in lowered
         assert "plug" in lowered and "no" in lowered
+        assert "portal" in lowered
 
 
 def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
@@ -96,7 +98,7 @@ def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
 
 
 def test_release_attaches_snap_then_tries_the_store() -> None:
-    """Store review of uinput must not swallow the GitHub .snap (v0.17.0)."""
+    """A Store human review must not swallow the GitHub .snap (v0.17.0, uinput)."""
     text = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "  build-snap:\n" in text
     assert "  attach-snap:\n" in text
@@ -137,7 +139,8 @@ def test_release_attaches_snap_then_tries_the_store() -> None:
 def test_release_notes_document_snap_sideload() -> None:
     body = (REPO_ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "snap install --dangerous" in body
-    assert "snap connect vocalinux:uinput" in body
+    assert "RemoteDesktop portal" in body
+    assert "no `uinput` plug" in body
     assert "vocalinux_${{ steps.get_version.outputs.VERSION }}_amd64.snap" in body
 
 
@@ -193,3 +196,37 @@ def test_snap_promote_dispatch_input_never_reaches_the_shell() -> None:
         assert "${{" not in line, f"a run: step interpolates a template expression: {line.strip()}"
     assert "TAG: ${{ inputs.tag }}" in text
     assert "REVISION: ${{ steps.candidate.outputs.revision }}" in text
+
+
+#: ggml SIMD options pinned off for the portable x86-64 baseline in every
+#: packaged pywhispercpp build (#957). GGML_NATIVE=OFF alone leaves each of
+#: these on while ggml's native default is on.
+PORTABLE_GGML_OPTIONS = (
+    "GGML_NATIVE",
+    "GGML_SSE42",
+    "GGML_AVX",
+    "GGML_AVX2",
+    "GGML_BMI2",
+    "GGML_FMA",
+    "GGML_F16C",
+)
+
+
+def test_snap_builds_pywhispercpp_at_the_portable_baseline() -> None:
+    """pywhispercpp's PyPI wheel ships a libggml-cpu compiled for AVX2+FMA,
+    which dies with SIGILL at model load on pre-Haswell CPUs (#957). The
+    python plugin installs that wheel by default, so the recipe must force an
+    sdist build with every ggml SIMD option pinned off — GGML_NATIVE=OFF
+    alone leaves them all on."""
+    doc = yaml.safe_load(SNAPCRAFT_YAML.read_text(encoding="utf-8"))
+    env: dict = {}
+    for entry in doc["parts"]["vocalinux"].get("build-environment") or []:
+        env.update(entry)
+    assert (
+        env.get("PIP_NO_BINARY") == "pywhispercpp"
+    ), "without --no-binary the snap installs the AVX2+FMA wheel (#957)"
+    cmake_args = env.get("CMAKE_ARGS") or ""
+    for flag in PORTABLE_GGML_OPTIONS:
+        assert (
+            f"-D{flag}=OFF" in cmake_args
+        ), f"the snap's pywhispercpp build does not pin {flag} off"

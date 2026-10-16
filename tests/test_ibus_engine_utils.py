@@ -428,6 +428,7 @@ class TestStopEngineProcess(unittest.TestCase):
 class TestStopRestoreRetry(unittest.TestCase):
     """Coverage for stop() restore retry after teardown."""
 
+    @patch("vocalinux.text_injection.ibus_engine._query_active_engine", return_value=None)
     @patch("vocalinux.text_injection.ibus_engine.stop_engine_process")
     @patch("vocalinux.text_injection.ibus_engine.get_current_engine", return_value="xkb:es::spa")
     @patch("vocalinux.text_injection.ibus_engine.switch_engine", return_value=False)
@@ -435,7 +436,7 @@ class TestStopRestoreRetry(unittest.TestCase):
     @patch("vocalinux.text_injection.ibus_engine.IBUS_AVAILABLE", True)
     @patch("vocalinux.text_injection.ibus_engine.ensure_ibus_dir")
     def test_stop_retries_failed_engine_restore(
-        self, mock_ensure_dir, mock_sleep, mock_switch, mock_get_current, mock_stop_proc
+        self, mock_ensure_dir, mock_sleep, mock_switch, mock_get_current, mock_stop_proc, mock_live
     ):
         """stop() retries switch_engine after teardown when the first attempts fail."""
         from vocalinux.text_injection.ibus_engine import IBusTextInjector

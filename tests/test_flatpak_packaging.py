@@ -28,6 +28,19 @@ from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
 
+#: ggml SIMD options pinned off for the portable x86-64 baseline in every
+#: packaged pywhispercpp build (#957). GGML_NATIVE=OFF alone leaves each of
+#: these on while ggml's native default is on.
+PORTABLE_GGML_OPTIONS = (
+    "GGML_NATIVE",
+    "GGML_SSE42",
+    "GGML_AVX",
+    "GGML_AVX2",
+    "GGML_BMI2",
+    "GGML_FMA",
+    "GGML_F16C",
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
 EXPORT = REPO_ROOT / "requirements" / "runtime.txt"
@@ -221,8 +234,10 @@ def test_the_version_injection_names_the_version_being_built() -> None:
 def test_the_vulkan_build_does_not_borrow_the_builders_instruction_set() -> None:
     """GGML_NATIVE is ggml's default and puts -march=native on libggml-cpu, so
     the Flatpak inherits whichever instruction set the builder has, and the
-    result SIGILLs on any CPU without it (#938). OFF ships the portable
-    baseline the PyPI wheel carries."""
+    result SIGILLs on any CPU without it (#938). OFF alone is not the portable
+    baseline either: while the native default is on, ggml turns every GGML_*
+    SIMD option on, still compiling -mavx2 -mfma and dying on pre-Haswell CPUs
+    (#957), so each option must be pinned off for the plain x86-64 baseline."""
     module = re.search(
         r"^  - name: python3-pywhispercpp$(.*?)(?=^  - name: |\Z)",
         DEPS_YAML.read_text(encoding="utf-8"),
@@ -232,9 +247,13 @@ def test_the_vulkan_build_does_not_borrow_the_builders_instruction_set() -> None
     command_lines = [
         line for line in module.group(1).splitlines() if not line.lstrip().startswith("#")
     ]
-    assert any(
-        "-DGGML_NATIVE=OFF" in line and "pip3 install" in line for line in command_lines
-    ), "the Flatpak Vulkan build must not compile with -march=native"
+    install_line = next((line for line in command_lines if "pip3 install" in line), "")
+    assert install_line, "the pywhispercpp pip3 install line is gone"
+    for flag in PORTABLE_GGML_OPTIONS:
+        assert f"-D{flag}=OFF" in install_line, (
+            f"the Flatpak build does not pin {flag} off; the package runs on"
+            " CPUs the builder's instruction set does not describe"
+        )
 
 
 def test_the_manifest_env_agrees_with_the_module() -> None:

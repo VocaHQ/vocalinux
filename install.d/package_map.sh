@@ -55,7 +55,7 @@ load_distro_package_map() {
             ;;
 
         fedora)
-            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard)
+            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake gcc-c++ make wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard)
             APPINDICATOR_PACKAGES=(libayatana-appindicator-gtk3 libappindicator-gtk3)
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
@@ -94,28 +94,28 @@ load_distro_package_map() {
             ;;
 
         alpine)
-            SYSTEM_PACKAGES=(py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev cairo-dev py3-virtualenv pkgconf cmake wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard)
+            SYSTEM_PACKAGES=(py3-gobject3 py3-pip gtk+3.0 py3-cairo portaudio-dev cairo-dev py3-virtualenv pkgconf cmake build-base wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard)
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
             YDOTOOL_PACKAGES=(ydotool)
             ;;
 
         void)
-            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk+3 libappindicator-gtk3 gobject-introspection portaudio-devel cairo-devel python3-devel pkg-config cmake wget curl unzip shaderc patchelf Vulkan-Tools xclip xsel wl-clipboard)
+            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk+3 libappindicator-gtk3 gobject-introspection portaudio-devel cairo-devel python3-devel pkg-config cmake base-devel wget curl unzip shaderc patchelf Vulkan-Tools xclip xsel wl-clipboard)
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
             YDOTOOL_PACKAGES=(ydotool)
             ;;
 
         solus)
-            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 libappindicator gobject-introspection-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard)
+            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 libappindicator gobject-introspection-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake gcc g++ make wget curl unzip shaderc patchelf vulkan-tools xclip xsel wl-clipboard)
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
             YDOTOOL_PACKAGES=(ydotool)
             ;;
 
         mageia)
-            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard)
+            SYSTEM_PACKAGES=(python3-pip python3-gobject gtk3 ibus-devel gobject-introspection-devel python3-devel portaudio-devel cairo-devel python3-virtualenv pkg-config cmake gcc-c++ make wget curl unzip vulkan-tools vulkan-loader-devel glslc patchelf xclip xsel wl-clipboard)
             XDOTOOL_PACKAGES=(xdotool)
             WTYPE_PACKAGES=(wtype)
             YDOTOOL_PACKAGES=(ydotool)

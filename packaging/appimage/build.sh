@@ -427,6 +427,58 @@ copy_whisper_native_libs_to_usr_lib() {
   done < <(find "$APPDIR/usr" \( -name 'libggml*.so*' -o -name 'libwhisper.so*' \) ! -path '*/usr/lib/*' 2>/dev/null || true)
 }
 
+# ggml's instruction-set floor for every CPU-side pywhispercpp build this
+# script ships; CMAKE_ARGS inlines it below so the native-cache id keeps
+# hashing it. GGML_NATIVE is ggml's default and compiles libggml-cpu with
+# -march=native, tuned to whichever runner the build lands on: a runner with
+# AVX-512 ships a libggml-cpu.so that dies with SIGILL on any CPU without it
+# (#938), and the native cache then serves the same binary to every later
+# build. GGML_NATIVE=OFF alone is not the portable baseline either — while
+# the native default is on, ggml turns every GGML_* SIMD option on and still
+# compiles -mavx2 -mfma, dying the same way on pre-Haswell CPUs (#957). Each
+# option is pinned off for the plain x86-64 baseline; the Vulkan path is
+# unaffected because its shaders run on the GPU.
+PORTABLE_GGML_CMAKE_ARGS="-DGGML_NATIVE=OFF -DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"
+
+# Reinstall the same pinned sdist the bundle already carries, hashes and all:
+# a source build is still a download, and this one ends up in ctypes.cdll.
+# GGML_VULKAN=1 in the caller's env selects the Vulkan build; without it the
+# compile is CPU-only and any -DVulkan_INCLUDE_DIR is dead.
+_install_pinned_pywhispercpp() {
+  local pip_log="$1"
+  awk '/^pywhispercpp==/ {found=1; print; next}
+       found && /^[[:space:]]/ {print; next}
+       found {exit}' "$REPO_ROOT/requirements/vad.txt" > "$WORKDIR/pywhispercpp.txt"
+  # Hosts that default cc/c++ to clang (this Cloud Agent image) fail the
+  # CMAKE C++ compiler test: clang does not search gcc's libstdc++ path.
+  CC="${CC:-gcc}" CXX="${CXX:-g++}" \
+    GGML_VULKAN="${GGML_VULKAN:-0}" \
+    CMAKE_ARGS="-DCMAKE_INSTALL_RPATH=\$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON $PORTABLE_GGML_CMAKE_ARGS${VULKAN_INCLUDE_DIR:+ -DVulkan_INCLUDE_DIR=$VULKAN_INCLUDE_DIR}" \
+    uv_install --verbose --require-hashes --no-deps \
+      --reinstall-package pywhispercpp --no-binary pywhispercpp \
+      -r "$WORKDIR/pywhispercpp.txt" >"$pip_log" 2>&1
+}
+
+# CPU-only fallback for the Vulkan path. The PyPI wheel the bundle started
+# with is the same AVX2+FMA build the SIGILL reports come from, so keeping it
+# is no fallback at all on pre-Haswell CPUs — rebuild the sdist at the
+# baseline instead.
+_compile_pywhispercpp_baseline() {
+  local pip_log="$WORKDIR/pywhispercpp-baseline.log"
+  export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+  ensure_build_tools
+  echo "== Rebuilding pywhispercpp at the portable CPU baseline =="
+  remove_appdir_pywhispercpp
+  if ! _install_pinned_pywhispercpp "$pip_log"; then
+    # The wheel is already gone, so "continue" would ship an AppImage with
+    # no speech engine at all; fail the build instead.
+    echo "Baseline pywhispercpp rebuild failed; refusing to ship without the speech engine." >&2
+    tail -n 40 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
+    return 1
+  fi
+  copy_whisper_native_libs_to_usr_lib
+}
+
 # The miss path of rebuild_pywhispercpp_vulkan. require_vulkan, cache_dir, and
 # site are locals of that caller; bash shows them to this function.
 _compile_pywhispercpp_vulkan() {
@@ -437,7 +489,8 @@ _compile_pywhispercpp_vulkan() {
       echo "VOCALINUX_APPIMAGE_REQUIRE_VULKAN=1: refusing to ship a CPU-only AppImage." >&2
       exit 1
     fi
-    echo "Warning: AppImage will use the CPU-only pywhispercpp wheel." >&2
+    echo "Warning: AppImage will use a CPU-only baseline pywhispercpp build." >&2
+    _compile_pywhispercpp_baseline || return 1
     return 0
   fi
 
@@ -448,7 +501,8 @@ _compile_pywhispercpp_vulkan() {
     if [ "$require_vulkan" = "1" ]; then
       exit 1
     fi
-    echo "Warning: continuing with the CPU-only pywhispercpp wheel." >&2
+    echo "Warning: continuing with a CPU-only baseline pywhispercpp build." >&2
+    _compile_pywhispercpp_baseline || return 1
     return 0
   fi
 
@@ -456,25 +510,7 @@ _compile_pywhispercpp_vulkan() {
   remove_appdir_pywhispercpp
   local pip_log="$WORKDIR/pywhispercpp-vulkan.log"
   export CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
-  # Reinstall the same pinned sdist the bundle already carries, hashes and all:
-  # a source build is still a download, and this one ends up in ctypes.cdll.
-  awk '/^pywhispercpp==/ {found=1; print; next}
-       found && /^[[:space:]]/ {print; next}
-       found {exit}' "$REPO_ROOT/requirements/vad.txt" > "$WORKDIR/pywhispercpp.txt"
-  # Hosts that default cc/c++ to clang (this Cloud Agent image) fail the
-  # CMAKE C++ compiler test: clang does not search gcc's libstdc++ path.
-  # GGML_NATIVE is ggml's default and compiles libggml-cpu with -march=native,
-  # tuned to whichever runner the build lands on. A runner with AVX-512 ships a
-  # libggml-cpu.so that dies with SIGILL on any CPU without it (#938), and the
-  # native cache then serves the same binary to every later build. OFF builds
-  # the portable baseline the PyPI wheel already ships; the Vulkan path is
-  # unaffected because its shaders run on the GPU.
-  if ! CC="${CC:-gcc}" CXX="${CXX:-g++}" \
-      GGML_VULKAN=1 \
-      CMAKE_ARGS="-DCMAKE_INSTALL_RPATH=\$ORIGIN -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON -DGGML_NATIVE=OFF -DVulkan_INCLUDE_DIR=$VULKAN_INCLUDE_DIR" \
-      uv_install --verbose --require-hashes --no-deps \
-        --reinstall-package pywhispercpp --no-binary pywhispercpp \
-        -r "$WORKDIR/pywhispercpp.txt" >"$pip_log" 2>&1; then
+  if ! GGML_VULKAN=1 _install_pinned_pywhispercpp "$pip_log"; then
     # The tail is the Python traceback wrapping the build and says nothing about
     # the compile, so lead with the compiler's own errors.
     echo "pywhispercpp Vulkan rebuild failed." >&2
@@ -485,7 +521,8 @@ _compile_pywhispercpp_vulkan() {
     if [ "$require_vulkan" = "1" ]; then
       exit 1
     fi
-    echo "Warning: continuing with the CPU-only pywhispercpp wheel." >&2
+    echo "Warning: continuing with a CPU-only baseline pywhispercpp build." >&2
+    _compile_pywhispercpp_baseline || return 1
     return 0
   fi
 
@@ -496,7 +533,10 @@ _compile_pywhispercpp_vulkan() {
       tail -n 80 "$pip_log" 2>/dev/null | sed 's/^/    /' >&2 || true
       exit 1
     fi
-    echo "Warning: AppImage will use CPU-only pywhispercpp." >&2
+    # The GGML_VULKAN=1 compile is already the portable baseline even when no
+    # Vulkan library comes out of it, so this build is safe to keep.
+    echo "Warning: AppImage will use CPU-only baseline pywhispercpp." >&2
+    copy_whisper_native_libs_to_usr_lib
     return 0
   fi
   echo "  found $vk_lib"

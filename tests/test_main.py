@@ -1729,6 +1729,65 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             boot.stack.close()
 
 
+class TestMainCallbackLineBreakCommands(unittest.TestCase):
+    """Standalone line-break segments through the real main() callback (#955).
+
+    "new line" / "new paragraph" expand to leading newlines, which the old
+    bare ``lstrip()`` destroyed — the segment was dropped or only its stray
+    punctuation survived.  Normalization now strips only spaces/tabs.
+    """
+
+    def test_standalone_newline_is_injected(self) -> None:
+        """A segment that is only a line break reaches the injector verbatim."""
+        boot = _boot_main_callbacks()
+        try:
+            boot.text_cb("\n").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("\n")
+        finally:
+            boot.stack.close()
+
+    def test_standalone_paragraph_break_is_injected(self) -> None:
+        """A paragraph break reaches the injector verbatim, no trailing space."""
+        boot = _boot_main_callbacks()
+        try:
+            boot.text_cb("\n\n").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("\n\n")
+        finally:
+            boot.stack.close()
+
+    def test_leading_newline_before_text_is_preserved(self) -> None:
+        """A command starting a mixed segment keeps its line break."""
+        boot = _boot_main_callbacks()
+        try:
+            boot.text_cb("\n hello").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("\n hello ")
+        finally:
+            boot.stack.close()
+
+    def test_horizontal_whitespace_still_stripped(self) -> None:
+        """Spaces and tabs are still stripped on both sides."""
+        boot = _boot_main_callbacks()
+        try:
+            boot.text_cb("  \t hello \t ").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("hello ")
+        finally:
+            boot.stack.close()
+
+    def test_vosk_capitalize_skips_leading_newline(self) -> None:
+        """Vosk auto-capitalize uppercases the first letter after "\n"."""
+        boot = _boot_main_callbacks()
+        try:
+            boot.mock_speech.engine = "vosk"
+            boot.mock_config.get.side_effect = lambda section, key, *a, **k: (section, key) == (
+                "text_injection",
+                "auto_capitalize",
+            )
+            boot.text_cb("\nhello").result(timeout=10)
+            boot.text_system.inject_text.assert_called_once_with("\nHello ")
+        finally:
+            boot.stack.close()
+
+
 class TestPadRoutingCallbacks(unittest.TestCase):
     """Pad capture routing through the real main() callback wrappers (#726).
 

@@ -22,6 +22,11 @@ _ATTACH_LEFT_REPLACEMENTS = {".", ",", "?", "!", ";", ":"}
 # line-break command just inserted (``\s*`` would collapse "new line" + "period").
 _ATTACH_LEFT_WS = r"[^\S\n]*"
 
+# Sentence-final punctuation engines may wrap around a standalone command
+# utterance ("New line.").  Dropped only when the whole segment is command
+# phrases — the same marks stay untouched on real text.
+_EDGE_PUNCTUATION = ".,!?;:…"
+
 # Base English text commands (always present).
 _BASE_TEXT_COMMANDS = {
     # Line commands
@@ -252,22 +257,36 @@ class CommandProcessor:
 
         # If no exact match found, fallback to generic processing
         else:
-            processed_text = text.strip()
+            # Engines add sentence-final punctuation to an utterance that is
+            # only a command ("New line.", "Select all.").  When the segment is
+            # nothing but command phrases and whitespace once edge punctuation
+            # is dropped, substitute on that stripped core so the stray mark
+            # cannot leak into the output; real text keeps its punctuation.
+            core = text.strip().strip(_EDGE_PUNCTUATION).strip()
+            residual = self.format_cmd_regex.sub(
+                "", self.action_cmd_regex.sub("", self.text_cmd_regex.sub("", core))
+            )
+            segment_text = core if core and not residual.strip() else text
+            processed_text = segment_text.strip()
 
             # Handle action commands
             for cmd, action in self.action_commands.items():
                 cmd_pattern = r"\b" + re.escape(cmd) + r"\b"
 
-                if re.search(cmd_pattern, text, re.IGNORECASE):
+                if re.search(cmd_pattern, segment_text, re.IGNORECASE):
                     actions.append(action)
 
                     # Check if there's text after the command
-                    match = re.search(r"\b" + re.escape(cmd) + r"\s+(.*)", text, re.IGNORECASE)
+                    match = re.search(
+                        r"\b" + re.escape(cmd) + r"\s+(.*)", segment_text, re.IGNORECASE
+                    )
                     if match:
                         remaining_text = match.group(1).strip()
                         # Only add space if there's text before the command
                         cmd_match = re.search(
-                            r"^(.*?)\b" + re.escape(cmd) + r"\b", text, re.IGNORECASE
+                            r"^(.*?)\b" + re.escape(cmd) + r"\b",
+                            segment_text,
+                            re.IGNORECASE,
                         )
                         if cmd_match and cmd_match.group(1).strip():
                             processed_text = " " + remaining_text
@@ -302,9 +321,11 @@ class CommandProcessor:
             for cmd, format_type in self.format_commands.items():
                 cmd_pattern = r"\b" + re.escape(cmd) + r"\b"
 
-                if re.search(cmd_pattern, text, re.IGNORECASE):
+                if re.search(cmd_pattern, segment_text, re.IGNORECASE):
                     # Handle format command that modifies next word
-                    match = re.search(r"\b" + re.escape(cmd) + r"\s+(\w+)", text, re.IGNORECASE)
+                    match = re.search(
+                        r"\b" + re.escape(cmd) + r"\s+(\w+)", segment_text, re.IGNORECASE
+                    )
                     if match:
                         word = match.group(1)
                         if format_type == "capitalize_next":
@@ -320,7 +341,7 @@ class CommandProcessor:
                         processed_text = re.sub(
                             r"\b" + re.escape(cmd) + r"\s+" + re.escape(word) + r"\b",
                             replacement,
-                            text,
+                            segment_text,
                             flags=re.IGNORECASE,
                         )
                     else:
@@ -347,8 +368,14 @@ def capitalize_sentences(text: str) -> str:
     if not text:
         return text
 
-    # Capitalize first character
-    result = text[0].upper() + text[1:]
+    # Capitalize the first letter, skipping leading whitespace a voice
+    # command can leave behind ("new line hello" -> "\n hello").
+    first_letter = re.match(r"\s*([a-z])", text)
+    if first_letter:
+        idx = first_letter.start(1)
+        result = text[:idx] + text[idx].upper() + text[idx + 1 :]
+    else:
+        result = text[0].upper() + text[1:]
 
     # Capitalize after sentence-ending punctuation + whitespace
     result = re.sub(

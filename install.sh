@@ -1774,8 +1774,11 @@ install_cpu_pywhispercpp() {
     local PYWHISPERCPP_CMAKE_ARGS
     PYWHISPERCPP_CMAKE_ARGS=$(get_pywhispercpp_cmake_args)
 
+    # The PyPI wheel's libggml-cpu is compiled for AVX2+FMA and SIGILLs on
+    # pre-Haswell CPUs (#957), so the CPU path builds the pinned sdist like
+    # the GPU paths do; -march=native then matches this machine exactly.
     CMAKE_ARGS="${CMAKE_ARGS:+$CMAKE_ARGS }$PYWHISPERCPP_CMAKE_ARGS" \
-        pip_reinstall_pywhispercpp "$PIP_LOG_FILE"
+        pip_reinstall_pywhispercpp "$PIP_LOG_FILE" --no-binary pywhispercpp
 }
 
 pip_reinstall_pywhispercpp() {

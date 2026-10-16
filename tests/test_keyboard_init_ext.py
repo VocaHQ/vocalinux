@@ -115,6 +115,56 @@ class TestDesktopEnvironmentDetect:
         mock_pynput.assert_called_once()
         mock_evdev.assert_not_called()
 
+    def test_create_backend_gnome_x11_prefers_evdev(self) -> None:
+        """GNOME X11 must prefer evdev: mutter's XRecord drops physical key events (#954)."""
+        from vocalinux.ui.keyboard_backends import create_backend
+
+        fake = MagicMock()
+        fake.is_available.return_value = True
+
+        env = {
+            "XDG_SESSION_TYPE": "x11",
+            "XDG_CURRENT_DESKTOP": "GNOME",
+            "DISPLAY": ":0",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with (
+                patch.object(kb_module, "EVDEV_AVAILABLE", True),
+                patch.object(kb_module, "EvdevKeyboardBackend", return_value=fake) as mock_evdev,
+                patch.object(kb_module, "PYNPUT_AVAILABLE", True),
+                patch.object(kb_module, "PynputKeyboardBackend") as mock_pynput,
+            ):
+                backend = create_backend()
+        assert backend is fake
+        mock_evdev.assert_called_once()
+        mock_pynput.assert_not_called()
+
+    def test_create_backend_gnome_x11_falls_back_to_pynput(self) -> None:
+        """GNOME X11 keeps pynput when evdev cannot read /dev/input (#954)."""
+        from vocalinux.ui.keyboard_backends import create_backend
+
+        fake = MagicMock()
+        fake.is_available.return_value = False
+        fake.get_permission_hint.return_value = "not in input group"
+
+        env = {
+            "XDG_SESSION_TYPE": "x11",
+            "XDG_CURRENT_DESKTOP": "ubuntu:GNOME",
+            "DISPLAY": ":0",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with (
+                patch.object(kb_module, "EVDEV_AVAILABLE", True),
+                patch.object(kb_module, "EvdevKeyboardBackend", return_value=fake),
+                patch.object(kb_module, "PYNPUT_AVAILABLE", True),
+                patch.object(
+                    kb_module, "PynputKeyboardBackend", return_value=MagicMock()
+                ) as mock_pynput,
+            ):
+                backend = create_backend()
+        assert backend is mock_pynput.return_value
+        mock_pynput.assert_called_once()
+
     def test_detect_xdg_session_type_case_insensitive(self):
         """Test that XDG_SESSION_TYPE detection is case-insensitive."""
         with patch.dict(os.environ, {"XDG_SESSION_TYPE": "WAYLAND"}, clear=False):
