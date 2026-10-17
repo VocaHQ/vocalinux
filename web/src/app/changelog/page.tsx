@@ -15,6 +15,20 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.3",
+    date: "2026-10-17",
+    type: "stable",
+    highlights: [
+      "\"new line\" and \"new paragraph\" voice commands insert real line breaks, standalone and mid-utterance, with no stray punctuation left behind (PR #958, #962)",
+      "Hotkeys work again on GNOME Shell X11: the evdev backend is preferred there over pynput (PR #963)",
+      "Quitting no longer collapses multi-layout keyboards; the IBus engine restore is skipped when a real engine is live (PR #963)",
+      "Snap, Flatpak, AppImage and .deb/.rpm builds compile pywhispercpp at the portable x86-64 baseline, ending SIGILL crashes on pre-Haswell CPUs (PR #959)",
+      "Snap recipe drops the denied `uinput` plug so new revisions clear Store review; Wayland typing uses the RemoteDesktop portal (PR #960)",
+      "Transcribe File's modal download dialog releases its grab once TinyDiarize lands, so the transcript's Copy and Save As buttons work (PR #965)",
+      "Flatpak remote publish warns loudly when unconfigured instead of skipping silently (PR #961); README gains install-format badges and a Nix section (PR #949)",
+    ],
+  },
+  {
     version: "v0.18.2",
     date: "2026-10-12",
     type: "stable",
@@ -494,7 +508,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-10-12",
+    dateModified: "2026-10-17",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

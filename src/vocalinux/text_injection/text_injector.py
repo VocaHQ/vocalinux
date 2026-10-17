@@ -1850,8 +1850,8 @@ class TextInjector:
             max_retries = 2
             logger.debug(f"Starting xdotool injection with {max_retries} max retries")
 
-            # Retries resume at the first untyped chunk: restarting from the
-            # top would duplicate the chunks a failed attempt already sent.
+            # Retries resume at the first untyped position: restarting from
+            # the top would duplicate what a failed attempt already sent.
             typed = 0
             for retry in range(max_retries + 1):
                 try:
@@ -1868,23 +1868,58 @@ class TextInjector:
                         chunk = text[i : i + chunk_size]
                         chunk_num = (i // chunk_size) + 1
 
-                        # First try with clearmodifiers. ``--`` ends option
-                        # parsing: a chunk that starts with '-' (a word
-                        # hyphenated across the chunk boundary) is typed
-                        # literally instead of read as a flag and rejected
-                        # (#921).
-                        cmd = ["xdotool", "type", "--clearmodifiers", "--", chunk]
-                        logger.debug(f"Injecting chunk {chunk_num}/{total_chunks}: '{chunk}'")
-
-                        subprocess.run(
-                            cmd,
-                            env=host_env(env),
-                            check=True,
-                            stderr=subprocess.PIPE,
-                            text=True,
-                            timeout=5,
-                        )
-                        typed = min(i + chunk_size, len(text))
+                        # ``xdotool type`` maps '\n' to the Linefeed keysym
+                        # (0xFF0A), which GTK targets silently drop — only a
+                        # real Return keypress inserts the newline (#955).
+                        # Split the chunk on '\n', typing each segment and
+                        # pressing Return between them.  The '\t' case is
+                        # untouched: Tab is a working keysym in type strings.
+                        segments = chunk.split("\n")
+                        for seg_index, segment in enumerate(segments):
+                            if self._abort_injections.is_set():
+                                raise _InjectionAborted
+                            if segment:
+                                # ``--`` ends option parsing: a segment that
+                                # starts with '-' (a word hyphenated across
+                                # the chunk boundary) is typed literally
+                                # instead of read as a flag and rejected
+                                # (#921).
+                                cmd = [
+                                    "xdotool",
+                                    "type",
+                                    "--clearmodifiers",
+                                    "--",
+                                    segment,
+                                ]
+                                logger.debug(
+                                    f"Injecting chunk {chunk_num}/{total_chunks}: '{segment}'"
+                                )
+                                subprocess.run(
+                                    cmd,
+                                    env=host_env(env),
+                                    check=True,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=5,
+                                )
+                            # Advance past what just went out so a retry
+                            # resumes mid-chunk instead of re-typing it.
+                            typed += len(segment)
+                            if seg_index < len(segments) - 1:
+                                subprocess.run(
+                                    [
+                                        "xdotool",
+                                        "key",
+                                        "--clearmodifiers",
+                                        "Return",
+                                    ],
+                                    env=host_env(env),
+                                    check=True,
+                                    stderr=subprocess.PIPE,
+                                    text=True,
+                                    timeout=5,
+                                )
+                                typed += 1  # the '\n' the Return produced
 
                         # Add a larger delay between chunks
                         if i + chunk_size < len(text):

@@ -1166,3 +1166,44 @@ class TestAppIndicatorImportFallback(unittest.TestCase):
         import vocalinux.ui.tray_indicator as tray
 
         self.assertIs(tray.AppIndicator3, sentinel)
+
+
+class TestTdrzDownloadDialog(TestTrayIndicator):
+    """The transcribe-path TinyDiarize download dialog must release its modal
+    grab once the model lands: the transcript dialog opening behind it would
+    otherwise be unclickable until the hidden dialog is found and closed."""
+
+    def _run_download(
+        self, download_side_effect: Exception | None = None
+    ) -> tuple[MagicMock, MagicMock]:
+        from vocalinux.ui.tray_indicator import Gtk
+
+        mock_prompt = MagicMock()
+        mock_prompt.run.return_value = Gtk.ResponseType.OK
+        mock_dialog = MagicMock()
+        mock_dialog.cancelled = False
+        self.mock_speech_engine.try_begin_download.return_value = True
+        self.mock_speech_engine.download_whispercpp_model.side_effect = download_side_effect
+
+        with (
+            patch("vocalinux.ui.tray_indicator.Gtk.MessageDialog", return_value=mock_prompt),
+            patch("vocalinux.ui.tray_indicator.ModelDownloadDialog", return_value=mock_dialog),
+            patch.object(self.tray_indicator, "_start_file_transcription") as mock_start,
+        ):
+            self.tray_indicator._offer_tdrz_download("/tmp/clip.wav")
+            run = self.mock_thread_class.call_args.kwargs["target"]
+            run()
+        return mock_dialog, mock_start
+
+    def test_success_destroys_modal_dialog(self) -> None:
+        mock_dialog, mock_start = self._run_download()
+        mock_dialog.destroy.assert_called_once()
+        mock_dialog.set_complete.assert_not_called()
+        mock_start.assert_called_once_with("/tmp/clip.wav")
+
+    def test_failure_keeps_dialog_for_the_error(self) -> None:
+        mock_dialog, mock_start = self._run_download(Exception("network down"))
+        mock_dialog.set_complete.assert_called_once()
+        self.assertFalse(mock_dialog.set_complete.call_args[0][0])
+        mock_dialog.destroy.assert_not_called()
+        mock_start.assert_not_called()

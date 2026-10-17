@@ -684,6 +684,11 @@ jobs:
             mkdir -p "$repo"
             ostree --repo="$repo" init --mode=archive-z2
           fi
+          # git drops empty directories: a checked-out site/repo lacks
+          # refs/remotes and refs/mirrors, and `build-update-repo
+          # --generate-static-deltas` aborts with
+          # "opendir(refs/remotes): No such file or directory" without them.
+          mkdir -p "$repo/refs/remotes" "$repo/refs/mirrors"
           ls -la dist/*.flatpak
           for bundle in dist/*.flatpak; do
             flatpak build-import-bundle \
@@ -1091,6 +1096,10 @@ jobs:
             && grep -F -q "allow-installation" "$log"; then
             echo "::warning::Snap Store queued a human review (allow-installation). The .snap is on the GitHub Release."
             exit 0
+          fi
+          if grep -F -q "Waiting for previous upload(s)" "$log"; then
+            echo "::error::Snap Store publish failed: an older upload is still in the review queue. Reject and remove it at https://dashboard.snapcraft.io/ (the upload page lists it), then re-run this job."
+            exit "$status"
           fi
           echo "::error::Snap Store publish failed (exit $status) for a reason other than allow-installation review."
           exit "$status"

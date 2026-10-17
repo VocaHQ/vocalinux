@@ -27,6 +27,14 @@ _ATTACH_LEFT_WS = r"[^\S\n]*"
 # phrases — the same marks stay untouched on real text.
 _EDGE_PUNCTUATION = ".,!?;:…"
 
+# Trailing punctuation right after a spoken command mid-utterance is also
+# phrasing, not text ("testing, new paragraph, done" must not type a stray
+# comma after the break).  Command substitution consumes it — but only
+# before whitespace: a mark at end-of-string may have been produced by an
+# earlier command replacement ("…new line exclamation mark" → "\n!"), and
+# the end-of-utterance case is handled by a pre-pass on the raw segment.
+_TRAILING_PUNCTUATION = r"(?:[,.!?;:…]+(?=\s))?"
+
 # Base English text commands (always present).
 _BASE_TEXT_COMMANDS = {
     # Line commands
@@ -119,7 +127,8 @@ class CommandProcessor:
         """Compile regex patterns for command matching."""
         # Longer phrases first so alternation prefers "punto interrogativo" over "punto"
         text_keys = sorted(self.text_commands.keys(), key=len, reverse=True)
-        text_cmd_pattern = r"\b(" + "|".join(re.escape(cmd) for cmd in text_keys) + r")\b"
+        self._text_cmd_alternation = "|".join(re.escape(cmd) for cmd in text_keys)
+        text_cmd_pattern = r"\b(" + self._text_cmd_alternation + r")\b"
         self.text_cmd_regex = re.compile(text_cmd_pattern, re.IGNORECASE)
 
         # Create regex pattern for action commands
@@ -267,6 +276,18 @@ class CommandProcessor:
                 "", self.action_cmd_regex.sub("", self.text_cmd_regex.sub("", core))
             )
             segment_text = core if core and not residual.strip() else text
+
+            # End-of-utterance form of _TRAILING_PUNCTUATION: a segment that
+            # ends with a command plus engine marks ("hello new line.") has
+            # no following whitespace for the eater to see, so strip the run
+            # here.  Runs at end-of-string mid-loop are left alone — a mark
+            # there may have been produced by another command's replacement.
+            segment_text = re.sub(
+                r"(\b(?:" + self._text_cmd_alternation + r")\b)[,.!?;:…]+$",
+                r"\1",
+                segment_text.strip(),
+                flags=re.IGNORECASE,
+            )
             processed_text = segment_text.strip()
 
             # Handle action commands
@@ -304,14 +325,14 @@ class CommandProcessor:
                     if replacement in _ATTACH_LEFT_REPLACEMENTS:
                         # Punctuation: drop horizontal space before the spoken phrase
                         processed_text = re.sub(
-                            _ATTACH_LEFT_WS + cmd_pattern + _ATTACH_LEFT_WS,
+                            _ATTACH_LEFT_WS + cmd_pattern + _TRAILING_PUNCTUATION + _ATTACH_LEFT_WS,
                             replacement,
                             processed_text,
                             flags=re.IGNORECASE,
                         )
                     else:
                         processed_text = re.sub(
-                            cmd_pattern,
+                            cmd_pattern + _TRAILING_PUNCTUATION,
                             replacement,
                             processed_text,
                             flags=re.IGNORECASE,

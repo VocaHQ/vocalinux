@@ -2507,9 +2507,16 @@ class ModelDownloadDialog(Gtk.Dialog):
         self.show_all()
 
         self._pulse_timeout = None
+        # A destroyed dialog must not leave its pulse timer firing: the
+        # timeout retains the widget and keeps calling back into it.
+        self.connect("destroy", self._on_destroy)
         # For Whisper, we can't track progress, so pulse
         if engine == "whisper":
             self._start_pulsing()
+
+    def _on_destroy(self, *_args: object) -> None:
+        """Stop the pulse timer when the dialog goes away."""
+        self._stop_pulsing()
 
     def _start_pulsing(self) -> None:
         """Bounce the bar, for work that reports no measurable progress."""

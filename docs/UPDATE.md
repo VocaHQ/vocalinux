@@ -20,7 +20,7 @@ The installer detects a running instance, updates in place, preserves configurat
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.18.2
+git checkout v0.18.3
 ./install.sh
 ```
 
@@ -76,6 +76,32 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.3
+
+0.18.3 is a **patch** on the stable line. Default engine is still whisper.cpp. This one is all fixes: "new line" and "new paragraph" finally insert real line breaks, hotkeys come back on GNOME Shell X11, packaged builds stop crashing on older CPUs, and the Snap package can publish again now that the denied `uinput` plug is gone.
+
+### 0.18.3 highlights
+
+| Fix | Description |
+|---------|-------------|
+| **Real line breaks** | "new line" and "new paragraph" insert an actual newline standalone or mid-utterance, and the stray punctuation they used to leave behind is gone (#958, #962; fixes #955 reported by @rastarr) |
+| **GNOME X11 hotkeys** | Push-to-talk and toggle shortcuts work on gnome-shell X11 sessions again; the app now prefers the evdev backend there (#963; fixes #954 reported by @jepst) |
+| **Layout restore on quit** | Quitting no longer collapses a multi-layout keyboard map (us,de staying us,de) because the IBus engine restore is skipped when a real engine is already active (#963) |
+| **Older CPUs unblocked** | Snap, Flatpak, AppImage and the .deb/.rpm builds now compile the bundled pywhispercpp at the true x86-64 baseline, ending the SIGILL crash on pre-Haswell processors (#959; fixes #957 reported by @bucketsofmail) |
+| **Snap can publish** | The `uinput` plug the Snap Store denied is removed, so new revisions clear automatic review again; Wayland typing uses the RemoteDesktop portal (#960) |
+
+### Also in v0.18.3
+
+- The Flatpak remote publish warns on the release run when its secrets are not configured, instead of skipping silently for tags (#961; fixes #951 reported by @andreacasini)
+- README gains a badge row for every install format plus a Nix flake section (#949)
+- Transcribe File's modal model-download dialog now closes itself once TinyDiarize lands, releasing its grab so the transcript's Copy and Save As buttons are clickable (#965; found during release e2e testing)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp only.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.3).
 
 ---
 

@@ -173,7 +173,7 @@ sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/
 
 Native Wayland typing uses the RemoteDesktop portal: the compositor asks once on first dictation, nothing to connect. The recipe ships **no `uinput` plug** and no ydotool; the Store denied the super-privileged grant ([the request thread](https://forum.snapcraft.io/t/53528)), which held the 0.17.0+ revisions and left **v0.16.2 (rev 7)** on edge. On KDE Plasma, KWin's portal can mistype letter case ([KDE bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021)); set Virtual Keyboard to "IBus Wayland" so dictation types correctly.
 
-The v0.18.x GitHub `.snap` still declares `uinput`, so KDE users who want ydotool can sideload it and connect the plug manually:
+GitHub `.snap` files through v0.18.2 declare `uinput`, so KDE users who want ydotool can sideload that build and connect the plug manually:
 
 ```bash
 sudo snap install --dangerous ./vocalinux_0.18.2_amd64.snap

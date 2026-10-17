@@ -1131,9 +1131,11 @@ class TrayIndicator:
                 self.speech_engine.set_download_progress_callback(None)
                 self.speech_engine.end_download()
 
-            GLib.idle_add(dialog.set_complete, True, "")
-            # The dialog shows its own completion; starting the transcription
-            # as soon as the model lands keeps the flow to a single click.
+            # The transcript dialog that opens next is the completion
+            # affordance here: the download dialog is modal, so leaving it
+            # open behind the transcript keeps its grab and makes the
+            # transcript's buttons unclickable until it is found and closed.
+            GLib.idle_add(dialog.destroy)
             _idle_once(self._start_file_transcription, path)
 
         threading.Thread(target=run, daemon=True, name="tdrz-download").start()

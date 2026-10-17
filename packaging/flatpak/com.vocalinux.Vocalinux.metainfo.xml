@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.18.3" date="2026-10-17">
+      <description>
+        <p>Patch: "new line" and "new paragraph" voice commands insert real line breaks standalone and mid-utterance, hotkeys work again on GNOME Shell X11 and quitting no longer collapses multi-layout keyboard maps, the bundled pywhispercpp builds at the portable x86-64 baseline so older CPUs stop crashing, and the Snap recipe drops the `uinput` plug the Store denied so revisions publish again. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.18.2" date="2026-10-12">
       <description>
         <p>Patch: the dictation overlay orb pulses and ripples with live microphone level, Nix gets a flake package with NixOS and Home Manager modules plus Vulkan GPU inference, keyboards with a held key or queued key events are left ungrabbed at startup so typing during launch cannot strand a key, bundled pywhispercpp drops -march=native so AppImage and Flatpak stop crashing on older CPUs, and the piped installer prompts via /dev/tty. This Flatpak still ships whisper.cpp only.</p>

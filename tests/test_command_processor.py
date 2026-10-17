@@ -592,3 +592,36 @@ class TestStandaloneCommandPunctuation(unittest.TestCase):
         result, actions = self.processor.process_text("...")
         self.assertEqual(result, "...")
         self.assertEqual(actions, [])
+
+    def test_mid_utterance_trailing_punctuation_is_consumed(self) -> None:
+        """Punctuation right after a mid-utterance command does not type (#955)."""
+        cases = [
+            (
+                "Testing 1, 2, 3. New paragraph. Does this work now?",
+                "Testing 1, 2, 3. \n\n Does this work now?",
+            ),
+            (
+                "Testing 123, new paragraph, does this work now?",
+                "Testing 123, \n\n does this work now?",
+            ),
+            ("line one, new line, line two", "line one, \n line two"),
+            ("hello new line.", "hello \n"),
+            ("hello new line. ", "hello \n"),
+        ]
+        for input_text, expected in cases:
+            with self.subTest(input_text=input_text):
+                result, actions = self.processor.process_text(input_text)
+                self.assertEqual(result, expected)
+                self.assertEqual(actions, [])
+
+    def test_trailing_punct_eaten_only_before_space_or_end(self) -> None:
+        """A dot glued to following text is not sentence punctuation."""
+        result, actions = self.processor.process_text("use new paragraph.done")
+        self.assertEqual(result, "use \n\n.done")
+        self.assertEqual(actions, [])
+
+    def test_command_produced_punctuation_is_not_eaten(self) -> None:
+        """A mark from an earlier command replacement survives (#955)."""
+        result, actions = self.processor.process_text("hello new line exclamation mark")
+        self.assertEqual(result, "hello \n!")
+        self.assertEqual(actions, [])
