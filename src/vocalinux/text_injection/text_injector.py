@@ -1269,7 +1269,33 @@ class TextInjector:
         """xclip/xsel only: the X11 CLIPBOARD an xdotool paste actually reads."""
         return [name for name in ("xclip", "xsel") if shutil.which(name)]
 
-    def _run_clipboard_command(self, tool: str, text: str) -> bool:
+    def _wl_copy_supports_sensitive(self) -> bool:
+        """Return True if the installed wl-copy understands ``--sensitive``.
+
+        The flag arrived in wl-clipboard 2.2; older builds reject it and the copy
+        fails. Probe ``wl-copy --help`` once and cache the answer.
+        """
+        cached = getattr(self, "_wl_copy_sensitive_supported", None)
+        if cached is not None:
+            return cached
+
+        supported = False
+        try:
+            result = subprocess.run(
+                ["wl-copy", "--help"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                env=host_env(),
+            )
+            supported = "--sensitive" in f"{result.stdout or ''}{result.stderr or ''}"
+        except (OSError, subprocess.SubprocessError) as e:
+            logger.debug(f"Could not probe wl-copy for --sensitive: {e}")
+
+        self._wl_copy_sensitive_supported = supported
+        return supported
+
+    def _run_clipboard_command(self, tool: str, text: str, sensitive: bool = False) -> bool:
         # NB: wl-copy/xclip/xsel fork a background process that keeps owning the
         # selection in order to serve it. That child inherits our pipes, so
         # capturing stderr via subprocess.PIPE makes run() block until the child
@@ -1277,8 +1303,14 @@ class TextInjector:
         # — even though the copy itself succeeded. Redirect to DEVNULL so run()
         # only waits for the short-lived foreground process.
         if tool == "wl-copy":
+            # --sensitive tells clipboard managers (Klipper, cliphist, ...) not to
+            # keep the entry. xclip/xsel have no equivalent.
+            cmd = ["wl-copy"]
+            if sensitive and self._wl_copy_supports_sensitive():
+                cmd.append("--sensitive")
+            cmd.append(text)
             subprocess.run(
-                ["wl-copy", text],
+                cmd,
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -1453,7 +1485,9 @@ class TextInjector:
         logger.debug("No better tools available, continuing with xdotool fallback")
         return False
 
-    def _copy_to_clipboard(self, text: str, tools: Optional[list] = None) -> bool:
+    def _copy_to_clipboard(
+        self, text: str, tools: Optional[list] = None, sensitive: bool = False
+    ) -> bool:
         """
         Copy text to clipboard.
 
@@ -1466,6 +1500,9 @@ class TextInjector:
             tools: Clipboard binaries to try. Defaults to ``_get_clipboard_tools``
                 (session clipboard). XWayland paste passes xclip/xsel so the
                 text lands on the X11 CLIPBOARD that xdotool Ctrl+V reads.
+            sensitive: Mark the copy with ``wl-copy --sensitive`` (where
+                supported) so clipboard managers skip it. For the transient
+                paste-injection copy only.
 
         Returns:
             True if clipboard copy was successful, False otherwise
@@ -1477,7 +1514,7 @@ class TextInjector:
                 continue
 
             try:
-                if self._run_clipboard_command(tool, text):
+                if self._run_clipboard_command(tool, text, sensitive=sensitive):
                     self._clipboard_tool_health[tool] = True
                     logger.info(f"Text copied to clipboard using {tool}")
                     return True
@@ -2116,7 +2153,12 @@ class TextInjector:
             pending_target if pending_target is not None else self._read_clipboard()
         )
 
-        if not self._copy_to_clipboard(text, tools=tools):
+        # The copy only exists to feed the paste chord, so keep it out of
+        # clipboard-manager history -- unless the user asked for dictated text
+        # to stay on the clipboard (copy_to_clipboard), then it is a real copy.
+        if not self._copy_to_clipboard(
+            text, tools=tools, sensitive=not self._should_copy_to_clipboard()
+        ):
             logger.warning("Could not copy text to clipboard for paste injection")
             return False
 

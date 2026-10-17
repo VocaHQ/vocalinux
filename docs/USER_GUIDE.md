@@ -34,6 +34,8 @@ When Vocalinux injects through the clipboard (the usual Wayland / ydotool path),
 
 On non-US layouts such as German Neo, that chord uses the key that types **v** on the active layout (not physical KEY_V). Nested terminal panels inside an IDE are often invisible to window-class detection. If paste lands as a literal `^V` or does nothing, open **Settings → Dictation → Clipboard Paste Shortcut** and choose **Ctrl+Shift+V**.
 
+The clipboard copy behind that paste is temporary: your previous clipboard comes back right after. When the copy goes through `wl-copy` 2.2 or newer, it is also marked sensitive (`wl-copy --sensitive`), and clipboard managers that honor that hint, such as Klipper or cliphist, keep it out of their history. Older `wl-copy` builds and the XWayland path (`xclip`/`xsel`) have no such hint, so there the dictated text can still show up in history. With **Settings → Dictation → Copy to Clipboard** on, the dictated text is an ordinary copy and stays in history.
+
 **Other audio.** Settings → Audio → Other audio can lower speakers and headphones while the microphone is open, then put that volume back. It stays off until you turn it on. Level while dictating is a percent of the current volume (0 is silent). Quitting mid-dictation puts the volume back; if the app crashes first, the next launch does.
 
 ## Shortcuts
