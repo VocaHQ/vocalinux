@@ -59,6 +59,7 @@ jobs:
               - 'scripts/**'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
+              - '.github/workflows/release.yml'
             # The AUR gate builds packaging/aur/vocalinux/PKGBUILD from this
             # tree. Its depends= mirror pyproject.toml, so every python change
             # reaches the gate through the python filter above; this filter
@@ -94,6 +95,34 @@ jobs:
             echo "deploy=false" >> $GITHUB_OUTPUT
           fi
           rm -f "$COMMIT_MSG_FILE"
+
+  # Always run: README, LICENSE and MANIFEST.in also affect the distribution.
+  # This is the same gate that runs before a tag can publish anything.
+  reproducible-wheel:
+    name: Reproducible Python wheel
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.11'
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.23'
+      - name: Build and verify reproducible wheel
+        run: python scripts/build_reproducible_wheel.py --python "$(command -v python)"
+      - name: Preserve failed wheel builds and diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-reproducibility-diagnostics
+          path: build/reproducible-wheel/
+          retention-days: 7
 
   python-lint:
     name: 🔍 Lint Python

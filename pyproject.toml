@@ -84,6 +84,14 @@ docs = [
 # --only-group lint` installs them without the project, so the lint job needs
 # no portaudio/girepository headers to build pyaudio and PyGObject.
 [dependency-groups]
+# Release builds install this complete toolchain from its hash-pinned export,
+# then use --no-isolation so setuptools cannot be resolved a second time.
+release-build = [
+    "build>=1.2,<2",
+    "setuptools>=83",
+    "wheel",
+    "twine>=6,<7",
+]
 # install.sh installs this wheel-only toolchain before any source builds, then
 # disables build isolation so pip cannot resolve another unpinned environment.
 installer-build = [

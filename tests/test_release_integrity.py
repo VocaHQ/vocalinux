@@ -7,8 +7,9 @@ on three runners (`build-and-release`, `build-appimage-arm64`, `publish-pypi`),
 so the wheel on PyPI was never the wheel on the GitHub release, and a checksum
 for one would not have described the other.
 
-These tests pin the shape of the fix: build once, publish that, and cover every
-artifact with one manifest. Parsed as text rather than YAML on purpose — the
+These tests pin the shape of the fix: verify independent builds, publish only
+the canonical distributions, and cover every artifact with one manifest.
+Parsed as text rather than YAML on purpose — the
 sibling workflow guards do the same, and the only YAML parser on hand reaches
 the venv transitively through pre-commit.
 """
@@ -82,21 +83,39 @@ def _top_level_permissions() -> dict:
     return dict(re.findall(r"^  (\S+): (\S+)", match.group(1), re.M))
 
 
-def test_the_release_is_built_exactly_once():
-    """Three builds meant three sets of bytes and no `SOURCE_DATE_EPOCH`, so
-    neither a checksum nor an attestation could speak for the whole release."""
-    builds = _without_comments(_text()).count("python -m build")
-    assert builds == 1, f"the release is built {builds} times; build once and pass the artifact"
-
-
-def test_the_build_timestamp_is_pinned_to_the_tagged_commit():
-    """Otherwise re-running the tag produces bytes the published checksum no
-    longer matches."""
+def test_only_verified_canonical_distributions_are_published():
+    """Independent verification builds must not become additional release payloads."""
     block = _jobs()["build-and-release"]
-    assert "SOURCE_DATE_EPOCH=" in block
-    assert block.index("SOURCE_DATE_EPOCH=") < block.index(
-        "python -m build\n"
-    ), "SOURCE_DATE_EPOCH is set after the build, which is the same as not setting it"
+    gate = "python scripts/build_reproducible_wheel.py"
+    assert gate in block
+    assert block.index(gate) < block.index("name: Upload the built distributions")
+    assert block.index(gate) < block.index("name: Create Release")
+    assert "python -m build" not in _without_comments(_text())
+    assert "pip install" not in _without_comments(block.split("      - name: Create Release")[0])
+    assert "pip install" not in _without_comments(_jobs()["publish-pypi"])
+    assert "version: '0.12.23'" in block
+    assert "dist/*.whl" in block and "dist/*.tar.gz" in block
+    assert "path: build/reproducible-wheel/" in block
+
+
+def test_pr_ci_runs_the_same_reproducibility_gate():
+    """README/license changes can change wheels too: this job is unconditional."""
+    ci = (REPO_ROOT / ".github/workflows/unified-pipeline.yml").read_text()
+    block = ci.split("\n  reproducible-wheel:\n", 1)[1].split("\n  python-lint:", 1)[0]
+    assert "python scripts/build_reproducible_wheel.py" in block
+    assert "python-version: '3.11'" in block
+    assert "version: '0.12.23'" in block
+    assert not re.search(r"^    if:", block, re.M)
+
+
+def test_release_publication_cannot_bypass_the_wheel_gate():
+    """Even independent Snap builds and always-run checksum jobs must wait."""
+    jobs = _jobs()
+    for name in ("publish-pypi", "publish-snap", "publish-aur", "publish-flatpak-remote"):
+        assert "build-and-release" in _needs(jobs[name]), name
+    checksums = jobs["publish-checksums"]
+    assert "needs.build-and-release.result == 'success'" in checksums
+    assert "pattern: '@(python-dist|appimage-*|native-*|flatpak-*|snap-amd64)'" in checksums
 
 
 def test_every_consumer_downloads_the_build_instead_of_repeating_it():

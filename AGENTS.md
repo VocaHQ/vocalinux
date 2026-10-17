@@ -95,6 +95,7 @@ just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
 just remote-install-gate debian:12  # remote curl|bash path end to end against HEAD (needs docker)
 just verify-release  # check a published release as published (needs gh)
+just reproducible-wheel  # independent locked wheel builds; stages verified dist/ (needs uv)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug
@@ -123,6 +124,7 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 | Whisper CPU torch | `requirements/whisper.txt` is compiled from `requirements/whisper.in`. Pin `torch` to a `+cpu` local version — PyPI CUDA wheels win resolution regardless of index order. OpenAI Whisper does not use `torchaudio`, and the CPU index can lag torch |
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | Installer build tools | `[dependency-groups].installer-build` exports to `requirements/installer-build.txt`. Bootstrap uses hashed wheels on new and reused venvs; source builds use these tools without build isolation. Its setuptools `>=83` floor keeps the pinned installer tools patched; do not add it to `[build-system]` (Arch). Backend rebuilds select pywhispercpp's complete hash block from `runtime.txt` via `scripts/installer_requirements.py`, with `--no-deps` so they cannot replace the runtime |
+| Release build tools | `[dependency-groups].release-build` exports to `requirements/release-build.txt`. `scripts/build_reproducible_wheel.py` builds in two fresh source trees/venvs with hashed tools and `--no-isolation`, compares wheel bytes, and stages only canonical distributions in `dist/`. These build-only venvs exclude system site-packages: host setuptools plugins must not influence locked builds, and packaging does not import GTK. Repeat runs clean recognized diagnostics and staged archives matching retained canonical digests; staged copies are deleted first so interrupted cleanup remains retryable. Unrelated/modified files are preserved and block cleanup. Never wipe all of `build/`. PR and release CI use Python 3.11 and pinned uv. Failed build outputs/logs stay under `build/reproducible-wheel/`, excluded from release artifacts |
 | Installer Whisper export | Compiled universally from Python 3.11, constrained by `runtime.txt` and `installer-build.txt` to keep shared pins consistent. Uses a `+cpu` torch pin and best-match index resolution so the CPU index's older copies of shared packages do not downgrade the runtime |
 | Remote installer | After cloning, hand off to the tagged `install.sh` with the original arguments and remote venv path. The installer and its exports must come from the same revision, including when the tag predates the pinned installer |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
@@ -227,7 +229,7 @@ Site-only work: `web/AGENTS.md` (commands, layout map). Product claims: `web/PRO
 
 ## Runtime (any Linux dev machine)
 
-- Create venvs with `--system-site-packages`. Do not drop that flag
+- Create runtime/dev venvs with `--system-site-packages`. Build-only venvs in `scripts/build_reproducible_wheel.py` are the exception: exclude host packages to keep the release toolchain isolated
 - Kill the app by PID, never `pkill -f vocalinux` (matches editors, shells, and cwd paths)
 - Stale instance: `$XDG_DATA_HOME/vocalinux/instance.lock` (default `~/.local/share/vocalinux/instance.lock`)
 - Default dictation shortcut: hold Right Alt (push-to-talk). Existing `~/.config/vocalinux/config.json` wins

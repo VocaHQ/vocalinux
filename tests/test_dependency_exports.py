@@ -128,6 +128,20 @@ def test_build_system_setuptools_accepts_arch_extra() -> None:
     assert ">=77" in setuptools_req.replace(" ", "")
 
 
+def test_release_build_tools_have_a_complete_hash_pinned_export() -> None:
+    """Release tools must be regenerated from the lock, not independently resolved."""
+    tools = set(_requirement_names(_pyproject()["dependency-groups"]["release-build"]))
+    assert {"build", "setuptools", "wheel", "twine"} <= tools
+    export = REQUIREMENTS / "release-build.txt"
+    assert tools <= _exported_names(export)
+    pins = _pinned_hash_counts(export)
+    assert pins and all(hashes for _, hashes in pins)
+    assert any(
+        "--only-group release-build" in line and "-o requirements/release-build.txt" in line
+        for line in JUSTFILE.read_text(encoding="utf-8").splitlines()
+    )
+
+
 def test_the_dev_export_requests_every_group_it_needs() -> None:
     """The export line has to name the lint group, not just the dev extra."""
     line = next(

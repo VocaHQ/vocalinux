@@ -174,11 +174,17 @@ remote-install-gate distro="debian:12":
 verify-release tag="":
     python3 scripts/verify_release.py {{tag}}
 
+# Build in two clean environments, compare wheels, then stage canonical dist/.
+# PYTHON selects the build interpreter (CI uses the supported floor, 3.11).
+reproducible-wheel:
+    python3 scripts/build_reproducible_wheel.py --python "${PYTHON:-python3}"
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch +cpu pin in requirements/whisper.in when you want a newer
 # CPU build. OpenAI Whisper does not use torchaudio, whose CPU index can lag.
 lock:
     uv lock
+    uv export --only-group release-build --no-emit-project -o requirements/release-build.txt
     uv export --only-group installer-build --no-emit-project -o requirements/installer-build.txt
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt

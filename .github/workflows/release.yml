@@ -39,10 +39,10 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
 
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install build wheel setuptools
+      - name: Set up pinned uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.23'
 
       - name: Extract version from tag
         id: get_version
@@ -63,22 +63,20 @@ jobs:
             echo "Warning: Version mismatch between tag ($TAG_VERSION) and package ($PACKAGE_VERSION)"
           fi
 
-      # Archive timestamps are what made two builds of one tag differ. Pinned to
-      # the tagged commit, re-running this workflow reproduces the bytes we
-      # published, so a checksum stays true for the life of the release.
-      - name: Pin the build timestamp to the tagged commit
-        run: |
-          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct "$GITHUB_SHA")" >> "$GITHUB_ENV"
+      # Two independent builds verify reproducibility, but only the canonical
+      # distributions enter dist/. Every publisher consumes those same bytes.
+      # The script pins SOURCE_DATE_EPOCH, verifies exports, installs the hashed
+      # toolchain, builds without isolation and runs twine check --strict.
+      - name: Build and verify reproducible wheel
+        run: python scripts/build_reproducible_wheel.py --python "$(command -v python)"
 
-      # The only `python -m build` in this workflow. PyPI, the aarch64 AppImage
-      # and the checksums all consume the artifact below, so the wheel on PyPI
-      # is the wheel on the release. It used to be built three times, on three
-      # runners, and nothing guaranteed the three agreed.
-      - name: Build package
-        run: |
-          python -m build
-          echo "Built packages:"
-          ls -la dist/
+      - name: Preserve failed wheel builds and diagnostics
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: wheel-reproducibility-diagnostics
+          path: build/reproducible-wheel/
+          retention-days: 7
 
       - name: Upload the built distributions
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -797,7 +795,7 @@ jobs:
     # artifacts, which exist regardless of whether an upload to the release
     # succeeded. A missing build artifact still fails the job via the guard
     # below, so a partial manifest can never publish.
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' }}
     permissions:
       contents: write
       id-token: write
@@ -806,6 +804,8 @@ jobs:
       - name: Collect every artifact this run published
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          # Verification-only artifacts must never enter the release manifest.
+          pattern: '@(python-dist|appimage-*|native-*|flatpak-*|snap-amd64)'
           merge-multiple: true
           path: dist
 
@@ -864,17 +864,8 @@ jobs:
           name: python-dist
           path: dist
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Verify package
-        run: |
-          python -m pip install --upgrade pip
-          pip install twine
-          twine check dist/*
-
+      # twine check --strict already ran with the locked release toolchain
+      # before these exact distributions were uploaded by build-and-release.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
         with:
@@ -1046,7 +1037,7 @@ jobs:
 
   publish-snap:
     name: Publish Snap to Store
-    needs: build-snap
+    needs: [build-snap, build-and-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
