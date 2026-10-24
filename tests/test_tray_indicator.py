@@ -1417,6 +1417,24 @@ class TestIndicatorBackendWiring(TestTrayIndicator):
         raw.set_actions.assert_called_once()
         raw.set_icon_theme_path.assert_called()
 
+    def test_flatpak_glib_backend_creates_indicator_without_icon_path(self):
+        from vocalinux.ui.tray_menu_model import GMenuIndicator
+
+        raw = MagicMock(name="raw-indicator")
+        with (
+            patch("vocalinux.ui.tray_indicator.INDICATOR_USES_GMENU", True),
+            patch(
+                "vocalinux.ui.tray_indicator.AppIndicator.Indicator.new", return_value=raw
+            ) as new,
+            patch("vocalinux.ui.tray_indicator.FLATPAK_ID", "com.vocalinux.Vocalinux"),
+        ):
+            self.tray_indicator._init_indicator()
+
+        new.assert_called_once()
+        self.assertIsInstance(self.tray_indicator.indicator, GMenuIndicator)
+        raw.set_icon_theme_path.assert_not_called()
+        raw.set_menu.assert_called_once()
+
     def test_gtk3_backend_uses_indicator_directly(self):
         raw = self._init_with_backend(uses_gmenu=False)
 

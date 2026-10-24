@@ -227,3 +227,76 @@ def test_gmenu_indicator_adapts_gtk3_calls():
 
 def test_refresh_before_set_menu_is_a_no_op():
     GMenuIndicator(MagicMock(), FakeGio).refresh_menu()
+
+
+def _action_names(menu: FakeGioMenu) -> dict[str, str]:
+    """Map each top-level item label to its action name."""
+    return {
+        label: payload.split(".", 1)[1]
+        for section in _sections(menu)
+        for kind, label, payload in section
+        if kind == "item"
+    }
+
+
+def _first_submenu_action(menu: FakeGioMenu) -> str:
+    submenu = _sections(menu)[0][0][2]
+    return str(_sections(submenu)[0][0][2]).split(".", 1)[1]
+
+
+def test_hiding_an_item_never_hands_its_action_to_a_neighbour():
+    """A click from the previous menu reaches its own item or nothing."""
+    cancel = FakeMenuItem("Cancel")
+    transcribe = FakeMenuItem("Transcribe Audio File…")
+    bridge = MenuModelBridge(FakeMenu(FakeMenuItem("Start"), cancel, transcribe), FakeGio)
+    before = _action_names(bridge.menu_model)
+    stale_cancel = bridge.action_group.actions[before["Cancel"]]
+
+    cancel.visible = False
+    bridge.sync()
+
+    assert _action_names(bridge.menu_model) == {
+        "Start": before["Start"],
+        "Transcribe Audio File…": before["Transcribe Audio File…"],
+    }
+    assert before["Cancel"] not in bridge.action_group.actions
+    stale_cancel.activate()
+    assert (cancel.activations, transcribe.activations) == (0, 0)
+
+    cancel.visible = True
+    bridge.sync()
+    assert _action_names(bridge.menu_model)["Cancel"] == before["Cancel"]
+
+
+def test_rebuilt_submenu_items_get_fresh_names():
+    old = FakeMenuItem("old snippet")
+    history = FakeMenuItem("Recent Snippets", submenu=FakeMenu(old))
+    bridge = MenuModelBridge(FakeMenu(history), FakeGio)
+    old_name = _first_submenu_action(bridge.menu_model)
+    stale = bridge.action_group.actions[old_name]
+
+    new = FakeMenuItem("new snippet")
+    history.submenu = FakeMenu(new)
+    bridge.sync()
+    new_name = _first_submenu_action(bridge.menu_model)
+
+    assert new_name != old_name
+    assert old_name not in bridge.action_group.actions
+    stale.activate()
+    assert (old.activations, new.activations) == (0, 0)
+    bridge.action_group.actions[new_name].activate()
+    assert new.activations == 1
+
+
+def test_activation_ignores_items_changed_since_the_last_sync():
+    cancel = FakeMenuItem("Cancel")
+    stop = FakeMenuItem("Stop")
+    bridge = MenuModelBridge(FakeMenu(cancel, stop), FakeGio)
+    names = _action_names(bridge.menu_model)
+
+    cancel.visible = False
+    stop.sensitive = False
+    bridge.action_group.actions[names["Cancel"]].activate()
+    bridge.action_group.actions[names["Stop"]].activate()
+
+    assert (cancel.activations, stop.activations) == (0, 0)

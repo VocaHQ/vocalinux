@@ -35,7 +35,11 @@ class MenuModelBridge:
 
     Hidden items are left out, separators start a new section, submenus are
     mirrored recursively, and item sensitivity maps to action enabled state.
-    Call :meth:`sync` after changing the Gtk menu.
+    Each Gtk item keeps one action name for as long as it stays in the menu,
+    and a name is never handed to another item: a tray host can deliver a
+    click from the menu it rendered before the last :meth:`sync`, and that
+    click must reach the item it showed or nothing. Call :meth:`sync` after
+    changing the Gtk menu.
     """
 
     def __init__(self, gtk_menu: Any, gio: Any) -> None:
@@ -44,13 +48,18 @@ class MenuModelBridge:
         self.menu_model = gio.Menu()
         self.action_group = gio.SimpleActionGroup()
         self._items: dict[str, Any] = {}
+        self._names: dict[Any, str] = {}
+        self._next_name = 0
         self._layout: Optional[_Layout] = None
         self.sync()
 
     def sync(self) -> None:
         """Bring the menu model and actions in line with the Gtk menu."""
         items: dict[str, Any] = {}
-        layout = self._describe(self._gtk_menu, items)
+        names: dict[Any, str] = {}
+        layout = self._describe(self._gtk_menu, items, names)
+        # Items that left the menu lose their name for good.
+        self._names = names
 
         for name, item in items.items():
             action = self.action_group.lookup_action(name)
@@ -70,28 +79,42 @@ class MenuModelBridge:
             self._fill(self.menu_model, layout)
             self._layout = layout
 
-    def _describe(self, gtk_menu: Any, items: dict[str, Any]) -> _Layout:
-        """Snapshot the visible structure of ``gtk_menu``, naming each leaf action."""
+    def _describe(self, gtk_menu: Any, items: dict[str, Any], names: dict[Any, str]) -> _Layout:
+        """Snapshot the visible structure of ``gtk_menu``, naming each leaf action.
+
+        ``items`` collects the visible leaves by action name; ``names`` collects
+        every leaf still in the menu, hidden ones included, so an item that is
+        hidden and shown again keeps its name.
+        """
         sections: list[tuple[tuple[str, Any, Any], ...]] = []
         current: list[tuple[str, Any, Any]] = []
         for item in gtk_menu.get_children():
+            submenu = item.get_submenu()
+            leaf = submenu is None and not _is_separator(item)
+            if leaf:
+                names[item] = self._action_name(item)
             if not item.get_visible():
                 continue
-            if _is_separator(item):
+            if submenu is not None:
+                current.append(("submenu", item.get_label(), self._describe(submenu, items, names)))
+            elif leaf:
+                items[names[item]] = item
+                current.append(("item", item.get_label(), names[item]))
+            else:
                 if current:
                     sections.append(tuple(current))
                 current = []
-                continue
-            submenu = item.get_submenu()
-            if submenu is not None:
-                current.append(("submenu", item.get_label(), self._describe(submenu, items)))
-                continue
-            name = f"item-{len(items)}"
-            items[name] = item
-            current.append(("item", item.get_label(), name))
         if current:
             sections.append(tuple(current))
         return tuple(sections)
+
+    def _action_name(self, item: Any) -> str:
+        """Return ``item``'s action name, assigning a never-used one on first sight."""
+        name = self._names.get(item)
+        if name is None:
+            name = f"item-{self._next_name}"
+            self._next_name += 1
+        return name
 
     def _fill(self, menu: Any, layout: _Layout) -> None:
         """Append ``layout`` to ``menu`` as one section per Gtk separator group."""
@@ -111,6 +134,9 @@ class MenuModelBridge:
         item = self._items.get(name)
         if item is None:
             logger.debug("Tray action %s no longer maps to a menu item", name)
+            return
+        if not item.get_visible() or not item.get_sensitive():
+            logger.debug("Tray action %s targets a hidden or disabled item", name)
             return
         item.activate()
 
