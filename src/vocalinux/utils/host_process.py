@@ -20,6 +20,11 @@ from typing import Dict, Mapping, Optional
 _KEEP = ("APPDIR", "APPIMAGE")
 
 
+def running_from_appimage() -> bool:
+    """True when this process runs from the AppImage bundle (``APPDIR`` set)."""
+    return bool(os.environ.get("APPDIR"))
+
+
 def _points_into(value: str, appdir: str) -> bool:
     if not value:
         return False
