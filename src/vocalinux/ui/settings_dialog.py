@@ -71,6 +71,7 @@ from ..utils.proxy import (  # noqa: E402
     normalize_proxy_protocol,
     requests_proxies,
 )
+from ..utils.snap import SNAP_GPU_NOTE, running_in_snap  # noqa: E402
 from ..utils.system_language import (  # noqa: E402
     LANGUAGE_FOLLOWS_LAYOUT,
     language_for_active_layout,
@@ -6587,6 +6588,8 @@ class SettingsDialog(AboutSectionMixin):
 
     def _gpu_acceleration_subtitle(self) -> str:
         """Describe whether the bundled pywhispercpp can use the GPU picker."""
+        if running_in_snap():
+            return SNAP_GPU_NOTE
         try:
             from ..speech_recognition.recognition_manager import detect_pywhispercpp_gpu_backend
 
