@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from gi.repository import Gtk
+    from gi.repository import Gdk, Gtk
 
 from ..common_types import RecognitionState
 
@@ -255,7 +255,7 @@ class DictationOverlay:
         self._on_realize(widget)
         return False
 
-    def _on_delete_event(self, widget, event) -> bool:
+    def _on_delete_event(self, widget: Gtk.Widget, event: Gdk.Event) -> bool:
         """Refuse close requests from the dock or taskbar.
 
         On Wayland without layer shell the overlay is a regular toplevel, so
