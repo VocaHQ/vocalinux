@@ -36,6 +36,11 @@ gi.require_version("Gdk", "3.0")
 # Need GLib for idle_add
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from ..audio.pulse_sources import (  # noqa: E402
+    is_pulse_device_index,
+    pulse_label_for_name,
+    pulse_source_name_for_label,
+)
 from ..common_types import (  # noqa: E402
     RecognitionState,
     SpeechRecognitionManagerProtocol,
@@ -209,13 +214,25 @@ def _resolve_audio_device_selection(
 
     Returns the matched device index, or None when the saved device is gone
     (caller should fall back to System Default).
+
+    A snap PulseAudio source is saved by its server name, which the list does
+    not show, so it is matched through the source's current label. A named
+    snap source is never matched by index: positions shift as sources come
+    and go, so the index may now belong to a different microphone.
     """
     saved_raw_name = _raw_audio_device_name(saved_name)
+    named_pulse_source = bool(saved_raw_name) and is_pulse_device_index(saved_index)
+    if named_pulse_source:
+        live_label = pulse_label_for_name(saved_raw_name)
+        if live_label:
+            for idx, name, _is_default in devices:
+                if name == live_label and is_pulse_device_index(idx):
+                    return int(idx)
     if saved_raw_name:
         for idx, name, _is_default in devices:
             if name == saved_raw_name:
                 return int(idx)
-    if saved_index is not None:
+    if saved_index is not None and not named_pulse_source:
         for idx, _name, _is_default in devices:
             if idx == saved_index:
                 return saved_index
@@ -9851,6 +9868,9 @@ For now, the engine has been reverted to VOSK."""
         device_index = int(device_id)
         device_label = self.audio_device_combo.get_active_text()
         device_name = _raw_audio_device_name(device_label)
+        if is_pulse_device_index(device_index):
+            # Save the stable server name; the label changes as devices come and go.
+            device_name = pulse_source_name_for_label(device_name) or device_name
 
         if device_index == -1:
             self.config_manager.set("audio", "device_index", None)

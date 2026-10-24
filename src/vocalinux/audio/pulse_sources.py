@@ -10,7 +10,13 @@ through ``pulseaudio-utils``) lists them, and libpulse connects a client that
 asks for the default device to the source named by ``PULSE_SOURCE``. The ALSA
 pulse plugin creates a fresh libpulse context on every open, so setting that
 variable around one PortAudio open of the default device routes that stream to
-the chosen source without touching the system-wide default.
+the chosen source without touching the system-wide default. The variable is
+process-wide, so inside the snap every PortAudio open holds one lock for the
+whole set/open/restore scope.
+
+A saved choice is the source's server name, not its display label: labels
+change when another source with the same description comes or goes, names do
+not.
 
 Outside a snap PortAudio enumerates the hardware itself, so every entry point
 here is inert.
@@ -23,6 +29,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Callable, Iterator, List, Mapping, Optional, Tuple, cast
@@ -41,6 +48,11 @@ PULSE_INDEX_BASE = PIPEWIRE_INDEX_FLOOR - 1
 PULSE_SOURCE_ENV = "PULSE_SOURCE"
 
 _COMMAND_TIMEOUT_SECONDS = 3.0
+
+#: Held around every PortAudio open inside the snap. Settings' audio test and
+#: dictation open streams on different threads; without it one open could see
+#: the other's PULSE_SOURCE, and interleaved restores could leave it set.
+_PULSE_OPEN_LOCK = threading.RLock()
 
 CommandResult = Tuple[int, str, str]
 CommandRunner = Callable[[List[str]], CommandResult]
@@ -238,7 +250,9 @@ def resolve_pulse_source(
 ) -> Optional[PulseSource]:
     """Resolve a stored selection to a live PulseAudio source.
 
-    A stored name that no longer matches returns ``None`` rather than falling
+    ``device_name`` is the source's server name, which Settings saves; a
+    display label (what the device list shows) is accepted as a fallback. A
+    stored name that no longer matches returns ``None`` rather than falling
     back to the index position: positions shift as devices come and go, and
     guessing wrong would record from a different microphone.
     """
@@ -247,6 +261,9 @@ def resolve_pulse_source(
     if sources is None:
         sources = get_pulse_sources()
     if device_name:
+        for source in sources:
+            if source.name == device_name:
+                return source
         for source in sources:
             if source.display_name == device_name:
                 return source
@@ -257,22 +274,62 @@ def resolve_pulse_source(
     return None
 
 
+def pulse_source_name_for_label(
+    label: Optional[str], sources: Optional[List[PulseSource]] = None
+) -> Optional[str]:
+    """Return the server name of the live source shown as ``label``, if any.
+
+    Settings stores this instead of the label so the choice survives label
+    changes (e.g. ``USB Audio (mic_a)`` becoming ``USB Audio`` once a second
+    ``USB Audio`` microphone is unplugged).
+    """
+    if not label:
+        return None
+    if sources is None:
+        sources = get_pulse_sources()
+    for source in sources:
+        if source.display_name == label:
+            return source.name
+    return None
+
+
+def pulse_label_for_name(
+    source_name: Optional[str], sources: Optional[List[PulseSource]] = None
+) -> Optional[str]:
+    """Return the current display label of the live source named ``source_name``."""
+    if not source_name:
+        return None
+    if sources is None:
+        sources = get_pulse_sources()
+    for source in sources:
+        if source.name == source_name:
+            return source.display_name
+    return None
+
+
 @contextmanager
 def pulse_source_env(source_name: Optional[str]) -> Iterator[None]:
     """Point libpulse's default capture source at ``source_name`` for one open.
 
-    Restores the previous value afterwards. ``None`` leaves the environment
-    alone, so callers can wrap every open unconditionally.
+    This is the only place that sets ``PULSE_SOURCE``. Inside the snap the
+    whole scope holds ``_PULSE_OPEN_LOCK``, including opens with ``None``, so
+    a System Default open never inherits another thread's choice. The previous
+    value is restored afterwards. Outside the snap ``None`` is a no-op, so
+    callers can wrap every open unconditionally.
     """
-    if not source_name:
+    if not source_name and not running_in_snap():
         yield
         return
-    previous = os.environ.get(PULSE_SOURCE_ENV)
-    os.environ[PULSE_SOURCE_ENV] = source_name
-    try:
-        yield
-    finally:
-        if previous is None:
-            os.environ.pop(PULSE_SOURCE_ENV, None)
-        else:
-            os.environ[PULSE_SOURCE_ENV] = previous
+    with _PULSE_OPEN_LOCK:
+        if not source_name:
+            yield
+            return
+        previous = os.environ.get(PULSE_SOURCE_ENV)
+        os.environ[PULSE_SOURCE_ENV] = source_name
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(PULSE_SOURCE_ENV, None)
+            else:
+                os.environ[PULSE_SOURCE_ENV] = previous

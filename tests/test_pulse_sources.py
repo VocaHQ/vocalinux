@@ -6,7 +6,9 @@ and the snap's CPU-only whisper.cpp reporting.
 import importlib
 import json
 import os
+import subprocess
 import sys
+import threading
 from typing import Dict, List, Optional
 from unittest.mock import MagicMock, patch
 
@@ -25,9 +27,12 @@ from vocalinux.audio.pulse_sources import (
     PulseSource,
     _parse_pactl_json,
     _parse_pactl_text,
+    _run_pactl,
     get_pulse_sources,
     is_pulse_device_index,
+    pulse_label_for_name,
     pulse_source_env,
+    pulse_source_name_for_label,
     resolve_pulse_source,
 )
 from vocalinux.utils import whispercpp_model_info
@@ -125,6 +130,43 @@ class TestPactlParsing:
         ]
 
 
+class TestPactlEdgeCases:
+    def test_json_tolerates_malformed_entries(self) -> None:
+        entries = [
+            "not a dict",
+            {"description": "no name"},
+            {"index": "x", "name": "mic_a", "description": "Mic", "monitor_of_sink": ""},
+            {"index": 3, "name": "mic_b", "monitor_of_sink": "speakers"},
+        ]
+        assert _parse_pactl_json(json.dumps({"not": "a list"})) is None
+        sources = _parse_pactl_json(json.dumps(entries))
+        assert sources == [PulseSource(name="mic_a", description="Mic", index=0)]
+
+    def test_text_tolerates_preamble_nameless_and_bad_index_blocks(self) -> None:
+        text = (
+            "stray line before any source\n"
+            "Source #x\n\tName: mic_a\n\tDescription: Mic\n\tMonitor of Sink: n/a\n"
+            "Source #7\n\tDescription: no name\n"
+        )
+        assert _parse_pactl_text(text) == [PulseSource(name="mic_a", description="Mic", index=0)]
+
+    def test_default_lookup_failure_still_lists_sources(self) -> None:
+        def runner(args: List[str]):
+            if args[-1] == "get-default-source":
+                raise subprocess.TimeoutExpired(args, 3)
+            return 0, json.dumps(PACTL_JSON), ""
+
+        sources = get_pulse_sources(runner=runner, which=_have_pactl, environ=SNAP_ENV)
+        assert len(sources) == 2
+        assert not any(source.is_default for source in sources)
+
+    def test_run_pactl_uses_the_c_locale_and_host_env(self) -> None:
+        completed = subprocess.CompletedProcess(["pactl"], 0, stdout="ok", stderr=None)
+        with patch("vocalinux.audio.pulse_sources.subprocess.run", return_value=completed) as run:
+            assert _run_pactl(["pactl", "info"]) == (0, "ok", "")
+        assert run.call_args.kwargs["env"]["LC_ALL"] == "C"
+
+
 class TestGetPulseSources:
     def test_inert_outside_snap(self) -> None:
         runner = MagicMock()
@@ -218,6 +260,57 @@ class TestResolvePulseSource:
     def test_non_pulse_index_is_ignored(self) -> None:
         assert resolve_pulse_source(0, "Yeti", self.sources) is None
 
+    def test_resolves_by_server_name_before_the_label(self) -> None:
+        assert resolve_pulse_source(PULSE_INDEX_BASE, "mic_b", self.sources) is self.sources[1]
+
+
+def _usb_listing(*names: str) -> List[PulseSource]:
+    """List same-description microphones the way pactl reports them."""
+    entries = [
+        {"index": position, "name": name, "description": "USB Audio"}
+        for position, name in enumerate(names, start=1)
+    ]
+    runner = _runner(
+        {
+            "pactl -f json list sources": (0, json.dumps(entries), ""),
+            "pactl get-default-source": (0, names[0], ""),
+        }
+    )
+    return get_pulse_sources(runner=runner, which=_have_pactl, environ=SNAP_ENV)
+
+
+class TestSavedChoiceSurvivesLabelChanges:
+    """Unplugging one of two same-named microphones relabels the other (#1018 review)."""
+
+    def test_label_changes_when_the_twin_is_unplugged(self) -> None:
+        before = _usb_listing("mic_a", "mic_b")
+        after = _usb_listing("mic_a")
+        assert before[0].display_name == "USB Audio (mic_a)"
+        assert after[0].display_name == "USB Audio"
+
+    def test_saved_server_name_still_resolves_after_unplug(self) -> None:
+        before = _usb_listing("mic_a", "mic_b")
+        saved = pulse_source_name_for_label("USB Audio (mic_a)", before)
+        assert saved == "mic_a"
+
+        after = _usb_listing("mic_a")
+        resolved = resolve_pulse_source(PULSE_INDEX_BASE, saved, after)
+        assert resolved is not None and resolved.name == "mic_a"
+        assert pulse_label_for_name(saved, after) == "USB Audio"
+
+    def test_helpers_return_none_for_unknown_or_empty_input(self) -> None:
+        sources = _usb_listing("mic_a")
+        assert pulse_source_name_for_label(None, sources) is None
+        assert pulse_source_name_for_label("Unplugged", sources) is None
+        assert pulse_label_for_name(None, sources) is None
+        assert pulse_label_for_name("mic_z", sources) is None
+
+    def test_helpers_query_the_server_when_no_listing_is_given(self) -> None:
+        sources = _usb_listing("mic_a")
+        with patch("vocalinux.audio.pulse_sources.get_pulse_sources", return_value=sources):
+            assert pulse_source_name_for_label("USB Audio") == "mic_a"
+            assert pulse_label_for_name("mic_a") == "USB Audio"
+
 
 class TestPulseSourceEnv:
     def test_sets_and_removes(self) -> None:
@@ -237,6 +330,61 @@ class TestPulseSourceEnv:
         with patch.dict(os.environ, {PULSE_SOURCE_ENV: "user_choice"}):
             with pulse_source_env(None):
                 assert os.environ[PULSE_SOURCE_ENV] == "user_choice"
+
+    def test_snap_opens_are_serialized_across_threads(self) -> None:
+        """A System Default open never sees another thread's PULSE_SOURCE (#1018 review)."""
+        inside_first = threading.Event()
+        release_first = threading.Event()
+        seen: Dict[str, Optional[str]] = {}
+
+        def choose_mic() -> None:
+            with pulse_source_env("mic_b"):
+                inside_first.set()
+                release_first.wait(timeout=5)
+
+        def open_default() -> None:
+            with pulse_source_env(None):
+                seen["default"] = os.environ.get(PULSE_SOURCE_ENV)
+
+        with patch.dict(os.environ, SNAP_ENV):
+            os.environ.pop(PULSE_SOURCE_ENV, None)
+            first = threading.Thread(target=choose_mic)
+            first.start()
+            assert inside_first.wait(timeout=5)
+            second = threading.Thread(target=open_default)
+            second.start()
+            second.join(timeout=0.2)
+            assert second.is_alive(), "System Default open ran inside another open's scope"
+            release_first.set()
+            first.join(timeout=5)
+            second.join(timeout=5)
+            leaked = os.environ.get(PULSE_SOURCE_ENV)
+
+        assert seen == {"default": None}
+        assert leaked is None
+
+    def test_overlapping_scopes_always_restore_the_environment(self) -> None:
+        barrier = threading.Barrier(8)
+        wrong: List[str] = []
+
+        def open_with(name: str) -> None:
+            barrier.wait(timeout=5)
+            for _ in range(50):
+                with pulse_source_env(name):
+                    if os.environ.get(PULSE_SOURCE_ENV) != name:
+                        wrong.append(name)
+
+        with patch.dict(os.environ, SNAP_ENV):
+            os.environ.pop(PULSE_SOURCE_ENV, None)
+            threads = [threading.Thread(target=open_with, args=(f"mic_{n % 2}",)) for n in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+            leaked = os.environ.get(PULSE_SOURCE_ENV)
+
+        assert wrong == []
+        assert leaked is None
 
 
 def _pyaudio_with_one_mic():
@@ -371,6 +519,67 @@ class TestSnapGpuReporting:
             subtitle = settings_dialog.SettingsDialog._gpu_acceleration_subtitle(MagicMock())
         assert subtitle == SNAP_GPU_NOTE
         probe.assert_not_called()
+
+
+class TestSettingsPersistsServerName:
+    """Settings saves the stable source name and finds it again after relabels."""
+
+    def test_selection_after_unplug_matches_the_relabelled_source(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        after = _usb_listing("mic_a")
+        devices = [(0, "Webcam", False), (PULSE_INDEX_BASE, "USB Audio", True)]
+        with patch.object(
+            settings_dialog,
+            "pulse_label_for_name",
+            side_effect=lambda name: pulse_label_for_name(name, after),
+        ):
+            matched = settings_dialog._resolve_audio_device_selection(
+                devices, PULSE_INDEX_BASE - 1, "mic_a"
+            )
+        assert matched == PULSE_INDEX_BASE
+
+    def test_gone_source_is_not_matched_by_its_old_position(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        devices = [(PULSE_INDEX_BASE, "USB Audio", True)]  # now mic_b
+        with patch.object(settings_dialog, "pulse_label_for_name", return_value=None):
+            matched = settings_dialog._resolve_audio_device_selection(
+                devices, PULSE_INDEX_BASE, "mic_a"
+            )
+        assert matched is None
+
+    def test_non_pulse_selection_keeps_label_matching(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        devices = [(0, "Webcam", False), (1, "Yeti", False)]
+        with patch.object(settings_dialog, "pulse_label_for_name") as lookup:
+            matched = settings_dialog._resolve_audio_device_selection(devices, 3, "Yeti")
+        assert matched == 1
+        lookup.assert_not_called()
+
+    def _choose(self, settings_dialog, device_id: str, label: str, sources) -> MagicMock:
+        dialog = MagicMock(_initializing=False)
+        dialog.audio_device_combo.get_active_id.return_value = device_id
+        dialog.audio_device_combo.get_active_text.return_value = label
+        with patch.object(
+            settings_dialog,
+            "pulse_source_name_for_label",
+            side_effect=lambda text: pulse_source_name_for_label(text, sources),
+        ):
+            settings_dialog.SettingsDialog._on_audio_device_changed(dialog, None)
+        return dialog
+
+    def test_choosing_a_snap_source_saves_its_server_name(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        before = _usb_listing("mic_a", "mic_b")
+        dialog = self._choose(
+            settings_dialog, str(PULSE_INDEX_BASE), "USB Audio (mic_a) (default)", before
+        )
+        dialog.config_manager.set.assert_any_call("audio", "device_name", "mic_a")
+        dialog.speech_engine.set_audio_device.assert_called_once_with(PULSE_INDEX_BASE, "mic_a")
+
+    def test_choosing_a_portaudio_device_saves_its_label(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = self._choose(settings_dialog, "1", "Yeti", [])
+        dialog.config_manager.set.assert_any_call("audio", "device_name", "Yeti")
 
 
 def _load_settings_dialog():
