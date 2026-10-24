@@ -37,9 +37,11 @@ gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
 from ..audio.pulse_sources import (  # noqa: E402
+    PULSE_INDEX_BASE,
+    PulseSource,
+    get_pulse_sources,
     is_pulse_device_index,
     pulse_label_for_name,
-    pulse_source_name_for_label,
 )
 from ..common_types import (  # noqa: E402
     RecognitionState,
@@ -209,6 +211,7 @@ def _resolve_audio_device_selection(
     devices: list,
     saved_index: Optional[int],
     saved_name: Optional[str],
+    pulse_sources: Optional[list[PulseSource]] = None,
 ) -> Optional[int]:
     """Resolve a saved audio device to a currently listed index.
 
@@ -218,12 +221,13 @@ def _resolve_audio_device_selection(
     A snap PulseAudio source is saved by its server name, which the list does
     not show, so it is matched through the source's current label. A named
     snap source is never matched by index: positions shift as sources come
-    and go, so the index may now belong to a different microphone.
+    and go, so the index may now belong to a different microphone. Pass the
+    ``pulse_sources`` that built ``devices`` to avoid listing them again.
     """
     saved_raw_name = _raw_audio_device_name(saved_name)
     named_pulse_source = bool(saved_raw_name) and is_pulse_device_index(saved_index)
     if named_pulse_source:
-        live_label = pulse_label_for_name(saved_raw_name)
+        live_label = pulse_label_for_name(saved_raw_name, pulse_sources)
         if live_label:
             for idx, name, _is_default in devices:
                 if name == live_label and is_pulse_device_index(idx):
@@ -2545,6 +2549,8 @@ class SettingsDialog(AboutSectionMixin):
         self._test_cancelled = False
         self._test_result = ""
         self._initializing = True  # Flag to prevent auto-apply during initialization
+        # Server name of each snap PulseAudio entry in the device dropdown.
+        self._pulse_source_names: dict[int, str] = {}
         self._populating_models = False  # Flag to prevent model change handler during population
         # Guards the simple-mode widgets while they are being pointed at the
         # live configuration, so syncing them does not look like a user edit.
@@ -9811,7 +9817,15 @@ For now, the engine has been reverted to VOSK."""
 
         self.audio_device_combo.append("-1", "System Default")
 
-        devices = get_audio_input_devices()
+        # List the snap's PulseAudio sources once and keep each entry's server
+        # name, so choosing a microphone never queries the sound server from
+        # the GTK thread. Empty outside the snap.
+        pulse_sources = get_pulse_sources()
+        self._pulse_source_names = {
+            PULSE_INDEX_BASE - position: source.name
+            for position, source in enumerate(pulse_sources)
+        }
+        devices = get_audio_input_devices(pulse_sources=pulse_sources)
 
         for device_index, device_name, is_default in devices:
             label = device_name
@@ -9826,7 +9840,7 @@ For now, the engine has been reverted to VOSK."""
             self.audio_device_combo.set_active_id("-1")
         else:
             matched_index = _resolve_audio_device_selection(
-                devices, saved_device, saved_device_name
+                devices, saved_device, saved_device_name, pulse_sources
             )
             if matched_index is not None:
                 self.audio_device_combo.set_active_id(str(matched_index))
@@ -9870,7 +9884,7 @@ For now, the engine has been reverted to VOSK."""
         device_name = _raw_audio_device_name(device_label)
         if is_pulse_device_index(device_index):
             # Save the stable server name; the label changes as devices come and go.
-            device_name = pulse_source_name_for_label(device_name) or device_name
+            device_name = self._pulse_source_names.get(device_index, device_name)
 
         if device_index == -1:
             self.config_manager.set("audio", "device_index", None)

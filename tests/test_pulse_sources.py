@@ -9,7 +9,8 @@ import os
 import subprocess
 import sys
 import threading
-from typing import Dict, List, Optional
+from types import ModuleType
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +33,6 @@ from vocalinux.audio.pulse_sources import (
     is_pulse_device_index,
     pulse_label_for_name,
     pulse_source_env,
-    pulse_source_name_for_label,
     resolve_pulse_source,
 )
 from vocalinux.utils import whispercpp_model_info
@@ -91,10 +91,15 @@ Source #52
 """
 
 
-def _runner(responses: Dict[str, tuple], calls: Optional[List[List[str]]] = None):
+CommandResult = Tuple[int, str, str]
+
+
+def _runner(
+    responses: Dict[str, CommandResult], calls: Optional[List[List[str]]] = None
+) -> Callable[[List[str]], CommandResult]:
     """Return a command runner answering by joined argv."""
 
-    def run(args: List[str]):
+    def run(args: List[str]) -> CommandResult:
         if calls is not None:
             calls.append(args)
         return responses[" ".join(args)]
@@ -151,7 +156,7 @@ class TestPactlEdgeCases:
         assert _parse_pactl_text(text) == [PulseSource(name="mic_a", description="Mic", index=0)]
 
     def test_default_lookup_failure_still_lists_sources(self) -> None:
-        def runner(args: List[str]):
+        def runner(args: List[str]) -> CommandResult:
             if args[-1] == "get-default-source":
                 raise subprocess.TimeoutExpired(args, 3)
             return 0, json.dumps(PACTL_JSON), ""
@@ -220,7 +225,7 @@ class TestGetPulseSources:
         assert [s.display_name for s in sources] == ["USB Audio (mic_a)", "USB Audio (mic_b)"]
 
     def test_server_errors_return_nothing(self) -> None:
-        def broken(_args: List[str]):
+        def broken(_args: List[str]) -> CommandResult:
             raise OSError("connection refused")
 
         assert get_pulse_sources(runner=broken, which=_have_pactl, environ=SNAP_ENV) == []
@@ -236,7 +241,7 @@ class TestIndexRanges:
         assert not is_pulse_device_index(PIPEWIRE_INDEX_FLOOR)
 
     @pytest.mark.parametrize("value", [None, True, -1, 0, 3, PIPEWIRE_INDEX_BASE])
-    def test_other_indices_are_not_pulse(self, value) -> None:
+    def test_other_indices_are_not_pulse(self, value: Optional[int]) -> None:
         assert not is_pulse_device_index(value)
 
 
@@ -290,8 +295,8 @@ class TestSavedChoiceSurvivesLabelChanges:
 
     def test_saved_server_name_still_resolves_after_unplug(self) -> None:
         before = _usb_listing("mic_a", "mic_b")
-        saved = pulse_source_name_for_label("USB Audio (mic_a)", before)
-        assert saved == "mic_a"
+        assert before[0].display_name == "USB Audio (mic_a)"
+        saved = before[0].name  # what Settings stores for that entry
 
         after = _usb_listing("mic_a")
         resolved = resolve_pulse_source(PULSE_INDEX_BASE, saved, after)
@@ -300,15 +305,12 @@ class TestSavedChoiceSurvivesLabelChanges:
 
     def test_helpers_return_none_for_unknown_or_empty_input(self) -> None:
         sources = _usb_listing("mic_a")
-        assert pulse_source_name_for_label(None, sources) is None
-        assert pulse_source_name_for_label("Unplugged", sources) is None
         assert pulse_label_for_name(None, sources) is None
         assert pulse_label_for_name("mic_z", sources) is None
 
     def test_helpers_query_the_server_when_no_listing_is_given(self) -> None:
         sources = _usb_listing("mic_a")
         with patch("vocalinux.audio.pulse_sources.get_pulse_sources", return_value=sources):
-            assert pulse_source_name_for_label("USB Audio") == "mic_a"
             assert pulse_label_for_name("mic_a") == "USB Audio"
 
 
@@ -387,7 +389,7 @@ class TestPulseSourceEnv:
         assert leaked is None
 
 
-def _pyaudio_with_one_mic():
+def _pyaudio_with_one_mic() -> Tuple[MagicMock, MagicMock]:
     mock_audio = MagicMock()
     mock_audio.get_device_count.return_value = 1
     mock_audio.get_default_input_device_info.return_value = {"index": 0, "name": "default"}
@@ -420,11 +422,24 @@ class TestCaptureIntegration:
             (PULSE_INDEX_BASE - 1, "Yeti", False),
         ]
 
-    def _open_recording_env(self, device_index, device_name, sources) -> tuple:
+    def test_device_list_reuses_a_listing_it_is_given(self) -> None:
+        _audio, mock_pyaudio = _pyaudio_with_one_mic()
+        with (
+            patch.dict(sys.modules, {"pyaudio": mock_pyaudio}),
+            patch("vocalinux.audio.capture.get_system_audio_sources", return_value=[]),
+            patch("vocalinux.audio.capture.get_pulse_sources") as listing,
+        ):
+            devices = get_audio_input_devices(pulse_sources=self.sources[1:])
+        listing.assert_not_called()
+        assert devices == [(PULSE_INDEX_BASE, "Yeti", False)]
+
+    def _open_recording_env(
+        self, device_index: int, device_name: str, sources: List[PulseSource]
+    ) -> Tuple[Dict[str, object], Optional[str]]:
         mock_audio, mock_pyaudio = _pyaudio_with_one_mic()
         seen: Dict[str, object] = {}
 
-        def fake_open(audio, index):
+        def fake_open(audio: Any, index: Optional[int]) -> Tuple[int, int, MagicMock]:
             seen["index"] = index
             seen["env"] = os.environ.get(PULSE_SOURCE_ENV)
             return 1, 16000, MagicMock()
@@ -461,7 +476,7 @@ class TestCaptureIntegration:
         stream.read.return_value = b"\x00\x10" * 1024
         seen: Dict[str, object] = {}
 
-        def fake_open(audio, index):
+        def fake_open(audio: Any, index: Optional[int]) -> Tuple[int, int, MagicMock]:
             seen["index"] = index
             seen["env"] = os.environ.get(PULSE_SOURCE_ENV)
             return 1, 16000, stream
@@ -490,7 +505,9 @@ class TestSnapGpuReporting:
         assert running_in_snap({"SNAP": "/snap/vocalinux/42"})
         assert not running_in_snap({})
 
-    def test_snap_reports_cpu_without_probing_host_gpu_tools(self, caplog) -> None:
+    def test_snap_reports_cpu_without_probing_host_gpu_tools(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         caplog.set_level("INFO", logger="vocalinux.utils.whispercpp_model_info")
         with (
             patch.dict(os.environ, SNAP_ENV),
@@ -528,23 +545,19 @@ class TestSettingsPersistsServerName:
         settings_dialog = _load_settings_dialog()
         after = _usb_listing("mic_a")
         devices = [(0, "Webcam", False), (PULSE_INDEX_BASE, "USB Audio", True)]
-        with patch.object(
-            settings_dialog,
-            "pulse_label_for_name",
-            side_effect=lambda name: pulse_label_for_name(name, after),
-        ):
+        with patch("vocalinux.audio.pulse_sources.get_pulse_sources") as listing:
             matched = settings_dialog._resolve_audio_device_selection(
-                devices, PULSE_INDEX_BASE - 1, "mic_a"
+                devices, PULSE_INDEX_BASE - 1, "mic_a", after
             )
         assert matched == PULSE_INDEX_BASE
+        listing.assert_not_called()
 
     def test_gone_source_is_not_matched_by_its_old_position(self) -> None:
         settings_dialog = _load_settings_dialog()
         devices = [(PULSE_INDEX_BASE, "USB Audio", True)]  # now mic_b
-        with patch.object(settings_dialog, "pulse_label_for_name", return_value=None):
-            matched = settings_dialog._resolve_audio_device_selection(
-                devices, PULSE_INDEX_BASE, "mic_a"
-            )
+        matched = settings_dialog._resolve_audio_device_selection(
+            devices, PULSE_INDEX_BASE, "mic_a", _usb_listing("mic_b")
+        )
         assert matched is None
 
     def test_non_pulse_selection_keeps_label_matching(self) -> None:
@@ -555,34 +568,71 @@ class TestSettingsPersistsServerName:
         assert matched == 1
         lookup.assert_not_called()
 
-    def _choose(self, settings_dialog, device_id: str, label: str, sources) -> MagicMock:
-        dialog = MagicMock(_initializing=False)
+    def _choose(
+        self,
+        settings_dialog: ModuleType,
+        device_id: str,
+        label: str,
+        names: Dict[int, str],
+    ) -> MagicMock:
+        dialog = MagicMock(_initializing=False, _pulse_source_names=names)
         dialog.audio_device_combo.get_active_id.return_value = device_id
         dialog.audio_device_combo.get_active_text.return_value = label
-        with patch.object(
-            settings_dialog,
-            "pulse_source_name_for_label",
-            side_effect=lambda text: pulse_source_name_for_label(text, sources),
+        # Choosing a microphone runs on the GTK thread: it must not query the server.
+        with (
+            patch.object(settings_dialog, "get_pulse_sources") as listing,
+            patch("vocalinux.audio.pulse_sources.get_pulse_sources") as module_listing,
         ):
             settings_dialog.SettingsDialog._on_audio_device_changed(dialog, None)
+        listing.assert_not_called()
+        module_listing.assert_not_called()
         return dialog
 
     def test_choosing_a_snap_source_saves_its_server_name(self) -> None:
         settings_dialog = _load_settings_dialog()
-        before = _usb_listing("mic_a", "mic_b")
+        names = {PULSE_INDEX_BASE: "mic_a", PULSE_INDEX_BASE - 1: "mic_b"}
         dialog = self._choose(
-            settings_dialog, str(PULSE_INDEX_BASE), "USB Audio (mic_a) (default)", before
+            settings_dialog, str(PULSE_INDEX_BASE), "USB Audio (mic_a) (default)", names
         )
         dialog.config_manager.set.assert_any_call("audio", "device_name", "mic_a")
         dialog.speech_engine.set_audio_device.assert_called_once_with(PULSE_INDEX_BASE, "mic_a")
 
     def test_choosing_a_portaudio_device_saves_its_label(self) -> None:
         settings_dialog = _load_settings_dialog()
-        dialog = self._choose(settings_dialog, "1", "Yeti", [])
+        dialog = self._choose(settings_dialog, "1", "Yeti", {})
         dialog.config_manager.set.assert_any_call("audio", "device_name", "Yeti")
 
+    def test_device_list_keeps_each_entry_server_name(self) -> None:
+        """Populating lists the server once and maps dropdown entries to names."""
+        settings_dialog = _load_settings_dialog()
+        sources = _usb_listing("mic_a", "mic_b")
+        dialog = MagicMock()
+        dialog.config_manager.get_optional_int.return_value = PULSE_INDEX_BASE - 1
+        dialog.config_manager.get.return_value = "mic_b"
+        devices = [
+            (PULSE_INDEX_BASE, sources[0].display_name, True),
+            (PULSE_INDEX_BASE - 1, sources[1].display_name, False),
+        ]
+        with (
+            patch.object(settings_dialog, "get_pulse_sources", return_value=sources) as listing,
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.get_audio_input_devices",
+                return_value=devices,
+            ) as get_devices,
+            patch("vocalinux.audio.pulse_sources.get_pulse_sources") as relisting,
+        ):
+            settings_dialog.SettingsDialog._populate_audio_devices(dialog)
+        listing.assert_called_once_with()
+        get_devices.assert_called_once_with(pulse_sources=sources)
+        relisting.assert_not_called()
+        assert dialog._pulse_source_names == {
+            PULSE_INDEX_BASE: "mic_a",
+            PULSE_INDEX_BASE - 1: "mic_b",
+        }
+        dialog.audio_device_combo.set_active_id.assert_called_with(str(PULSE_INDEX_BASE - 1))
 
-def _load_settings_dialog():
+
+def _load_settings_dialog() -> ModuleType:
     """Import settings_dialog with real GTK base classes so its methods are callable.
 
     Mirrors the helper in test_download_error_reporting.py and restores the

@@ -184,9 +184,14 @@ def _get_device_info_safe(audio: Any, device_index: Optional[int] = None) -> dic
         return {}
 
 
-def get_audio_input_devices() -> list:
+def get_audio_input_devices(pulse_sources: Optional[list[PulseSource]] = None) -> list:
     """
     Get a list of available audio input devices, excluding virtual devices.
+
+    Args:
+        pulse_sources: The snap's PulseAudio sources when the caller already
+            listed them (Settings keeps their server names with the entries);
+            listed here otherwise.
 
     Returns:
         List of tuples: (device_index, device_name, is_default)
@@ -244,7 +249,9 @@ def get_audio_input_devices() -> list:
     # Inside the snap PortAudio only reaches the sound server's default device,
     # so the server's own sources are listed too (#1011). Empty elsewhere.
     try:
-        for position, pulse_source in enumerate(get_pulse_sources()):
+        if pulse_sources is None:
+            pulse_sources = get_pulse_sources()
+        for position, pulse_source in enumerate(pulse_sources):
             devices.append(
                 (PULSE_INDEX_BASE - position, pulse_source.display_name, pulse_source.is_default)
             )

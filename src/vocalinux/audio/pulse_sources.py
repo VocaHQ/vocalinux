@@ -274,25 +274,6 @@ def resolve_pulse_source(
     return None
 
 
-def pulse_source_name_for_label(
-    label: Optional[str], sources: Optional[List[PulseSource]] = None
-) -> Optional[str]:
-    """Return the server name of the live source shown as ``label``, if any.
-
-    Settings stores this instead of the label so the choice survives label
-    changes (e.g. ``USB Audio (mic_a)`` becoming ``USB Audio`` once a second
-    ``USB Audio`` microphone is unplugged).
-    """
-    if not label:
-        return None
-    if sources is None:
-        sources = get_pulse_sources()
-    for source in sources:
-        if source.display_name == label:
-            return source.name
-    return None
-
-
 def pulse_label_for_name(
     source_name: Optional[str], sources: Optional[List[PulseSource]] = None
 ) -> Optional[str]:
