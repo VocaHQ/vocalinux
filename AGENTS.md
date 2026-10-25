@@ -91,7 +91,7 @@ just appimage      # build the AppImage in its pinned base image (needs docker)
 just appimage-boot fedora:42   # boot that AppImage in a distro container
 just native-packages  # build the .deb and .rpm in the pinned base image (needs docker)
 just native-smoke fedora:42  # install the built package in a distro container
-just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
+just aur-gate      # build canonical sdist + unchanged AUR fixture on current Arch (needs uv/docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
 just remote-install-gate debian:12  # remote curl|bash path end to end against HEAD (needs docker)
 just verify-release  # check a published release as published (needs gh)
@@ -127,6 +127,7 @@ Use **uv 0.13.3** for `just lock` and `just export-check`, matching CI. Other ve
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | Installer build tools | `[dependency-groups].installer-build` exports to `requirements/installer-build.txt`. Bootstrap uses hashed wheels on new and reused venvs; source builds use these tools without build isolation. Its setuptools `>=83` floor keeps the pinned installer tools patched; do not add it to `[build-system]` (Arch). Backend rebuilds select pywhispercpp's complete hash block from `runtime.txt` via `scripts/installer_requirements.py`, with `--no-deps` so they cannot replace the runtime |
 | Release build tools | `[dependency-groups].release-build` exports to `requirements/release-build.txt`. `scripts/build_reproducible_wheel.py` builds in two fresh source trees/venvs with hashed tools and `--no-isolation`, compares wheel bytes, and stages only canonical distributions in `dist/`. These build-only venvs exclude system site-packages: host setuptools plugins must not influence locked builds, and packaging does not import GTK. Repeat runs clean recognized diagnostics and staged archives matching retained canonical digests; staged copies are deleted first so interrupted cleanup remains retryable. Unrelated/modified files are preserved and block cleanup. Never wipe all of `build/`. PR and release CI use Python 3.11 and pinned uv. Failed build outputs/logs stay under `build/reproducible-wheel/`, excluded from release artifacts |
+| AUR source publication | Use the canonical release sdist, not a GitHub tag archive. `scripts/prepare_aur_source.py` (run with the locked `release-build` group) requires its published checksum and provenance from the exact release workflow/tag/commit before preparing a pinned PKGBUILD. Release CI builds/installs that unchanged recipe on current Arch; publication consumes only the gated artifact with `updpkgsums: false`. PR/local fixtures must explicitly use `--local-unattested` and are never publication inputs. Existing AUR provider stubs/pinned import smoke and the separate `vocalinux-bin` path remain limited as documented in `docs/AUR.md` |
 | Installer Whisper export | Compiled universally from Python 3.11, constrained by `runtime.txt` and `installer-build.txt` to keep shared pins consistent. Uses a `+cpu` torch pin and best-match index resolution so the CPU index's older copies of shared packages do not downgrade the runtime |
 | Remote installer | After cloning, hand off to the tagged `install.sh` with the original arguments and remote venv path. The installer and its exports must come from the same revision, including when the tag predates the pinned installer |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
@@ -240,7 +241,7 @@ Site-only work: `web/AGENTS.md` (commands, layout map). Product claims: `web/PRO
 
 ## Runtime (any Linux dev machine)
 
-- Create runtime/dev venvs with `--system-site-packages`. Build-only venvs in `scripts/build_reproducible_wheel.py` are the exception: exclude host packages to keep the release toolchain isolated
+- Create runtime/dev venvs with `--system-site-packages`. Build-only venvs for `scripts/build_reproducible_wheel.py` and `just aur-gate` preparation are the exception: exclude host packages to keep the locked release tools isolated; never prune the developer environment to run a packaging gate
 - Kill the app by PID, never `pkill -f vocalinux` (matches editors, shells, and cwd paths)
 - Stale instance: `$XDG_DATA_HOME/vocalinux/instance.lock` (default `~/.local/share/vocalinux/instance.lock`)
 - Default dictation shortcut: hold Right Alt (push-to-talk). Existing `~/.config/vocalinux/config.json` wins
