@@ -112,11 +112,30 @@ def test_pr_ci_runs_the_same_reproducibility_gate():
 def test_release_publication_cannot_bypass_the_wheel_gate():
     """Even independent Snap builds and always-run checksum jobs must wait."""
     jobs = _jobs()
-    for name in ("publish-pypi", "publish-snap", "publish-aur", "publish-flatpak-remote"):
+    for name in (
+        "publish-pypi",
+        "publish-snap",
+        "publish-aur",
+        "publish-aur-bin",
+        "publish-flatpak-remote",
+    ):
         assert "build-and-release" in _needs(jobs[name]), name
     checksums = jobs["publish-checksums"]
     assert "needs.build-and-release.result == 'success'" in checksums
     assert "pattern: '@(python-dist|appimage-*|native-*|flatpak-*|snap-amd64)'" in checksums
+
+
+def test_aur_bin_publication_depends_only_on_its_appimage_inputs() -> None:
+    """Source-gate or unrelated package failures must not block ready AppImages."""
+    jobs = _jobs()
+
+    def prerequisites(name: str) -> set[str]:
+        direct = _needs(jobs[name])
+        return direct.union(*(prerequisites(dependency) for dependency in direct))
+
+    expected = {"build-and-release", "build-appimage-arm64"}
+    assert _needs(jobs["publish-aur-bin"]) == expected
+    assert prerequisites("publish-aur-bin") == expected
 
 
 def test_every_consumer_downloads_the_build_instead_of_repeating_it():

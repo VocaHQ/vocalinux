@@ -11,9 +11,10 @@ yay -S vocalinux-git      # community package; tracks main
 
 `packaging/aur/vocalinux-bin/` builds a `-bin` variant that installs the
 prebuilt AppImage from the release — no Python, engine, or GPU dependency
-builds, since the bundle carries them (#817). The release workflow publishes
-it alongside the source package: it first pins the per-arch AppImage digests
-in the PKGBUILD, then pushes to AUR in the `Publish AUR -bin package` step.
+builds, since the bundle carries them (#817). Its publication waits only for
+release creation and both AppImages, not the source-package gate or other
+packaging jobs. It first pins the per-arch AppImage digests in the PKGBUILD,
+then pushes to AUR in the `Publish AUR -bin package` step.
 
 ## Maintainers (one-time setup)
 
@@ -69,7 +70,11 @@ canonical sdist from the current checkout's reproducible-wheel gate, then prepar
 an explicitly `--local-unattested` fixture. The `Build AUR package (gate)` job in
 `unified-pipeline.yml` builds and installs its PKGBUILD on `archlinux:latest`.
 Run `just aur-gate` locally (needs uv and Docker); it includes the reproducible-wheel
-build and uses a fresh temporary directory for the prepared fixture.
+build and uses a fresh temporary directory for the distributions, diagnostics,
+tooling and prepared fixture. Existing `dist/`, `build/reproducible-wheel/` and
+the developer environment are untouched, so other packaging commands can run
+before or after it. Successful runs clean the temporary directory; failed runs
+retain it and print its path for diagnosis.
 
 ### Release gate
 
@@ -86,8 +91,9 @@ Only after this succeeds is `aur-source-pkgbuild` uploaded for `publish-aur`.
 Publication downloads that exact file; there is no version rewrite or
 `updpkgsums` afterwards. The gate runs even without AUR credentials; only the
 final push is secret-gated. This intentionally makes source publication wait
-for the release's checksums and attestations. `vocalinux-bin` keeps its existing
-separate AppImage publication path; its PR smoke still uses a stub AppImage.
+for the release's checksums and attestations. `vocalinux-bin` uses a separate
+AppImage publication path independent of this source gate and the global
+checksum job; its PR smoke still uses a stub AppImage.
 
 Both gates deliberately use rolling `archlinux:latest`: #757 was Arch's
 setuptools moving underneath us. `python-pywhispercpp` (virtual, provided by the

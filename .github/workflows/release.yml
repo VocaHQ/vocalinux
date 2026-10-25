@@ -954,11 +954,12 @@ jobs:
 
   # Separate job: the -bin PKGBUILD pins digests of BOTH AppImages, and the
   # aarch64 build attaches its asset after build-and-release returns. Waiting
-  # for it here keeps the binary package from curling a 404. The source package
-  # now also waits for its own checksum/provenance and exact-PKGBUILD gate.
+  # for it here keeps the binary package from curling a 404. Do not depend on
+  # source publication: its Arch gate and unrelated checksum producers must
+  # not block ready AppImages.
   publish-aur-bin:
     name: Publish -bin to AUR
-    needs: [publish-aur, build-appimage-arm64]
+    needs: [build-and-release, build-appimage-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -129,16 +129,27 @@ native-smoke distro="debian:12":
 
 # Build the canonical sdist, prepare an explicitly unattested local PKGBUILD,
 # then build/install it unchanged on current Arch (needs uv and docker).
-aur-gate: reproducible-wheel
+# Keep distributions and diagnostics away from other packaging commands' outputs.
+aur-gate:
     #!/usr/bin/env bash
     set -euo pipefail
     WORK="$(mktemp -d)"
-    trap 'rm -rf "$WORK"' EXIT
+    cleanup() {
+        local status=$?
+        if [ "$status" -eq 0 ]; then
+            rm -rf "$WORK"
+        else
+            echo "AUR gate failed; diagnostics retained in $WORK" >&2
+        fi
+    }
+    trap cleanup EXIT
+    python3 scripts/build_reproducible_wheel.py --python "${PYTHON:-python3}" \
+      --output "$WORK/dist" --diagnostics "$WORK/diagnostics"
     uv venv --no-config --python "${PYTHON:-python3}" "$WORK/venv"
     uv pip install --no-config --python "$WORK/venv/bin/python" \
       --require-hashes --no-deps --only-binary=:all: -r requirements/release-build.txt
     "$WORK/venv/bin/python" scripts/prepare_aur_source.py \
-      --local-unattested --sdist dist/vocalinux-*.tar.gz --output "$WORK/source"
+      --local-unattested --sdist "$WORK"/dist/vocalinux-*.tar.gz --output "$WORK/source"
     docker run --rm -v "$PWD:/repo:ro" -v "$WORK/source:/aur-source:ro" \
       -e AUR_SOURCE=/aur-source archlinux:latest bash /repo/packaging/aur/build-test.sh
 

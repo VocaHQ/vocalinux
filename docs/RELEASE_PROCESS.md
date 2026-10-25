@@ -144,6 +144,8 @@ AUR push, but does not unpublish GitHub/PyPI artifacts already released. It is
 separate from PR/local `--local-unattested` fixtures, which exercise the same
 preparation/build path but are never used for publication. See [AUR.md](AUR.md)
 for the trust model and the existing AUR-provider smoke-test limitations.
+`vocalinux-bin` publication waits only for release creation and both AppImages;
+source-gate failures or unrelated checksum producers do not block it.
 
 ## Detailed Release Steps
 
