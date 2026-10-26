@@ -87,7 +87,8 @@ def test_stop_racing_start_is_not_lost() -> None:
 
 def test_stop_completes_while_capture_read_is_blocked() -> None:
     manager = _make_manager()
-    read_entered = threading.Event()
+    first_read_done = threading.Event()
+    read_blocking = threading.Event()
     release_read = threading.Event()
 
     source = MagicMock()
@@ -97,9 +98,10 @@ def test_stop_completes_while_capture_read_is_blocked() -> None:
     def read_chunk() -> bytes:
         # The first read returns normally, every later one stalls like a
         # device that disappeared under the audio server.
-        if read_entered.is_set():
+        if first_read_done.is_set():
+            read_blocking.set()
             release_read.wait(timeout=10.0)
-        read_entered.set()
+        first_read_done.set()
         return b"\x00\x00" * 1024
 
     source.read_chunk.side_effect = read_chunk
@@ -109,8 +111,8 @@ def test_stop_completes_while_capture_read_is_blocked() -> None:
         with patch.object(recognition_module, "play_start_sound"):
             with patch.object(manager, "_arm_playback_duck"):
                 assert manager.start_recognition(mode="push_to_talk")
-        assert read_entered.wait(timeout=2.0)
-        time.sleep(0.05)  # let the capture thread enter the stalled read
+        # Start the stop only once the capture thread is inside the stalled read.
+        assert read_blocking.wait(timeout=2.0)
 
         stop = threading.Thread(target=_stop_session, args=(manager,), daemon=True)
         stop.start()
