@@ -15,23 +15,42 @@ from typing import Any, Callable, Optional, Sequence, cast
 
 import gi
 
+from ..utils.host_process import host_env, running_from_appimage
+
 # Import GTK
 gi.require_version("Gtk", "3.0")
-# Prefer Ayatana AppIndicator: it is the actively maintained fork and the one
-# most distros ship for KDE/SNI compatibility. The original Canonical
-# AppIndicator3 (unmaintained since ~2013) can be present alongside it (e.g.
-# Fedora's libappindicator-gtk3) but fails to register a StatusNotifierItem
-# on modern KDE Plasma, leaving the tray icon invisible with no error logged.
-try:
-    gi.require_version("AyatanaAppIndicator3", "0.1")
-    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
-except (ImportError, ValueError):
+# Prefer libayatana-appindicator-glib: libayatana-appindicator (GTK 3) now
+# logs "libayatana-appindicator is deprecated" at startup and points here.
+# The glib library takes a GMenuModel instead of a Gtk.Menu, which
+# tray_menu_model bridges. The AppImage skips it: its bundled GLib is older
+# than the library needs and it does not ship the library, so a host copy on
+# GI's default search path would load against the bundle's GLib.
+# Otherwise prefer Ayatana AppIndicator: it is the actively maintained fork
+# and the one most distros ship for KDE/SNI compatibility. The original
+# Canonical AppIndicator3 (unmaintained since ~2013) can be present alongside
+# it (e.g. Fedora's libappindicator-gtk3) but fails to register a
+# StatusNotifierItem on modern KDE Plasma, leaving the tray icon invisible
+# with no error logged.
+INDICATOR_USES_GMENU = False
+if not running_from_appimage():
     try:
-        gi.require_version("AyatanaAppindicator3", "0.1")
-        from gi.repository import AyatanaAppindicator3 as AppIndicator3
+        gi.require_version("AyatanaAppIndicatorGlib", "2.0")
+        from gi.repository import AyatanaAppIndicatorGlib as AppIndicator
+
+        INDICATOR_USES_GMENU = True
     except (ImportError, ValueError):
-        gi.require_version("AppIndicator3", "0.1")
-        from gi.repository import AppIndicator3
+        pass
+if not INDICATOR_USES_GMENU:
+    try:
+        gi.require_version("AyatanaAppIndicator3", "0.1")
+        from gi.repository import AyatanaAppIndicator3 as AppIndicator
+    except (ImportError, ValueError):
+        try:
+            gi.require_version("AyatanaAppindicator3", "0.1")
+            from gi.repository import AyatanaAppindicator3 as AppIndicator
+        except (ImportError, ValueError):
+            gi.require_version("AppIndicator3", "0.1")
+            from gi.repository import AppIndicator3 as AppIndicator
 
 from gi.repository import GdkPixbuf, Gio, GLib, GObject, Gtk
 
@@ -47,7 +66,6 @@ from ..speech_recognition.diarization import (
     transcribe_audio_file,
 )
 from ..suspend_handler import SuspendHandler
-from ..utils.host_process import host_env
 from ..utils.resource_manager import ResourceManager
 from ..utils.update_checker import DEFAULT_CHECK_AUTOMATICALLY, ReleaseInfo
 from ..utils.update_monitor import UpdateMonitor
@@ -69,6 +87,7 @@ from .settings_dialog import (
     recommended_model_for_engine,
 )
 from .transcription_history import DEFAULT_MAX_ITEMS, TranscriptionHistory
+from .tray_menu_model import GMenuIndicator
 
 logger = logging.getLogger(__name__)
 
@@ -551,20 +570,21 @@ class TrayIndicator:
         initial_icon = self._icon_keys["default"]
         try:
             if FLATPAK_ID:
-                self.indicator = AppIndicator3.Indicator.new(
+                indicator = AppIndicator.Indicator.new(
                     APP_ID,
                     initial_icon,
-                    AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+                    AppIndicator.IndicatorCategory.APPLICATION_STATUS,
                 )
             else:
-                self.indicator = AppIndicator3.Indicator.new_with_path(
+                indicator = AppIndicator.Indicator.new_with_path(
                     APP_ID,
                     initial_icon,
-                    AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
+                    AppIndicator.IndicatorCategory.APPLICATION_STATUS,
                     ICON_DIR,
                 )
-                self.indicator.set_icon_theme_path(ICON_DIR)
-            self.indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+                indicator.set_icon_theme_path(ICON_DIR)
+            self.indicator = GMenuIndicator(indicator, Gio) if INDICATOR_USES_GMENU else indicator
+            self.indicator.set_status(AppIndicator.IndicatorStatus.ACTIVE)
             self.indicator.set_title("Vocalinux")
             self._indicator_title = "Vocalinux"
         except Exception as e:
@@ -630,6 +650,7 @@ class TrayIndicator:
         else:
             self._show_update_menu_item(self._pending_update)
         self._gateway_stop_menu_item.hide()
+        self._sync_indicator_menu()
         self._gateway_manager = get_gateway_embed_manager()
         self._gateway_manager.add_listener(self._on_gateway_status_for_tray)
         # Runtime detect + leftover compose probe (Quit does not stop compose).
@@ -854,6 +875,12 @@ class TrayIndicator:
         """Add a separator to the indicator menu."""
         separator = Gtk.SeparatorMenuItem()
         self.menu.append(separator)
+
+    def _sync_indicator_menu(self) -> None:
+        """Re-export the Gtk menu after a change when the indicator mirrors it."""
+        indicator = getattr(self, "indicator", None)
+        if isinstance(indicator, GMenuIndicator):
+            indicator.refresh_menu()
 
     def _on_recognition_state_changed(self, state: RecognitionState):
         """
@@ -1316,6 +1343,7 @@ class TrayIndicator:
             if isinstance(item, Gtk.MenuItem) and item.get_label() == label:
                 item.set_sensitive(enabled)
                 break
+        self._sync_indicator_menu()
 
     def _set_cancel_menu_item_visible(self, visible: bool) -> None:
         item = getattr(self, "_cancel_menu_item", None)
@@ -1323,6 +1351,7 @@ class TrayIndicator:
             return
         item.set_sensitive(visible)
         item.set_visible(visible)
+        self._sync_indicator_menu()
 
     def _on_start_clicked(self, widget):
         """Handle click on the Start Voice Typing menu item."""
@@ -1367,6 +1396,7 @@ class TrayIndicator:
 
         submenu.show_all()
         self._history_menu_item.set_submenu(submenu)
+        self._sync_indicator_menu()
         return False  # Remove idle callback
 
     @staticmethod
@@ -1495,6 +1525,7 @@ class TrayIndicator:
                 self._maybe_notify_update(release)
         elif self._update_menu_item is not None:
             self._update_menu_item.hide()
+            self._sync_indicator_menu()
 
     def _show_update_menu_item(self, release: ReleaseInfo) -> None:
         """Reveal the tray menu entry that opens About / release notes."""
@@ -1506,6 +1537,7 @@ class TrayIndicator:
             "Open Settings → About for release notes and download links"
         )
         self._update_menu_item.show()
+        self._sync_indicator_menu()
 
     def _maybe_notify_update(self, release: ReleaseInfo) -> None:
         """Send one desktop notification per new version when notifications are on."""
@@ -1829,6 +1861,7 @@ class TrayIndicator:
             item.show()
         else:
             item.hide()
+        self._sync_indicator_menu()
         return False
 
     def _on_stop_local_gateway_clicked(self, widget: Any) -> None:

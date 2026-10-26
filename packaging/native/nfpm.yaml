@@ -82,6 +82,10 @@ overrides:
       - ibus
       # Desktop notifications.
       - gir1.2-notify-0.7
+      # Tray backend the app prefers when present: libayatana-appindicator
+      # (GTK 3) logs a deprecation warning at startup. Debian 13+ ships it;
+      # apt skips the recommendation where it does not exist (Debian 12).
+      - gir1.2-ayatanaappindicatorglib-2.0
   rpm:
     depends:
       - python3 >= 3.11

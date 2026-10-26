@@ -23,9 +23,8 @@ cd vocalinux
 ./install.sh --dev
 ```
 
-This installs system dependencies, creates a venv from the system Python, installs the package in editable mode with dev tools, and runs the test suite.
-
-`install.sh` always builds `venv/` from the system Python (`/usr/bin/python3`, or `$SYSTEM_PYTHON`), because distro PyGObject is only importable from that interpreter. It ignores an activated virtualenv, so you can run it from a shell that still has uv's `.venv` active. See [The two environments](#the-two-environments).
+This installs system dependencies, creates `venv/` with an editable install and dev
+tools, and runs the test suite. See [The two environments](#the-two-environments).
 
 ### Manual setup
 
@@ -33,20 +32,20 @@ This installs system dependencies, creates a venv from the system Python, instal
 
 2. Install system dependencies (examples):
 
-   **Ubuntu 24.04+** (`just deps` pip-builds PyGObject 3.56 from the lock):
+   **Ubuntu 24.04+:**
    ```bash
    sudo apt update
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
         gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libgirepository1.0-dev \
-        build-essential pkg-config libcairo2-dev \
+        build-essential pkg-config libcairo2-dev libffi-dev \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
-   **Debian 12** cannot pip-build PyGObject 3.56 (glib 2.74). Use `./install.sh --dev` for tests and running from source, then `venv/bin/pytest` / `venv/bin/python -m vocalinux.main --debug`.
+   **Debian 12 (installer environment only):**
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
         gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository1.0-dev libcairo2-dev \
-        build-essential pkg-config \
+        build-essential pkg-config libffi-dev \
        python3-dev portaudio19-dev python3-venv xdotool
    ```
 
@@ -54,8 +53,16 @@ This installs system dependencies, creates a venv from the system Python, instal
    ```bash
    sudo apt install -y python3-pip python3-gi python3-gi-cairo \
         gir1.2-gtk-3.0 gir1.2-ibus-1.0 libgirepository-2.0-dev libcairo2-dev \
-        build-essential pkg-config \
+        build-essential pkg-config libffi-dev \
        python3-dev portaudio19-dev python3-venv xdotool
+   ```
+
+   **Fedora 40+:**
+   ```bash
+   sudo dnf install -y python3-pip python3-gobject gtk3 ibus-devel \
+        gobject-introspection-devel glib2-devel python3-devel portaudio-devel \
+        cairo-devel cairo-gobject-devel libffi-devel python3-virtualenv pkg-config cmake \
+        gcc-c++ make xdotool
    ```
 
    AppIndicator (system tray):
@@ -66,6 +73,10 @@ This installs system dependencies, creates a venv from the system Python, instal
    sudo apt install -y gir1.2-ayatanaappindicator3-0.1
    ```
 
+   **macOS (tooling only):** `brew install portaudio pkg-config`; use
+   `xcode-select --install` if a C compiler is missing. PyGObject/pycairo and their
+   header checks apply only on Linux, which is required to run the desktop app.
+
 3. Create the environment and install:
 
    ```bash
@@ -73,7 +84,8 @@ This installs system dependencies, creates a venv from the system Python, instal
    just deps
    ```
 
-   `just deps` compiles PyGObject from the lock into `.venv`. That needs `libgirepository-2.0-dev` (Ubuntu 24.04+). Debian 12 cannot build it; use Option 1 and the installer `venv/` instead.
+   Missing native build headers are reported with install commands before syncing.
+   For older Linux releases, use the installer environment described below.
 
 4. Run:
 
@@ -98,7 +110,16 @@ The repository uses two virtual environments on purpose. Do not merge them:
 | `.venv/`  | `just deps` (uv) | pinned in `.python-version` | dev tooling: pytest, black, mypy, `just` recipes |
 | `venv/`   | `./install.sh` | the system Python | running the installed app, which needs distro PyGObject |
 
-`gi` (PyGObject) is the reason. `just deps` / `uv sync` build it from source into `.venv/`, which works wherever glib 2.80+ and `libgirepository-2.0-dev` are present (Arch, Fedora, Ubuntu 24.04 with that package, CI). Debian 12 cannot build PyGObject 3.56; use `./install.sh --dev` and `venv/bin/pytest`. `install.sh` never reuses `.venv/`: it builds `venv/` from the system Python with `--system-site-packages`, and rebuilds it if another interpreter created it. Set `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh` on systems that ship several system interpreters.
+- On Linux, `.venv/` builds the locked PyGObject, requiring glib 2.80+ and the
+  headers above. On Debian 12 or Fedora 39 and older, use `./install.sh --dev`,
+  then `venv/bin/pytest` or `venv/bin/python -m vocalinux.main --debug` instead.
+- `venv/` uses distro PyGObject via `--system-site-packages`. The installer ignores
+  an activated venv and rebuilds one created by the wrong interpreter. It uses
+  `/usr/bin/python3` unless overridden, e.g. `SYSTEM_PYTHON=/usr/bin/python3.12 ./install.sh`.
+
+`just appimage` bundles its own Python/PyGObject in the pinned Ubuntu Docker image.
+For GI failures, check `Checking bundled PyGObject after linuxdeploy` and the smoke
+test's path diagnostics; installing `python3-gobject` on the host won't fix the bundle.
 
 ## Making changes
 

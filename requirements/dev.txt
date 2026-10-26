@@ -356,7 +356,7 @@ distlib==0.4.3 \
     --hash=sha256:4b0ce306c966eb73bc3a7b6abad017c556dadd92c44701562cd528ac7fde4d5b \
     --hash=sha256:f152097224a0ae24be5a0f6bae1b9359af82133bce63f98a95f86cae1aede9ed
     # via virtualenv
-evdev==1.9.3 ; 'linux' in sys_platform or sys_platform == 'linux' \
+evdev==1.9.3 ; sys_platform == 'linux' or 'linux' in sys_platform \
     --hash=sha256:2c140e01ac8437758fa23fe5c871397412461f42d421aa20241dc8fe8cfccbc9
     # via
     #   pynput

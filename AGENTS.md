@@ -34,15 +34,15 @@ Rules:
 | Piece | Current |
 |---|---|
 | Python | `>=3.11` (`requires-python` in `pyproject.toml`; CI: 3.11–3.14). Floor, classifiers, CI matrix and `install.sh` must agree — `tests/test_python_version_policy.py` |
-| GTK | GTK 3 via distro `python3-gi` (PyGObject). Never pip-install it |
-| uv | `>=0.12,<0.13` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth; CI runs `uv sync --locked` / `uv run --locked`, which fails on drift |
+| GTK | Runtime `venv/` uses distro `python3-gi` (PyGObject), never pip-install it; uv builds the locked PyGObject in the separate dev `.venv/` on supported distros |
+| uv | `>=0.12,<0.14` (`[tool.uv]` in `pyproject.toml`). `uv.lock` is the source of truth; CI runs `uv sync --locked` / `uv run --locked`, which fails on drift |
 | just | https://just.systems or distro package `just` |
 | Format / lint / types | Black + isort (line length 100), flake8 (`E9,F63,F7,F82` only), mypy `src/` (targets 3.11 and runs as a CI lint gate). The tools live in the `lint` dependency group, not the `dev` extra, so CI can install them without building the project |
 | Website | Next.js / TypeScript in `web/` — see `web/AGENTS.md` |
 
 Two virtualenvs, on purpose:
 
-- **`.venv/`** — uv's, for dev tooling. `just deps` syncs it; every other Python `just` recipe uses `uv run --no-sync` so it does not prune extras that `just deps-all` installed. No activation needed.
+- **`.venv/`** — uv's, for dev tooling. `just deps` checks native headers before syncing it (on Fedora 40+, install `glib2-devel`, `cairo-gobject-devel`, `gobject-introspection-devel`, `libffi-devel` and the PortAudio headers); every other Python `just` recipe uses `uv run --no-sync` so it does not prune extras that `just deps-all` installed. No activation needed.
 - **`venv/`** — what `install.sh` builds for the app itself, from the *system* Python so distro `gi` is importable.
 
 Never run `install.sh` from an activated `.venv`: it drops an inherited `VIRTUAL_ENV` from `PATH` and picks `$SYSTEM_PYTHON` (default `/usr/bin/python3`) precisely because a venv built from uv's interpreter cannot see distro PyGObject.
@@ -95,6 +95,7 @@ just aur-gate      # build the AUR PKGBUILD on current Arch (needs docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
 just remote-install-gate debian:12  # remote curl|bash path end to end against HEAD (needs docker)
 just verify-release  # check a published release as published (needs gh)
+just reproducible-wheel  # independent locked wheel builds; stages verified dist/ (needs uv)
 just pre-commit    # pre-commit run --all-files
 just run-debug     # vocalinux --debug
 just run-source-debug
@@ -114,15 +115,18 @@ Website: `web/AGENTS.md`, `web/PRODUCT.md`, `web/DESIGN.md`. Do not duplicate si
 
 ## Dependencies (uv)
 
+Use **uv 0.13.3** for `just lock` and `just export-check`, matching CI. Other versions in the supported contributor range can order equivalent platform markers differently; export verification compares files byte-for-byte. Update the CI pins and regenerate exports together when changing the generation version.
+
 `uv.lock` is authoritative. `just lock` regenerates it, the hash-pinned `requirements/*.txt` exports, and `packaging/flatpak/python3-dependencies.yaml`. The AppImage build installs from `runtime`/`vad` plus `appimage.txt`; `install.sh` consumes the runtime and selected extras with `--require-hashes --no-deps --no-build-isolation`, then installs the project with `--no-deps --no-build-isolation`. **Do not edit `requirements/*.txt` by hand**, nor the url/sha256 pairs in `packaging/flatpak/python3-dependencies.yaml`. Change `pyproject.toml` (or `requirements/whisper.in` for the Whisper engine, `requirements/appimage*.in` for the AppImage), run `just lock`, and commit the lock plus the exports with the manifest change.
 
 | Constraint | Rule |
 |---|---|
-| PyGObject | Distro `python3-gi` only, via `--system-site-packages`. Pip install fails on Ubuntu 24.04 (`girepository-2.0`). uv-managed interpreters do not see distro `gi` unless the venv is created that way |
+| PyGObject | The runtime installer uses distro `python3-gi` via `--system-site-packages`; do not pip-install it into `venv/`. The dev `.venv/` instead builds the locked version with uv when glib 2.80+ and native headers are available. uv-managed interpreters do not see distro `gi` unless the venv is created with `--system-site-packages` |
 | `[vosk]` extra | Wheel-only on PyPI (no sdist). Never part of a source-buildable lock. `install.sh --engine=vosk` installs it |
 | Whisper CPU torch | `requirements/whisper.txt` is compiled from `requirements/whisper.in`. Pin `torch` to a `+cpu` local version — PyPI CUDA wheels win resolution regardless of index order. OpenAI Whisper does not use `torchaudio`, and the CPU index can lag torch |
 | pywhispercpp | Pinned in `install.sh` as `PYWHISPERCPP_VERSION` (keep in sync with `uv.lock`) |
 | Installer build tools | `[dependency-groups].installer-build` exports to `requirements/installer-build.txt`. Bootstrap uses hashed wheels on new and reused venvs; source builds use these tools without build isolation. Its setuptools `>=83` floor keeps the pinned installer tools patched; do not add it to `[build-system]` (Arch). Backend rebuilds select pywhispercpp's complete hash block from `runtime.txt` via `scripts/installer_requirements.py`, with `--no-deps` so they cannot replace the runtime |
+| Release build tools | `[dependency-groups].release-build` exports to `requirements/release-build.txt`. `scripts/build_reproducible_wheel.py` builds in two fresh source trees/venvs with hashed tools and `--no-isolation`, compares wheel bytes, and stages only canonical distributions in `dist/`. These build-only venvs exclude system site-packages: host setuptools plugins must not influence locked builds, and packaging does not import GTK. Repeat runs clean recognized diagnostics and staged archives matching retained canonical digests; staged copies are deleted first so interrupted cleanup remains retryable. Unrelated/modified files are preserved and block cleanup. Never wipe all of `build/`. PR and release CI use Python 3.11 and pinned uv. Failed build outputs/logs stay under `build/reproducible-wheel/`, excluded from release artifacts |
 | Installer Whisper export | Compiled universally from Python 3.11, constrained by `runtime.txt` and `installer-build.txt` to keep shared pins consistent. Uses a `+cpu` torch pin and best-match index resolution so the CPU index's older copies of shared packages do not downgrade the runtime |
 | Remote installer | After cloning, hand off to the tagged `install.sh` with the original arguments and remote venv path. The installer and its exports must come from the same revision, including when the tag predates the pinned installer |
 | `[vad]` extra | `onnxruntime` for Silero VAD |
@@ -236,7 +240,7 @@ Site-only work: `web/AGENTS.md` (commands, layout map). Product claims: `web/PRO
 
 ## Runtime (any Linux dev machine)
 
-- Create venvs with `--system-site-packages`. Do not drop that flag
+- Create runtime/dev venvs with `--system-site-packages`. Build-only venvs in `scripts/build_reproducible_wheel.py` are the exception: exclude host packages to keep the release toolchain isolated
 - Kill the app by PID, never `pkill -f vocalinux` (matches editors, shells, and cwd paths)
 - Stale instance: `$XDG_DATA_HOME/vocalinux/instance.lock` (default `~/.local/share/vocalinux/instance.lock`)
 - Default dictation shortcut: hold Right Alt (push-to-talk). Existing `~/.config/vocalinux/config.json` wins

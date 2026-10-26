@@ -70,6 +70,7 @@ Install `just` from https://just.systems or the distro package `just`.
 - [ ] Run `just lint` - No linting errors
 - [ ] Run `just typecheck` - No type errors
 - [ ] Run `just build` - Package builds successfully
+- [ ] Run `PYTHON=python3.11 just reproducible-wheel` - Independent wheels match
 - [ ] Run `npm run build` in `web/` - Website builds successfully
 
 > Note: CI workflows also sync website version metadata from `src/vocalinux/version.py`, but source files should still be updated in-repo during release prep for review clarity.
@@ -91,6 +92,42 @@ It cannot see a hand edit made afterwards, which is how every v0.16.2 defect
 arrived, so run it yourself after touching a published release. The one
 exception is `snap-backfill.yml`: that workflow attaches the snap, rewrites
 `SHA256SUMS`, and then runs `scripts/verify_release.py` itself.
+
+### Pre-publication wheel reproducibility
+
+PR CI and the release workflow run `scripts/build_reproducible_wheel.py` before
+publication. It checks lock/export drift, installs the hash-pinned `release-build`
+toolchain into two fresh virtualenvs without system site-packages, and independently
+builds an sdist and its wheel in each source tree with `--no-isolation`.
+`SOURCE_DATE_EPOCH` comes from
+the checked-out commit. Both builds use the same Python 3.11 interpreter and
+platform; this checks repeatability under controlled inputs, not cross-platform
+or cross-Python-version reproducibility. Only wheels are compared byte-for-byte.
+
+Build-only environments deliberately exclude host packages and setuptools plugins.
+Unlike runtime/development virtualenvs, they do not need distro PyGObject: the
+backend reads version metadata without importing GTK.
+
+The script runs `twine check --strict` with the locked tools and stages only the
+canonical wheel and sdist in `dist/` after comparison succeeds. All release
+consumers reuse those distributions. Snap Store publication also waits for this
+gate. Verification builds never enter the release checksum manifest.
+
+Locally, `PYTHON=python3.11 just reproducible-wheel` includes tracked working-tree
+edits and non-ignored new files, but excludes ignored build/egg-info/venv state.
+Repeat runs automatically clean the gate's previous logs and build archives.
+Staged files in `dist/` are removed only if their names and digests match the
+retained canonical archives. Unrelated or modified files, unexpected diagnostic
+files, and symlinks cause cleanup to stop before deleting anything; move those
+files aside first. The rest of `build/` is never cleaned. Logs, hashes and both
+builds are retained in `build/reproducible-wheel/`; CI uploads that directory on failure.
+Refresh the toolchain through `just lock`, not by editing its export by hand.
+Cleanup removes staged copies before their canonical originals, so an interrupted
+cleanup can safely be retried.
+The gate holds a checkout lock from before cleanup through final staging; a second
+active run fails without changing the first run's outputs. Archives are copied to
+an ignored temporary sibling of `dist/` and then atomically renamed into place,
+so interrupted staging leaves only complete archives in `dist/` and can be retried.
 
 ## Detailed Release Steps
 

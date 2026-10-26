@@ -298,6 +298,17 @@ def test_audio_test_routes_cancellation_to_pipewire(monkeypatch: pytest.MonkeyPa
     run_test.assert_called_once_with(-2, 2.0, should_continue=predicate)
 
 
+def test_audio_test_cancels_before_pulse_source_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    lookup = MagicMock()
+    monkeypatch.setattr(capture, "_resolve_pulse_selection", lookup)
+
+    result = capture.test_audio_input(device_index=-1000, should_continue=lambda: False)
+
+    assert result["success"] is False
+    assert result["error"] == "Audio test cancelled"
+    lookup.assert_not_called()
+
+
 def test_pipewire_cancel_discards_partial_chunk(monkeypatch: pytest.MonkeyPatch) -> None:
     cancel = threading.Event()
     source = pipewire.PipeWireCaptureSource()

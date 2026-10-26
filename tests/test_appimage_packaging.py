@@ -95,6 +95,28 @@ def test_appimage_build_ships_transitive_typelibs():
     assert "Need at least one of:" in text
 
 
+# Typelibs the app never requests inside the AppImage, so the bundle need not
+# seed them. libayatana-appindicator-glib needs a newer GLib than the bundle
+# carries; tray_indicator.py and main.py skip it when running_from_appimage().
+SKIPPED_IN_APPIMAGE = frozenset({"AyatanaAppIndicatorGlib-2.0"})
+
+
+def test_typelibs_skipped_in_appimage_are_guarded_by_running_from_appimage():
+    for module in ("ui/tray_indicator.py", "main.py"):
+        text = (REPO_ROOT / "src" / "vocalinux" / module).read_text(encoding="utf-8")
+        assert "AyatanaAppIndicatorGlib" in text
+        assert "running_from_appimage()" in text, f"{module} must skip the glib indicator"
+
+
+def test_running_from_appimage_follows_appdir(monkeypatch):
+    from vocalinux.utils.host_process import running_from_appimage
+
+    monkeypatch.delenv("APPDIR", raising=False)
+    assert not running_from_appimage()
+    monkeypatch.setenv("APPDIR", "/tmp/.mount_vocalinux")
+    assert running_from_appimage()
+
+
 def test_every_typelib_the_app_requires_is_seeded():
     """A required typelib the bundle does not seed sends GI to the host's search
     path — the openSUSE/Fedora breakage from #585."""
@@ -106,7 +128,9 @@ def test_every_typelib_the_app_requires_is_seeded():
         ):
             required.add(f"{namespace}-{version}")
     assert required, "no gi.require_version calls found; has the app stopped using GI?"
-    missing = sorted(name for name in required if name not in seeded)
+    missing = sorted(
+        name for name in required if name not in seeded and name not in SKIPPED_IN_APPIMAGE
+    )
     assert not missing, f"the app requires these typelibs; TYPELIBS does not seed them: {missing}"
 
 
@@ -140,6 +164,21 @@ def test_appimage_build_smokes_gi_without_host_typelibs():
     text = BUILD_SH.read_text()
     assert "smoke_gi_imports" in text
     assert "unshare --user --mount" in text
+
+
+def test_appimage_build_checks_gi_after_linuxdeploy() -> None:
+    """The GTK plugin must not silently remove gi or the path AppRun imports it from."""
+    text = BUILD_SH.read_text(encoding="utf-8")
+    deploy = text.index('"$TOOLDIR/linuxdeploy" --appdir')
+    check = text.index("== Checking bundled PyGObject after linuxdeploy ==", deploy)
+    smoke = text.index('smoke_gi_imports "$APPDIR"', check)
+    between = text[check:smoke]
+
+    assert 'GI_SITE="$APPDIR/usr/lib/python${PY_VER}/site-packages"' in between
+    assert '"$GI_SITE/gi/__init__.py"' in between
+    assert 'ln -sfn "python${PY_VER}" "$APPDIR/usr/lib/python3"' in between
+    assert "'import gi; print(" in between
+    assert "sys.path:" in text, "isolated GI failures should report where Python looked"
 
 
 def test_appimage_build_rebuilds_pywhispercpp_with_vulkan():

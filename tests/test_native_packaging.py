@@ -214,6 +214,14 @@ def test_host_tools_are_recommended_in_both_formats() -> None:
         assert tool in deps["rpm"]["recommends"], f"{tool} missing from rpm recommends"
 
 
+def test_deb_recommends_the_appindicator_glib_tray_backend() -> None:
+    """The tray prefers libayatana-appindicator-glib; the GTK 3 typelib stays a
+    hard dependency so Debian 12, which lacks the glib one, still installs."""
+    deps = _nfpm()["overrides"]["deb"]
+    assert "gir1.2-ayatanaappindicatorglib-2.0" in deps["recommends"]
+    assert "gir1.2-ayatanaappindicator3-0.1" in deps["depends"]
+
+
 def test_the_pins_are_digests_rather_than_names() -> None:
     for name, (kind, value, source) in _pins().items():
         if kind == "sha256":

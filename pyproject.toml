@@ -87,6 +87,14 @@ docs = [
 # --only-group lint` installs them without the project, so the lint job needs
 # no portaudio/girepository headers to build pyaudio and PyGObject.
 [dependency-groups]
+# Release builds install this complete toolchain from its hash-pinned export,
+# then use --no-isolation so setuptools cannot be resolved a second time.
+release-build = [
+    "build>=1.2,<2",
+    "setuptools>=83",
+    "wheel",
+    "twine>=6,<7",
+]
 # install.sh installs this wheel-only toolchain before any source builds, then
 # disables build isolation so pip cannot resolve another unpinned environment.
 installer-build = [
@@ -122,9 +130,9 @@ Issues = "https://github.com/VocaHQ/vocalinux/issues"
 Changelog = "https://github.com/VocaHQ/vocalinux/releases"
 
 [tool.uv]
-# Lock/exports are generated with uv; keep the minor pinned so lockfile
-# upgrades are deliberate (see `just lock`).
-required-version = ">=0.12,<0.13"
+# Contributors may use uv 0.12 or 0.13. CI and lock/export generation use
+# uv 0.13.3 for reproducible export formatting (see `just lock`).
+required-version = ">=0.12,<0.14"
 
 [tool.setuptools]
 # Resource dirs carry no .py files, but setuptools still treats them as packages.
