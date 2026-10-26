@@ -3379,18 +3379,21 @@ class SpeechRecognitionManager:
             self._session_cancel = threading.Event()
             self._worker_exited = threading.Event()
             self._idle_on_worker_exit = None
+            # Arm the session before anyone can see LISTENING. A stop racing
+            # this start (a key released on another thread, the tray) acts as
+            # soon as it sees a non-IDLE state; setting should_record after
+            # that point would undo the stop and leave the capture thread
+            # recording with nothing left to stop it.
+            self.should_record = True
+            self._recognition_mode = mode
+            self.audio_buffer = []
+            self._segment_started_at = None
+            self._segment_queue = queue.Queue(maxsize=32)
+            self._key_release_gate = _ReleaseGate()
         self._update_state(RecognitionState.LISTENING)
 
         # Play the start sound
         play_start_sound()
-
-        # Set recording flag
-        self.should_record = True
-        self._recognition_mode = mode
-        self.audio_buffer = []
-        self._segment_started_at = None
-        self._segment_queue = queue.Queue(maxsize=32)
-        self._key_release_gate = _ReleaseGate()
 
         # Start the audio recording thread
         self.audio_thread = threading.Thread(target=self._record_audio)
@@ -3828,7 +3831,16 @@ class SpeechRecognitionManager:
                             self.audio_buffer = self.audio_buffer[remove_count:]
                             logger.info(f"Buffer trimmed by {remove_count} chunks")
 
-                        data = source.read_chunk()
+                    # Read outside _buffer_lock. A capture read can block
+                    # indefinitely (the audio server reconfigures the device,
+                    # a USB/Bluetooth mic stalls); holding the lock across it
+                    # would block stop_recognition() on that same lock after
+                    # its bounded join, leaving the engine stuck in PROCESSING.
+                    data = source.read_chunk()
+
+                    with self._buffer_lock:
+                        # Re-check: the session may have been cancelled or
+                        # replaced while this thread was reading.
                         if session_cancel.is_set() or self._session_cancel is not session_cancel:
                             break
 
