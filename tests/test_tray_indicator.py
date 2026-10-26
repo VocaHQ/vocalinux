@@ -943,7 +943,7 @@ class TestTrayIndicator(unittest.TestCase):
 
     def test_init_indicator_creation_failure_shows_error_dialog(self):
         with patch(
-            "vocalinux.ui.tray_indicator.AppIndicator3.Indicator.new_with_path",
+            "vocalinux.ui.tray_indicator.AppIndicator.Indicator.new_with_path",
             side_effect=Exception("boom"),
         ):
             with patch.object(
@@ -968,7 +968,7 @@ class TestTrayIndicator(unittest.TestCase):
 
         with patch("vocalinux.ui.tray_indicator.os.path.exists", return_value=False):
             with patch(
-                "vocalinux.ui.tray_indicator.AppIndicator3.Indicator.new_with_path",
+                "vocalinux.ui.tray_indicator.AppIndicator.Indicator.new_with_path",
                 side_effect=Exception("fresh-boom"),
             ):
                 with patch(
@@ -1333,14 +1333,42 @@ class TestAppIndicatorImportFallback(unittest.TestCase):
         )
         return repo
 
-    def test_prefers_ayatana_appindicator3_when_available(self):
+    def test_prefers_appindicator_glib_over_gtk3_ayatana(self):
+        sentinel = MagicMock(name="AyatanaAppIndicatorGlib")
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = self._fake_repository(
+            AyatanaAppIndicatorGlib=sentinel,
+            AyatanaAppIndicator3=MagicMock(name="AyatanaAppIndicator3"),
+        )
+
+        import vocalinux.ui.tray_indicator as tray
+
+        self.assertIs(tray.AppIndicator, sentinel)
+        self.assertTrue(tray.INDICATOR_USES_GMENU)
+
+    def test_appimage_skips_appindicator_glib(self):
+        sentinel = MagicMock(name="AyatanaAppIndicator3")
+        sys.modules["gi"] = mock_gi
+        sys.modules["gi.repository"] = self._fake_repository(
+            AyatanaAppIndicatorGlib=MagicMock(name="AyatanaAppIndicatorGlib"),
+            AyatanaAppIndicator3=sentinel,
+        )
+
+        with patch.dict(os.environ, {"APPDIR": "/tmp/.mount_vocalinux"}):
+            import vocalinux.ui.tray_indicator as tray
+
+        self.assertIs(tray.AppIndicator, sentinel)
+        self.assertFalse(tray.INDICATOR_USES_GMENU)
+
+    def test_prefers_ayatana_appindicator3_when_glib_missing(self):
         sentinel = MagicMock(name="AyatanaAppIndicator3")
         sys.modules["gi"] = mock_gi
         sys.modules["gi.repository"] = self._fake_repository(AyatanaAppIndicator3=sentinel)
 
         import vocalinux.ui.tray_indicator as tray
 
-        self.assertIs(tray.AppIndicator3, sentinel)
+        self.assertIs(tray.AppIndicator, sentinel)
+        self.assertFalse(tray.INDICATOR_USES_GMENU)
 
     def test_falls_back_to_lowercase_ayatana_variant(self):
         sentinel = MagicMock(name="AyatanaAppindicator3")
@@ -1349,7 +1377,8 @@ class TestAppIndicatorImportFallback(unittest.TestCase):
 
         import vocalinux.ui.tray_indicator as tray
 
-        self.assertIs(tray.AppIndicator3, sentinel)
+        self.assertIs(tray.AppIndicator, sentinel)
+        self.assertFalse(tray.INDICATOR_USES_GMENU)
 
     def test_falls_back_to_legacy_appindicator3_when_no_ayatana_available(self):
         sentinel = MagicMock(name="AppIndicator3")
@@ -1358,7 +1387,69 @@ class TestAppIndicatorImportFallback(unittest.TestCase):
 
         import vocalinux.ui.tray_indicator as tray
 
-        self.assertIs(tray.AppIndicator3, sentinel)
+        self.assertIs(tray.AppIndicator, sentinel)
+        self.assertFalse(tray.INDICATOR_USES_GMENU)
+
+
+class TestIndicatorBackendWiring(TestTrayIndicator):
+    """_init_indicator wraps the glib indicator and keeps its menu in sync."""
+
+    def _init_with_backend(self, uses_gmenu: bool) -> MagicMock:
+        raw = MagicMock(name="raw-indicator")
+        with (
+            patch("vocalinux.ui.tray_indicator.INDICATOR_USES_GMENU", uses_gmenu),
+            patch(
+                "vocalinux.ui.tray_indicator.AppIndicator.Indicator.new_with_path",
+                return_value=raw,
+            ),
+            patch("vocalinux.ui.tray_indicator.FLATPAK_ID", None),
+        ):
+            self.tray_indicator._init_indicator()
+        return raw
+
+    def test_glib_backend_wraps_indicator_in_gmenu_adapter(self):
+        from vocalinux.ui.tray_menu_model import GMenuIndicator
+
+        raw = self._init_with_backend(uses_gmenu=True)
+
+        self.assertIsInstance(self.tray_indicator.indicator, GMenuIndicator)
+        raw.set_menu.assert_called_once()
+        raw.set_actions.assert_called_once()
+        raw.set_icon_theme_path.assert_called()
+
+    def test_flatpak_glib_backend_creates_indicator_without_icon_path(self):
+        from vocalinux.ui.tray_menu_model import GMenuIndicator
+
+        raw = MagicMock(name="raw-indicator")
+        with (
+            patch("vocalinux.ui.tray_indicator.INDICATOR_USES_GMENU", True),
+            patch(
+                "vocalinux.ui.tray_indicator.AppIndicator.Indicator.new", return_value=raw
+            ) as new,
+            patch("vocalinux.ui.tray_indicator.FLATPAK_ID", "com.vocalinux.Vocalinux"),
+        ):
+            self.tray_indicator._init_indicator()
+
+        new.assert_called_once()
+        self.assertIsInstance(self.tray_indicator.indicator, GMenuIndicator)
+        raw.set_icon_theme_path.assert_not_called()
+        raw.set_menu.assert_called_once()
+
+    def test_gtk3_backend_uses_indicator_directly(self):
+        raw = self._init_with_backend(uses_gmenu=False)
+
+        self.assertIs(self.tray_indicator.indicator, raw)
+        raw.set_menu.assert_called_once_with(self.tray_indicator.menu)
+
+    def test_menu_mutations_refresh_the_glib_menu(self):
+        self._init_with_backend(uses_gmenu=True)
+        with patch.object(self.tray_indicator.indicator, "refresh_menu") as refresh:
+            self.tray_indicator._set_menu_item_enabled("Start Voice Typing", False)
+            self.tray_indicator._set_cancel_menu_item_visible(True)
+            self.tray_indicator._sync_gateway_stop_menu(None)
+            self.tray_indicator._apply_update_status(False, None, notify=False)
+
+        self.assertEqual(refresh.call_count, 4)
 
 
 class TestTdrzDownloadDialog(TestTrayIndicator):

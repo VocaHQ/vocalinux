@@ -18,6 +18,7 @@ from typing import Any, Optional, cast
 from .host_process import host_env
 from .model_checksums import whispercpp_revision
 from .paths import is_within_directory, models_dir
+from .snap import SNAP_GPU_NOTE, running_in_snap
 
 logger = logging.getLogger(__name__)
 
@@ -483,9 +484,16 @@ def detect_compute_backend() -> tuple[str, str]:
 
     Priority order: Vulkan > CUDA > CPU
 
+    The snap's whisper.cpp has no GPU backend and cannot see the host's GPU
+    tools, so it reports the CPU without probing.
+
     Returns:
         Tuple of (backend_type, backend_info)
     """
+    if running_in_snap():
+        logger.info(SNAP_GPU_NOTE)
+        return ComputeBackend.CPU, detect_cpu_info()
+
     # Try Vulkan first (supports AMD, Intel, NVIDIA)
     has_vulkan, vulkan_info = detect_vulkan_support()
     if has_vulkan and vulkan_info:

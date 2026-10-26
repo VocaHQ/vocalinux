@@ -371,6 +371,53 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
             mock_prewarm.assert_called_once_with()
         overlay.destroy()
 
+    def test_close_request_keeps_overlay_window(self) -> None:
+        """A close from GNOME's dock must not destroy the prewarmed window (#1010)."""
+        overlay, mock_window = self._mock_window_overlay()
+
+        self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+
+        mock_window.destroy.assert_not_called()
+        mock_window.hide.assert_not_called()
+        overlay._window = None
+        overlay.destroy()
+
+    def test_disabling_unmaps_prewarmed_window(self) -> None:
+        """Turning the overlay off removes the transparent window from the dock (#1010)."""
+        overlay, mock_window = self._mock_window_overlay()
+        overlay._use_layer_shell = False
+        mock_window.is_composited.return_value = True
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch.object(overlay, "_layout_bottom_strip"),
+        ):
+            overlay.prewarm()
+            mock_window.get_visible.return_value = True
+
+            overlay.set_enabled(False)
+            mock_window.hide.assert_called_once()
+
+            mock_window.get_visible.return_value = False
+            overlay.set_enabled(True)
+
+        self.assertEqual(mock_window.show_all.call_count, 2)
+        mock_window.set_opacity.assert_called_with(0.0)
+        overlay._window = None
+        overlay.destroy()
+
+    def test_idle_keeps_enabled_window_mapped_when_composited(self) -> None:
+        overlay, mock_window = self._mock_window_overlay()
+        mock_window.get_visible.return_value = True
+        mock_window.is_composited.return_value = True
+
+        overlay.on_recognition_state(RecognitionState.IDLE)
+
+        mock_window.hide.assert_not_called()
+        mock_window.set_opacity.assert_called_with(0.0)
+        overlay._window = None
+        overlay.destroy()
+
     def test_sync_shows_on_listening_hides_on_idle(self):
         overlay = _overlay_without_gtk(enabled=True)
         mock_window = MagicMock()
@@ -881,6 +928,7 @@ class TestInitGtkWindowWithMocks(unittest.TestCase):
         win.add.assert_called_with(mocks["drawing"])
         mocks["drawing"].connect.assert_any_call("draw", overlay._on_draw)
         win.connect.assert_any_call("realize", overlay._on_realize)
+        win.connect.assert_any_call("delete-event", overlay._on_delete_event)
         self.assertFalse(overlay._use_layer_shell)
         overlay.destroy()
 

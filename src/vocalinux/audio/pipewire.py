@@ -41,6 +41,10 @@ SYSTEM_AUDIO_PREFIX = "System audio: "
 #: count down from -2.
 PIPEWIRE_INDEX_BASE = -2
 
+#: Lowest index a PipeWire source can take. Indices below it belong to the
+#: snap's PulseAudio sources (see ``pulse_sources.PULSE_INDEX_BASE``).
+PIPEWIRE_INDEX_FLOOR = -999
+
 #: pw-dump media classes whose monitor a user can meaningfully record.
 _MONITOR_CLASSES = frozenset({"Audio/Sink", "Audio/Sink/Virtual"})
 
@@ -203,7 +207,7 @@ def is_pipewire_device_index(device_index: Optional[int]) -> bool:
     return (
         isinstance(device_index, int)
         and not isinstance(device_index, bool)
-        and device_index <= PIPEWIRE_INDEX_BASE
+        and PIPEWIRE_INDEX_FLOOR <= device_index <= PIPEWIRE_INDEX_BASE
     )
 
 

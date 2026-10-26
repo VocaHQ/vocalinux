@@ -37,6 +37,10 @@ description: |
     - KDE Plasma: KWin's portal can mistype letter case (KDE bug 489021);
       set "Virtual Keyboard = IBus Wayland" so the IBus path delivers text.
     - Microphone may need: sudo snap connect vocalinux:audio-record
+      The microphone list comes from the sound server, so pick a device
+      in Settings rather than relying on the system default.
+    - whisper.cpp runs on the CPU in this snap; it has no GPU backend.
+      For Vulkan acceleration install the AppImage or use install.sh.
     - Config and models live under ~/snap/vocalinux/
 
 grade: stable
@@ -130,7 +134,7 @@ parts:
       - libasound2t64  # Ubuntu 24.04 / core24 name for libasound2
       - libasound2-data
       - libasound2-plugins # pcm/ctl pulse → host PulseAudio/PipeWire
-      - pulseaudio-utils # paplay for start/stop UI sounds
+      - pulseaudio-utils # paplay for start/stop UI sounds; pactl lists microphones
       - xdotool
       - wtype # virtual-keyboard protocol (GNOME often rejects this)
       - x11-utils # xprop for XWayland WM_CLASS

@@ -14,7 +14,7 @@ from types import ModuleType
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from gi.repository import Gtk
+    from gi.repository import Gdk, Gtk
 
 from ..common_types import RecognitionState
 
@@ -209,6 +209,7 @@ class DictationOverlay:
         window.connect("size-allocate", self._on_size_allocate)
         window.connect("realize", self._on_realize)
         window.connect("map-event", self._on_map_event)
+        window.connect("delete-event", self._on_delete_event)
         # Fallback placement is stale the moment monitor geometry or the
         # compositor changes; layer shell re-anchors itself on these signals.
         screen.connect("size-changed", self._on_screen_geometry_changed)
@@ -253,6 +254,21 @@ class DictationOverlay:
             self._layout_bottom_strip()
         self._on_realize(widget)
         return False
+
+    def _on_delete_event(self, widget: Gtk.Widget, event: Gdk.Event) -> bool:
+        """Refuse close requests from the dock or taskbar.
+
+        On Wayland without layer shell the overlay is a regular toplevel, so
+        GNOME's dock lists it and can close it. GTK's default handler would
+        destroy the window; the next recording would then map a new toplevel
+        that takes focus from the editor (#1010). Disabling the overlay in
+        Settings unmaps it instead.
+        """
+        logger.info(
+            "Ignoring a close request for the dictation overlay; "
+            "turn the overlay off in Settings to remove it"
+        )
+        return True
 
     def _on_size_allocate(self, widget, allocation) -> None:
         """Keep the empty input shape after size changes."""
@@ -336,6 +352,13 @@ class DictationOverlay:
         mode = self.controller.mode
         if mode is None:
             self._stop_animation()
+            if not self.controller.enabled:
+                # Turned off: nothing maps the window again until it is
+                # re-enabled, so unmap it. A transparent mapped window still
+                # shows in the dock on Wayland without layer shell (#1010).
+                if self._window.get_visible():
+                    self._window.hide()
+                return
             # Opacity 0 instead of hide() — hide/show cycles re-activate the
             # window on many Wayland compositors and steal editor focus (which
             # breaks IBus/wtype injection into the previously focused app).
