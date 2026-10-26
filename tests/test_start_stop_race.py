@@ -9,13 +9,38 @@
    stop_recognition() blocked forever on that lock after its bounded join.
 """
 
+import sys
 import threading
 import time
+from typing import Iterator
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 import vocalinux.speech_recognition.recognition_manager as recognition_module
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+
+@pytest.fixture(autouse=True)
+def _numpy_is_real_while_capturing() -> Iterator[None]:
+    """Run the real capture loop against the real NumPy.
+
+    Older tests assign ``sys.modules["numpy"] = MagicMock()`` at import and
+    never put the real module back. ``_record_audio`` imports numpy lazily, so
+    under that leak its first chunk raises and the loop exits before the
+    stalled read this file depends on.
+    """
+    current = sys.modules.get("numpy")
+    real = getattr(sys, "_vocalinux_real_numpy", None)
+    if isinstance(current, MagicMock) and real is not None:
+        sys.modules["numpy"] = real
+        try:
+            yield
+        finally:
+            sys.modules["numpy"] = current
+    else:
+        yield
 
 
 def _make_manager() -> SpeechRecognitionManager:
