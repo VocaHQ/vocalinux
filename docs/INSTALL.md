@@ -158,6 +158,14 @@ flatpak run com.vocalinux.Vocalinux
 
 Whisper.cpp + Vulkan. It is **not on Flathub** (submission [flathub#9368](https://github.com/flathub/flathub/pull/9368) closed 2026-07-23 on policy grounds). Details: [packaging/flatpak/README.md](../packaging/flatpak/README.md).
 
+On native X11, hotkeys work without device access (GNOME X11 is the exception:
+its X server hides physical keys from the X11 listener, so it also needs
+`/dev/input`). On Wayland, the built-in hotkey needs `/dev/input` (`--device=input` on Flatpak 1.15.6 or newer, or
+`--device=all` on older versions); otherwise enable External Activation and
+bind a desktop shortcut to the D-Bus `Toggle` command in
+[Running without device access](../packaging/flatpak/README.md#running-without-device-access).
+Desktop shortcuts only toggle dictation, so they cannot support push-to-talk.
+
 ## Snap (Ubuntu Snap Store)
 
 Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases attach `vocalinux_<version>_amd64.snap` to the GitHub Release and try Snap Store `edge` and `candidate` when credentials are set. `stable` is promoted from `candidate` after QA.
@@ -172,6 +180,8 @@ sudo snap connect vocalinux:hardware-observe  # list keyboards (/proc/bus/input/
 ```
 
 Native Wayland typing uses the RemoteDesktop portal: the compositor asks once on first dictation, nothing to connect. The recipe ships **no `uinput` plug** and no ydotool; the Store denied the super-privileged grant ([the request thread](https://forum.snapcraft.io/t/53528)), which held the 0.17.0+ revisions and left **v0.16.2 (rev 7)** on edge. On KDE Plasma, KWin's portal can mistype letter case ([KDE bug 489021](https://bugs.kde.org/show_bug.cgi?id=489021)); set Virtual Keyboard to "IBus Wayland" so dictation types correctly.
+
+Under strict confinement the snap reaches audio through the PulseAudio/PipeWire server, not the sound card, so Settings → Audio lists the server's microphones (via `pactl`) and records from the one you pick. whisper.cpp in the snap is built without a GPU backend and runs on the CPU, and host tools such as `nvidia-smi` and `vulkaninfo` are not visible inside it. For Vulkan acceleration use the [AppImage](#appimage) or the [installer](#recommended-installer) instead.
 
 GitHub `.snap` files through v0.18.2 declare `uinput`, so KDE users who want ydotool can sideload that build and connect the plug manually:
 

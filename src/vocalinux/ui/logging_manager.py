@@ -217,12 +217,12 @@ class LoggingManager:
             return {"total": 0, "by_level": {}, "by_module": {}, "oldest": None, "newest": None}
 
         # Count by level
-        by_level = {}
+        by_level: dict[str, int] = {}
         for record in records:
             by_level[record.level] = by_level.get(record.level, 0) + 1
 
         # Count by module
-        by_module = {}
+        by_module: dict[str, int] = {}
         for record in records:
             module = (
                 record.logger_name.split(".")[0]

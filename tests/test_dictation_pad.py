@@ -294,22 +294,45 @@ class TestDictationPadFacade(unittest.TestCase):
         finally:
             pad.destroy()
 
-    def test_capture_checkbox_persists_config(self) -> None:
-        """The pad checkbox writes dictate_to_pad via the config manager."""
+    def test_pad_actions_never_write_config(self) -> None:
+        """The pad receives edits but never persists the routing setting."""
         config_manager = MagicMock()
         with patch.object(
             DictationPad,
             "_init_gtk_window",
             side_effect=RuntimeError("gtk disabled in unit tests"),
         ):
-            pad = DictationPad(enabled=False, config_manager=config_manager)
+            pad = DictationPad(enabled=True, config_manager=config_manager)
         try:
-            widget = MagicMock()
-            widget.get_active.return_value = True
-            pad._on_capture_toggled(widget)
-            config_manager.set.assert_called_once_with("text_injection", "dictate_to_pad", True)
-            config_manager.save_settings.assert_called_once()
+            pad.append_text("hello world")
+            pad.handle_action("undo")
+            pad.handle_action("redo")
+            pad.delete_last_chars(5)
+            pad.set_capture_enabled(False)
+            pad._on_clear_clicked()
+
+            config_manager.set.assert_not_called()
+            config_manager.save_settings.assert_not_called()
+        finally:
+            pad.destroy()
+
+    def test_controller_routing_state_tracks_external_config_changes(self) -> None:
+        """The pad reads Settings changes and syncs its controller without writing."""
+        config_manager = MagicMock()
+        config_manager.get_bool.side_effect = [False, True]
+        with patch.object(
+            DictationPad,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            pad = DictationPad(enabled=True, config_manager=config_manager)
+        try:
+            self.assertFalse(pad._capture_enabled())
+            self.assertFalse(pad.controller.enabled)
+            self.assertTrue(pad._capture_enabled())
             self.assertTrue(pad.controller.enabled)
+            config_manager.set.assert_not_called()
+            config_manager.save_settings.assert_not_called()
         finally:
             pad.destroy()
 

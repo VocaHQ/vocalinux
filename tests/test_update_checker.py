@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from vocalinux.utils.update_checker import (
     ReleaseInfo,
+    build_channel,
     fetch_latest_release,
     format_release_notes,
     is_newer_version,
@@ -42,6 +43,25 @@ class TestNormalizeAndCompare:
 
 
 class TestChannels:
+    def test_build_channel_from_version(self) -> None:
+        cases = (
+            ("0.18.3", "stable"),
+            ("v0.18.3", "stable"),
+            ("0.18.3+flatpak", "stable"),
+            ("0.14.0-beta", "stable"),
+            ("0.18.3.dev20261020+4799f06", "nightly"),
+            ("0.18.3.dev20261020", "nightly"),
+        )
+        for version, expected in cases:
+            assert build_channel(version) == expected
+
+    def test_build_channel_reads_version_module_at_call_time(self) -> None:
+        with patch(
+            "vocalinux.version.__version__",
+            "0.18.3.dev20261020+4799f06",
+        ):
+            assert build_channel() == "nightly"
+
     def test_normalize_channel(self):
         assert normalize_channel("stable") == "stable"
         assert normalize_channel("NIGHTLY") == "nightly"

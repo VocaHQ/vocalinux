@@ -10,6 +10,9 @@ that make up the dictation shortcut are consumed here and never reach the
 focused application. Without uinput access the backend still listens
 ungrabbed, but shortcut presses also pass through to apps.
 
+Keyboard nodes that also report pointer axes are monitored ungrabbed so
+pointer motion stays on the compositor's direct input path.
+
 All EvdevKeyboardBackend instances in the process share one device layer
 (EvdevDeviceHub): a grabbed device reports to a single fd, so a second
 reader opening the same keyboard would see no events. The hub owns the
@@ -26,7 +29,7 @@ import select
 import threading
 import time
 import weakref
-from typing import Any, Mapping, Optional, Sequence, TextIO
+from typing import Any, Mapping, Optional, Sequence, TextIO, cast
 
 # Try to import evdev
 try:
@@ -165,7 +168,7 @@ def _is_post_grab(event: InputEvent, grab_ts: float) -> bool:
     unreadable is treated as pre-grab — refusing the grab is the safe side.
     """
     try:
-        return event.timestamp() >= grab_ts
+        return cast(bool, event.timestamp() >= grab_ts)
     except (AttributeError, TypeError):
         return False
 
@@ -343,12 +346,11 @@ def evdev_code_for_key(token: str) -> Optional[int]:
 
 def find_keyboard_devices() -> list[str]:
     """
-    Find all keyboard input devices.
+    Find devices with real keyboard keys.
 
-    Devices that emit pointer motion (REL_X/Y, ABS_X/Y, or multitouch
-    ABS_MT_POSITION_X/Y) are excluded: a mouse is not a keyboard, and
-    monitoring one proxies all cursor movement through the reader thread
-    (cursor stutter, #900; dead touchpad, #914).
+    Nodes that also emit pointer motion are included but monitored ungrabbed
+    so pointer movement stays on the compositor's direct input path (#953).
+    Pointer-only devices and button blocks are excluded.
 
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
@@ -375,10 +377,9 @@ def find_keyboard_devices() -> list[str]:
 
 
 # Bits 0 and 1 of a REL or ABS capability bitmap: REL_X|REL_Y or
-# ABS_X|ABS_Y — pointer motion. A keyboard never reports both; devices
-# that do are mice, trackpads or tablets, and monitoring one meant
-# grabbing it and piping all cursor movement through the reader thread,
-# which showed up as periodic cursor stutter (#900).
+# ABS_X|ABS_Y — pointer motion. Some keyboards report these axes too
+# (Logitech HID++ keyboards, #953), so pointer-capable nodes are monitored
+# ungrabbed to keep cursor motion off the reader thread (#900).
 _POINTER_AXIS_BITS = 0x3
 
 # Key codes only real keyboards report: the modifiers plus KEY_A — the
@@ -485,10 +486,9 @@ def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices.
 
     Only blocks carrying a real keyboard key (a modifier or KEY_A, the
-    same rule the evdev fallback applies) qualify. Devices that emit
-    pointer motion (REL_X/Y, ABS_X/Y or ABS_MT_POSITION_X/Y) are
-    skipped: mice and tablets report EV_KEY bits for their buttons, but
-    grabbing them proxies every cursor movement through this reader.
+    same rule the evdev fallback applies) qualify. Pointer-capable keyboard
+    nodes are kept for ungrabbed monitoring; pointer-only and button-only
+    nodes remain excluded (#953).
     """
     keyboard_devices: list[str] = []
     device: Optional[dict[str, Any]] = None
@@ -503,12 +503,12 @@ def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
                     "Skipping non-keyboard device during keyboard discovery: "
                     f"{device.get('name', '?')} ({device.get('handlers', [])})"
                 )
-        elif _proc_block_has_pointer_axes(device):
-            logger.debug(
-                "Skipping pointer device during keyboard discovery: "
-                f"{device.get('name', '?')} ({device.get('handlers', [])})"
-            )
         else:
+            if _proc_block_has_pointer_axes(device):
+                logger.debug(
+                    "Keeping combined keyboard+pointer device for ungrabbed monitoring: "
+                    f"{device.get('name', '?')} ({device.get('handlers', [])})"
+                )
             for handler in device.get("handlers", []):
                 if handler.startswith("event"):
                     device_path = f"/dev/input/{handler}"
@@ -557,6 +557,17 @@ def _capabilities_have_pointer_axes(capabilities: Mapping[int, Sequence[int]]) -
     return ecodes.ABS_MT_POSITION_X in abs_codes and ecodes.ABS_MT_POSITION_Y in abs_codes
 
 
+def _device_has_pointer_axes(device: InputDevice) -> bool:
+    """Return True for pointer axes or when the device capabilities are unknown."""
+    try:
+        capabilities = device.capabilities()
+        if not isinstance(capabilities, Mapping):
+            return True
+        return _capabilities_have_pointer_axes(capabilities)
+    except (OSError, IOError, TypeError, ValueError):
+        return True
+
+
 def _find_keyboard_devices_from_evdev() -> list[str]:
     """Discover keyboards by opening devices from ``evdev.list_devices()``."""
     if not EVDEV_AVAILABLE:
@@ -574,16 +585,9 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
             device = InputDevice(path)
             try:
                 capabilities = device.capabilities()
-                device_name = str(getattr(device, "name", "") or "")
             finally:
                 device.close()
         except (OSError, IOError, TypeError, ValueError):
-            continue
-
-        if capabilities and _capabilities_have_pointer_axes(capabilities):
-            # Mice/tablets also report EV_KEY for their buttons; monitoring
-            # a pointer pipes all cursor movement through this reader.
-            logger.debug(f"Skipping pointer device during keyboard discovery: {device_name}")
             continue
 
         # Prefer devices that look like keyboards: EV_KEY with a common letter
@@ -1214,6 +1218,14 @@ class EvdevDeviceHub:
             # suppression is lost, which a grab could never provide anyway
             # — the remapper re-emits on a device we cannot hold.
             logger.debug(f"Monitoring virtual keyboard ungrabbed: {device_path} ({device_name})")
+        elif _device_has_pointer_axes(device):
+            # Grabbing would pipe pointer motion through the reader (#900).
+            # Leave it ungrabbed so the compositor reads the node directly;
+            # only shortcut suppression is lost on this device, the same
+            # tradeoff as for remappers.
+            logger.debug(
+                f"Monitoring keyboard+pointer device ungrabbed: {device_path} ({device_name})"
+            )
         else:
             # Exclusive grab hides the device from the compositor; the
             # paired clone re-emits every event we do not consume so apps
@@ -1623,8 +1635,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._hub._known_engines.add(self)
         self._hub.reset_if_idle()
 
-        self.last_trigger_time = 0
-        self.last_key_press_time = 0
+        self.last_trigger_time: float = 0.0
+        self.last_key_press_time: float = 0.0
         self.double_tap_threshold = 0.3  # seconds
         self.key_pressed_devices: set[int] = set()
 

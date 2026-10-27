@@ -5,17 +5,20 @@ This module provides model metadata and hardware acceleration detection
 for whisper.cpp, supporting Vulkan, CUDA, and CPU backends.
 """
 
+import ctypes
 import logging
 import math
 import os
 import re
 import subprocess
-from functools import lru_cache
-from typing import Optional
+from functools import cache, lru_cache
+from importlib.metadata import PackageNotFoundError, version
+from typing import Any, Optional, cast
 
 from .host_process import host_env
 from .model_checksums import whispercpp_revision
 from .paths import is_within_directory, models_dir
+from .snap import SNAP_GPU_NOTE, running_in_snap
 
 logger = logging.getLogger(__name__)
 
@@ -347,13 +350,68 @@ def detect_vulkan_devices() -> list[dict]:
     return devices
 
 
+@cache
+def detect_ggml_gpu_devices() -> Optional[list[dict[str, Any]]]:
+    """Return whisper.cpp's usable GPU devices in its device-selection order."""
+    try:
+        raw_version = version("pywhispercpp")
+    except (ImportError, PackageNotFoundError):
+        return None
+
+    version_match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", raw_version)
+    if version_match is None:
+        return None
+    installed_version = tuple(int(part or 0) for part in version_match.groups())
+    if installed_version < (1, 5, 0):
+        return None
+
+    try:
+        from . import pywhispercpp_loader
+
+        pywhispercpp_loader.preload_shared_libraries()
+        import _pywhispercpp
+
+        library = ctypes.CDLL(_pywhispercpp.__file__)
+        library.ggml_backend_dev_count.argtypes = []
+        library.ggml_backend_dev_count.restype = ctypes.c_size_t
+        library.ggml_backend_dev_get.argtypes = [ctypes.c_size_t]
+        library.ggml_backend_dev_get.restype = ctypes.c_void_p
+        library.ggml_backend_dev_name.argtypes = [ctypes.c_void_p]
+        library.ggml_backend_dev_name.restype = ctypes.c_char_p
+        library.ggml_backend_dev_description.argtypes = [ctypes.c_void_p]
+        library.ggml_backend_dev_description.restype = ctypes.c_char_p
+        library.ggml_backend_dev_type.argtypes = [ctypes.c_void_p]
+        library.ggml_backend_dev_type.restype = ctypes.c_int
+
+        devices: list[dict[str, Any]] = []
+        for registry_index in range(library.ggml_backend_dev_count()):
+            device = library.ggml_backend_dev_get(registry_index)
+            device_type = library.ggml_backend_dev_type(device)
+            if device_type not in (1, 2):
+                continue
+            # whisper.cpp counts every GPU/IGPU device, so never skip one here.
+            backend_name = library.ggml_backend_dev_name(device) or b"unknown"
+            description = library.ggml_backend_dev_description(device) or backend_name
+            devices.append(
+                {
+                    "index": len(devices),
+                    "name": description.decode("utf-8", errors="replace"),
+                    "backend_name": backend_name.decode("utf-8", errors="replace"),
+                    "device_type": "discrete" if device_type == 1 else "integrated",
+                }
+            )
+        return devices
+    except (ImportError, OSError, AttributeError):
+        return None
+
+
 def _prefer_discrete_vulkan_device() -> Optional[int]:
     """Return the index of the preferred hardware Vulkan GPU (discrete if available)."""
     devices = _hardware_vulkan_devices()
     for device in devices:
         if device["device_type"] == "discrete":
-            return device["index"]
-    return devices[0]["index"] if devices else None
+            return cast(int, device["index"])
+    return cast(int, devices[0]["index"]) if devices else None
 
 
 def _vulkan_device_name_by_index(devices: list[dict], device_index: Optional[int]) -> Optional[str]:
@@ -361,11 +419,11 @@ def _vulkan_device_name_by_index(devices: list[dict], device_index: Optional[int
     if not devices:
         return None
     if device_index is None:
-        return devices[0]["name"]
+        return cast(str, devices[0]["name"])
     for device in devices:
         if device["index"] == device_index:
-            return device["name"]
-    return devices[0]["name"]
+            return cast(str, device["name"])
+    return cast(str, devices[0]["name"])
 
 
 @lru_cache(maxsize=1)
@@ -426,9 +484,16 @@ def detect_compute_backend() -> tuple[str, str]:
 
     Priority order: Vulkan > CUDA > CPU
 
+    The snap's whisper.cpp has no GPU backend and cannot see the host's GPU
+    tools, so it reports the CPU without probing.
+
     Returns:
         Tuple of (backend_type, backend_info)
     """
+    if running_in_snap():
+        logger.info(SNAP_GPU_NOTE)
+        return ComputeBackend.CPU, detect_cpu_info()
+
     # Try Vulkan first (supports AMD, Intel, NVIDIA)
     has_vulkan, vulkan_info = detect_vulkan_support()
     if has_vulkan and vulkan_info:
@@ -546,7 +611,7 @@ def _model_file_path(model_name: str) -> str:
 
     model_info = WHISPERCPP_MODEL_INFO.get(model_name)
     if model_info and model_info.get("url"):
-        return os.path.join(whispercpp_dir, os.path.basename(model_info["url"]))
+        return os.path.join(whispercpp_dir, os.path.basename(cast(str, model_info["url"])))
 
     return os.path.join(whispercpp_dir, f"ggml-{model_name}.bin")
 

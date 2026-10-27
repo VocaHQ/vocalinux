@@ -15,13 +15,21 @@ import ctypes
 import logging
 import subprocess
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, cast
 
 from .pipewire import (
     PIPEWIRE_INDEX_BASE,
     _test_pipewire_input,
     get_system_audio_sources,
     is_pipewire_device_index,
+)
+from .pulse_sources import (
+    PULSE_INDEX_BASE,
+    PulseSource,
+    get_pulse_sources,
+    is_pulse_device_index,
+    pulse_source_env,
+    resolve_pulse_source,
 )
 
 if TYPE_CHECKING:
@@ -176,9 +184,14 @@ def _get_device_info_safe(audio: Any, device_index: Optional[int] = None) -> dic
         return {}
 
 
-def get_audio_input_devices() -> list:
+def get_audio_input_devices(pulse_sources: Optional[list[PulseSource]] = None) -> list:
     """
     Get a list of available audio input devices, excluding virtual devices.
+
+    Args:
+        pulse_sources: The snap's PulseAudio sources when the caller already
+            listed them (Settings keeps their server names with the entries);
+            listed here otherwise.
 
     Returns:
         List of tuples: (device_index, device_name, is_default)
@@ -233,7 +246,42 @@ def get_audio_input_devices() -> list:
     ):
         logger.warning("PipeWire source enumeration failed", exc_info=True)
 
+    # Inside the snap PortAudio only reaches the sound server's default device,
+    # so the server's own sources are listed too (#1011). Empty elsewhere.
+    try:
+        if pulse_sources is None:
+            pulse_sources = get_pulse_sources()
+        for position, pulse_source in enumerate(pulse_sources):
+            devices.append(
+                (PULSE_INDEX_BASE - position, pulse_source.display_name, pulse_source.is_default)
+            )
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
+        logger.warning("PulseAudio source enumeration failed", exc_info=True)
+
     return devices
+
+
+def _resolve_pulse_selection(
+    device_index: Optional[int], device_name: Optional[str]
+) -> tuple[bool, Optional[PulseSource]]:
+    """Whether a selection names a snap PulseAudio source, and which live one.
+
+    Returns ``(False, None)`` for every PortAudio or PipeWire selection. A
+    PulseAudio selection whose source has gone returns ``(True, None)``: the
+    caller records from the server default rather than a guessed device.
+    """
+    if not is_pulse_device_index(device_index):
+        return False, None
+    source = resolve_pulse_source(device_index, device_name)
+    if source is None:
+        logger.warning(
+            "Audio source [%s] (%s) is no longer available; recording from the default source",
+            device_index,
+            device_name,
+        )
+    else:
+        logger.info("Recording from PulseAudio source %s (%s)", source.name, source.display_name)
+    return True, source
 
 
 def _resolve_device_by_name(
@@ -280,7 +328,7 @@ def _resolve_valid_input_device(audio: Any, preferred_index: Optional[int] = Non
     Returns:
         A valid device index with input channels, or None if none found.
     """
-    input_device_indices = []
+    input_device_indices: list[int] = []
     default_input_index = None
 
     try:
@@ -345,7 +393,7 @@ def _resolve_valid_input_device(audio: Any, preferred_index: Optional[int] = Non
         )
 
     if default_input_index is not None and default_input_index in input_device_indices:
-        return default_input_index
+        return cast(int, default_input_index)
 
     return input_device_indices[0]
 
@@ -644,8 +692,15 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
         "error": None,
     }
 
-    if is_pipewire_device_index(device_index):
-        return _test_pipewire_input(device_index, duration)
+    if is_pipewire_device_index(cast(int, device_index)):
+        return _test_pipewire_input(cast(int, device_index), duration)
+
+    # A snap PulseAudio source opens through the default device with
+    # PULSE_SOURCE pointing at it, so PortAudio never sees its index.
+    pulse_selected, pulse_source = _resolve_pulse_selection(device_index, None)
+    pulse_name = pulse_source.name if pulse_source is not None else None
+    if pulse_selected:
+        device_index = None
 
     try:
         import numpy as np
@@ -667,6 +722,8 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
                 info = audio.get_default_input_device_info()
             result["device_name"] = info.get("name", "Unknown")
             result["device_index"] = info.get("index", device_index)
+            if pulse_source is not None:
+                result["device_name"] = pulse_source.display_name
         except (IOError, OSError) as e:
             result["error"] = f"Cannot get device info: {e}"
             audio.terminate()
@@ -675,7 +732,8 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
         # Negotiate the format and open the capture stream in ONE PortAudio
         # open — Bluetooth SCO devices abort with heap corruption when the
         # stream is opened, closed, and quickly reopened (issue #567).
-        CHANNELS, RATE, stream = _open_capture_stream(audio, open_device_index)
+        with pulse_source_env(pulse_name):
+            CHANNELS, RATE, stream = _open_capture_stream(audio, open_device_index)
         logger.info(f"Using {CHANNELS} channel(s) for audio test")
         result["sample_rate"] = RATE
 
@@ -693,19 +751,20 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
                 if open_device_index is not None:
                     stream_kwargs["input_device_index"] = open_device_index
 
-                stream = audio.open(**stream_kwargs)
+                with pulse_source_env(pulse_name):
+                    stream = audio.open(**stream_kwargs)
             except (IOError, OSError) as e:
                 result["error"] = f"Cannot open audio stream: {e}"
                 audio.terminate()
                 return result
 
         # Record and analyze
-        all_amplitudes = []
+        all_amplitudes: list[Any] = []
         frames_to_read = int(RATE * duration / CHUNK)
 
         for _ in range(frames_to_read):
             try:
-                data = stream.read(CHUNK, exception_on_overflow=False)
+                data = cast(Any, stream).read(CHUNK, exception_on_overflow=False)
                 audio_data = np.frombuffer(data, dtype=np.int16)
                 amplitudes = np.abs(audio_data)
                 all_amplitudes.extend(amplitudes)
@@ -724,7 +783,7 @@ def test_audio_input(device_index: Optional[int] = None, duration: float = 1.0) 
             result["mean_amplitude"] = float(np.mean(all_amplitudes))
             # Signal present if max amplitude is above typical digital noise floor
             # 16-bit audio has max value of 32768, noise floor is typically < 100
-            result["has_signal"] = result["max_amplitude"] > 200
+            result["has_signal"] = cast(float, result["max_amplitude"]) > 200
 
     except ImportError as e:
         result["error"] = f"Missing dependency: {e}"
@@ -789,8 +848,13 @@ class PortAudioCaptureSource:
 
         # Resolve the input device by name first (indices can shift between
         # sessions due to USB replugging or virtual devices being added).
-        # Fall back to the stored index, then to the system default.
-        use_system_default = self.device_index is None and self.device_name is None
+        # Fall back to the stored index, then to the system default. A snap
+        # PulseAudio source opens the default device with PULSE_SOURCE set.
+        pulse_selected, pulse_source = _resolve_pulse_selection(self.device_index, self.device_name)
+        pulse_name = pulse_source.name if pulse_source is not None else None
+        use_system_default = pulse_selected or (
+            self.device_index is None and self.device_name is None
+        )
         if use_system_default:
             resolved_device_index = None
         else:
@@ -824,9 +888,10 @@ class PortAudioCaptureSource:
         # Negotiate the format and open the capture stream in ONE PortAudio
         # open — Bluetooth SCO devices abort with heap corruption when the
         # stream is opened, closed, and quickly reopened (issue #567).
-        self.channels, self.sample_rate, negotiated_stream = _open_capture_stream(
-            audio, resolved_device_index
-        )
+        with pulse_source_env(pulse_name):
+            self.channels, self.sample_rate, negotiated_stream = _open_capture_stream(
+                audio, resolved_device_index
+            )
         logger.info(f"Using {self.channels} channel(s) for recording")
         self.downmix_channel = None  # New stream: speech-gated sticky unset
         logger.info(f"Using sample rate: {self.sample_rate}Hz")
@@ -865,7 +930,8 @@ class PortAudioCaptureSource:
         if resolved_device_index is not None and resolved_device_index != default_idx:
             stream_kwargs["input_device_index"] = resolved_device_index
 
-        self.stream = audio.open(**stream_kwargs)
+        with pulse_source_env(pulse_name):
+            self.stream = audio.open(**stream_kwargs)
 
     def read_chunk(self) -> bytes:
         """Read one chunk and return mono 16 kHz int16 PCM bytes.
@@ -922,7 +988,13 @@ class PortAudioCaptureSource:
                 self.stream = None
 
             # Resolve a valid input device — by name first, then by index
-            use_system_default = self.device_index is None and self.device_name is None
+            pulse_selected, pulse_source = _resolve_pulse_selection(
+                self.device_index, self.device_name
+            )
+            pulse_name = pulse_source.name if pulse_source is not None else None
+            use_system_default = pulse_selected or (
+                self.device_index is None and self.device_name is None
+            )
             if use_system_default:
                 resolved_device_index = None
             else:
@@ -942,9 +1014,10 @@ class PortAudioCaptureSource:
             # PortAudio open — Bluetooth SCO devices abort with heap
             # corruption when the stream is opened, closed, and quickly
             # reopened (issue #567).
-            self.channels, self.sample_rate, new_stream = _open_capture_stream(
-                audio_instance, resolved_device_index
-            )
+            with pulse_source_env(pulse_name):
+                self.channels, self.sample_rate, new_stream = _open_capture_stream(
+                    audio_instance, resolved_device_index
+                )
             logger.debug(f"Reconnecting with {self.channels} channel(s)")
             self.downmix_channel = None  # Reopened stream: clear speech-gated sticky
             logger.debug(f"Reconnecting with sample rate: {self.sample_rate}Hz")
@@ -967,7 +1040,8 @@ class PortAudioCaptureSource:
                 if resolved_device_index is not None and resolved_device_index != default_idx:
                     stream_kwargs["input_device_index"] = resolved_device_index
 
-                new_stream = audio_instance.open(**stream_kwargs)
+                with pulse_source_env(pulse_name):
+                    new_stream = audio_instance.open(**stream_kwargs)
 
             # Test the stream by reading a small amount of data
             test_data = new_stream.read(CAPTURE_CHUNK, exception_on_overflow=False)

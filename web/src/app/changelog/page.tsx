@@ -15,6 +15,21 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.4",
+    date: "2026-10-21",
+    type: "stable",
+    highlights: [
+      "Long push-to-talk dictations are queued in segments before the buffer cap, so nothing after the first two minutes is lost (PR #976)",
+      "Model downloads only start after you confirm them, Cancel cancels the whole change without freezing Settings, and switching models keeps your language settings (PR #1006)",
+      "Test Dictation always shows its own result; the Dictation Pad routing toggle moves to Settings > Dictation (PR #1005)",
+      "The GPU picker follows ggml's device list and CPU runs use most of your cores instead of 2 threads (PR #1001)",
+      "Press the recording hotkey again to cancel a slow transcription; nothing is typed or saved (PR #1004)",
+      "Wayland fixes: unique RemoteDesktop portal request tokens (PR #996), xdotool for XWayland apps outside IBus (PR #1003), and the first recording keeps focus on GNOME (PR #998)",
+      "Flatpak bundles onnxruntime for Silero VAD (PR #1002) and uses the X11 hotkey listener on X11 sessions (PR #997); keyboards with pointer axes like the Logitech K860 work again (PR #978)",
+      "Parakeet installs work again (PR #1000), update checks follow the build channel and can be turned off (PR #999), and Slovenian is supported (PR #995)",
+    ],
+  },
+  {
     version: "v0.18.3",
     date: "2026-10-17",
     type: "stable",
@@ -508,7 +523,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-10-17",
+    dateModified: "2026-10-21",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

@@ -217,6 +217,14 @@ const supportedLanguages = [
     engines: [...ALL_ENGINES],
   },
   {
+    code: "sl",
+    name: "Slovenian",
+    nativeName: "Slovenščina",
+    flag: "🇸🇮",
+    description: "Slovenian dictation with multilingual Whisper models",
+    engines: [...WHISPER_ENGINES],
+  },
+  {
     code: "es",
     name: "Spanish",
     nativeName: "Español",
@@ -314,6 +322,7 @@ export const metadata: Metadata = buildPageMetadata({
     "Italian voice recognition",
     "Portuguese voice typing",
     "Russian speech recognition",
+    "Slovenian voice typing",
     "Chinese dictation",
     "Hindi voice typing",
     "Linux multilingual dictation",

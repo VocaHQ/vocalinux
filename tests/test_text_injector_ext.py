@@ -74,6 +74,7 @@ def _make_injector(env) -> Any:
     obj = cast(Any, TextInjector.__new__(TextInjector))
     obj._ibus_injector = None
     obj.environment = env
+    obj._backend_pin = ("auto", None)
     obj._session_environment = env
     obj._ibus_ready = False
     obj._ibus_init_failed = False
@@ -1224,38 +1225,50 @@ class TestInjectText(unittest.TestCase):
 
 
 class TestLogWindowInfo(unittest.TestCase):
-    def test_log_x11(self):
+    def test_log_x11(self) -> None:
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.X11)
-        with patch.object(obj, "_log_x11_window_info") as mock_log:
-            obj._log_current_window_info()
-            # Verify that _log_x11_window_info was called for X11 environment
-            mock_log.assert_called_once()
+        with patch(
+            "vocalinux.text_injection.text_injector.logger.isEnabledFor",
+            return_value=True,
+        ):
+            with patch.object(obj, "_log_x11_window_info") as mock_log:
+                obj._log_current_window_info()
+                mock_log.assert_called_once()
 
-    def test_log_wayland(self):
+    def test_log_wayland(self) -> None:
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.WAYLAND)
-        # For pure Wayland, _log_current_window_info logs a debug message instead
-        # Just verify it doesn't raise
-        obj._log_current_window_info()
+        with patch(
+            "vocalinux.text_injection.text_injector.logger.isEnabledFor",
+            return_value=True,
+        ):
+            obj._log_current_window_info()
 
-    def test_log_xwayland(self):
+    def test_log_xwayland(self) -> None:
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
-        with patch.object(obj, "_log_x11_window_info") as mock_log:
-            obj._log_current_window_info()
-            # Verify that _log_x11_window_info was called for WAYLAND_XDOTOOL environment
-            mock_log.assert_called_once()
+        with patch(
+            "vocalinux.text_injection.text_injector.logger.isEnabledFor",
+            return_value=True,
+        ):
+            with patch.object(obj, "_log_x11_window_info") as mock_log:
+                obj._log_current_window_info()
+                mock_log.assert_called_once()
 
-    def test_log_exception(self):
+    def test_log_exception(self) -> None:
         from vocalinux.text_injection.text_injector import DesktopEnvironment
 
         obj = _make_injector(DesktopEnvironment.X11)
-        with patch.object(obj, "_log_x11_window_info", side_effect=Exception("err")):
-            obj._log_current_window_info()  # Should not raise
+        with patch(
+            "vocalinux.text_injection.text_injector.logger.isEnabledFor",
+            return_value=True,
+        ):
+            with patch.object(obj, "_log_x11_window_info", side_effect=Exception("err")):
+                obj._log_current_window_info()
 
 
 class TestInjectKeyboardShortcut(unittest.TestCase):

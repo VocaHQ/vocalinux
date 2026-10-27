@@ -8,7 +8,7 @@ Works on X11 and XWayland, but NOT on pure Wayland.
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional, cast
 
 # Try to import pynput
 try:
@@ -24,14 +24,14 @@ from .base import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE, KeyboardBackend
 logger = logging.getLogger(__name__)
 
 
-def _optional_key(key_name: str):
+def _optional_key(key_name: str) -> Any:
     if not PYNPUT_AVAILABLE:
         return None
     return getattr(keyboard.Key, key_name, None)
 
 
-def _key_set(*key_names: str) -> set:
-    keys = set()
+def _key_set(*key_names: str) -> set[Any]:
+    keys: set[Any] = set()
     for key_name in key_names:
         key = _optional_key(key_name)
         if key is not None:
@@ -149,10 +149,10 @@ def pynput_key_token(key) -> Optional[str]:
         return None
     token = _PYNPUT_NAMED_TOKENS.get(key)
     if token is not None:
-        return token
+        return cast(str, token)
     char = getattr(key, "char", None)
     if char:
-        lowered = char.lower()
+        lowered = cast(str, char.lower())
         if len(lowered) == 1 and lowered.isalnum():
             return lowered
         code = ord(char)
@@ -179,16 +179,16 @@ class PynputKeyboardBackend(KeyboardBackend):
             mode: The shortcut mode ("toggle" or "push_to_talk")
         """
         super().__init__(shortcut, mode)
-        self.listener = None
-        self.last_trigger_time = 0
-        self.last_key_press_time = 0
+        self.listener: Optional[Any] = None
+        self.last_trigger_time: float = 0.0
+        self.last_key_press_time: float = 0.0
         self.double_tap_threshold = 0.3  # seconds
-        self.current_keys = set()
+        self.current_keys: set[Any] = set()
 
         # Combo (modifier+key) state.
-        self._combo_required_modifier_keys: list = []
+        self._combo_required_modifier_keys: list[Any] = []
         self._combo_key_token: Optional[str] = None
-        self._combo_held_keys: set = set()
+        self._combo_held_keys: set[Any] = set()
         self._combo_active = False
         self._resolve_combo_targets()
 
@@ -242,11 +242,11 @@ class PynputKeyboardBackend(KeyboardBackend):
             return False
 
         normalized_key = self._normalize_modifier_key(key)
-        return normalized_key == target_key
+        return cast(bool, normalized_key == target_key)
 
     def is_available(self) -> bool:
         """Check if pynput is available."""
-        return PYNPUT_AVAILABLE
+        return cast(bool, PYNPUT_AVAILABLE)
 
     def get_permission_hint(self) -> Optional[str]:
         """

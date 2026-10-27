@@ -2,10 +2,14 @@
 
 import json
 import unittest
+from typing import Optional
 from unittest.mock import MagicMock, mock_open, patch
 
 from vocalinux.text_injection.focused_window import (
     FocusedWindow,
+    _process_toolkits,
+    environ_uses_ibus_im,
+    focused_xwayland_client_without_ibus,
     get_focused_window,
     is_focused_window_terminal,
     looks_like_terminal,
@@ -243,3 +247,151 @@ class TestGetFocusedWindow(unittest.TestCase):
             return_value=None,
         ):
             self.assertFalse(is_focused_window_terminal())
+
+
+class TestFocusedXWaylandClientWithoutIBus(unittest.TestCase):
+    """Detect XWayland clients that IBus has no input context for (#972)."""
+
+    _MODULE = "vocalinux.text_injection.focused_window"
+    _WAYLAND_ENV = {"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}
+
+    def _probe(
+        self,
+        outputs: dict[str, str],
+        *,
+        environ: Optional[bytes] = None,
+        wm_class: str = "",
+        toolkits: frozenset[str] = frozenset(),
+    ) -> bool:
+        def fake_run_text(cmd: list[str], env: Optional[dict[str, str]] = None) -> str:
+            return outputs.get(cmd[1], "")
+
+        open_patch = (
+            patch(f"{self._MODULE}.open", mock_open(read_data=environ))
+            if environ is not None
+            else patch(f"{self._MODULE}.open", side_effect=PermissionError("denied"))
+        )
+        with (
+            patch.dict("os.environ", self._WAYLAND_ENV, clear=False),
+            patch(f"{self._MODULE}.shutil.which", return_value="/usr/bin/xdotool"),
+            patch(f"{self._MODULE}._run_text", side_effect=fake_run_text),
+            patch(f"{self._MODULE}.read_wm_class", return_value=wm_class),
+            patch(f"{self._MODULE}._process_toolkits", return_value=set(toolkits)),
+            open_patch,
+        ):
+            return focused_xwayland_client_without_ibus()
+
+    def test_client_without_im_module(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        self.assertTrue(self._probe(outputs, environ=b"HOME=/home/u\0LANG=C\0"))
+
+    def test_client_with_qt_ibus_module(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        self.assertFalse(self._probe(outputs, environ=b"QT_IM_MODULE=ibus\0"))
+
+    def test_client_with_xim_ibus(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        self.assertFalse(self._probe(outputs, environ=b"XMODIFIERS=@im=ibus\0"))
+
+    def test_gtk_client_ignores_qt_ibus_setting(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        environ = b"GTK_IM_MODULE=fcitx\0QT_IM_MODULE=ibus\0"
+        self.assertTrue(self._probe(outputs, environ=environ, toolkits=frozenset({"gtk"})))
+
+    def test_qt_client_with_qt_ibus_setting(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        environ = b"GTK_IM_MODULE=fcitx\0QT_IM_MODULE=ibus\0"
+        self.assertFalse(self._probe(outputs, environ=environ, toolkits=frozenset({"qt"})))
+
+    def test_unknown_toolkit_with_mixed_settings(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        environ = b"GTK_IM_MODULE=fcitx\0QT_IM_MODULE=ibus\0"
+        self.assertTrue(self._probe(outputs, environ=environ))
+
+    def test_unreadable_environment_counts_as_unconnected(self) -> None:
+        outputs = {"getactivewindow": "4194311", "getwindowpid": "1234"}
+        self.assertTrue(self._probe(outputs))
+
+    def test_kwin_placeholder_window_is_not_a_client(self) -> None:
+        self.assertFalse(self._probe({"getactivewindow": "2097152"}))
+
+    def test_client_without_pid_but_with_class(self) -> None:
+        self.assertTrue(self._probe({"getactivewindow": "6291472"}, wm_class="tkprobe Tkprobe"))
+
+    def test_no_active_x11_window(self) -> None:
+        self.assertFalse(self._probe({}))
+
+    def test_not_a_wayland_session(self) -> None:
+        with (
+            patch.dict("os.environ", {"DISPLAY": ":0"}, clear=True),
+            patch(f"{self._MODULE}._run_text") as run_text,
+        ):
+            self.assertFalse(focused_xwayland_client_without_ibus())
+        run_text.assert_not_called()
+
+    def test_no_xdotool(self) -> None:
+        with (
+            patch.dict("os.environ", self._WAYLAND_ENV, clear=False),
+            patch(f"{self._MODULE}.shutil.which", return_value=None),
+            patch(f"{self._MODULE}._run_text") as run_text,
+        ):
+            self.assertFalse(focused_xwayland_client_without_ibus())
+        run_text.assert_not_called()
+
+
+class TestEnvironUsesIBusIm(unittest.TestCase):
+    """Decide from a client's IM variables and toolkit whether it reaches IBus."""
+
+    def test_variables(self) -> None:
+        self.assertTrue(environ_uses_ibus_im({"GTK_IM_MODULE": "ibus"}))
+        self.assertTrue(environ_uses_ibus_im({"QT_IM_MODULE": "IBus"}))
+        self.assertTrue(environ_uses_ibus_im({"XMODIFIERS": "@im=ibus"}))
+        self.assertFalse(
+            environ_uses_ibus_im({"GTK_IM_MODULE": "fcitx", "XMODIFIERS": "@im=fcitx"})
+        )
+        self.assertFalse(environ_uses_ibus_im({}))
+
+    def test_unknown_toolkit_needs_every_set_variable(self) -> None:
+        self.assertFalse(environ_uses_ibus_im({"GTK_IM_MODULE": "fcitx", "QT_IM_MODULE": "ibus"}))
+        self.assertFalse(environ_uses_ibus_im({"QT_IM_MODULE": "ibus", "XMODIFIERS": "@im=none"}))
+        self.assertTrue(environ_uses_ibus_im({"GTK_IM_MODULE": "ibus", "QT_IM_MODULE": "ibus"}))
+
+    def test_known_toolkit_uses_its_own_variable(self) -> None:
+        mixed = {"GTK_IM_MODULE": "fcitx", "QT_IM_MODULE": "ibus"}
+        self.assertFalse(environ_uses_ibus_im(mixed, frozenset({"gtk"})))
+        self.assertTrue(environ_uses_ibus_im(mixed, frozenset({"qt"})))
+        self.assertFalse(environ_uses_ibus_im(mixed, frozenset({"gtk", "qt"})))
+        self.assertFalse(environ_uses_ibus_im({"XMODIFIERS": "@im=ibus"}, frozenset({"gtk"})))
+
+    def test_xim_module_defers_to_xmodifiers(self) -> None:
+        gtk = frozenset({"gtk"})
+        self.assertTrue(
+            environ_uses_ibus_im({"GTK_IM_MODULE": "xim", "XMODIFIERS": "@im=ibus"}, gtk)
+        )
+        self.assertFalse(
+            environ_uses_ibus_im({"GTK_IM_MODULE": "xim", "XMODIFIERS": "@im=fcitx"}, gtk)
+        )
+
+
+class TestProcessToolkits(unittest.TestCase):
+    """Read the GUI toolkit of a process from its mapped libraries."""
+
+    _MODULE = "vocalinux.text_injection.focused_window"
+
+    def test_detects_gtk_and_qt(self) -> None:
+        maps = (
+            "7f00 r-xp 0 08:01 1 /usr/lib/x86_64-linux-gnu/libgtk-3.so.0.2404.29\n"
+            "7f01 r-xp 0 08:01 2 /usr/lib/x86_64-linux-gnu/libQt5Gui.so.5.15.3\n"
+        )
+        with patch(f"{self._MODULE}.open", mock_open(read_data=maps)):
+            self.assertEqual(_process_toolkits("1234"), {"gtk", "qt"})
+
+    def test_plain_xlib_client(self) -> None:
+        maps = "7f00 r-xp 0 08:01 1 /usr/lib/x86_64-linux-gnu/libX11.so.6.4.0\n"
+        with patch(f"{self._MODULE}.open", mock_open(read_data=maps)):
+            self.assertEqual(_process_toolkits("1234"), set())
+
+    def test_unreadable_maps(self) -> None:
+        with patch(f"{self._MODULE}.open", side_effect=PermissionError("denied")):
+            self.assertEqual(_process_toolkits("1234"), set())
+        self.assertEqual(_process_toolkits("not-a-pid"), set())

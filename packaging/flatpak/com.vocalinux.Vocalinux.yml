@@ -24,7 +24,7 @@ finish-args:
   - --socket=pulseaudio
   # GPU render node for the Vulkan-accelerated whisper.cpp build.
   - --device=dri
-  # /dev/input for global hotkeys (evdev) and /dev/uinput for the ydotool
+  # /dev/input for evdev hotkeys on Wayland/XWayland and /dev/uinput for ydotool
   # injection fallback (Ctrl+V / type) when the RemoteDesktop portal is
   # unavailable. Flatpak has no narrower flag than "all" for uinput.
   - --device=all

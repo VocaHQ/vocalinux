@@ -153,6 +153,11 @@ SUPPORTED_LANGUAGES = {
         "whisper": "ru",
         "vosk": "vosk-model-small-ru-0.22",
     },
+    "sl": {
+        "name": "Slovenian",
+        "whisper": "sl",
+        "vosk": None,
+    },
     "es": {
         "name": "Spanish",
         "whisper": "es",

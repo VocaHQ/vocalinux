@@ -119,7 +119,7 @@ class AutoPauseMonitor:
         self._paused = False
         self._timeout_id: Optional[int] = None
         self._running = False
-        self._last_poll_interval = DEFAULT_POLL_INTERVAL_SECONDS
+        self._last_poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS
 
     @property
     def paused(self) -> bool:

@@ -10,9 +10,13 @@ UX Design Notes tested:
 - No action buttons - uses title bar close (GNOME HIG)
 """
 
+import os
+import subprocess
 import sys
+import textwrap
 import time
 import unittest
+from typing import Optional
 from unittest.mock import MagicMock, Mock, call, patch
 
 # Mock GTK before importing anything that might use it
@@ -50,6 +54,24 @@ mock_config_manager.get = Mock(
 mock_config_manager.update_speech_recognition_settings = Mock()
 mock_config_manager.set = Mock()
 mock_config_manager.save_settings = Mock()
+
+
+class TestAvailableEngines(unittest.TestCase):
+    def test_available_engines_preserves_legacy_mapping(self) -> None:
+        from vocalinux.ui import settings_dialog, settings_engines
+
+        with patch.object(settings_engines, "available_engines", return_value=["whisper_cpp"]):
+            self.assertEqual(
+                settings_dialog.get_available_engines(),
+                {
+                    "vosk": False,
+                    "whisper": False,
+                    "whisper_cpp": True,
+                    "parakeet": False,
+                    "faster_whisper": False,
+                    "remote_api": False,
+                },
+            )
 
 
 def apply_settings_internal(dialog, settings: dict) -> bool:
@@ -1232,9 +1254,22 @@ class TestSettingsNavigation(unittest.TestCase):
         footer_body = self.source_code.split("def _build_sidebar_footer")[1].split("\n    def ")[0]
         box_pack = footer_body.index("footer.pack_start(self.test_output_revealer")
         status_pack = footer_body.index("footer.pack_start(status_row")
-        button_pack = footer_body.index("footer.pack_start(self.test_button")
+        button_pack = footer_body.index("footer.pack_start(test_button_row")
+        test_button = footer_body.index("test_button_row.pack_start(self.test_button")
+        cancel_button = footer_body.index("test_button_row.pack_start(self.test_cancel_button")
         self.assertLess(box_pack, status_pack)
         self.assertLess(status_pack, button_pack)
+        self.assertLess(test_button, cancel_button)
+
+    def test_test_dictation_stop_runs_off_gtk_thread(self) -> None:
+        """Finalization keeps the Cancel button usable while recognition stops."""
+        finalize_body = self.source_code.split("def _finalize_test")[1].split("\n    def ")[0]
+        self.assertIn("def stop_test", finalize_body)
+        self.assertIn('name="vocalinux-test-dictation-stop"', finalize_body)
+        self.assertIn(
+            "GLib.timeout_add(100, self._wait_for_idle_then_restore_callbacks)",
+            finalize_body,
+        )
 
     def test_test_dictation_scrolled_window_has_no_shadow(self) -> None:
         """GTK3 ScrolledWindow default shadow is a left stripe on GNOME/Wayland (#847)."""
@@ -1281,7 +1316,7 @@ class TestSettingsNavigation(unittest.TestCase):
     def test_sidebar_category_list_is_scrollable(self) -> None:
         """The category list sits in a ScrolledWindow so the dialog can shrink
         vertically without clipping categories (#678)."""
-        class_body = self.source_code.split("class SettingsDialog(Gtk.Dialog):")[1]
+        class_body = self.source_code.split("class SettingsDialog(AboutSectionMixin):")[1]
         init_body = class_body.split("def __init__")[1].split("\n    def ")[0]
         self.assertIn("sidebar_scroller = Gtk.ScrolledWindow()", init_body)
         self.assertIn(
@@ -1299,9 +1334,14 @@ class TestAboutPage(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.source = TestSettingsSearch._settings_source()
-        cls.about = cls.source.split("def _build_about_section")[1].split("\n    def ")[0]
+        from pathlib import Path
 
-    def test_three_groups_keep_updater(self):
+        about_path = Path(__file__).resolve().parents[1] / "src/vocalinux/ui/settings_about.py"
+        cls.about_source = about_path.read_text(encoding="utf-8")
+        cls.source += cls.about_source
+        cls.about = cls.about_source.split("def _build_about_section")[1].split("\n    def ")[0]
+
+    def test_three_groups_keep_updater(self) -> None:
         self.assertIn('title="Vocalinux"', self.about)
         self.assertIn('title="Part of VocaHQ"', self.about)
         self.assertIn('title="Talk to us"', self.about)
@@ -1309,6 +1349,7 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("What's New", self.about)
         self.assertIn("_on_check_updates_clicked", self.about)
         self.assertIn("self.update_channel_combo", self.about)
+        self.assertIn("self.update_checks_switch", self.about)
 
     def test_product_status_and_honest_network_copy(self):
         self.assertIn("Available now on Linux (X11 and Wayland)", self.about)
@@ -1382,8 +1423,8 @@ class TestAboutPage(unittest.TestCase):
     def test_talk_to_us_sits_above_updates(self):
         self.assertLess(self.about.find('title="Talk to us"'), self.about.find('title="Updates"'))
         self.assertLess(
-            self.about.find("self.about_tab.pack_start(talk_group"),
-            self.about.find("self.about_tab.pack_start(updates_group"),
+            self.about.find("about_tab.pack_start(talk_group"),
+            self.about.find("about_tab.pack_start(updates_group"),
         )
 
     def test_channel_check_shares_one_row(self):
@@ -1555,6 +1596,68 @@ class TestAboutPage(unittest.TestCase):
         self.assertIn("_FAMILY_ICON_PX", self.source)
 
 
+class TestUpdatePreferences(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        source_dir = os.path.join(os.path.dirname(__file__), "..", "src", "vocalinux", "ui")
+        with open(os.path.join(source_dir, "settings_dialog.py"), encoding="utf-8") as source_file:
+            cls.settings_source = source_file.read()
+        with open(os.path.join(source_dir, "settings_about.py"), encoding="utf-8") as source_file:
+            cls.about_source = source_file.read()
+
+    @classmethod
+    def _method_source(cls, source: str, name: str) -> str:
+        start = source.index(f"    def {name}(")
+        end = source.find("\n    def ", start + 1)
+        return source[start:end] if end != -1 else source[start:]
+
+    def test_update_checks_toggle_persists_and_calls_callback(self) -> None:
+        method = self._method_source(self.settings_source, "_on_update_checks_toggled")
+
+        self.assertIn('self.config_manager.set("updates", "check_automatically", enabled)', method)
+        self.assertIn("self.config_manager.save_settings()", method)
+        self.assertIn("self.update_checks_callback(enabled)", method)
+        self.assertIn(
+            'logger.error("Automatic update checks callback failed", exc_info=True)', method
+        )
+
+    def test_channel_change_runs_manual_lookup_without_persisting(self) -> None:
+        method = self._method_source(self.settings_source, "_on_update_channel_changed")
+
+        self.assertIn("self._start_update_check()", method)
+        self.assertNotIn('self.config_manager.set("updates", "channel"', method)
+        self.assertNotIn("self.config_manager.save_settings()", method)
+
+    def test_manual_about_check_syncs_tray_only_for_enabled_build_channel(self) -> None:
+        method = self._method_source(self.settings_source, "_apply_update_check_result")
+        tray_sync = method.split("# Keep the tray menu in sync", 1)[1]
+        guard = tray_sync.split("):", 1)[0]
+
+        self.assertIn("channel == build_channel()", guard)
+        self.assertIn('"check_automatically", DEFAULT_CHECK_AUTOMATICALLY', guard)
+        self.assertIn("self.update_status_callback(update_available", tray_sync)
+
+    def test_about_auto_check_is_skipped_when_disabled(self) -> None:
+        method = self._method_source(self.settings_source, "_on_settings_page_changed")
+
+        self.assertIn('"check_automatically", DEFAULT_CHECK_AUTOMATICALLY', method)
+        self.assertIn("self._start_update_check()", method)
+        self.assertIn("Automatic checks are off. Press Check to look now.", method)
+
+    def test_update_switch_loads_state_before_connecting(self) -> None:
+        switch_start = self.about_source.index("self.update_checks_switch = Gtk.Switch()")
+        active_position = self.about_source.index(
+            "self.update_checks_switch.set_active(", switch_start
+        )
+        connect_position = self.about_source.index(
+            'self.update_checks_switch.connect("state-set", on_update_checks_toggled)',
+            switch_start,
+        )
+
+        self.assertLess(active_position, connect_position)
+        self.assertIn('"check_automatically", DEFAULT_CHECK_AUTOMATICALLY', self.about_source)
+
+
 class TestAboutInk(unittest.TestCase):
     """Ink for About marks follows light vs dark surfaces."""
 
@@ -1572,6 +1675,92 @@ class TestAboutInk(unittest.TestCase):
             self.assertEqual(_about_ink_hex(), _ABOUT_INK_ON_DARK)
         else:
             self.assertIn(_about_ink_hex(), {_ABOUT_INK, _ABOUT_INK_ON_DARK})
+
+
+class TestAboutColorSchemeRead(unittest.TestCase):
+    def test_about_section_reads_os_scheme_once_per_build(self) -> None:
+        script = textwrap.dedent("""
+            from unittest.mock import MagicMock, patch
+
+            from vocalinux.ui import settings_about, settings_dialog
+
+            dialog = MagicMock()
+            gtk = MagicMock()
+            gtk.Settings.get_default.return_value = None
+            with (
+                patch.object(settings_about, "Gtk", new=gtk),
+                patch.object(settings_dialog, "PreferenceRow", return_value=MagicMock()),
+                patch.object(settings_dialog, "PreferencesGroup", return_value=MagicMock()),
+                patch.object(settings_dialog, "_combo_with_suffix", return_value=MagicMock()),
+                patch.object(settings_dialog, "_combo_chrome"),
+                patch.object(settings_dialog, "_style_action_button"),
+                patch.object(settings_dialog, "_set_accessible_name"),
+                patch("vocalinux.ui.settings_about.os.path.exists", return_value=False),
+                patch(
+                    "vocalinux.utils.gtk_color_scheme.read_os_color_scheme",
+                    return_value="prefer-light",
+                ) as read_color_scheme,
+            ):
+                settings_about.AboutSectionMixin._build_about_section(dialog)
+                assert read_color_scheme.call_count == 1, read_color_scheme.call_count
+                print(f"ABOUT_SCHEME_READS={read_color_scheme.call_count}")
+            """)
+        env = os.environ.copy()
+        worktree_src = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        env["PYTHONPATH"] = os.pathsep.join(
+            path for path in (worktree_src, env.get("PYTHONPATH", "")) if path
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=True,
+            capture_output=True,
+            env=env,
+            text=True,
+        )
+        self.assertIn("ABOUT_SCHEME_READS=1", result.stdout)
+
+
+class TestPasteLongTextPreference(unittest.TestCase):
+    def test_switch_loads_and_saves(self) -> None:
+        from vocalinux.ui import settings_dialog
+
+        dialog = MagicMock()
+        dialog.config_manager.get_settings.return_value = {
+            "general": {},
+            "ui": {},
+            "text_injection": {},
+            "history": {},
+            "auto_pause": {},
+            "model_keepalive": {},
+            "post_processing": {},
+            "advanced": {},
+        }
+        dialog.config_manager.get_paste_long_text.return_value = True
+        dialog.config_manager.get_paste_shortcut.return_value = "auto"
+        dialog._get_current_settings.return_value = {
+            "engine": "whisper_cpp",
+            "language": "auto",
+            "model_size": "tiny",
+            "vad_sensitivity": 3,
+            "silence_timeout": 2.0,
+        }
+        dialog._follow_layout_supported.return_value = False
+
+        with patch.object(
+            settings_dialog, "get_available_engines", return_value={"whisper_cpp": True}
+        ):
+            with patch("vocalinux.ui.autostart_manager.is_autostart_enabled", return_value=False):
+                settings_dialog.SettingsDialog._load_and_apply_settings(dialog)
+        dialog.paste_long_text_switch.set_active.assert_called_once_with(True)
+
+        dialog.config_manager.reset_mock()
+        with patch.object(settings_dialog, "_handlers_suppressed", return_value=False):
+            result = settings_dialog.SettingsDialog._on_paste_long_text_toggled(
+                dialog, MagicMock(), True
+            )
+        self.assertFalse(result)
+        dialog.config_manager.set_paste_long_text.assert_called_once_with(True)
+        dialog.config_manager.save_settings.assert_called_once_with()
 
 
 class TestSettingsControlColumn(unittest.TestCase):
@@ -1605,6 +1794,83 @@ class TestSettingsControlColumn(unittest.TestCase):
     def test_model_card_has_no_legend(self):
         self.assertNotIn("✓ Downloaded    ↓ Will download    ★ Recommended", self.source)
         self.assertNotIn("Tip: <b>", self.source)
+
+
+def _gpu_settings_dialog(saved_device: Optional[int]) -> MagicMock:
+    dialog = MagicMock()
+    dialog.config_manager.get.return_value = saved_device
+    dialog.gpu_device_combo.set_active_id.return_value = True
+    return dialog
+
+
+def test_gpu_dropdown_uses_ggml_indices_and_labels() -> None:
+    from vocalinux.ui import settings_dialog
+    from vocalinux.utils import whispercpp_model_info
+
+    dialog = _gpu_settings_dialog(None)
+    ggml_devices = [
+        {
+            "index": 0,
+            "name": "NVIDIA GeForce GTX 1050",
+            "backend_name": "Vulkan0",
+            "device_type": "discrete",
+        },
+        {
+            "index": 1,
+            "name": "Intel Arc",
+            "backend_name": "Vulkan1",
+            "device_type": "integrated",
+        },
+    ]
+    with patch.object(whispercpp_model_info, "detect_ggml_gpu_devices", return_value=ggml_devices):
+        settings_dialog._populate_gpu_device_choices(dialog.gpu_device_combo, None)
+
+    dialog.gpu_device_combo.append.assert_any_call("0", "[0] NVIDIA GeForce GTX 1050 (Discrete)")
+    dialog.gpu_device_combo.append.assert_any_call("1", "[1] Intel Arc (Integrated)")
+
+
+def test_gpu_dropdown_falls_back_to_vulkaninfo_when_ggml_probe_is_unavailable() -> None:
+    from vocalinux.ui import settings_dialog
+    from vocalinux.utils import whispercpp_model_info
+
+    dialog = _gpu_settings_dialog(None)
+    vulkan_devices = [
+        {"index": 1, "name": "NVIDIA GPU", "device_type": "discrete"},
+    ]
+    with (
+        patch.object(whispercpp_model_info, "detect_ggml_gpu_devices", return_value=None),
+        patch.object(settings_dialog, "detect_vulkan_devices", return_value=vulkan_devices),
+    ):
+        settings_dialog._populate_gpu_device_choices(dialog.gpu_device_combo, None)
+
+    dialog.gpu_device_combo.append.assert_any_call("1", "[1] NVIDIA GPU (Discrete)")
+
+
+def test_gpu_dropdown_selects_auto_for_stale_saved_index() -> None:
+    from vocalinux.ui import settings_dialog
+    from vocalinux.utils import whispercpp_model_info
+
+    dialog = _gpu_settings_dialog(9)
+
+    def _set_active_id(device_id: str) -> bool:
+        return device_id in {"-1", "0"}
+
+    dialog.gpu_device_combo.set_active_id.side_effect = _set_active_id
+    ggml_devices = [
+        {
+            "index": 0,
+            "name": "NVIDIA GPU",
+            "backend_name": "Vulkan0",
+            "device_type": "discrete",
+        }
+    ]
+    with patch.object(whispercpp_model_info, "detect_ggml_gpu_devices", return_value=ggml_devices):
+        settings_dialog._populate_gpu_device_choices(dialog.gpu_device_combo, 9)
+
+    assert dialog.gpu_device_combo.set_active_id.call_args_list[-2:] == [
+        call("9"),
+        call("-1"),
+    ]
 
 
 if __name__ == "__main__":

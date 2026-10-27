@@ -192,7 +192,7 @@ class ResourceManager:
             Dictionary with validation results
         """
         resources_dir = self.resources_dir
-        results = {
+        results: dict[str, object] = {
             "resources_dir_exists": os.path.exists(resources_dir),
             "icons_dir_exists": os.path.exists(self.icons_dir),
             "sounds_dir_exists": os.path.exists(self.sounds_dir),
@@ -211,7 +211,7 @@ class ResourceManager:
         for icon in expected_icons:
             icon_path = self.get_icon_path(icon)
             if not os.path.exists(icon_path):
-                results["missing_icons"].append(icon)
+                cast(list[str], results["missing_icons"]).append(icon)
 
         # Expected sounds
         expected_sounds = ["start_recording", "stop_recording", "error"]
@@ -219,6 +219,6 @@ class ResourceManager:
         for sound in expected_sounds:
             sound_path = self.get_sound_path(sound)
             if not os.path.exists(sound_path):
-                results["missing_sounds"].append(sound)
+                cast(list[str], results["missing_sounds"]).append(sound)
 
         return results

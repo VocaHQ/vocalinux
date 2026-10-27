@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.18.4" date="2026-10-21">
+      <description>
+        <p>Patch: long push-to-talk dictations are transcribed in segments instead of being cut off, model downloads only start after you confirm them and Cancel cancels the whole change, Test Dictation keeps its own result while the Dictation Pad is open, the GPU picker follows ggml's device list and CPU runs use most of your cores, the recording hotkey can cancel a transcription in progress, this Flatpak bundles onnxruntime for Silero VAD and uses the X11 hotkey listener on X11 sessions, RemoteDesktop portal requests no longer collide on GNOME, update checks can be turned off, and Slovenian is supported. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.18.3" date="2026-10-17">
       <description>
         <p>Patch: "new line" and "new paragraph" voice commands insert real line breaks standalone and mid-utterance, hotkeys work again on GNOME Shell X11 and quitting no longer collapses multi-layout keyboard maps, the bundled pywhispercpp builds at the portable x86-64 baseline so older CPUs stop crashing, and the Snap recipe drops the `uinput` plug the Store denied so revisions publish again. This Flatpak still ships whisper.cpp only.</p>

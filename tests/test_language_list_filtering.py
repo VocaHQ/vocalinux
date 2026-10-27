@@ -181,6 +181,50 @@ def test_changed_fires_only_when_the_selection_actually_changes(settings_dialog)
     assert picker._active_id == "ja"
 
 
+def test_clear_active_shows_a_readout_without_emitting_changed(settings_dialog: Any) -> None:
+    picker = _picker_stub(settings_dialog, rows=LANGS, active="pl")
+
+    settings_dialog.SearchablePicker.clear_active(picker, "Detected each time")
+
+    assert picker._active_id is None
+    picker._label.set_text.assert_called_once_with("Detected each time")
+    picker.emit.assert_not_called()
+
+
+def test_follow_layout_auto_uses_a_readout_without_applying_settings(
+    settings_dialog: Any,
+) -> None:
+    picker = _picker_stub(settings_dialog, rows=LANGS, active="en-us")
+    label_text = {"value": "English (US)"}
+    picker._label.set_text.side_effect = lambda text: label_text.__setitem__("value", text)
+    picker.set_active_id.side_effect = (
+        lambda item_id: settings_dialog.SearchablePicker.set_active_id(picker, item_id)
+    )
+    picker.get_active_id.side_effect = lambda: settings_dialog.SearchablePicker.get_active_id(
+        picker
+    )
+    picker.clear_active.side_effect = lambda text="": settings_dialog.SearchablePicker.clear_active(
+        picker, text
+    )
+    dialog = Mock()
+    dialog._follow_layout_active = True
+    dialog.language = "auto"
+    dialog.language_combo.get_active_id.return_value = "auto"
+    dialog.simple_language_combo = picker
+    dialog._get_recommended_whispercpp_model_for_language.return_value = ("small", "reason")
+    dialog._get_selected_whispercpp_model.return_value = "small"
+    dialog._update_simple_visibility = Mock()
+    dialog._auto_apply_settings = Mock()
+
+    settings_dialog.SettingsDialog._sync_simple_from_advanced(dialog)
+
+    assert picker.get_active_id() is None
+    assert label_text["value"] == "Detected each time"
+    dialog.simple_language_row.set_sensitive.assert_called_once_with(False)
+    dialog._auto_apply_settings.assert_not_called()
+    picker.emit.assert_not_called()
+
+
 def test_opening_starts_from_an_empty_search(settings_dialog):
     """Leftover text from last time would hide most of the list on open."""
     picker = _picker_stub(settings_dialog, rows=LANGS)

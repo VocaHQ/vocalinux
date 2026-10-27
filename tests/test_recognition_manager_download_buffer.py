@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import unittest
+from contextlib import ExitStack
 from unittest.mock import MagicMock, Mock, PropertyMock, mock_open, patch
 
 # Mock modules BEFORE importing anything from vocalinux
@@ -33,6 +34,7 @@ sys.modules["zipfile"] = MagicMock()
 # Import after mocking
 from conftest import mock_audio_feedback
 
+import vocalinux.speech_recognition.recognition_manager as recognition_manager_module
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition.command_processor import CommandProcessor
 from vocalinux.speech_recognition.recognition_manager import (
@@ -96,6 +98,266 @@ class TestDownloadFunctions(unittest.TestCase):
         # Reset and verify again
         manager._download_cancelled = False
         assert manager._download_cancelled is False
+
+    def test_download_claim_resets_cancellation_for_the_next_attempt(self) -> None:
+        """A stale cancel from one attempt must not cancel the next one."""
+        manager = self._create_manager(engine="whisper")
+        manager._download_cancelled = True
+
+        assert manager.try_begin_download() is True
+        assert manager._download_cancelled is False
+        manager.cancel_download()
+        manager.end_download()
+        assert manager._download_cancelled is False
+
+    def _assert_missing_model_dispatch(self, engine: str, model_size: str, downloader: str) -> None:
+        manager = self._create_manager()
+        manager.engine = engine
+        manager.model_size = model_size
+        with ExitStack() as stack:
+            availability = None
+            if engine == "whisper_cpp":
+                stack.enter_context(
+                    patch.object(
+                        recognition_manager_module,
+                        "get_model_path",
+                        return_value="/models/target",
+                    )
+                )
+                availability = stack.enter_context(
+                    patch.object(recognition_manager_module.os.path, "exists")
+                )
+            elif engine == "whisper":
+                stack.enter_context(
+                    patch.object(
+                        manager,
+                        "_whisper_model_cache_paths",
+                        return_value=("/models/whisper", "/models/whisper/target.pt"),
+                    )
+                )
+                availability = stack.enter_context(
+                    patch.object(recognition_manager_module.os.path, "exists")
+                )
+            elif engine == "faster_whisper":
+                availability = stack.enter_context(
+                    patch.object(recognition_manager_module.faster_whisper, "is_model_downloaded")
+                )
+            elif engine == "parakeet":
+                availability = stack.enter_context(
+                    patch.object(recognition_manager_module.parakeet, "is_model_downloaded")
+                )
+            else:
+                stack.enter_context(
+                    patch.object(manager, "_get_vosk_model_path", return_value="/models/target")
+                )
+                availability = stack.enter_context(
+                    patch.object(recognition_manager_module.os.path, "exists")
+                )
+            download = stack.enter_context(patch.object(manager, downloader))
+
+            for downloaded in (True, False):
+                with self.subTest(engine=engine, downloaded=downloaded):
+                    availability.return_value = downloaded
+                    manager._download_selected_model_if_missing()
+                    if downloaded:
+                        download.assert_not_called()
+                    elif engine == "whisper":
+                        download.assert_called_once_with("/models/whisper")
+                    else:
+                        download.assert_called_once_with()
+                    download.reset_mock()
+
+    def test_download_selected_model_dispatches_whispercpp(self) -> None:
+        self._assert_missing_model_dispatch("whisper_cpp", "small", "_download_whispercpp_model")
+
+    def test_download_selected_model_dispatches_whisper(self) -> None:
+        self._assert_missing_model_dispatch("whisper", "small", "_download_whisper_model")
+
+    def test_download_selected_model_dispatches_faster_whisper(self) -> None:
+        self._assert_missing_model_dispatch(
+            "faster_whisper", "tiny", "_download_faster_whisper_model"
+        )
+
+    def test_download_selected_model_dispatches_parakeet(self) -> None:
+        self._assert_missing_model_dispatch("parakeet", "v3-european", "_download_parakeet_model")
+
+    def test_download_selected_model_dispatches_vosk(self) -> None:
+        self._assert_missing_model_dispatch("vosk", "small", "_download_vosk_model")
+
+    def test_reconfigure_download_cancellation_preserves_the_loaded_model(self) -> None:
+        manager = self._create_manager()
+        loaded_model = object()
+        manager.model = loaded_model
+        manager.engine = "whisper"
+        manager.model_size = "small"
+        manager.language = "en-us"
+        manager.command_processor = Mock()
+        restore_language = patch.object(manager, "_restore_language_after_oneshot")
+        restore_language_mock = restore_language.start()
+        self.patches.append(restore_language)
+
+        with (
+            patch.object(
+                recognition_manager_module,
+                "get_model_path",
+                return_value="/models/medium.bin",
+            ),
+            patch.object(recognition_manager_module.os.path, "exists", return_value=False),
+            patch.object(
+                manager,
+                "_download_whispercpp_model",
+                side_effect=RuntimeError("Download cancelled"),
+            ) as download,
+            patch.object(manager, "_init_selected_engine") as init_selected,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "Download cancelled"):
+                manager.reconfigure(
+                    engine="whisper_cpp",
+                    model_size="medium",
+                    language="fr",
+                    force_download=True,
+                )
+
+        assert manager.model is loaded_model
+        assert manager.engine == "whisper"
+        assert manager.model_size == "small"
+        assert manager.language == "en-us"
+        assert manager._defer_download is True
+        assert manager._model_lock.locked() is False
+        assert manager._prefetching_model is False
+        download.assert_called_once_with()
+        init_selected.assert_not_called()
+        manager.command_processor.set_language.assert_any_call("fr")
+        manager.command_processor.set_language.assert_any_call("en-us")
+        restore_language_mock.assert_called_once_with()
+
+    def test_reconfigure_prefetches_before_initializing_the_selected_engine(self) -> None:
+        manager = self._create_manager()
+        manager.engine = "whisper"
+        available = {"model": False}
+        loaded_model = object()
+
+        def model_exists(_path: str) -> bool:
+            return available["model"]
+
+        def download_model() -> None:
+            assert manager._prefetching_model is True
+            assert manager.start_recognition() is False
+            available["model"] = True
+
+        with (
+            patch.object(
+                recognition_manager_module,
+                "get_model_path",
+                return_value="/models/medium.bin",
+            ),
+            patch.object(recognition_manager_module.os.path, "exists", side_effect=model_exists),
+            patch.object(recognition_manager_module, "_preload_pywhispercpp_shared_libraries"),
+            patch.object(manager, "_whispercpp_model_is_verified", return_value=True),
+            patch.object(
+                manager, "_download_whispercpp_model", side_effect=download_model
+            ) as download,
+            patch.object(
+                manager,
+                "_load_whispercpp_model",
+                side_effect=lambda _path: setattr(manager, "model", loaded_model),
+            ),
+            patch.object(
+                manager, "_init_selected_engine", wraps=manager._init_selected_engine
+            ) as init,
+            patch.object(recognition_manager_module, "play_error_sound") as error_sound,
+            patch.object(recognition_manager_module, "_show_notification") as notification,
+        ):
+            manager.reconfigure(
+                engine="whisper_cpp",
+                model_size="medium",
+                force_download=True,
+            )
+
+        assert available["model"] is True
+        download.assert_called_once_with()
+        init.assert_called_once_with()
+        assert manager.model is loaded_model
+        assert manager._prefetching_model is False
+        error_sound.assert_called_once_with()
+        notification.assert_called_once_with(
+            "Speech model downloading",
+            "Dictation will be available when the new model has finished downloading.",
+            "dialog-information",
+        )
+
+    def test_reconfigure_without_download_permission_skips_prefetch(self) -> None:
+        manager = self._create_manager()
+        manager.engine = "whisper"
+
+        with (
+            patch.object(manager, "_download_selected_model_if_missing") as prefetch,
+            patch.object(manager, "_init_selected_engine"),
+        ):
+            manager.reconfigure(
+                engine="whisper_cpp",
+                model_size="medium",
+                force_download=False,
+            )
+
+        prefetch.assert_not_called()
+
+    def test_resume_skips_engine_reinit_while_model_is_prefetching(self) -> None:
+        manager = self._create_manager(engine="whisper")
+        manager.engine = "whisper_cpp"
+        manager._prefetching_model = True
+        manager._auto_paused = True
+        manager._idle_unloaded = True
+
+        with patch.object(manager, "_init_whispercpp") as init_whispercpp:
+            manager.reinitialize_after_resume()
+
+        init_whispercpp.assert_not_called()
+        self.assertFalse(manager._auto_paused)
+        self.assertFalse(manager._idle_unloaded)
+
+    def test_lazy_reload_follows_a_cancelled_prefetch_after_resume(self) -> None:
+        manager = self._create_manager(engine="whisper")
+        manager.engine = "whisper_cpp"
+        manager.model = None
+        manager._model_initialized = False
+        manager._prefetching_model = True
+        manager._auto_paused = True
+
+        manager.reinitialize_after_resume()
+        manager._prefetching_model = False
+
+        with patch.object(manager, "_init_whispercpp") as init_whispercpp:
+            manager.ensure_model_loaded()
+
+        init_whispercpp.assert_called_once()
+
+    def test_start_recognition_refuses_while_a_model_is_prefetching(self) -> None:
+        manager = self._create_manager()
+        manager.engine = "whisper_cpp"
+        manager._prefetching_model = True
+        uninitialized_manager = object.__new__(SpeechRecognitionManager)
+        assert uninitialized_manager._prefetching_model is False
+
+        with (
+            patch.object(recognition_manager_module, "play_error_sound") as error_sound,
+            patch.object(recognition_manager_module, "_show_notification") as notification,
+        ):
+            assert manager.start_recognition() is False
+            manager.language = "pl"
+            with patch.object(
+                manager, "start_recognition", wraps=manager.start_recognition
+            ) as start:
+                assert manager.start_recognition_with_language("pl") is False
+
+        start.assert_called_once_with(mode="toggle")
+        assert error_sound.call_count == 2
+        notification.assert_called_with(
+            "Speech model downloading",
+            "Dictation will be available when the new model has finished downloading.",
+            "dialog-information",
+        )
+        assert notification.call_count == 2
 
     def test_download_vosk_model_with_progress(self):
         """Test VOSK model download with progress tracking."""
@@ -320,7 +582,7 @@ class TestBufferManagement(unittest.TestCase):
             with patch("vocalinux.ui.audio_feedback.play_stop_sound"):
                 manager.stop_recognition()
 
-                enqueue_mock.assert_called_once_with([b"small"])
+                enqueue_mock.assert_called_once_with([b"small"], release_gate=None)
                 assert manager.audio_buffer == []
 
     def test_stop_recognition_large_buffer_trim(self):
@@ -377,6 +639,40 @@ class TestErrorHandling(unittest.TestCase):
 
         assert manager.engine == "whisper"
         assert manager.engine != original_engine
+
+    def test_reconfigure_aborts_when_download_cancelled_while_lock_is_busy(self) -> None:
+        """Cancellation while waiting for a transcription lock restores state."""
+        manager = SpeechRecognitionManager(engine="vosk", defer_download=True)
+        manager._download_claim.acquire()
+        manager.engine = "vosk"
+        manager._model_lock.acquire()
+        manager._model_lock.release()
+
+        lock_held = threading.Event()
+        release_lock = threading.Event()
+
+        def hold_model_lock() -> None:
+            manager._model_lock.acquire()
+            lock_held.set()
+            release_lock.wait(timeout=2)
+            manager._model_lock.release()
+
+        holder = threading.Thread(target=hold_model_lock)
+        holder.start()
+        assert lock_held.wait(timeout=2)
+        manager.cancel_download()
+
+        try:
+            with patch.object(manager, "_download_selected_model_if_missing"):
+                with self.assertRaisesRegex(RuntimeError, "Download cancelled"):
+                    manager.reconfigure(engine="whisper", force_download=True)
+        finally:
+            release_lock.set()
+            holder.join(timeout=2)
+            manager.end_download()
+
+        assert manager.engine == "vosk"
+        assert manager._defer_download is True
 
     def test_reconfigure_language_change(self):
         """Test reconfiguring language triggers restart."""

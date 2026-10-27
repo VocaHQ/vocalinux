@@ -20,7 +20,7 @@ The installer detects a running instance, updates in place, preserves configurat
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.18.3
+git checkout v0.18.4
 ./install.sh
 ```
 
@@ -76,6 +76,39 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.4
+
+0.18.4 is a **patch** on the stable line. Default engine is still whisper.cpp. It closes the reports filed after 0.18.3: long dictations keep all their audio, model downloads are always your decision, Test Dictation and the Dictation Pad stop competing for text, and GPU and thread selection match what whisper.cpp actually runs on.
+
+### 0.18.4 highlights
+
+| Fix | Description |
+|---------|-------------|
+| **Long dictations kept whole** | Push-to-talk recordings past the buffer cap are queued for transcription in segments, so a 44.1 kHz mic no longer loses everything after about two minutes (#976 by @dishanood; fixes #975 reported by @dishanood) |
+| **Explicit model downloads** | Settings never schedules a download on its own. Every download asks first with its size, Cancel cancels the whole change without freezing the dialog, picking a model keeps your language settings, and [docs/MODEL_SELECTION.md](MODEL_SELECTION.md) has a hardware to model guide (#1006; fixes #979, #980, #981, #982, #985, #988 reported by @hopsayer) |
+| **Test Dictation and the Dictation Pad** | Test Dictation always shows its own result, and "Dictate into Dictation Pad" now lives in Settings > Dictation next to an Open Dictation Pad button (#1005; fixes #983, #986 reported by @hopsayer) |
+| **GPU picker and CPU threads** | The GPU list follows ggml's own device enumeration, the log reports the backend actually in use, and CPU runs size threads from your core count instead of 2 (#1001; fixes #987, #990 reported by @hopsayer) |
+| **Cancel a transcription** | Press the recording hotkey again, use the tray item, or click Cancel in Test Dictation to drop a slow transcription. Nothing is typed or added to history (#1004; fixes #991 reported by @hopsayer) |
+| **Slovenian** | `sl` is a supported language in Settings and in language shortcuts (#995; fixes #970 reported by @samodadela) |
+
+### Also in v0.18.4
+
+- Keyboards whose evdev node also reports pointer axes, such as the Logitech K860, are monitored again without being grabbed, so `right_alt` and other hotkeys fire (#978 by @ikarius; fixes #953 reported by @dherdt)
+- The Flatpak bundles onnxruntime, so Silero VAD works there instead of falling back to amplitude VAD (#1002; fixes #969 reported by @samodadela)
+- The Flatpak uses the X11 hotkey listener on native X11 sessions, so it no longer needs `--device=all` there (#997; fixes #971 reported by @samodadela)
+- RemoteDesktop portal requests each get a unique handle token, which fixes the missing GNOME consent dialog and the 15 second timeout (#996; fixes #993 reported by @hal2100)
+- XWayland apps that are not connected to IBus, such as SoftMaker TextMaker, receive text through xdotool (#1003; fixes #972 reported by @kdseattlewa)
+- On GNOME Wayland the dictation overlay is mapped at startup, so the first recording no longer steals focus from the app you are typing into (#998; fixes #992 reported by @lavoie005)
+- `install.sh --engine=parakeet` installs a working Parakeet engine again (#1000; fixes #973 reported by @Ma6nus)
+- Update checks follow the build channel, so stable installs only hear about stable releases, and Settings can turn them off (#999; fixes #977 reported by @hopsayer)
+- Faster Settings, typing and dictation, plus mypy as a CI gate (#968)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp only.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.4).
 
 ---
 

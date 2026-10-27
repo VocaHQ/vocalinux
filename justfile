@@ -5,8 +5,9 @@
 #
 # Two environments, deliberately separate:
 #   .venv/  dev tooling, built by uv from .python-version (3.13). `just deps`
-#           pip-builds PyGObject from the lock and needs libgirepository-2.0-dev
-#           (Ubuntu 24.04+). Debian 12 cannot build 3.56; use `just install-dev`.
+#           builds PyGObject from the lock and needs libgirepository-2.0-dev
+#           (Ubuntu 24.04+) or glib2-devel (Fedora 40+), plus cairo-gobject
+#           headers on Fedora. Debian 12 cannot build 3.56; use `just install-dev`.
 #   venv/   what `just install` creates, always from the system Python so the
 #           distro PyGObject package is importable.
 #           install.sh ignores an activated .venv and rebuilds
@@ -27,13 +28,23 @@ DEV_EXTRAS := "--extra dev --extra vad --group lint"
 default:
     @just --list
 
+# Fail before `uv sync` when the headers pyaudio, pycairo and PyGObject need are
+# absent. Without this, the first error is a C compiler traceback from inside a
+# dependency build, which reads as a uv problem rather than a distro package.
+# PyGObject/pycairo checks apply only on Linux, matching the dependency marker.
+# An existing .venv/ with the platform's native packages skips the header check.
+[no-exit-message]
+[private]
+_check_build_deps:
+    @python3 scripts/check_build_deps.py
+
 # Create .venv/ and keep it matching the lock. --inexact is what makes this safe
 # to run ahead of every recipe: a plain `uv sync` removes extraneous packages, so
 # it would uninstall whatever `just deps-all` installed — the very thing the
 # --no-sync flags below exist to prevent. `version` skips this; it reads one
 # string out of version.py and needs a bare interpreter, not a sync.
 [private]
-_tooling:
+_tooling: _check_build_deps
     uv sync --inexact {{DEV_EXTRAS}}
 
 # Install Vocalinux
@@ -45,11 +56,11 @@ install-dev:
     ./install.sh --dev
 
 # Install development dependencies into .venv/ (dev + vad extras)
-deps:
+deps: _check_build_deps
     uv sync {{DEV_EXTRAS}}
 
 # Install every optional extra — whisper/vosk engines and docs (CUDA torch, multi-GB)
-deps-all:
+deps-all: _check_build_deps
     uv sync --all-extras --group lint
 
 # Run test suite
@@ -82,7 +93,7 @@ format: _tooling
 # Run type checking (mypy)
 typecheck: _tooling
     @echo "Running mypy..."
-    uv run --no-sync mypy src/
+    uv run --locked --no-sync --only-group lint mypy src/
 
 # Build distribution packages
 build:
@@ -174,11 +185,17 @@ remote-install-gate distro="debian:12":
 verify-release tag="":
     python3 scripts/verify_release.py {{tag}}
 
+# Build in two clean environments, compare wheels, then stage canonical dist/.
+# PYTHON selects the build interpreter (CI uses the supported floor, 3.11).
+reproducible-wheel:
+    python3 scripts/build_reproducible_wheel.py --python "${PYTHON:-python3}"
+
 # Regenerate uv.lock and the hash-pinned requirements/* exports.
 # Bump the torch +cpu pin in requirements/whisper.in when you want a newer
 # CPU build. OpenAI Whisper does not use torchaudio, whose CPU index can lag.
 lock:
     uv lock
+    uv export --only-group release-build --no-emit-project -o requirements/release-build.txt
     uv export --only-group installer-build --no-emit-project -o requirements/installer-build.txt
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt
@@ -237,7 +254,7 @@ distro-packages-check: _tooling
 flatpak-deps: _tooling
     uv run --no-sync python scripts/sync_flatpak_deps.py
 
-# Fail if the Flatpak manifest is behind requirements/runtime.txt.
+# Fail if the Flatpak manifest is behind requirements/vad.txt (runtime + [vad]).
 flatpak-deps-check: _tooling
     uv run --no-sync python scripts/sync_flatpak_deps.py --check
 

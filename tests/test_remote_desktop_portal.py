@@ -1,7 +1,11 @@
 """Tests for the RemoteDesktop portal injection backend and its selection."""
 
+import logging
+import os
+import re
 import subprocess
 import threading
+from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 from unittest.mock import MagicMock, patch
 
@@ -97,18 +101,30 @@ class _FakePortalConn:
         results: Optional[Dict[str, Any]] = None,
         cancels: Optional[Dict[str, int]] = None,
         notify_fail_at: Optional[int] = None,
+        errors: Optional[Dict[str, int]] = None,
+        returned_paths: Optional[Dict[str, str]] = None,
     ) -> None:
         self.version = version
         self.results = dict(results or {})
         self.cancels = dict(cancels or {})  # method -> remaining cancelled replies
+        self.errors = dict(errors or {})  # method -> remaining raised calls
+        self.returned_paths = dict(returned_paths or {})
         # Raise inside NotifyKeyboardKeysym once this many notifies landed.
         self.notify_fail_at = notify_fail_at
-        self.calls: List[Tuple[str, str, Any]] = []
+        self.calls: List[Tuple[str, str, Any, Any]] = []
         self.notifies: List[Tuple[int, int]] = []
         self.closed_sessions: List[Any] = []
         self.subscriptions: Dict[str, Any] = {}
+        self.subscription_paths: Dict[int, str] = {}
+        self.unsubscribed: List[int] = []
+        self.unsubscribed_paths: List[str] = []
         self.pending: List[Tuple[str, int, Dict[str, Any]]] = []
-        self._next_request = 0
+        self.exported_request_paths: set[str] = set()
+        self.request_subscriptions_at_call: List[Tuple[str, str, bool]] = []
+        self._next_subscription = 0
+
+    def get_unique_name(self) -> str:
+        return ":1.571"
 
     def call_sync(
         self,
@@ -141,13 +157,29 @@ class _FakePortalConn:
             )
             return None
         if method in ("CreateSession", "SelectDevices", "Start"):
-            self._next_request += 1
-            request_path = f"/org/freedesktop/portal/request/{self._next_request}"
+            options = params.value[-1]
+            if isinstance(options, _FakeVariant):
+                options = options.value
+            token_variant = options.get("handle_token")
+            token = token_variant.get_string() if token_variant is not None else "t"
+            predicted_path = rdp._predicted_request_path(self.get_unique_name(), token)
+            request_path = self.returned_paths.get(method, predicted_path)
+            self.request_subscriptions_at_call.append(
+                (method, predicted_path, predicted_path in self.subscriptions)
+            )
+            remaining_errors = self.errors.get(method, 0)
+            if remaining_errors:
+                self.errors[method] = remaining_errors - 1
+                raise RuntimeError(f"call failed: {method}")
+
+            collision = request_path in self.exported_request_paths
+            self.exported_request_paths.add(request_path)
             remaining = self.cancels.get(method, 0)
             code = rdp._RESPONSE_CANCELLED if remaining else rdp._RESPONSE_OK
             if remaining:
                 self.cancels[method] = remaining - 1
-            self.pending.append((request_path, code, dict(self.results)))
+            if not collision:
+                self.pending.append((request_path, code, dict(self.results)))
             return _FakeVariant("(o)", (request_path,))
         raise AssertionError(f"Unexpected portal call: {interface}.{method}")
 
@@ -161,11 +193,17 @@ class _FakePortalConn:
         flags: Any,
         callback: Any,
     ) -> int:
+        self._next_subscription += 1
+        subscription_id = self._next_subscription
         self.subscriptions[object_path] = callback
-        return len(self.subscriptions)
+        self.subscription_paths[subscription_id] = object_path
+        return subscription_id
 
     def signal_unsubscribe(self, subscription_id: int) -> None:
-        pass
+        self.unsubscribed.append(subscription_id)
+        path = self.subscription_paths.pop(subscription_id)
+        self.unsubscribed_paths.append(path)
+        self.subscriptions.pop(path, None)
 
 
 class _FakeContext:
@@ -219,6 +257,12 @@ _SESSION_RESULTS = {
     "session_handle": "/org/freedesktop/portal/session/1",
     "restore_token": "token-abc",
 }
+
+
+def _request_options(call: Tuple[str, str, Any, Any]) -> Dict[str, _FakeVariant]:
+    """Return the options dictionary passed to a portal request method."""
+    options = call[3].value[-1]
+    return options.value if isinstance(options, _FakeVariant) else options
 
 
 class TestKeysymMapping:
@@ -302,6 +346,143 @@ class TestPortalClient:
         conn.calls.clear()
         assert portal.inject_text("a") is True
         assert [c[1] for c in conn.calls] == ["NotifyKeyboardKeysym"] * 2
+
+    def test_reset_session_closes_old_path_and_allows_session_recreation(
+        self, portal_client: PortalFactory
+    ) -> None:
+        conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
+        portal = portal_client(conn)
+        assert portal.inject_text("a") is True
+        old_session_path = portal._session_path
+        assert old_session_path is not None
+        first_create = next(call for call in conn.calls if call[1] == "CreateSession")
+        first_token = _request_options(first_create)["session_handle_token"].get_string()
+
+        portal.reset_session()
+
+        assert portal._session_path is None
+        assert conn.closed_sessions == [old_session_path]
+        assert portal._closed is False
+        assert portal.inject_text("b") is True
+
+        creates = [call for call in conn.calls if call[1] == "CreateSession"]
+        second_token = _request_options(creates[1])["session_handle_token"].get_string()
+        assert len(creates) == 2
+        assert first_token != second_token
+        assert portal._closed is False
+
+    def test_reset_session_without_session_is_a_noop(self, portal_client: PortalFactory) -> None:
+        conn = _FakePortalConn()
+        portal = portal_client(conn)
+
+        portal.reset_session()
+
+        assert conn.closed_sessions == []
+        assert portal._session_path is None
+        assert portal._closed is False
+
+    def test_requests_use_distinct_tokens_and_subscribe_before_call(
+        self, portal_client: PortalFactory
+    ) -> None:
+        conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
+        portal = portal_client(conn)
+        portal.inject_text("a")
+
+        calls = [
+            call for call in conn.calls if call[1] in ("CreateSession", "SelectDevices", "Start")
+        ]
+        options = [_request_options(call) for call in calls]
+        tokens = [entry["handle_token"].get_string() for entry in options]
+        assert len(tokens) == 3
+        assert len(set(tokens)) == 3
+        assert all(re.fullmatch(r"[A-Za-z0-9_]+", token) for token in tokens)
+        assert [method for method, _, _ in conn.request_subscriptions_at_call] == [
+            "CreateSession",
+            "SelectDevices",
+            "Start",
+        ]
+        assert all(subscribed for _, _, subscribed in conn.request_subscriptions_at_call)
+        assert conn.subscriptions == {}
+        assert len(conn.unsubscribed) == len(calls)
+
+    def test_session_handle_tokens_are_unique_between_instances(
+        self, portal_client: PortalFactory
+    ) -> None:
+        session_tokens: List[str] = []
+        for _ in range(2):
+            conn = _FakePortalConn(version=1, results=_SESSION_RESULTS)
+            portal = portal_client(conn)
+            portal.inject_text("a")
+            create_call = next(call for call in conn.calls if call[1] == "CreateSession")
+            session_tokens.append(
+                _request_options(create_call)["session_handle_token"].get_string()
+            )
+        assert session_tokens[0] != session_tokens[1]
+
+    def test_subscribes_to_returned_path_when_it_differs(
+        self, portal_client: PortalFactory
+    ) -> None:
+        actual_path = "/org/freedesktop/portal/request/legacy/request_42"
+        conn = _FakePortalConn(
+            version=1,
+            results=_SESSION_RESULTS,
+            returned_paths={"Start": actual_path},
+        )
+        portal = portal_client(conn)
+        assert portal.inject_text("a") is True
+        assert actual_path in conn.unsubscribed_paths
+        assert conn.subscriptions == {}
+
+    def test_retry_after_cancelled_start_uses_fresh_request_paths(
+        self, portal_client: PortalFactory
+    ) -> None:
+        conn = _FakePortalConn(
+            version=2,
+            results=_SESSION_RESULTS,
+            cancels={"Start": 1},
+        )
+        portal = portal_client(conn)
+        with pytest.raises(RemoteDesktopPortalError):
+            portal.inject_text("a")
+        assert portal.inject_text("a") is True
+
+        request_paths = [path for _, path, _ in conn.request_subscriptions_at_call]
+        assert len(request_paths) == 6
+        assert len(set(request_paths)) == len(request_paths)
+
+    def test_request_subscription_is_removed_when_call_raises(
+        self, portal_client: PortalFactory
+    ) -> None:
+        conn = _FakePortalConn(errors={"CreateSession": 1})
+        portal = portal_client(conn)
+        with pytest.raises(RemoteDesktopPortalError, match="call failed: CreateSession"):
+            portal.inject_text("a")
+        assert conn.subscriptions == {}
+        assert conn.unsubscribed == [1]
+
+    def test_long_wait_logs_debug_progress(
+        self,
+        portal_client: PortalFactory,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        conn = _FakePortalConn()
+        portal = portal_client(conn)
+        elapsed = [0.0]
+
+        def monotonic() -> float:
+            return elapsed[0]
+
+        def sleep(_seconds: float) -> None:
+            elapsed[0] += 5.1
+
+        monkeypatch.setattr(rdp, "time", SimpleNamespace(monotonic=monotonic, sleep=sleep))
+        path = "/org/freedesktop/portal/desktop/request/1_571/waiting"
+        with caplog.at_level(logging.DEBUG, logger=rdp.__name__):
+            with pytest.raises(RemoteDesktopPortalError, match=path):
+                portal._await_response("Start", path, {}, 10.0)
+        assert "still waiting for Start Response on" in caplog.text
+        assert path in caplog.text
 
     def test_inject_text_persists_restore_token(self, portal_client: PortalFactory) -> None:
         conn = _FakePortalConn(version=2, results=_SESSION_RESULTS)
@@ -624,6 +805,18 @@ def _bare_injector(**attrs: Any) -> TextInjector:
     return injector
 
 
+def _injector_for_portal_failure(portal: Any) -> TextInjector:
+    """Build a TextInjector with the collaborators used by inject_text()."""
+    injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+    injector._abort_injections = threading.Event()
+    injector._portal = portal
+    injector._log_current_window_info = MagicMock()
+    injector._wait_for_modifiers_released = MagicMock()
+    injector._copy_to_clipboard = MagicMock(return_value=True)
+    injector._show_clipboard_fallback_notification = MagicMock()
+    return injector
+
+
 class TestPortalInjectionPaths:
     """Portal dispatch inside the Wayland injection paths."""
 
@@ -663,6 +856,165 @@ class TestPortalInjectionPaths:
         with patch.object(injector, "_wait_for_modifiers_released"):
             with pytest.raises(RuntimeError):
                 injector._inject_with_wayland_tool("hello")
+
+    def test_flatpak_keeps_portal_when_ydotoold_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        portal = MagicMock()
+        portal.inject_text.side_effect = RemoteDesktopPortalError("boom")
+        injector._portal = portal
+        injector._ensure_ydotoold = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "shutil.which", lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+                clear=True,
+            ),
+            patch.object(injector, "_wait_for_modifiers_released"),
+        ):
+            with pytest.raises(RuntimeError):
+                injector._inject_with_wayland_tool("hello")
+            with pytest.raises(RuntimeError):
+                injector._inject_with_wayland_tool("again")
+
+        assert injector.wayland_tool == "portal"
+        assert injector._portal is portal
+        portal.close.assert_not_called()
+        assert portal.inject_text.call_count == 2
+        assert portal.reset_session.call_count == 2
+        assert injector._ensure_ydotoold.call_count == 2
+
+    def test_flatpak_keep_branch_resets_portal_session(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        portal = MagicMock()
+        injector._portal = portal
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        with patch.dict(
+            os.environ,
+            {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+            clear=True,
+        ):
+            assert injector._demote_portal_backend() is False
+
+        assert injector.wayland_tool == "portal"
+        assert injector._portal is portal
+        portal.reset_session.assert_called_once()
+
+    def test_flatpak_demotes_to_ydotool_only_when_ydotoold_is_ready(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        portal = MagicMock()
+        injector._portal = portal
+        injector._ensure_ydotoold = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "shutil.which", lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        )
+
+        with patch.dict(
+            os.environ,
+            {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+            clear=True,
+        ):
+            assert injector._demote_portal_backend() is True
+
+        assert injector.wayland_tool == "ydotool"
+        assert injector._portal is None
+        portal.close.assert_called_once()
+        injector._ensure_ydotoold.assert_called_once()
+
+    def test_flatpak_backspace_keeps_portal_when_ydotoold_is_unavailable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")
+        injector._abort_injections = threading.Event()
+        portal = MagicMock()
+        portal.tap_keysym.side_effect = RemoteDesktopPortalError("boom")
+        injector._portal = portal
+        injector._ensure_ydotoold = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "shutil.which", lambda cmd: "/usr/bin/ydotool" if cmd == "ydotool" else None
+        )
+
+        with (
+            patch.dict(
+                os.environ,
+                {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+                clear=True,
+            ),
+            patch.object(injector, "_wait_for_modifiers_released"),
+        ):
+            assert injector.press_backspace(1) is False
+            assert injector.press_backspace(1) is False
+
+        assert injector.wayland_tool == "portal"
+        assert injector._portal is portal
+        portal.close.assert_not_called()
+        assert portal.tap_keysym.call_count == 2
+
+    def test_flatpak_keep_portal_copies_only_undelivered_text(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        portal = MagicMock()
+        portal.inject_text.side_effect = RemoteDesktopPortalError("boom", delivered=3)
+        injector = _injector_for_portal_failure(portal)
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        with patch.dict(
+            os.environ,
+            {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+            clear=True,
+        ):
+            assert injector.inject_text("hello world") is False
+
+        assert injector.last_typed_count == 3
+        injector._copy_to_clipboard.assert_called_once_with("lo world")
+        portal.reset_session.assert_called_once()
+
+    def test_flatpak_keep_portal_does_not_copy_when_delivery_count_is_unknown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        portal = MagicMock()
+        portal.inject_text.side_effect = RemoteDesktopPortalError("boom", delivered=None)
+        injector = _injector_for_portal_failure(portal)
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        with patch.dict(
+            os.environ,
+            {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+            clear=True,
+        ):
+            assert injector.inject_text("hello world") is False
+
+        assert injector.last_typed_count == -1
+        injector._copy_to_clipboard.assert_not_called()
+        portal.reset_session.assert_called_once()
+
+    def test_flatpak_keep_portal_copies_full_text_when_nothing_was_delivered(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        portal = MagicMock()
+        portal.inject_text.side_effect = RemoteDesktopPortalError("boom", delivered=0)
+        injector = _injector_for_portal_failure(portal)
+        monkeypatch.setattr("shutil.which", lambda _cmd: None)
+
+        with patch.dict(
+            os.environ,
+            {"FLATPAK_ID": "com.vocalinux.Vocalinux"},
+            clear=True,
+        ):
+            assert injector.inject_text("hello world") is True
+
+        injector._copy_to_clipboard.assert_called_once_with("hello world")
+        portal.reset_session.assert_called_once()
 
     def test_press_backspace_uses_portal_tap(self) -> None:
         injector = _bare_injector(environment=DesktopEnvironment.WAYLAND, wayland_tool="portal")

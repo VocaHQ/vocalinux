@@ -747,7 +747,7 @@ class TestHTTPSession(unittest.TestCase):
         session = manager._http_session
 
         with patch.object(manager, "_init_vosk"):
-            manager.reconfigure(engine="vosk")
+            manager.reconfigure(engine="vosk", force_download=False)
 
         session.close.assert_called_once()
         self.assertIsNone(manager._http_session)

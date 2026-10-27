@@ -87,6 +87,23 @@ def _is_gnome_session() -> bool:
     return "GNOME" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
 
 
+def _is_native_x11_session() -> bool:
+    """Return True when raw XDG_SESSION_TYPE is x11 and WAYLAND_DISPLAY is unset or empty."""
+    return os.environ.get("XDG_SESSION_TYPE", "").lower() == "x11" and not os.environ.get(
+        "WAYLAND_DISPLAY"
+    )
+
+
+def _log_flatpak_input_hint() -> None:
+    logger.warning(
+        "Grant --device=input (Flatpak 1.15.6+) or --device=all, or enable "
+        "External Activation and bind a desktop shortcut to: %s",
+        "gdbus call --session --dest com.vocalinux.Vocalinux "
+        "--object-path /com/vocalinux/Vocalinux "
+        "--method com.vocalinux.Vocalinux.Toggle",
+    )
+
+
 def create_backend(
     preferred_backend: Optional[str] = None,
     shortcut: str = DEFAULT_SHORTCUT,
@@ -130,13 +147,14 @@ def create_backend(
         else:
             logger.warning(f"Unknown preferred backend: '{preferred_backend}'")
 
-    # Prefer evdev whenever pynput cannot see keys from other apps:
-    # - native Wayland (no X11 grab path)
-    # - Flatpak: even with --socket=x11, XWayland only delivers keys to the
-    #   focused X client, so double-tap Ctrl and other globals need /dev/input
-    need_evdev = env == DesktopEnvironment.WAYLAND or bool(os.environ.get("FLATPAK_ID"))
+    # Flatpak on Wayland/XWayland still needs evdev because XWayland only
+    # delivers keys to the focused X client. On native X11, Flatpak reaches
+    # the host X server through --socket=x11 and uses the host install path (#971).
+    in_flatpak = bool(os.environ.get("FLATPAK_ID"))
+    flatpak_needs_evdev = in_flatpak and not _is_native_x11_session()
+    need_evdev = env == DesktopEnvironment.WAYLAND or flatpak_needs_evdev
     if need_evdev:
-        reason = "Flatpak" if os.environ.get("FLATPAK_ID") else "Wayland"
+        reason = "Flatpak" if in_flatpak else "Wayland"
         if EVDEV_AVAILABLE:
             logger.info(f"Using evdev backend for global shortcuts ({reason})")
             backend = EvdevKeyboardBackend(shortcut=shortcut, mode=mode)  # type: ignore
@@ -148,6 +166,8 @@ def create_backend(
             logger.warning(
                 "Keyboard shortcuts will not work without access to keyboard input devices"
             )
+            if in_flatpak:
+                _log_flatpak_input_hint()
             return None
         logger.warning(
             "evdev backend not available (%s). "
@@ -155,6 +175,8 @@ def create_backend(
             "add your user to the 'input' group (or grant Flatpak --device=input).",
             reason,
         )
+        if in_flatpak:
+            _log_flatpak_input_hint()
         return None
 
     # On GNOME's X11 session, mutter does not deliver physical key events
@@ -162,6 +184,7 @@ def create_backend(
     # listener starts cleanly but shortcuts stay dead (#954). evdev reads the
     # kernel input devices directly, so prefer it here — but fall back to
     # pynput when /dev/input is unusable rather than leaving shortcuts dead.
+    # This applies inside Flatpak too.
     if env == DesktopEnvironment.X11 and _is_gnome_session() and EVDEV_AVAILABLE:
         backend = EvdevKeyboardBackend(shortcut=shortcut, mode=mode)  # type: ignore
         if backend.is_available():

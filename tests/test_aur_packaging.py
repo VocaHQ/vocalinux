@@ -314,6 +314,8 @@ def test_every_selectable_engine_reaches_optdepends() -> None:
             dist = re.split(r"[<>=!~\[; ]", spec, maxsplit=1)[0].strip().lower()
             if dist in {"torch", "torchaudio"}:
                 continue  # pulled in by python-openai-whisper, not named alone
+            if dist == "sherpa-onnx-core":
+                continue  # Arch's python-sherpa-onnx links the system onnxruntime instead
             arch_name = f"python-{dist.replace('_', '-')}"
             if arch_name not in optdepends:
                 missing.append(f"{extra} -> {arch_name}")

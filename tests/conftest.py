@@ -210,12 +210,27 @@ def _clear_hardware_detection_cache():
             "detect_cuda_support",
             "detect_compute_backend",
             "detect_cpu_info",
+            "detect_ggml_gpu_devices",
         ):
             fn = getattr(_wmi, fn_name, None)
             if fn is not None and hasattr(fn, "cache_clear"):
                 fn.cache_clear()
     except Exception:
         pass
+    yield
+
+
+@pytest.fixture(autouse=True)
+def _use_legacy_ggml_gpu_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[None, None, None]:
+    """Keep existing tests on the legacy path unless they opt into ggml probing."""
+    from vocalinux.utils import whispercpp_model_info as _wmi
+
+    def _return_none() -> None:
+        return None
+
+    monkeypatch.setattr(_wmi, "detect_ggml_gpu_devices", _return_none)
     yield
 
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlparse
 
+from .. import version as _version_module
 from ..version import __url__
 from .proxy import requests_proxies
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 UPDATE_CHANNELS = ("stable", "nightly")
 DEFAULT_UPDATE_CHANNEL = "stable"
+DEFAULT_CHECK_AUTOMATICALLY = True
 
 _GITHUB_REPO_RE = re.compile(r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+?)(?:\.git)?/?$")
 _PRE_RELEASE_SUFFIX_RE = re.compile(
@@ -109,6 +111,13 @@ def _nightly_date(tag_or_version: str) -> Optional[str]:
         return None
     raw = dev_match.group(1)
     return f"{raw[:4]}-{raw[4:6]}-{raw[6:8]}"
+
+
+def build_channel(version: Optional[str] = None) -> str:
+    """Return the channel for this build; nightly builds carry .devYYYYMMDD from CI."""
+    if version is None:
+        version = _version_module.__version__
+    return "nightly" if _nightly_date(version) is not None else "stable"
 
 
 def is_update_available(

@@ -12,8 +12,10 @@ from typing import Callable, Optional
 
 from ..version import __version__
 from .update_checker import (
+    DEFAULT_CHECK_AUTOMATICALLY,
     DEFAULT_UPDATE_CHANNEL,
     ReleaseInfo,
+    build_channel,
     fetch_latest_release,
     is_update_available,
     normalize_channel,
@@ -31,8 +33,11 @@ class UpdateMonitor:
 
     Args:
         get_channel: Returns ``stable`` / ``nightly`` (re-read each check).
+            When None, the running build determines the channel.
         on_result: ``on_result(available, release)`` on the GLib main loop.
             ``release`` is set only when ``available`` is True.
+        get_enabled: Returns whether automatic update checks are enabled.
+            When None, automatic checks are always enabled.
         startup_delay_seconds: Delay before the first check.
         check_interval_seconds: Delay between subsequent checks.
         use_glib: Schedule via GLib (False = tests drive ``_run_check``).
@@ -40,14 +45,16 @@ class UpdateMonitor:
 
     def __init__(
         self,
-        get_channel: Callable[[], str],
+        get_channel: Optional[Callable[[], str]] = None,
         on_result: Optional[Callable[[bool, Optional[ReleaseInfo]], None]] = None,
+        get_enabled: Optional[Callable[[], bool]] = None,
         startup_delay_seconds: float = DEFAULT_STARTUP_DELAY_SECONDS,
         check_interval_seconds: float = DEFAULT_CHECK_INTERVAL_SECONDS,
         use_glib: bool = True,
-    ):
+    ) -> None:
         self._get_channel = get_channel
         self._on_result = on_result
+        self._get_enabled = get_enabled
         self._startup_delay = max(0.0, float(startup_delay_seconds))
         self._check_interval = max(60.0, float(check_interval_seconds))
         self._use_glib = use_glib
@@ -103,7 +110,7 @@ class UpdateMonitor:
                 pass
         self._timeout_id = None
 
-    def _on_timer(self):
+    def _on_timer(self) -> bool:
         self._timeout_id = None
         if self._running:
             self._run_check()
@@ -111,6 +118,11 @@ class UpdateMonitor:
 
     def _run_check(self) -> None:
         if self._check_in_progress:
+            return
+        if not self._is_enabled():
+            logger.debug("Automatic update checks are off")
+            if self._running:
+                self._schedule(self._check_interval)
             return
         self._check_in_progress = True
         self._generation += 1
@@ -145,12 +157,31 @@ class UpdateMonitor:
         )
 
     def _current_channel(self) -> str:
-        """Read and normalize the live channel preference."""
+        """Read the live channel preference or infer the running build's channel."""
         try:
+            if self._get_channel is None:
+                return build_channel(__version__)
             return normalize_channel(self._get_channel())
         except Exception:
             logger.error("Failed to read update channel", exc_info=True)
             return DEFAULT_UPDATE_CHANNEL
+
+    def _is_enabled(self) -> bool:
+        """Return whether automatic update checks are enabled."""
+        if self._get_enabled is None:
+            return True
+        try:
+            return bool(self._get_enabled())
+        except Exception:
+            logger.error("Failed to read automatic update setting", exc_info=True)
+            return DEFAULT_CHECK_AUTOMATICALLY
+
+    def check_now(self) -> None:
+        """Run an update check now when the monitor is active and enabled."""
+        if not self._running or self._check_in_progress or not self._is_enabled():
+            return
+        self._cancel_timeout()
+        self._run_check()
 
     def _finish_check(
         self,
@@ -164,6 +195,11 @@ class UpdateMonitor:
         def _apply() -> bool:
             self._check_in_progress = False
             if not self._running or generation != self._generation:
+                return False
+            if callback and not self._is_enabled():
+                logger.debug("Automatic update checks are off")
+                if self._running:
+                    self._schedule(self._check_interval)
                 return False
             # Drop results from an earlier channel (About-page checks do the same).
             if callback:

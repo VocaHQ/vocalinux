@@ -1150,8 +1150,14 @@ class TestFailedReconfigureRestoresPreviousEngine:
         manager._model_initialized = True
         manager.state = RecognitionState.IDLE
 
-        with patch.object(
-            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        with (
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.is_model_downloaded",
+                return_value=True,
+            ),
+            patch.object(
+                manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+            ),
         ):
             with patch.object(manager, "_init_whispercpp") as restore_init:
                 with pytest.raises(RuntimeError, match="download failed"):
@@ -1172,8 +1178,14 @@ class TestFailedReconfigureRestoresPreviousEngine:
         manager.model_size = "tiny"
         manager.state = RecognitionState.IDLE
 
-        with patch.object(
-            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        with (
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.is_model_downloaded",
+                return_value=True,
+            ),
+            patch.object(
+                manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+            ),
         ):
             with patch.object(
                 manager, "_init_whispercpp", side_effect=RuntimeError("restore failed")
@@ -1210,8 +1222,14 @@ class TestFailedReconfigureRestoresPreviousEngine:
         manager._model_initialized = True
         manager.state = RecognitionState.IDLE
 
-        with patch.object(
-            manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+        with (
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.faster_whisper.is_model_downloaded",
+                return_value=True,
+            ),
+            patch.object(
+                manager, "_init_faster_whisper", side_effect=RuntimeError("download failed")
+            ),
         ):
             with patch.object(manager, "_init_whispercpp") as restore_init:
                 with pytest.raises(RuntimeError, match="download failed"):

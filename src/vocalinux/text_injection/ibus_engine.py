@@ -25,7 +25,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Mapping, Optional
 
 # Package import when loaded normally; absolute / inline fallbacks when this
 # file is executed by path (Vocalinux start_engine_process / IBus component exec).
@@ -39,7 +39,7 @@ except ImportError:  # pragma: no cover - exercised via script-path subprocess
     except ImportError:
         # Last resort: same semantics as the vocalinux.utils originals, except
         # that host_env cannot strip a bundle it can no longer import.
-        def host_env(base=None):
+        def host_env(base: Optional[Mapping[str, str]] = None) -> dict[str, str]:
             return dict(os.environ if base is None else base)
 
         def xdg_data_home() -> str:
@@ -1135,7 +1135,10 @@ def stop_engine_process(wait_timeout: float = 2.0) -> None:
             PID_FILE.unlink()
 
 
-class VocalinuxEngine(IBus.Engine if IBUS_AVAILABLE else object):
+IBusEngineBase: Any = IBus.Engine if IBUS_AVAILABLE else object
+
+
+class VocalinuxEngine(IBusEngineBase):
     """
     IBus proxy engine for Vocalinux text injection.
 
@@ -1464,7 +1467,7 @@ class IBusTextInjector:
         # Empty until a real X11 layout is captured. A non-empty default (e.g.
         # "us") would make stop()/restore re-apply a layout that was never
         # captured, flipping non-US users to us. See issue #474.
-        self._previous_xkb_layout: tuple = ("", "", "")
+        self._previous_xkb_layout: Optional[tuple[str, str, str]] = ("", "", "")
 
         if auto_activate:
             self._setup_engine()
@@ -1598,6 +1601,7 @@ class IBusTextInjector:
         when the live engine is Vocalinux or unavailable (failed inject restore).
         """
         current = get_current_engine()
+        restore_engine: Optional[str]
         if current and current != ENGINE_NAME:
             restore_engine = current
         else:

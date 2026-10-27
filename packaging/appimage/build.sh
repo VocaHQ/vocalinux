@@ -596,6 +596,32 @@ export DEPLOY_GTK_VERSION=3
   -d "$APPDIR/usr/share/applications/vocalinux.desktop" \
   -i "$APPDIR/usr/share/icons/hicolor/scalable/apps/vocalinux.svg"
 
+# The plugin can change the bundle after PyGObject was installed. Check the
+# package and the version-agnostic Python path that AppRun and the GI smoke use
+# before entering a new mount/user namespace; a missing module there is not a
+# missing python3-gi package on the builder's host.
+echo "== Checking bundled PyGObject after linuxdeploy =="
+GI_SITE="$APPDIR/usr/lib/python${PY_VER}/site-packages"
+if [ ! -f "$GI_SITE/gi/__init__.py" ]; then
+  echo "PyGObject is missing from $GI_SITE after linuxdeploy." >&2
+  echo "Check the earlier uv install of requirements/appimage.txt." >&2
+  exit 1
+fi
+if [ -d "$APPDIR/usr/lib/python3" ] && [ ! -L "$APPDIR/usr/lib/python3" ]; then
+  echo "Expected usr/lib/python3 to be a symlink to python${PY_VER}, not a directory." >&2
+  exit 1
+fi
+# Restore this link if linuxdeploy replaced it; a broken alias hides gi even
+# though its versioned site-packages directory is present in the bundle.
+ln -sfn "python${PY_VER}" "$APPDIR/usr/lib/python3"
+if ! PYTHONHOME="$APPDIR/usr" \
+     PYTHONPATH="$APPDIR/usr/lib/python3:$APPDIR/usr/lib/python3/site-packages" \
+     LD_LIBRARY_PATH="$APPDIR/usr/lib" \
+     "$APPDIR/usr/bin/python3" -c 'import gi; print("  gi:", gi.__file__)'; then
+  echo "The bundled Python cannot import gi before the isolated smoke test." >&2
+  exit 1
+fi
+
 # linuxdeploy copies the host's full typelib set; keep those extras (transitive
 # GIR deps vary by distro) and re-assert our required seed on top.
 echo "== Ensuring required typelibs are present (keeping linuxdeploy extras) =="
@@ -715,7 +741,32 @@ smoke_gi_imports() {
     export GI_TYPELIB_PATH='$appdir/usr/lib/girepository-1.0'
     export LD_LIBRARY_PATH='$appdir/usr/lib'
     '$appdir/usr/bin/python3' - <<'PY'
-import gi
+try:
+    import gi
+except ModuleNotFoundError:
+    import os
+    import pathlib
+    import stat
+    import sys
+
+    print('Bundled gi is not importable inside the isolated smoke test.', file=sys.stderr)
+    print(f'  python: {sys.executable}, uid: {os.geteuid()}', file=sys.stderr)
+    print('  PYTHONHOME:', os.environ.get('PYTHONHOME'), file=sys.stderr)
+    print('  PYTHONPATH:', os.environ.get('PYTHONPATH'), file=sys.stderr)
+    print(f'  sys.path: {sys.path}', file=sys.stderr)
+    lib = pathlib.Path(sys.prefix) / 'lib'
+    versioned = lib / f'python{sys.version_info.major}.{sys.version_info.minor}'
+    for candidate in (lib / 'python3', versioned / 'site-packages' / 'gi',
+                      lib / 'python3' / 'site-packages' / 'gi'):
+        try:
+            details = candidate.stat()
+        except OSError as exc:
+            print(f'  {candidate}: {exc}', file=sys.stderr)
+        else:
+            print(f'  {candidate}: mode={stat.S_IMODE(details.st_mode):o}, '
+                  f'uid={details.st_uid}, accessible={os.access(candidate, os.R_OK | os.X_OK)}',
+                  file=sys.stderr)
+    raise
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk  # noqa: F401
 try:

@@ -4,7 +4,7 @@ This module provides type definitions to avoid circular imports.
 """
 
 from enum import Enum, auto
-from typing import Any, Callable, Iterable, Optional, Protocol  # noqa: F401
+from typing import Any, Callable, Iterable, Optional, Protocol, runtime_checkable  # noqa: F401
 
 
 class RecognitionState(Enum):
@@ -51,10 +51,40 @@ class Engine(Protocol):
         ...
 
 
+@runtime_checkable
+class SpeechEngine(Protocol):
+    """Runtime-checkable contract for speech transcription engines."""
+
+    def init(self) -> None:
+        """Initialize the engine and load any required models."""
+        ...
+
+    def is_ready(self) -> bool:
+        """Return True if the engine is initialized and ready to transcribe."""
+        ...
+
+    def transcribe(
+        self,
+        audio_buffer: list[bytes],
+        language: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
+    ) -> str:
+        """Transcribe audio chunks with optional per-call language and prompt."""
+        ...
+
+    def cleanup(self) -> None:
+        """Release any engine resources."""
+        ...
+
+
 class SpeechRecognitionManagerProtocol(Protocol):
     """Protocol defining the interface for SpeechRecognitionManager."""
 
     state: RecognitionState
+    state_callbacks: list[Callable[[RecognitionState], None]]
+    buffer_during_reload: bool
+    test_capture_floor: Optional[float]
+    test_capture_ceiling: Optional[float]
 
     def start_recognition(self, mode: str = "toggle") -> bool:
         """Start the speech recognition process. Returns True if listening began."""
@@ -64,8 +94,20 @@ class SpeechRecognitionManagerProtocol(Protocol):
         """Start recognition in ``language`` for this utterance only (#805)."""
         ...
 
+    def is_transcribing(self) -> bool:
+        """Whether a stopped dictation session is still being transcribed."""
+        ...
+
+    def cancel_transcription(self) -> bool:
+        """Cancel the active dictation session and discard its result."""
+        ...
+
     def stop_recognition(self) -> None:
         """Stop the speech recognition process."""
+        ...
+
+    def has_pending_transcription(self) -> bool:
+        """Return True while the recognition worker may still deliver text to text callbacks."""
         ...
 
     def register_state_callback(self, callback: Callable[[RecognitionState], None]) -> None:
@@ -74,6 +116,14 @@ class SpeechRecognitionManagerProtocol(Protocol):
 
     def register_text_callback(self, callback: Callable[[str], None]) -> None:
         """Register a callback for recognized text."""
+        ...
+
+    def get_text_callbacks(self) -> list[Callable[[str], None]]:
+        """Return registered transcript callbacks."""
+        ...
+
+    def set_text_callbacks(self, callbacks: list[Callable[[str], None]]) -> None:
+        """Replace registered transcript callbacks."""
         ...
 
     def register_segment_callback(self, callback: Callable[[str, float], None]) -> None:
@@ -121,6 +171,12 @@ class SpeechRecognitionManagerProtocol(Protocol):
         self, callback: Optional[Callable[[float, float, str], None]]
     ) -> None:
         """Register a callback for download progress (fraction, mbps, status)."""
+        ...
+
+    def set_audio_device(
+        self, device_index: Optional[int], device_name: Optional[str] = None
+    ) -> None:
+        """Set the preferred audio input device."""
         ...
 
     def download_whispercpp_model(self, model_name: str) -> None:

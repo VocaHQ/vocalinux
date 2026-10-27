@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from vocalinux.common_types import RecognitionState
@@ -241,6 +242,181 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
     Exercise DictationOverlay sync path when a mock window is attached,
     proving show/hide follows the real controller without a compositor.
     """
+
+    def _mock_window_overlay(self, enabled: bool = True) -> tuple[DictationOverlay, MagicMock]:
+        overlay = _overlay_without_gtk(enabled=enabled)
+        mock_window = MagicMock()
+        mock_window.get_visible.return_value = False
+        overlay._window = mock_window
+        overlay._gtk_ready = True
+        overlay._GLib = MagicMock()
+        overlay._GLib.timeout_add.return_value = 42
+        overlay._drawing_area = MagicMock()
+        return overlay, mock_window
+
+    def test_prewarm_maps_wayland_fallback_transparently_without_animation(self) -> None:
+        overlay, mock_window = self._mock_window_overlay()
+        overlay._use_layer_shell = False
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch.object(overlay, "_layout_bottom_strip"),
+        ):
+            self.assertFalse(overlay.prewarm())
+
+        mock_window.show_all.assert_called_once()
+        mock_window.set_opacity.assert_called_with(0.0)
+        mock_window.set_accept_focus.assert_called_with(False)
+        mock_window.set_can_focus.assert_called_with(False)
+        mock_window.set_focus_on_map.assert_called_with(False)
+        self.assertIsNone(overlay._anim_id)
+        overlay._window = None
+        overlay.destroy()
+
+    def test_prewarmed_window_is_not_remapped_for_recording(self) -> None:
+        overlay, mock_window = self._mock_window_overlay()
+        overlay._use_layer_shell = False
+        mock_window.is_composited.return_value = True
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch.object(overlay, "_layout_bottom_strip"),
+        ):
+            overlay.prewarm()
+            mock_window.get_visible.return_value = True
+            overlay.on_recognition_state(RecognitionState.LISTENING)
+
+            mock_window.show_all.assert_called_once()
+            mock_window.set_opacity.assert_called_with(1.0)
+
+            overlay.on_recognition_state(RecognitionState.IDLE)
+
+        mock_window.show_all.assert_called_once()
+        mock_window.hide.assert_not_called()
+        overlay._window = None
+        overlay._anim_id = None
+        overlay.destroy()
+
+    def test_prewarm_is_noop_when_any_gate_blocks_it(self) -> None:
+        cases = (
+            ("X11", False, False, True, True, False),
+            ("layer shell", True, True, True, True, False),
+            ("disabled", True, False, False, True, False),
+            ("already visible", True, False, True, True, True),
+            ("GTK unavailable", True, False, True, False, False),
+        )
+        for name, wayland, layer_shell, enabled, gtk_ready, visible in cases:
+            with self.subTest(name=name):
+                overlay, mock_window = self._mock_window_overlay(enabled=enabled)
+                overlay._use_layer_shell = layer_shell
+                overlay._gtk_ready = gtk_ready
+                mock_window.get_visible.return_value = visible
+
+                with patch.object(overlay, "_display_is_wayland", return_value=wayland):
+                    self.assertFalse(overlay.prewarm())
+
+                mock_window.show_all.assert_not_called()
+                mock_window.set_opacity.assert_not_called()
+                overlay._window = None
+                overlay.destroy()
+
+    def test_display_is_wayland_for_wayland_gtype(self) -> None:
+        overlay = _overlay_without_gtk()
+        overlay._Gdk = MagicMock()
+        overlay._Gdk.Display.get_default.return_value = SimpleNamespace(
+            __gtype__=SimpleNamespace(name="GdkWaylandDisplay")
+        )
+
+        self.assertTrue(overlay._display_is_wayland())
+        overlay.destroy()
+
+    def test_display_is_not_wayland_for_x11_gtype(self) -> None:
+        overlay = _overlay_without_gtk()
+        overlay._Gdk = MagicMock()
+        overlay._Gdk.Display.get_default.return_value = SimpleNamespace(
+            __gtype__=SimpleNamespace(name="GdkX11Display")
+        )
+
+        self.assertFalse(overlay._display_is_wayland())
+        overlay.destroy()
+
+    def test_display_is_not_wayland_without_default_display(self) -> None:
+        overlay = _overlay_without_gtk()
+        overlay._Gdk = MagicMock()
+        overlay._Gdk.Display.get_default.return_value = None
+
+        self.assertFalse(overlay._display_is_wayland())
+        overlay.destroy()
+
+    def test_display_is_not_wayland_without_gtype(self) -> None:
+        overlay = _overlay_without_gtk()
+        overlay._Gdk = MagicMock()
+        overlay._Gdk.Display.get_default.return_value = SimpleNamespace()
+
+        self.assertFalse(overlay._display_is_wayland())
+        overlay.destroy()
+
+    def test_prewarm_returns_false_when_gtk_is_unavailable(self) -> None:
+        overlay = _overlay_without_gtk()
+        self.assertFalse(overlay.prewarm())
+        overlay.destroy()
+
+    def test_set_enabled_prewarm_only_when_enabled(self) -> None:
+        overlay = _overlay_without_gtk()
+        with patch.object(overlay, "prewarm") as mock_prewarm:
+            overlay.set_enabled(False)
+            mock_prewarm.assert_not_called()
+
+            overlay.set_enabled(True)
+            mock_prewarm.assert_called_once_with()
+        overlay.destroy()
+
+    def test_close_request_keeps_overlay_window(self) -> None:
+        """A close from GNOME's dock must not destroy the prewarmed window (#1010)."""
+        overlay, mock_window = self._mock_window_overlay()
+
+        self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+
+        mock_window.destroy.assert_not_called()
+        mock_window.hide.assert_not_called()
+        overlay._window = None
+        overlay.destroy()
+
+    def test_disabling_unmaps_prewarmed_window(self) -> None:
+        """Turning the overlay off removes the transparent window from the dock (#1010)."""
+        overlay, mock_window = self._mock_window_overlay()
+        overlay._use_layer_shell = False
+        mock_window.is_composited.return_value = True
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch.object(overlay, "_layout_bottom_strip"),
+        ):
+            overlay.prewarm()
+            mock_window.get_visible.return_value = True
+
+            overlay.set_enabled(False)
+            mock_window.hide.assert_called_once()
+
+            mock_window.get_visible.return_value = False
+            overlay.set_enabled(True)
+
+        self.assertEqual(mock_window.show_all.call_count, 2)
+        mock_window.set_opacity.assert_called_with(0.0)
+        overlay._window = None
+        overlay.destroy()
+
+    def test_idle_keeps_enabled_window_mapped_when_composited(self) -> None:
+        overlay, mock_window = self._mock_window_overlay()
+        mock_window.get_visible.return_value = True
+        mock_window.is_composited.return_value = True
+
+        overlay.on_recognition_state(RecognitionState.IDLE)
+
+        mock_window.hide.assert_not_called()
+        mock_window.set_opacity.assert_called_with(0.0)
+        overlay._window = None
+        overlay.destroy()
 
     def test_sync_shows_on_listening_hides_on_idle(self):
         overlay = _overlay_without_gtk(enabled=True)
@@ -752,7 +928,16 @@ class TestInitGtkWindowWithMocks(unittest.TestCase):
         win.add.assert_called_with(mocks["drawing"])
         mocks["drawing"].connect.assert_any_call("draw", overlay._on_draw)
         win.connect.assert_any_call("realize", overlay._on_realize)
+        win.connect.assert_any_call("delete-event", overlay._on_delete_event)
         self.assertFalse(overlay._use_layer_shell)
+        overlay.destroy()
+
+    def test_init_schedules_overlay_prewarm(self) -> None:
+        mocks = self._install_gi_mocks()
+        with patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=None):
+            overlay = DictationOverlay(enabled=True)
+
+        mocks["glib"].idle_add.assert_called_once_with(overlay.prewarm)
         overlay.destroy()
 
     def test_init_with_layer_shell_keyboard_mode(self):

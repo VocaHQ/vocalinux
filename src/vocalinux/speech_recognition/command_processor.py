@@ -111,7 +111,7 @@ class CommandProcessor:
         }
 
         # Active format modifiers
-        self.active_formats = set()
+        self.active_formats: set[str] = set()
 
         # Compile regex patterns for faster matching
         self._compile_patterns()

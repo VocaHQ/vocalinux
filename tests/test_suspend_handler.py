@@ -6,6 +6,7 @@ SpeechRecognitionManager.
 """
 
 import sys
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -490,6 +491,75 @@ class TestTrayIndicatorResumeFlow(unittest.TestCase):
         indicator._cleanup_input_monitor()
 
         mock_glib.source_remove.assert_not_called()
+
+    def test_tray_hotkey_cancels_late_worker_after_stop_join_timeout(self) -> None:
+        import vocalinux.speech_recognition.recognition_manager as recognition_module
+        from vocalinux.speech_recognition.recognition_manager import (
+            SpeechRecognitionManager,
+        )
+
+        duck = MagicMock()
+        duck.enabled.return_value = False
+        with patch.object(SpeechRecognitionManager, "_init_whispercpp"):
+            manager = SpeechRecognitionManager(
+                engine="whisper_cpp",
+                model_size="small",
+                language="en-us",
+                playback_duck=duck,
+            )
+        manager.model = MagicMock()
+        manager._model_initialized = True
+        manager._voice_commands_enabled = False
+
+        transcriber_started = threading.Event()
+        release_transcriber = threading.Event()
+        delivered: list[str] = []
+
+        def record_audio() -> None:
+            return None
+
+        def transcribe(_audio: list[bytes], _language: str | None = None) -> str:
+            transcriber_started.set()
+            release_transcriber.wait(timeout=3.0)
+            return "cancelled text"
+
+        manager._record_audio = record_audio
+        manager._transcribe_with_whispercpp = transcribe
+        manager.register_text_callback(delivered.append)
+        with patch.object(recognition_module, "play_start_sound"):
+            with patch.object(manager, "_arm_playback_duck"):
+                assert manager.start_recognition()
+        manager._enqueue_audio_segment([b"slow audio"])
+        assert transcriber_started.wait(timeout=1.0)
+
+        worker_exited = manager._worker_exited
+        assert worker_exited is not None
+        worker_thread = manager.recognition_thread
+        assert worker_thread is not None
+        try:
+            with patch.object(SpeechRecognitionManager, "_STOP_WORKER_JOIN_TIMEOUT_S", 0.05):
+                with patch.object(
+                    SpeechRecognitionManager, "_STOP_WORKER_FINAL_JOIN_TIMEOUT_S", 0.01
+                ):
+                    with patch.object(recognition_module, "play_stop_sound"):
+                        manager.stop_recognition()
+
+            assert manager.state is RecognitionState.PROCESSING
+            assert manager.is_transcribing()
+            tray = self._make_tray_indicator()
+            tray.speech_engine = manager
+            tray._ptt_lock = threading.Lock()
+            tray._ptt_owner = None
+            tray._toggle_recognition()
+            assert manager.state is RecognitionState.IDLE
+        finally:
+            release_transcriber.set()
+            worker_thread.join(timeout=2.0)
+
+        assert not worker_thread.is_alive()
+        assert worker_exited.is_set()
+        assert manager.state is RecognitionState.IDLE
+        assert delivered == []
 
 
 class TestTrayAutoPauseWiring(unittest.TestCase):

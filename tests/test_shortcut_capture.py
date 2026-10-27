@@ -509,13 +509,13 @@ def test_stop_is_idempotent_and_callback_after_stop_does_not_commit(
 
 
 def _settings_dialog_unbound(name: str) -> Any:
-    """Return a SettingsDialog method without instantiating the dialog.
-
-    Gtk.Dialog is a MagicMock in this harness, so `class SettingsDialog` is
-    constructed as a MagicMock and the class body lives on ``return_value``.
-    """
-    namespace = SettingsDialog.return_value
-    return namespace[name]
+    """Return a SettingsDialog method without instantiating the dialog."""
+    namespace = getattr(SettingsDialog, "return_value", None)
+    if isinstance(namespace, dict):
+        return namespace[name]
+    if namespace is None:
+        namespace = SettingsDialog
+    return getattr(namespace, name)
 
 
 def test_destroy_clears_recording_flag_and_closes_devices(

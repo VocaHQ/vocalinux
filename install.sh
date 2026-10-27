@@ -1882,6 +1882,22 @@ venv_can_import() {
     "$VENV_DIR/bin/python" -c "import $1" >/dev/null 2>&1
 }
 
+engine_import_error() {
+    local ENGINE="$1"
+    local MODULE
+    MODULE=$(engine_import_module "$ENGINE")
+    [ -n "$MODULE" ] || return 1
+
+    local IMPORT_ERROR
+    if IMPORT_ERROR=$("$VENV_DIR/bin/python" -c "import $MODULE" 2>&1); then
+        return 0
+    fi
+
+    print_error "$ENGINE installed but \`import $MODULE\` failed:"
+    print_error "$(printf '%s\n' "$IMPORT_ERROR" | tail -n 1)"
+    return 1
+}
+
 # Point config.json at engine $2. Non-zero if it could not be rewritten.
 set_configured_engine() {
     "$VENV_DIR/bin/python" - "$1" "$2" <<'PY' 2>/dev/null
@@ -2384,6 +2400,7 @@ FALLBACK_CONFIG
                     print_error "Failed to install the vosk engine"
                     return 1
                 }
+                engine_import_error vosk || return 1
 
                 # Create config with vosk as default
                 local VOSK_CONFIG_FILE="$CONFIG_DIR/config.json"
@@ -2431,6 +2448,7 @@ VOSK_CONFIG
                     print_error "Failed to install the parakeet engine"
                     return 1
                 }
+                engine_import_error parakeet || return 1
 
                 # config_manager merges the remaining defaults, but a file with no
                 # shortcuts section reads as a pre-push-to-talk config and gets
@@ -2523,7 +2541,8 @@ REMOTE_CONFIG
                 print_info "Installing Faster-Whisper engine..."
                 print_info "This engine uses CTranslate2 for fast CPU inference."
 
-                if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" faster_whisper; then
+                if pip_install_extras_skip_pygobject "$PIP_LOG_FILE" faster_whisper &&
+                    engine_import_error faster_whisper; then
                     mkdir -p "$CONFIG_DIR"
                     if [ ! -f "$CONFIG_DIR/config.json" ]; then
                         cat > "$CONFIG_DIR/config.json" << 'FASTER_WHISPER_CONFIG'
@@ -2770,6 +2789,7 @@ PY
         [ -n "$MODULE_FOR_CANDIDATE" ] || continue
         venv_can_import "$MODULE_FOR_CANDIDATE" || continue
         if set_configured_engine "$CONFIG_FILE" "$CANDIDATE"; then
+            SELECTED_ENGINE="$CANDIDATE"
             print_success "Switched $CONFIG_FILE to the $CANDIDATE engine."
             print_info "Reinstall $(engine_pip_name "$CONFIGURED_ENGINE") and switch back in Settings if you want it."
             return 0

@@ -13,6 +13,7 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, Optional
 
+from .utils.host_process import running_from_appimage
 from .utils.vosk_model_info import SUPPORTED_LANGUAGES
 from .version import __version__
 
@@ -200,33 +201,17 @@ def check_dependencies():
             "GTK3 (install with: sudo apt install python3-gi gir1.2-gtk-3.0)"
         )
 
-    # Prefer Ayatana AppIndicator (maintained; registers on KDE Plasma).
-    # Match tray_indicator.py: canonical Ayatana, rare lowercase typelib, then
-    # legacy Canonical AppIndicator3 as last resort.
-    try:
-        import gi
-
-        gi.require_version("AyatanaAppIndicator3", "0.1")
-        from gi.repository import AyatanaAppIndicator3  # noqa: F401
-    except (ImportError, ValueError) as e:
-        logger.debug("AyatanaAppIndicator3 import failed: %s", e)
-        try:
-            import gi
-
-            gi.require_version("AyatanaAppindicator3", "0.1")
-            from gi.repository import AyatanaAppindicator3  # noqa: F401
-        except (ImportError, ValueError) as e2:
-            logger.debug("AyatanaAppindicator3 import failed: %s", e2)
-            try:
-                import gi
-
-                gi.require_version("AppIndicator3", "0.1")
-                from gi.repository import AppIndicator3  # noqa: F401
-            except (ImportError, ValueError) as e3:
-                logger.debug("AppIndicator3 import failed: %s", e3)
-                missing_system_deps.append(
-                    "AppIndicator3/AyatanaAppIndicator3 - Required for system tray icon"
-                )
+    # Match tray_indicator.py, which never loads the glib indicator from the
+    # AppImage: the bundle's GLib is older than that library needs.
+    indicator_typelibs = [
+        (namespace, version)
+        for namespace, version in _APPINDICATOR_TYPELIBS
+        if namespace != "AyatanaAppIndicatorGlib" or not running_from_appimage()
+    ]
+    if not any(_typelib_available(namespace, version) for namespace, version in indicator_typelibs):
+        missing_system_deps.append(
+            "AppIndicator3/AyatanaAppIndicator3 - Required for system tray icon"
+        )
 
     # Keyboard backends are optional and checked lazily by the shortcut manager.
     # Importing pynput can fail on Wayland/X-less sessions even when installed.
@@ -280,6 +265,31 @@ def check_dependencies():
             )
         return False
 
+    return True
+
+
+# Tray indicator typelibs, most preferred first (same order as
+# tray_indicator.py): libayatana-appindicator-glib, Ayatana AppIndicator
+# (maintained; registers on KDE Plasma), its rare lowercase typelib, then
+# the legacy Canonical AppIndicator3 as last resort.
+_APPINDICATOR_TYPELIBS = (
+    ("AyatanaAppIndicatorGlib", "2.0"),
+    ("AyatanaAppIndicator3", "0.1"),
+    ("AyatanaAppindicator3", "0.1"),
+    ("AppIndicator3", "0.1"),
+)
+
+
+def _typelib_available(namespace: str, version: str) -> bool:
+    """Return True when the GObject Introspection namespace can be imported."""
+    try:
+        import gi
+
+        gi.require_version(namespace, version)
+        getattr(__import__("gi.repository", fromlist=[namespace]), namespace)
+    except (ImportError, ValueError, AttributeError) as e:
+        logger.debug("%s import failed: %s", namespace, e)
+        return False
     return True
 
 
@@ -527,7 +537,7 @@ def main():
         logger.info(f"Using model={model_size} (saved for engine {engine})")
 
     vad_sensitivity = saved_settings.get("vad_sensitivity", 3)
-    silence_timeout = saved_settings.get("silence_timeout", 2.0)
+    silence_timeout = saved_settings.get("silence_timeout", 1.2)
     stop_sound_guard_ms = saved_settings.get("stop_sound_guard_ms", 200)
     voice_commands_enabled = saved_settings.get("voice_commands_enabled")  # None = auto
     audio_device_index = audio_settings.get("device_index", None)

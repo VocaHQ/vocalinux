@@ -16,7 +16,7 @@ import logging
 import os
 import re
 import subprocess
-from typing import Optional
+from typing import Any, Optional, cast
 
 from .host_process import host_env
 
@@ -29,6 +29,7 @@ _LAYOUT_TO_LANGUAGE = {
     "gb": "en-us",
     "cz": "cs",
     "se": "sv",
+    "si": "sl",
     "dk": "da",
     "gr": "el",
     "ua": "uk",
@@ -161,22 +162,24 @@ def detect_keyboard_layout() -> Optional[str]:
     return chosen.split(",")[0].strip() or None
 
 
-def detect_locale_language(environ: Optional[dict] = None) -> Optional[str]:
+def detect_locale_language(environ: Optional[dict[str, str]] = None) -> Optional[str]:
     """Return the first locale value the environment offers, or None.
 
     LANGUAGE is returned intact (a colon-separated preference list). Mapping
     that list onto a supported catalogue entry happens in
     ``_language_from_locale_env``.
     """
-    environ = os.environ if environ is None else environ
+    environment = cast(dict[str, str], os.environ if environ is None else environ)
     for name in _LOCALE_ENV_VARS:
-        value = environ.get(name)
+        value = environment.get(name)
         if value:
             return value
     return None
 
 
-def _language_from_locale_env(environ: dict, supported: set[str] | dict) -> Optional[str]:
+def _language_from_locale_env(
+    environ: dict[str, str], supported: set[str] | dict[str, dict[str, str]]
+) -> Optional[str]:
     """Map locale env vars onto a catalogue entry, first supported win.
 
     LANGUAGE is a colon-separated preference list: each entry is tried through
@@ -199,7 +202,7 @@ def _language_from_locale_env(environ: dict, supported: set[str] | dict) -> Opti
 
 
 def detect_system_language(
-    supported: set[str] | dict, environ: Optional[dict] = None
+    supported: set[str] | dict[str, dict[str, str]], environ: Optional[dict[str, str]] = None
 ) -> Optional[str]:
     """Return the language id to start from, or None when nothing is decisive.
 
@@ -215,8 +218,8 @@ def detect_system_language(
             logger.info(f"Language {layout_language} taken from keyboard layout {layout!r}")
             return layout_language
 
-    environ = os.environ if environ is None else environ
-    locale_language = _language_from_locale_env(environ, supported)
+    environment = cast(dict[str, str], os.environ if environ is None else environ)
+    locale_language = _language_from_locale_env(environment, supported)
     if locale_language:
         logger.info(f"Language {locale_language} taken from locale environment")
         return locale_language
@@ -255,7 +258,7 @@ def _gsettings_get(key: str) -> Optional[str]:
     return result.stdout.strip() or None
 
 
-def _parse_sources(value: Optional[str]) -> list:
+def _parse_sources(value: Optional[str]) -> list[tuple[str, str]]:
     """Parse a gsettings input-source list, tolerating the ``@a(ss)`` prefix."""
     text = (value or "").strip()
     if text.startswith("@a(ss) "):
@@ -265,7 +268,9 @@ def _parse_sources(value: Optional[str]) -> list:
     except (ValueError, SyntaxError):
         logger.debug(f"Could not parse an input-source list: {value!r}")
         return []
-    return list(parsed) if isinstance(parsed, (list, tuple)) else []
+    if not isinstance(parsed, (list, tuple)):
+        return []
+    return cast(list[tuple[str, str]], list(parsed))
 
 
 def _xkb_layout_from_source(source: object) -> Optional[str]:
@@ -283,7 +288,7 @@ def _xkb_layout_from_source(source: object) -> Optional[str]:
     return source_id.split("+", 1)[0].strip() or None
 
 
-def _source_at_index(parsed: list, current: str) -> Optional[object]:
+def _source_at_index(parsed: list[tuple[str, str]], current: str) -> Optional[tuple[str, str]]:
     """Return the ``(type, id)`` pair the ``current`` index points at."""
     if not parsed:
         return None
@@ -307,7 +312,7 @@ def _parse_active_source(sources: str, current: str) -> Optional[str]:
     return _xkb_layout_from_source(_source_at_index(_parse_sources(sources), current))
 
 
-def _active_input_source() -> Optional[object]:
+def _active_input_source() -> Optional[tuple[str, str]]:
     """Return GNOME's active ``(type, id)`` input source, or None if unreadable.
 
     None means "no answer available" -- not GNOME, or the keys are missing. An

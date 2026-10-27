@@ -209,10 +209,8 @@ class DictationPad:
         self._window: Any = None
         self._textview: Any = None
         self._buffer: Any = None
-        self._capture_check: Any = None
         self._copy_button: Any = None
         self._gtk_ready = False
-        self._syncing_capture_check = False
         self._syncing_widget = False
         # Compositor-side shelving state. _window_iconified is tracked from
         # window-state-event (X11 minimize); _surface_shelved is detected by
@@ -280,18 +278,6 @@ class DictationPad:
         outer.set_margin_top(12)
         outer.set_margin_bottom(12)
         window.add(outer)
-
-        self._capture_check = Gtk.CheckButton(
-            label="Dictate into this window instead of injecting into other apps"
-        )
-        self._capture_check.set_tooltip_text(
-            "Fallback for desktops where text injection does not work "
-            "(e.g. Wayland): dictated text lands in this box, then you copy "
-            "it out by hand."
-        )
-        self._capture_check.set_active(self.controller.enabled)
-        self._capture_check.connect("toggled", self._on_capture_toggled)
-        outer.pack_start(self._capture_check, False, False, 0)
 
         scrolled = Gtk.ScrolledWindow()
         scrolled.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -369,10 +355,10 @@ class DictationPad:
         return self.controller.last_segment
 
     def show_pad(self) -> None:
-        """Show the pad window, resyncing capture state from live config."""
+        """Show the pad window, refreshing its routing state from live config."""
         if not self._gtk_ready or self._window is None:
             return
-        self._sync_capture_check()
+        self._capture_enabled()
         if not self._window.get_visible():
             self._window.show_all()
         elif self._surface_shelved:
@@ -400,9 +386,8 @@ class DictationPad:
             pass
 
     def set_capture_enabled(self, enabled: bool) -> None:
-        """Programmatically flip capture mode (keeps the checkbox in sync)."""
+        """Update the controller's routing state without persisting it."""
         self.controller.set_enabled(enabled)
-        self._sync_capture_check()
 
     def destroy(self) -> None:
         """Tear down the window and any pending feedback timer."""
@@ -628,19 +613,6 @@ class DictationPad:
         self.controller.set_enabled(enabled)
         return enabled
 
-    def _sync_capture_check(self) -> None:
-        """Mirror the persisted capture setting onto the checkbox."""
-        if self._capture_check is None:
-            return
-        try:
-            enabled = self._capture_enabled()
-            self._syncing_capture_check = True
-            self._capture_check.set_active(enabled)
-        except _ui_errors() as e:
-            logger.debug("Could not sync dictation pad toggle: %s", e)
-        finally:
-            self._syncing_capture_check = False
-
     def _on_delete_event(self, *_args: Any) -> bool:
         """Hide on close instead of destroying — the buffer is session-scoped."""
         if self._window is not None:
@@ -693,20 +665,6 @@ class DictationPad:
                 except _ui_errors() as e:
                     logger.debug("Could not repaint dictation pad: %s", e)
         return False
-
-    def _on_capture_toggled(self, widget: Any) -> None:
-        """Persist the pad's own capture checkbox."""
-        if self._syncing_capture_check:
-            return
-        enabled = bool(widget.get_active())
-        self.controller.set_enabled(enabled)
-        if self._config_manager is not None:
-            try:
-                self._config_manager.set("text_injection", "dictate_to_pad", enabled)
-                self._config_manager.save_settings()
-            except (AttributeError, TypeError) as e:
-                logger.warning("Could not save dictation pad setting: %s", e)
-        logger.info("Dictation pad capture %s", "enabled" if enabled else "disabled")
 
     def _on_copy_all_clicked(self, *_args: Any) -> None:
         """Copy the entire buffer to the clipboard and flash a confirmation."""

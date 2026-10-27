@@ -8,12 +8,16 @@ afterwards and no test compared it to anything, so it drifted: by 2026-09-10 ten
 of its fifteen shared packages were behind `requirements/runtime.txt`, including
 pywhispercpp, which sat at 1.4.1 under the project's own `>=1.5.0` floor. The
 Flatpak installs the project with `pip3 install --no-deps`, so that constraint
-is never evaluated and nothing there could notice.
+is never evaluated and nothing there could notice. It now reads
+`requirements/vad.txt`, the runtime dependencies plus the `[vad]` extra, so
+Silero VAD's onnxruntime ships too (#969).
 
 This script closes the loop the other way round: it reads the hash-pinned export
 that `just lock` produces and rewrites every source in the manifest to the
 artifact whose digest uv already recorded. The bytes the Flatpak downloads are
-then the bytes in `uv.lock`, verified by hash rather than by convention.
+then the bytes in `uv.lock`, verified by hash rather than by convention. The
+`onnxruntime` sources are selected as CPython-ABI wheels for each Flatpak
+architecture because PyPI publishes no sdist for it.
 
 It edits in place rather than regenerating, because two things in that file are
 hand-written and no generator produces them: pywhispercpp's Vulkan build with
@@ -41,15 +45,14 @@ from packaging.markers import Marker
 from packaging.utils import canonicalize_name
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPORT = REPO_ROOT / "requirements" / "runtime.txt"
+EXPORT = REPO_ROOT / "requirements" / "vad.txt"
 DEPS_YAML = REPO_ROOT / "packaging" / "flatpak" / "python3-dependencies.yaml"
 MANIFEST = REPO_ROOT / "packaging" / "flatpak" / "com.vocalinux.Vocalinux.yml"
 
-#: The environment the Flatpak build resolves for. `flatpak remote-info flathub
-#: org.gnome.Sdk//50 --show-metadata` reports a freedesktop 25.08 base, which
-#: ships Python 3.13. Only numpy reads this today: the lock splits it at
-#: `python_full_version >= '3.12'`. Everything else is marked on sys_platform
-#: alone. Bump it when the manifest's runtime-version moves.
+#: The environment the Flatpak build resolves for. GNOME 50 ships Python 3.13.
+#: numpy's lock entry splits at `python_full_version >= '3.12'`; onnxruntime's
+#: CPython wheel tag also uses this Python version. Bump it when the manifest's
+#: runtime-version moves.
 TARGET_ENV = {
     "sys_platform": "linux",
     "platform_system": "Linux",
@@ -67,9 +70,16 @@ TARGET_ENV = {
 #: `just lock` builds with --no-emit-package pygobject for the same reason.
 RUNTIME_PROVIDED = {"pycairo"}
 
+#: onnxruntime has no sdist on PyPI, and building it from source is out of reach
+#: in the sandbox. These come as CPython-ABI wheels, one per Flatpak arch, tagged
+#: for TARGET_ENV's python_version; a runtime Python bump makes pip --no-index
+#: fail loudly at build time rather than silently.
+BINARY_ONLY = {"onnxruntime"}
+FLATPAK_ARCHES = ("x86_64", "aarch64")
+
 #: Build backends for the sdists the manifest builds offline under
 #: --no-build-isolation. They are not runtime dependencies, so they never appear
-#: in requirements/runtime.txt and stay pinned here by hand.
+#: in requirements/vad.txt and stay pinned here by hand.
 BUILD_BACKENDS = {"meson-python", "pyproject-metadata"}
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/{version}/json"
@@ -116,31 +126,53 @@ def pypi_artifacts(name: str, version: str) -> list[dict]:
         return json.load(response)["urls"]
 
 
-def choose_artifact(name: str, version: str, digests: set[str]) -> tuple[str, str]:
+def choose_artifact(
+    name: str, version: str, digests: set[str], arch: str | None = None
+) -> tuple[str, str]:
     """The one file the Flatpak should download, as (url, sha256).
 
-    Prefer a universal wheel, fall back to the sdist. That is the rule the
-    original generator followed and it holds for every package here: the pure
-    Python ones ship `py3-none-any`, and the compiled ones (numpy, evdev,
-    PyAudio, psutil, pywhispercpp) ship no universal wheel, so the sandbox
-    builds them from source against the SDK's own interpreter. Never an
-    ABI-tagged wheel, whose cp tag would pin us to one SDK Python.
+    Binary-only packages use an architecture-specific CPython wheel. For every
+    other package, prefer a universal wheel and fall back to the sdist so the
+    sandbox builds compiled dependencies against the SDK's interpreter.
     """
     artifacts = pypi_artifacts(name, version)
-    wheels = [
-        a
-        for a in artifacts
-        if a["packagetype"] == "bdist_wheel" and a["filename"].endswith("-none-any.whl")
-    ]
-    sdists = [a for a in artifacts if a["packagetype"] == "sdist"]
-    candidates = wheels or sdists
+    if name in BINARY_ONLY:
+        if arch not in FLATPAK_ARCHES:
+            raise SystemExit(
+                f"{name} {version}: expected one of the Flatpak architectures "
+                f"{', '.join(FLATPAK_ARCHES)}, got {arch!r}"
+            )
+        python_tag = TARGET_ENV["python_version"].replace(".", "")
+        wheel_pattern = re.compile(
+            rf"-cp{python_tag}-cp{python_tag}-manylinux_.+_{re.escape(arch)}\.whl$"
+        )
+        candidates = [
+            artifact
+            for artifact in artifacts
+            if artifact["packagetype"] == "bdist_wheel"
+            and wheel_pattern.search(artifact["filename"])
+        ]
+        if not candidates:
+            raise SystemExit(
+                f"{name} {version} publishes no CPython cp{python_tag} manylinux "
+                f"wheel for {arch}; update the Flatpak Python runtime or package"
+            )
+    else:
+        wheels = [
+            artifact
+            for artifact in artifacts
+            if artifact["packagetype"] == "bdist_wheel"
+            and artifact["filename"].endswith("-none-any.whl")
+        ]
+        sdists = [artifact for artifact in artifacts if artifact["packagetype"] == "sdist"]
+        candidates = wheels or sdists
     if not candidates:
         raise SystemExit(
             f"{name} {version} publishes neither a universal wheel nor an sdist; "
             "the Flatpak cannot build it without an ABI-tagged wheel"
         )
-    # A release can publish more than one universal wheel (PySocks 1.7.1 ships
-    # py27 and py3 builds); take the first whose digest uv actually locked.
+    # A release can publish more than one matching wheel; take the first whose
+    # digest uv actually locked.
     picked = next((a for a in candidates if a["digests"]["sha256"] in digests), None)
     if picked is None:
         first = candidates[0]
@@ -189,9 +221,22 @@ def main() -> int:
     text = DEPS_YAML.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
 
-    in_manifest = {artifact_name(name) for _, name, _ in manifest_sources(text)}
+    sources = manifest_sources(text)
+    in_manifest = {artifact_name(name) for _, name, _ in sources}
     stale = sorted(in_manifest - set(locked) - BUILD_BACKENDS)
     missing = sorted(set(locked) - in_manifest - RUNTIME_PROVIDED)
+    binary_arches = {name: set() for name in BINARY_ONLY}
+    for _, filename, _ in sources:
+        name = artifact_name(filename)
+        if name in BINARY_ONLY:
+            arch_match = re.search(r"_(x86_64|aarch64)\.whl$", filename)
+            if arch_match:
+                binary_arches[name].add(arch_match.group(1))
+    for name in BINARY_ONLY & set(locked):
+        missing.extend(
+            f"{name} ({arch})" for arch in FLATPAK_ARCHES if arch not in binary_arches[name]
+        )
+    missing.sort()
     if stale:
         print(
             f"{DEPS_YAML.name} builds packages the lock does not resolve: "
@@ -213,14 +258,20 @@ def main() -> int:
         return 1
 
     changes: list[str] = []
-    for index, filename, old_sha in manifest_sources(text):
+    for index, filename, old_sha in sources:
         name = artifact_name(filename)
         if name in BUILD_BACKENDS:
             # Absent from the lock by definition: nothing imports them at
             # runtime, they only let the sandbox build the sdists offline.
             continue
         version, digests = locked[name]
-        url, sha = choose_artifact(name, version, digests)
+        arch = None
+        if name in BINARY_ONLY:
+            arch_match = re.search(r"_(x86_64|aarch64)\.whl$", filename)
+            if not arch_match:
+                raise SystemExit(f"{name}: cannot determine a Flatpak architecture from {filename}")
+            arch = arch_match.group(1)
+        url, sha = choose_artifact(name, version, digests, arch)
         if sha == old_sha:
             continue
         indent = re.match(r"^(\s*)", lines[index]).group(1)
@@ -265,11 +316,18 @@ def main() -> int:
     )
 
     if updated == text and manifest_updated == manifest_text:
-        print("Flatpak dependencies already match requirements/runtime.txt")
+        print(
+            "Flatpak dependencies already match requirements/vad.txt "
+            "(runtime dependencies plus the [vad] extra)"
+        )
         return 0
 
     if args.check:
-        print("Flatpak dependencies are behind requirements/runtime.txt:", file=sys.stderr)
+        print(
+            "Flatpak dependencies are behind requirements/vad.txt "
+            "(runtime dependencies plus the [vad] extra):",
+            file=sys.stderr,
+        )
         for change in changes:
             print(change, file=sys.stderr)
         if manifest_updated != manifest_text:

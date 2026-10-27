@@ -305,6 +305,18 @@ class TestSpeechRecognition(unittest.TestCase):
         self.assertIsNone(hu["vosk"])
         self.assertNotIn("hu", VOSK_MODEL_INFO["small"]["languages"])
 
+    def test_slovenian_is_whisper_only_in_catalog(self) -> None:
+        """Slovenian (issue #970) is exposed for Whisper engines, not VOSK or Slovak."""
+        from vocalinux.utils.vosk_model_info import SUPPORTED_LANGUAGES
+
+        slovenian = SUPPORTED_LANGUAGES["sl"]
+        self.assertEqual(slovenian["name"], "Slovenian")
+        self.assertEqual(slovenian["whisper"], "sl")
+        self.assertIsNone(slovenian["vosk"])
+        for size in ("small", "medium", "large"):
+            self.assertNotIn("sl", VOSK_MODEL_INFO[size]["languages"])
+        self.assertNotIn("sk", SUPPORTED_LANGUAGES)
+
     def test_resolve_whisper_language_maps_english_variants(self):
         """Catalog ids like en-us/en-in must become Whisper's 'en' code."""
         from unittest.mock import patch
@@ -314,6 +326,7 @@ class TestSpeechRecognition(unittest.TestCase):
         self.assertEqual(resolve_whisper_language("en-us"), "en")
         self.assertEqual(resolve_whisper_language("en-in"), "en")
         self.assertEqual(resolve_whisper_language("hu"), "hu")
+        self.assertEqual(resolve_whisper_language("sl"), "sl")
         self.assertEqual(resolve_whisper_language("ja"), "ja")
         self.assertIsNone(resolve_whisper_language("auto"))
         # Unknown catalog ids pass through unchanged.
@@ -548,7 +561,7 @@ class TestSpeechRecognition(unittest.TestCase):
 
         # Default values
         self.assertEqual(manager.vad_sensitivity, 3)
-        self.assertEqual(manager.silence_timeout, 2.0)
+        self.assertEqual(manager.silence_timeout, 1.2)
 
         # Configure with valid values
         manager.reconfigure(vad_sensitivity=4, silence_timeout=1.5)

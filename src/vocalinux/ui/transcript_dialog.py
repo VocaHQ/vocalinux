@@ -272,7 +272,7 @@ class TranscriptDialog(Gtk.Dialog):
         dialog.format_secondary_text("Do you want to replace it?")
         dialog.add_button("_Cancel", Gtk.ResponseType.CANCEL)
         dialog.add_button("_Replace", Gtk.ResponseType.OK)
-        confirmed = dialog.run() == Gtk.ResponseType.OK
+        confirmed = bool(dialog.run() == Gtk.ResponseType.OK)
         dialog.destroy()
         return confirmed
 

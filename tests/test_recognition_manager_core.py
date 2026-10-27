@@ -504,6 +504,7 @@ class TestStartStopRecognition(unittest.TestCase):
         manager.start_recognition()
         manager.audio_thread = self.threadInstance
         manager.recognition_thread = self.threadInstance
+        manager._worker_exited.set()
 
         manager.stop_recognition()
 
@@ -587,6 +588,7 @@ class TestPushToTalkMode(unittest.TestCase):
 
         manager.audio_thread = self.threadInstance
         manager.recognition_thread = self.threadInstance
+        manager._worker_exited.set()
         manager.stop_recognition()
         self.assertEqual(manager._recognition_mode, "toggle")
 

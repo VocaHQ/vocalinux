@@ -7,7 +7,7 @@ punctuation / line-break aliases keyed by Whisper ISO language codes
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, cast
 
 from vocalinux.utils.vosk_model_info import SUPPORTED_LANGUAGES
 
@@ -192,8 +192,9 @@ def normalize_command_language(language: Optional[str]) -> str:
     if not language or language == "auto":
         return "en"
     info = SUPPORTED_LANGUAGES.get(language)
-    if info is not None and info.get("whisper"):
-        return info["whisper"]
+    language_info = cast(Optional[dict[str, str]], info)
+    if language_info is not None and language_info.get("whisper"):
+        return language_info["whisper"]
     if language.startswith("en"):
         return "en"
     return language

@@ -8,7 +8,7 @@ the required methods.
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, cast
 
 Callback = Callable[[], None]
 
@@ -392,7 +392,7 @@ def format_shortcut_label(spec: ShortcutSpec) -> str:
             return SHORTCUT_DISPLAY_NAMES[legacy_id]
         return _MODIFIER_LABELS.get(spec.primary_modifier, spec.primary_modifier)
     parts = [_MODIFIER_LABELS.get(m, m) for m in spec.modifiers]
-    parts.append(_main_key_label(spec.key))
+    parts.append(_main_key_label(cast(str, spec.key)))
     return "+".join(parts)
 
 

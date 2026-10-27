@@ -12,7 +12,8 @@ The D-Bus conversation is asynchronous: each request method returns a
 ``org.freedesktop.portal.Request`` object that later emits ``Response``. To
 keep that deterministic this client runs a dedicated worker thread holding a
 private bus connection whose signals dispatch on a private
-``GLib.MainContext``; callers submit jobs and block on the result.
+``GLib.MainContext``; each request has a unique handle token and is subscribed
+before the method call; callers submit jobs and block on the result.
 
 Portal versions: version 2 of the interface adds ``persist_mode`` and the
 ``restore_token`` option, which lets a later session resume without the
@@ -23,6 +24,7 @@ re-authorized on each app start.
 import logging
 import os
 import queue
+import secrets
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -192,6 +194,17 @@ def _save_restore_token(token: str) -> None:
         logger.debug(f"Could not persist RemoteDesktop restore token: {e}")
 
 
+def _new_token() -> str:
+    """Return a unique D-Bus handle token."""
+    return f"vocalinux_{secrets.token_hex(8)}"
+
+
+def _predicted_request_path(unique_name: str, token: str) -> str:
+    """Return the Request object path implied by a connection name and token."""
+    sender = unique_name.lstrip(":").replace(".", "_")
+    return f"/org/freedesktop/portal/desktop/request/{sender}/{token}"
+
+
 class RemoteDesktopPortal:
     """Synchronous client for ``org.freedesktop.portal.RemoteDesktop``.
 
@@ -276,6 +289,17 @@ class RemoteDesktopPortal:
         """
         with self._lock:
             self._submit(lambda: self._shortcut(steps), timeout=_SUBMIT_TIMEOUT_S)
+
+    def reset_session(self) -> None:
+        """Close the current portal session without stopping the client."""
+        with self._lock:
+            session_path = self._session_path
+            self._session_path = None
+            if session_path and self._conn is not None:
+                try:
+                    self._submit(lambda: self._close_session(session_path), timeout=5)
+                except Exception as e:
+                    logger.debug(f"Could not close RemoteDesktop session: {e}")
 
     def close(self) -> None:
         """Close the portal session and stop the worker thread."""
@@ -461,14 +485,8 @@ class RemoteDesktopPortal:
         )
         return int(result.get_child_value(0).get_variant().get_uint32())
 
-    def _await_response(self, request_path: str, timeout_s: float) -> Dict[str, Any]:
-        """Wait for the Request::Response signal on ``request_path``.
-
-        Signals dispatch on this thread's private main context; iterating it
-        here is what delivers the callback, so there is no race between the
-        method returning the request path and the subscription being added.
-        """
-        outcome: Dict[str, Any] = {}
+    def _subscribe_response(self, request_path: str, outcome: Dict[str, Any]) -> int:
+        """Subscribe to Request::Response signals for ``request_path``."""
 
         def _on_response(
             _conn: Any,
@@ -481,31 +499,50 @@ class RemoteDesktopPortal:
             outcome["response"] = params.get_child_value(0).get_uint32()
             outcome["results"] = params.get_child_value(1)
 
-        subscription = self._conn.signal_subscribe(
-            _DESKTOP_BUS_NAME,
-            _REQUEST_IFACE,
-            "Response",
-            request_path,
-            None,
-            Gio.DBusSignalFlags.NONE,
-            _on_response,
+        return int(
+            self._conn.signal_subscribe(
+                _DESKTOP_BUS_NAME,
+                _REQUEST_IFACE,
+                "Response",
+                request_path,
+                None,
+                Gio.DBusSignalFlags.NONE,
+                _on_response,
+            )
         )
-        try:
-            deadline = time.monotonic() + timeout_s
-            if self._job_deadline is not None:
-                deadline = min(deadline, self._job_deadline)
-            while "response" not in outcome:
-                self._check_job_aborted()
-                if time.monotonic() >= deadline:
-                    raise RemoteDesktopPortalError(
-                        f"Portal request timed out after {timeout_s:.0f}s ({request_path})"
-                    )
-                self._context.iteration(False)
-                time.sleep(_RESPONSE_POLL_INTERVAL_S)
-        finally:
-            self._conn.signal_unsubscribe(subscription)
 
+    def _await_response(
+        self,
+        method: str,
+        request_path: str,
+        outcome: Dict[str, Any],
+        timeout_s: float,
+    ) -> Dict[str, Any]:
+        """Wait for the subscribed Request::Response signal on ``request_path``."""
+        started = time.monotonic()
+        deadline = started + timeout_s
+        if self._job_deadline is not None:
+            deadline = min(deadline, self._job_deadline)
+        next_wait_log = started + 5.0
+        while "response" not in outcome:
+            self._check_job_aborted()
+            now = time.monotonic()
+            if now >= deadline:
+                raise RemoteDesktopPortalError(
+                    f"Portal request timed out after {timeout_s:.0f}s ({request_path})"
+                )
+            if now >= next_wait_log:
+                logger.debug(
+                    "still waiting for %s Response on %s (%.0fs elapsed)",
+                    method,
+                    request_path,
+                    now - started,
+                )
+                next_wait_log += 5.0
+            self._context.iteration(False)
+            time.sleep(_RESPONSE_POLL_INTERVAL_S)
         response = outcome["response"]
+        logger.debug("Received %s Response code %s on %s", method, response, request_path)
         if response == _RESPONSE_OK:
             return outcome
         if response == _RESPONSE_CANCELLED:
@@ -515,7 +552,9 @@ class RemoteDesktopPortal:
     def _request(
         self,
         method: str,
-        params: Any,
+        signature: str,
+        args: Tuple[Any, ...],
+        options: Dict[str, Any],
         timeout_s: float = _REQUEST_TIMEOUT_S,
     ) -> Any:
         """Issue a portal request method and return its Response results.
@@ -527,15 +566,35 @@ class RemoteDesktopPortal:
         budget = self._job_time_left(timeout_s)
         if budget <= 0:
             raise RemoteDesktopPortalError(f"Portal request {method} exceeded the deadline")
-        result = self._call_sync(
-            _REMOTE_DESKTOP_IFACE,
-            method,
-            params,
-            "(o)",
-            timeout_ms=int(max(1.0, min(_REQUEST_TIMEOUT_S, budget)) * 1000),
-        )
-        request_path = result.get_child_value(0).get_string()
-        outcome = self._await_response(request_path, budget)
+        request_options = dict(options)
+        token = _new_token()
+        request_options["handle_token"] = token
+        predicted_path = _predicted_request_path(self._conn.get_unique_name(), token)
+        outcome: Dict[str, Any] = {}
+        subscriptions: List[int] = []
+        subscriptions.append(self._subscribe_response(predicted_path, outcome))
+        logger.debug("Issuing %s request on %s", method, predicted_path)
+        try:
+            result = self._call_sync(
+                _REMOTE_DESKTOP_IFACE,
+                method,
+                GLib.Variant(signature, (*args, self._sv_options(request_options))),
+                "(o)",
+                timeout_ms=int(max(1.0, min(_REQUEST_TIMEOUT_S, budget)) * 1000),
+            )
+            request_path = result.get_child_value(0).get_string()
+            if request_path != predicted_path:
+                logger.debug(
+                    "%s request returned path %s instead of predicted path %s",
+                    method,
+                    request_path,
+                    predicted_path,
+                )
+                subscriptions.append(self._subscribe_response(request_path, outcome))
+            outcome = self._await_response(method, request_path, outcome, budget)
+        finally:
+            for subscription in subscriptions:
+                self._conn.signal_unsubscribe(subscription)
         return outcome["results"]
 
     @staticmethod
@@ -561,13 +620,12 @@ class RemoteDesktopPortal:
             self._available = True
 
         persist = self._version >= 2
-        session_token = f"vocalinux_{os.getpid()}_{int(time.time())}"
+        session_token = _new_token()
         results = self._request(
             "CreateSession",
-            GLib.Variant(
-                "(a{sv})",
-                (self._sv_options({"session_handle_token": session_token}),),
-            ),
+            "(a{sv})",
+            (),
+            {"session_handle_token": session_token},
         )
 
         session_handle = results.lookup_value(
@@ -590,11 +648,15 @@ class RemoteDesktopPortal:
         try:
             self._request(
                 "SelectDevices",
-                GLib.Variant("(oa{sv})", (session_path, self._sv_options(select_options))),
+                "(oa{sv})",
+                (session_path,),
+                select_options,
             )
             start_results = self._request(
                 "Start",
-                GLib.Variant("(osa{sv})", (session_path, "", {})),
+                "(osa{sv})",
+                (session_path, ""),
+                {},
                 timeout_s=_START_TIMEOUT_S,
             )
         except Exception:

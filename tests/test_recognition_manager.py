@@ -185,12 +185,16 @@ class TestSpeechRecognition(unittest.TestCase):
         text_callback.assert_called_once_with("processed text")
         action_callback.assert_called_once_with("action1")
 
-    def test_start_stop_recognition(self):
+    def test_start_stop_recognition(self) -> None:
         """Test starting and stopping recognition."""
         manager = SpeechRecognitionManager(engine="vosk")
+        initial_gate = manager._key_release_gate
 
         # Start recognition
         manager.start_recognition()
+        session_gate = manager._key_release_gate
+        self.assertIsNot(session_gate, initial_gate)
+        self.assertFalse(session_gate.is_set())
 
         # Verify state and calls
         self.assertEqual(manager.state, RecognitionState.LISTENING)
@@ -210,13 +214,20 @@ class TestSpeechRecognition(unittest.TestCase):
         # Stop recognition
         manager.audio_thread = self.threadInstance
         manager.recognition_thread = self.threadInstance
+        manager._worker_exited.set()
         manager.stop_recognition()
 
         # Verify stopped state
         self.assertEqual(manager.state, RecognitionState.IDLE)
         self.assertFalse(manager.should_record)
+        self.assertTrue(session_gate.is_set())
         mock_audio_feedback.play_stop_sound.assert_called_once()
         self.threadInstance.join.assert_called()
+
+        manager.start_recognition()
+        self.assertIsNot(manager._key_release_gate, session_gate)
+        self.assertFalse(manager._key_release_gate.is_set())
+        manager.stop_recognition()
 
     def test_whisper_engine(self):
         """Test initialization and usage with Whisper engine."""
@@ -301,7 +312,7 @@ class TestSpeechRecognition(unittest.TestCase):
 
         # Default values
         self.assertEqual(manager.vad_sensitivity, 3)
-        self.assertEqual(manager.silence_timeout, 2.0)
+        self.assertEqual(manager.silence_timeout, 1.2)
 
         # Configure with valid values
         manager.reconfigure(vad_sensitivity=4, silence_timeout=1.5)

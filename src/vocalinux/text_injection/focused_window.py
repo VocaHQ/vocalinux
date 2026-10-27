@@ -253,6 +253,120 @@ def _focused_window_x11() -> Optional[FocusedWindow]:
     )
 
 
+def _read_process_environ(pid: str) -> Optional[dict[str, str]]:
+    """Return ``/proc/<pid>/environ`` as a dict, or None when it cannot be read."""
+    if not pid.isdigit():
+        return None
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as handle:
+            raw = handle.read()
+    except OSError:
+        return None
+    environ: dict[str, str] = {}
+    for entry in raw.split(b"\0"):
+        key, sep, value = entry.partition(b"=")
+        if sep:
+            environ[key.decode("utf-8", "replace")] = value.decode("utf-8", "replace")
+    return environ
+
+
+# Shared libraries that identify the toolkit an X11 client draws its text fields with.
+_GTK_LIBRARY_MARKERS = ("libgtk-3.so", "libgtk-x11-2.0.so", "libgtk-4.so")
+_QT_LIBRARY_MARKERS = ("libQt5Gui.so", "libQt6Gui.so", "libQtGui.so")
+_IM_MODULE_VARIABLES = {"gtk": "GTK_IM_MODULE", "qt": "QT_IM_MODULE"}
+
+
+def _process_toolkits(pid: str) -> set[str]:
+    """Return the GUI toolkits (``gtk``, ``qt``) mapped into a process, if readable."""
+    if not pid.isdigit():
+        return set()
+    try:
+        with open(f"/proc/{pid}/maps", "r", encoding="utf-8", errors="replace") as handle:
+            maps = handle.read()
+    except OSError:
+        return set()
+    toolkits: set[str] = set()
+    if any(marker in maps for marker in _GTK_LIBRARY_MARKERS):
+        toolkits.add("gtk")
+    if any(marker in maps for marker in _QT_LIBRARY_MARKERS):
+        toolkits.add("qt")
+    return toolkits
+
+
+def _toolkit_uses_ibus(environ: dict[str, str], toolkit: str) -> bool:
+    """True when a GTK or Qt client with this environment loads the IBus module.
+
+    The toolkit's own variable decides. ``xim`` hands the choice to XIM, which
+    reaches IBus only through ``XMODIFIERS=@im=ibus``.
+    """
+    module = environ.get(_IM_MODULE_VARIABLES[toolkit], "").strip().lower()
+    if module == "xim":
+        return "@im=ibus" in environ.get("XMODIFIERS", "").lower()
+    return "ibus" in module
+
+
+def environ_uses_ibus_im(environ: dict[str, str], toolkits: frozenset[str] = frozenset()) -> bool:
+    """True when a client with this environment and these toolkits talks to IBus.
+
+    For a known GTK or Qt client only that toolkit's variable counts, so an
+    IBus setting meant for the other toolkit does not hide a missing one. When
+    the toolkit is unknown (plain Xlib, Tk, Motif or a custom toolkit), every
+    input method variable that is set must select IBus, and at least one must.
+    """
+    known = toolkits & _IM_MODULE_VARIABLES.keys()
+    if known:
+        return all(_toolkit_uses_ibus(environ, toolkit) for toolkit in known)
+    values = [
+        environ.get(name, "").strip().lower()
+        for name in ("GTK_IM_MODULE", "QT_IM_MODULE", "XMODIFIERS")
+    ]
+    selected = [value for value in values if value]
+    return bool(selected) and all("ibus" in value for value in selected)
+
+
+def focused_xwayland_client_without_ibus() -> bool:
+    """True when a Wayland session has an XWayland client focused that IBus cannot reach.
+
+    An X11 client only talks to IBus through an input method module that it
+    loads at startup from GTK_IM_MODULE (GTK), QT_IM_MODULE (Qt) or XMODIFIERS
+    (XIM). Its toolkit is read from the libraries it has mapped. Without
+    one, IBus has no input context for it: the Vocalinux engine still commits
+    and reports success, and the text goes nowhere (#972). The client's own
+    environment is read because it can differ from the one Vocalinux runs in.
+
+    While a native Wayland client holds focus, XWayland's active window is
+    unset or a placeholder with no pid and no WM_CLASS, so this returns False.
+    A real client whose environment cannot be read counts as not connected,
+    since xdotool reaches every XWayland client and IBus does not.
+    """
+    if not os.environ.get("WAYLAND_DISPLAY") or not os.environ.get("DISPLAY"):
+        return False
+    if not shutil.which("xdotool"):
+        return False
+    env = _x11_probe_env()
+    window_id = _run_text(["xdotool", "getactivewindow"], env)
+    if not window_id:
+        return False
+    pid = _run_text(["xdotool", "getwindowpid", window_id], env)
+    if not pid.isdigit():
+        if not read_wm_class(window_id, env):
+            return False
+        logger.debug("Focused XWayland window %s has no pid; assuming no IBus", window_id)
+        return True
+    environ = _read_process_environ(pid)
+    if environ is None:
+        logger.debug("Cannot read the environment of XWayland pid %s; assuming no IBus", pid)
+        return True
+    if environ_uses_ibus_im(environ, frozenset(_process_toolkits(pid))):
+        return False
+    logger.debug(
+        "Focused XWayland client %s (pid %s) has no IBus input method module",
+        _process_name_for_pid(pid) or window_id,
+        pid,
+    )
+    return True
+
+
 def _first_string(payload: dict[str, Any], *keys: str) -> str:
     """Return the first non-empty string value for the given keys."""
     for key in keys:

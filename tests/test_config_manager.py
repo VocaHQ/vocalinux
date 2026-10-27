@@ -77,14 +77,32 @@ class TestConfigManager(unittest.TestCase):
         self.logger_patcher.stop()
         self.temp_dir.cleanup()
 
-    def test_init_default_config(self):
+    def test_init_default_config(self) -> None:
         """Test initialization with default configuration."""
         config_manager = ConfigManager()
         self.assertEqual(config_manager.config, DEFAULT_CONFIG)
+        self.assertTrue(DEFAULT_CONFIG["updates"]["check_automatically"])
         self.mock_logger.info.assert_called_with(
             f"Config file not found at {self.temp_config_file}. Using defaults."
         )
         self.assertTrue(os.path.exists(self.temp_config_dir))
+
+    def test_old_update_channel_config_loads_with_automatic_checks_enabled(self) -> None:
+        self._write_config({"updates": {"channel": "nightly"}})
+
+        config_manager = ConfigManager()
+
+        self.assertTrue(config_manager.get_bool("updates", "check_automatically"))
+        self.assertEqual(config_manager.config["updates"]["channel"], "nightly")
+
+    def test_paste_long_text_defaults_to_off_and_can_be_changed(self) -> None:
+        config_manager = ConfigManager()
+        self.assertFalse(DEFAULT_CONFIG["text_injection"]["paste_long_text"])
+        self.assertFalse(config_manager.get_paste_long_text())
+        config_manager.set_paste_long_text(True)
+        self.assertTrue(config_manager.get_paste_long_text())
+        config_manager.set_paste_long_text(False)
+        self.assertFalse(config_manager.get_paste_long_text())
 
     def test_ensure_config_dir(self):
         """Test that _ensure_config_dir creates the directory."""

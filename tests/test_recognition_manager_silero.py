@@ -12,8 +12,10 @@ returning scripted speech probabilities. Verifies:
 """
 
 import sys
+import threading
 import time
 import unittest  # noqa: E402
+from typing import Optional
 from unittest.mock import MagicMock, patch  # noqa: E402
 
 # Earlier test modules install `sys.modules["numpy"] = MagicMock()` at module
@@ -40,7 +42,10 @@ if "gi.repository" not in sys.modules:
     sys.modules["gi.repository"] = MagicMock()
 
 from vocalinux.common_types import RecognitionState  # noqa: E402
-from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager  # noqa: E402
+from vocalinux.speech_recognition.recognition_manager import (  # noqa: E402
+    SpeechRecognitionManager,
+    _ReleaseGate,
+)
 
 for _k, _v in _ORIG_MODULES.items():
     if _v is not None:
@@ -171,7 +176,16 @@ class TestRecordAudioSileroPath(unittest.TestCase):
 
         # Capture flushes triggered by the silence-detection branch
         self.enqueued = []
-        self.mgr._enqueue_audio_segment = lambda buf: self.enqueued.append(list(buf))
+        self.enqueued_gates: list[Optional[_ReleaseGate]] = []
+
+        def enqueue_segment(
+            audio_buffer: list[bytes],
+            release_gate: Optional[_ReleaseGate] = None,
+        ) -> None:
+            self.enqueued.append(list(audio_buffer))
+            self.enqueued_gates.append(release_gate)
+
+        self.mgr._enqueue_audio_segment = enqueue_segment
 
     def _drive(
         self,
@@ -233,6 +247,46 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         # but speech_counter never accumulates -> no flush.
         self._drive(probs=[0.95] * 20, vad_sensitivity=3)
         self.assertEqual(len(self.enqueued), 0, "speech should keep silence counter at 0, no flush")
+
+    def test_continuous_speech_flushes_before_buffer_cap(self) -> None:
+        """A pause-free hold must be queued, not trimmed, when it grows long."""
+        # 20 chunks * 0.064s = 1.28s. With a 0.5s segment limit the loop
+        # queues ~0.5s of audio and starts a fresh segment, twice.
+        self.mgr._max_segment_seconds = 0.5
+        self._drive(probs=[0.95] * 20, vad_sensitivity=3)
+        self.assertEqual(len(self.enqueued), 2)
+        self.assertEqual(len(self.mgr.audio_buffer), 4)
+        self.assertLess(len(self.mgr.audio_buffer), self.mgr._max_buffer_size)
+
+    def test_chunk_budget_flushes_before_cap_on_short_chunks(self) -> None:
+        """The 75% chunk-budget limit must win when chunks are short.
+
+        A high capture rate makes each chunk short, so a 90 s time limit would
+        be reached long after the destructive cap. The flush point has to
+        derive from the chunk budget in that case, or the trim sees speech.
+        """
+        # 10 chunks * 0.064s = 0.64s of buffer, so 75% is 7.5 chunks -> flush
+        # at chunk 8, two chunks before the cap could trim.
+        self.mgr._max_buffer_size = 10
+        self.mgr._max_segment_seconds = 90.0
+        self._drive(probs=[0.95] * 10, vad_sensitivity=3)
+        self.assertEqual(len(self.enqueued), 1)
+        self.assertEqual(len(self.enqueued[0]), 8)
+        self.assertEqual(len(self.mgr.audio_buffer), 2)
+        self.assertLess(len(self.mgr.audio_buffer), self.mgr._max_buffer_size)
+        # Every captured chunk is either queued or still buffered: no trim.
+        self.assertEqual(
+            sum(len(segment) for segment in self.enqueued) + len(self.mgr.audio_buffer),
+            10,
+        )
+
+    def test_speech_during_reload_is_not_flushed(self) -> None:
+        """A model reload keeps the utterance intact rather than enqueuing it."""
+        self.mgr._max_segment_seconds = 0.5
+        self.mgr._reload_pending = True
+        self._drive(probs=[0.95] * 20, vad_sensitivity=3)
+        self.assertEqual(self.enqueued, [])
+        self.assertEqual(len(self.mgr.audio_buffer), 20)
 
     def test_reload_keeps_speech_across_silence(self) -> None:
         """Speech during reload stays together despite intervening silence."""
@@ -301,6 +355,30 @@ class TestRecordAudioSileroPath(unittest.TestCase):
         self._drive(probs=[0.6] * 20, vad_sensitivity=1)
         self.assertEqual(len(self.enqueued), 0)
 
+    def test_push_to_talk_flushes_carry_the_session_release_gate(self) -> None:
+        """Mid-hold segments carry the session gate, which capture exit opens."""
+        self.mgr._recognition_mode = "push_to_talk"
+        self.mgr._max_segment_seconds = 0.5
+        self.mgr._key_release_gate = _ReleaseGate()
+        gate = self.mgr._key_release_gate
+
+        self._drive(probs=[0.95] * 20, vad_sensitivity=3)
+
+        self.assertGreater(len(self.enqueued_gates), 0)
+        self.assertTrue(all(enqueued_gate is gate for enqueued_gate in self.enqueued_gates))
+        self.assertTrue(gate.is_set())
+
+    def test_toggle_flushes_do_not_carry_a_release_gate(self) -> None:
+        """Toggle-mode segments are not gated even though capture exit opens its event."""
+        self.mgr._max_segment_seconds = 0.5
+        self.mgr._key_release_gate = _ReleaseGate()
+        gate = self.mgr._key_release_gate
+
+        self._drive(probs=[0.95] * 20, vad_sensitivity=3)
+
+        self.assertEqual(self.enqueued_gates, [None, None])
+        self.assertTrue(gate.is_set())
+
     def test_sensitivity_highest_accepts_borderline_speech(self):
         """At sensitivity=5 (threshold 0.3), prob=0.6 is speech, no flush."""
         self._drive(probs=[0.6] * 20, vad_sensitivity=5)
@@ -350,7 +428,16 @@ class TestRecordAudioAmplitudeFallback(unittest.TestCase):
         self.mgr._silero_vad = None
 
         self.enqueued = []
-        self.mgr._enqueue_audio_segment = lambda buf: self.enqueued.append(list(buf))
+        self.enqueued_gates: list[Optional[_ReleaseGate]] = []
+
+        def enqueue_segment(
+            audio_buffer: list[bytes],
+            release_gate: Optional[_ReleaseGate] = None,
+        ) -> None:
+            self.enqueued.append(list(audio_buffer))
+            self.enqueued_gates.append(release_gate)
+
+        self.mgr._enqueue_audio_segment = enqueue_segment
 
     def _drive(self, payload, max_iters):
         stream = MagicMock()
@@ -408,7 +495,7 @@ class TestAudioLevelCallback(unittest.TestCase):
         mgr.silence_timeout = 0.5
         mgr.vad_sensitivity = 3
         mgr._silero_vad = None
-        mgr._enqueue_audio_segment = lambda buf: None
+        mgr._enqueue_audio_segment = MagicMock()
 
         levels = []
         mgr._audio_level_callbacks = [levels.append]

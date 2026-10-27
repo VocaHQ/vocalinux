@@ -299,7 +299,7 @@ class TestEnumImports(unittest.TestCase):
 class TestProtocolImports(unittest.TestCase):
     """Test that all protocols are importable."""
 
-    def test_protocol_imports(self):
+    def test_protocol_imports(self) -> None:
         """Test that protocols can be imported."""
         from vocalinux.common_types import (
             SpeechRecognitionManagerProtocol,
@@ -309,6 +309,8 @@ class TestProtocolImports(unittest.TestCase):
         # Verify protocols are types with expected methods
         self.assertTrue(hasattr(SpeechRecognitionManagerProtocol, "start_recognition"))
         self.assertTrue(hasattr(SpeechRecognitionManagerProtocol, "stop_recognition"))
+        self.assertTrue(hasattr(SpeechRecognitionManagerProtocol, "is_transcribing"))
+        self.assertTrue(hasattr(SpeechRecognitionManagerProtocol, "cancel_transcription"))
         self.assertTrue(hasattr(SpeechRecognitionManagerProtocol, "register_state_callback"))
         self.assertTrue(hasattr(TextInjectorProtocol, "inject_text"))
 

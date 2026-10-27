@@ -122,7 +122,7 @@ def test_release_attaches_snap_then_tries_the_store() -> None:
     assert '"${{ github.ref_name }}"' not in attach
 
     store = text.split("  publish-snap:\n", 1)[1].split("\n  deploy-website:", 1)[0]
-    assert "needs: build-snap" in store
+    assert "needs: [build-snap, build-and-release]" in store
     assert "--release edge,candidate" in store
     assert "release: stable" not in store
     assert "SNAPCRAFT_STORE_CREDENTIALS is unset; cannot publish the snap" in store

@@ -23,8 +23,6 @@ import pytest
 
 from vocalinux.ui.keyboard_backends.evdev_backend import (
     DEVICE_RESCAN_SECONDS,
-    EVDEV_AVAILABLE,
-    MODIFIER_KEY_CODES,
     EvdevDeviceHub,
     EvdevKeyboardBackend,
     InputEvent,
@@ -36,6 +34,21 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
     ecodes,
     find_keyboard_devices,
 )
+
+
+def _proc_key_bitmap(*codes: int, word_bits: int = 64) -> str:
+    """Format key codes as the words printed in /proc device bitmaps."""
+    bits = sum(1 << code for code in codes)
+    word_mask = (1 << word_bits) - 1
+    word_count = max(1, (bits.bit_length() + word_bits - 1) // word_bits)
+    return " ".join(
+        f"{(bits >> (word_index * word_bits)) & word_mask:x}"
+        for word_index in reversed(range(word_count))
+    )
+
+
+def _keyboard_only_capabilities() -> dict[int, list[int]]:
+    return {ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_RIGHTCTRL]}
 
 
 class TestIsVirtualKeyboard:
@@ -197,9 +210,9 @@ B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
                 result = find_keyboard_devices()
                 assert "/dev/input/event0" not in result
 
-    def test_find_keyboard_devices_skips_relative_pointer(self) -> None:
-        """A device emitting REL_X/Y motion is a mouse, not a keyboard (#900)."""
-        mock_proc_content = """I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+    def test_find_keyboard_devices_keeps_relative_combo_and_skips_mouse(self) -> None:
+        """Keyboard keys keep a REL_X/Y combo; button-only pointer nodes stay excluded."""
+        mock_proc_content = f"""I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
 N: Name="AT Translated Set 2 keyboard"
 H: Handlers=sysrq kbd event0
 B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
@@ -209,28 +222,34 @@ H: Handlers=mouse0 event5
 B: KEY=1f0000 0 0 0 38000000
 B: REL=143
 B: MSC=10
+I: Bus=0003 Vendor=046d Product=0001 Version=0110
+N: Name="Test Mouse"
+H: Handlers=mouse0 event6
+B: KEY={_proc_key_bitmap(ecodes.BTN_LEFT, ecodes.BTN_RIGHT)}
+B: REL=143
 """
-        # KEY carries real keyboard keys (bits 29-31) so only the pointer
-        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
-                assert result == ["/dev/input/event0"]
+                assert result == ["/dev/input/event0", "/dev/input/event5"]
 
-    def test_find_keyboard_devices_skips_absolute_pointer(self) -> None:
-        """ABS_X/Y devices (touchpads, tablets) are also pointers."""
-        mock_proc_content = """I: Bus=0018 Vendor=04f3 Product=0033 Version=0500
+    def test_find_keyboard_devices_keeps_absolute_combo_and_skips_touchpad(self) -> None:
+        """Keyboard keys keep an ABS_X/Y combo; button-only touchpads stay excluded."""
+        mock_proc_content = f"""I: Bus=0018 Vendor=04f3 Product=0033 Version=0500
 N: Name="Elan Touchpad"
 H: Handlers=mouse0 event1
 B: KEY=ff000000000000 0 0 38000000
 B: ABS=273000000000003
+I: Bus=0018 Vendor=04f3 Product=0034 Version=0500
+N: Name="Button-only Touchpad"
+H: Handlers=mouse0 event2
+B: KEY={_proc_key_bitmap(ecodes.BTN_TOUCH)}
+B: ABS=273000000000003
 """
-        # KEY carries real keyboard keys (bits 29-31) so only the pointer
-        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
-                assert result == []
+                assert result == ["/dev/input/event1"]
 
     def test_find_keyboard_devices_keeps_wheel_only_device(self) -> None:
         """REL_WHEEL without X/Y motion does not mark a device as a pointer."""
@@ -245,23 +264,62 @@ B: REL=100
                 result = find_keyboard_devices()
                 assert result == ["/dev/input/event3"]
 
-    def test_find_keyboard_devices_pointer_axes_split_bitmap(self) -> None:
-        """Pointer axes are read from the low word of a multi-word bitmap."""
-        mock_proc_content = """I: Bus=0003 Vendor=046d Product=c52b Version=1201
+    def test_find_keyboard_devices_keeps_hidpp_keyboard_pointer_combos(self) -> None:
+        """All keyboard-capable HID++ nodes remain eligible regardless of name."""
+        # Real blocks from one Bolt receiver: keyboards and mouse share the
+        # same REL bitmap, only the name tells them apart.
+        mock_proc_content = """I: Bus=0003 Vendor=046d Product=408a Version=0111
+N: Name="Logitech MX Keys"
+H: Handlers=sysrq kbd leds mouse1 event3
+B: EV=12001f
+B: KEY=3f00733fff 0 0 483ffff17aff32d bfd4444600000000 \
+ffff0001 130ff38b17d007 ffff7bfad941dfff ffbeffdfffefffff fffffffffffffffe
+B: REL=1943
+B: ABS=100000000
+I: Bus=0003 Vendor=046d Product=4088 Version=0111
+N: Name="Logitech ERGO K860"
+H: Handlers=sysrq kbd leds mouse0 event4
+B: EV=12001f
+B: KEY=3f00733fff 0 0 483ffff17aff32d bfd4444600000000 \
+ffff0001 130ff38b17d007 ffff7bfad941dfff ffbeffdfffefffff fffffffffffffffe
+B: REL=1943
+B: ABS=100000000
+I: Bus=0003 Vendor=046d Product=4082 Version=0111
+N: Name="Logitech MX Master 3"
+H: Handlers=sysrq kbd leds mouse2 event5
+B: EV=120017
+B: KEY=ffff0000 1000000000007 ff9f207ac14057ff febeffdfffefffff fffffffffffffffe
+B: REL=1943
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                result = find_keyboard_devices()
+                assert result == [
+                    "/dev/input/event3",
+                    "/dev/input/event4",
+                    "/dev/input/event5",
+                ]
+
+    def test_find_keyboard_devices_keeps_split_bitmap_combo_and_skips_mouse(self) -> None:
+        """Low-word REL_X/Y axes keep keyboard combos, not button-only mice."""
+        mock_proc_content = f"""I: Bus=0003 Vendor=046d Product=c52b Version=1201
 N: Name="Logitech USB Receiver"
 H: Handlers=mouse0 event4
 B: KEY=ffff0000 0 0 0 38000000
 B: REL=0 0 143
+I: Bus=0003 Vendor=046d Product=0001 Version=0110
+N: Name="Button-only Mouse"
+H: Handlers=mouse0 event5
+B: KEY={_proc_key_bitmap(ecodes.BTN_LEFT, ecodes.BTN_RIGHT)}
+B: REL=0 0 143
 """
-        # KEY carries real keyboard keys (bits 29-31) so only the pointer
-        # check can drop this device.
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
-                assert result == []
+                assert result == ["/dev/input/event4"]
 
     def test_find_keyboard_devices_skips_button_only_devices(self) -> None:
-        """Devices whose KEY bitmap has no real keyboard key are not keyboards (#915)."""
+        """Button-only devices are excluded while keyboard-pointer combos remain eligible."""
         mock_proc_content = """I: Bus=0019 Vendor=0000 Product=0001 Version=0000
 N: Name="Power Button"
 H: Handlers=kbd event4
@@ -295,7 +353,11 @@ B: REL=143
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
                 result = find_keyboard_devices()
-                assert result == ["/dev/input/event0", "/dev/input/event8"]
+                assert result == [
+                    "/dev/input/event0",
+                    "/dev/input/event8",
+                    "/dev/input/event9",
+                ]
 
     def test_find_keyboard_devices_32bit_words(self) -> None:
         """On a 32-bit kernel each bitmap word holds 32 bits, not 64.
@@ -317,12 +379,12 @@ B: KEY=2 0 0 0
 
     def test_find_keyboard_devices_skips_multitouch_only_touchpad(self) -> None:
         """A touchpad reporting only MT axes (no ABS_X/Y) is a pointer (#914)."""
-        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+        mock_proc_content = f"""I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
 N: Name="GXTP5100:00 27C6:01E9"
 H: Handlers=mouse0 event2
 B: PROP=85
 B: EV=1b
-B: KEY=10000 0 0 0 38000000
+B: KEY={_proc_key_bitmap(ecodes.BTN_TOUCH)}
 B: ABS=60000000000000
 B: MSC=10
 """
@@ -332,11 +394,11 @@ B: MSC=10
                 assert result == []
 
     def test_find_keyboard_devices_skips_mixed_single_and_mt_touchpad(self) -> None:
-        """A touchpad with both ABS_X/Y and MT axes stays skipped."""
-        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+        """A button-only touchpad with both ABS and MT axes stays skipped."""
+        mock_proc_content = f"""I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
 N: Name="GXTP5100:00 27C6:01E9"
 H: Handlers=mouse0 event2
-B: KEY=10000 0 0 0 38000000
+B: KEY={_proc_key_bitmap(ecodes.BTN_TOUCH)}
 B: ABS=60000000000003
 """
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
@@ -345,18 +407,23 @@ B: ABS=60000000000003
                 assert result == []
 
     def test_find_keyboard_devices_mt_axes_32bit_words(self) -> None:
-        """On a 32-bit kernel the same MT axes print as two 32-bit words."""
-        mock_proc_content = """I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
+        """32-bit MT axes retain keyboard combos and skip button-only touchpads."""
+        mock_proc_content = f"""I: Bus=0018 Vendor=27c6 Product=01e9 Version=0100
 N: Name="GXTP5100:00 27C6:01E9"
 H: Handlers=mouse0 event2
-B: KEY=10000 0 0 0 38000000
+B: KEY={_proc_key_bitmap(ecodes.KEY_RIGHTCTRL, word_bits=32)}
+B: ABS=600000 0
+I: Bus=0018 Vendor=27c6 Product=01ea Version=0100
+N: Name="Button-only MT touchpad"
+H: Handlers=mouse0 event3
+B: KEY={_proc_key_bitmap(ecodes.BTN_TOUCH, word_bits=32)}
 B: ABS=600000 0
 """
         with patch("vocalinux.ui.keyboard_backends.evdev_backend._WORD_BITS", 32):
             with patch("builtins.open", mock_open(read_data=mock_proc_content)):
                 with patch("os.path.exists", return_value=True):
                     result = find_keyboard_devices()
-                    assert result == []
+                    assert result == ["/dev/input/event2"]
 
 
 class TestFindKeyboardDevicesFromEvdev:
@@ -382,16 +449,18 @@ class TestFindKeyboardDevicesFromEvdev:
 
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.evdev")
-    def test_skips_pointer_devices(self, mock_evdev: Mock, mock_input_device: Mock) -> None:
-        """Mice/tablets with EV_KEY buttons are skipped, keyboards kept."""
+    def test_keeps_keyboard_pointer_devices_and_skips_button_only_pointers(
+        self, mock_evdev: Mock, mock_input_device: Mock
+    ) -> None:
+        """Keyboard combos are kept; pointer nodes with only buttons are excluded."""
         caps = {
             "/dev/input/event0": {ecodes.EV_KEY: [ecodes.KEY_A]},
-            # Mouse-style node: keyboard keys plus pointer motion.
+            # Keyboard-plus-pointer combo.
             "/dev/input/event1": {
                 ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL],
                 ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y, ecodes.REL_WHEEL],
             },
-            # Tablet/touchpad: absolute pointer axes (AbsInfo tuples).
+            # Keyboard-plus-absolute-pointer combo (AbsInfo tuples).
             "/dev/input/event2": {
                 ecodes.EV_KEY: [ecodes.KEY_A],
                 ecodes.EV_ABS: [(ecodes.ABS_X, MagicMock()), (ecodes.ABS_Y, MagicMock())],
@@ -401,10 +470,21 @@ class TestFindKeyboardDevicesFromEvdev:
                 ecodes.EV_KEY: [ecodes.KEY_A],
                 ecodes.EV_REL: [ecodes.REL_WHEEL],
             },
-            # Multitouch-only touchpad: MT position axes, no ABS_X/Y (#914).
-            # Carries a real key so only the MT check can drop it.
+            # Keyboard-plus-MT combo: no ABS_X/Y.
             "/dev/input/event4": {
                 ecodes.EV_KEY: [ecodes.KEY_LEFTCTRL, ecodes.BTN_LEFT],
+                ecodes.EV_ABS: [
+                    (ecodes.ABS_MT_POSITION_X, MagicMock()),
+                    (ecodes.ABS_MT_POSITION_Y, MagicMock()),
+                ],
+            },
+            # Button-only pointer nodes remain excluded.
+            "/dev/input/event5": {
+                ecodes.EV_KEY: [ecodes.BTN_LEFT, ecodes.BTN_RIGHT],
+                ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y],
+            },
+            "/dev/input/event6": {
+                ecodes.EV_KEY: [ecodes.BTN_TOUCH],
                 ecodes.EV_ABS: [
                     (ecodes.ABS_MT_POSITION_X, MagicMock()),
                     (ecodes.ABS_MT_POSITION_Y, MagicMock()),
@@ -416,7 +496,43 @@ class TestFindKeyboardDevicesFromEvdev:
         mock_input_device.side_effect = lambda path: devices[path]
         assert _find_keyboard_devices_from_evdev() == [
             "/dev/input/event0",
+            "/dev/input/event1",
+            "/dev/input/event2",
             "/dev/input/event3",
+            "/dev/input/event4",
+        ]
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.evdev")
+    def test_keeps_hidpp_keyboard_pointer_combos(
+        self, mock_evdev: Mock, mock_input_device: Mock
+    ) -> None:
+        """All three HID++ nodes have keyboard keys and pointer axes."""
+        hidpp_caps = {
+            ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_RIGHTALT, ecodes.BTN_LEFT],
+            ecodes.EV_REL: [
+                ecodes.REL_X,
+                ecodes.REL_Y,
+                ecodes.REL_HWHEEL,
+                ecodes.REL_WHEEL,
+                ecodes.REL_WHEEL_HI_RES,
+                ecodes.REL_HWHEEL_HI_RES,
+            ],
+        }
+        names = {
+            "/dev/input/event3": "Logitech MX Keys",
+            "/dev/input/event4": "Logitech ERGO K860",
+            "/dev/input/event5": "Logitech MX Master 3",
+        }
+        devices = self._devices({path: hidpp_caps for path in names})
+        for path, name in names.items():
+            devices[path].name = name
+        mock_evdev.list_devices.return_value = list(names)
+        mock_input_device.side_effect = lambda path: devices[path]
+        assert _find_keyboard_devices_from_evdev() == [
+            "/dev/input/event3",
+            "/dev/input/event4",
+            "/dev/input/event5",
         ]
 
 
@@ -1343,14 +1459,168 @@ class TestEvdevGrabAndForwarding:
     def _syn_event(self) -> MagicMock:
         return MagicMock(type=0, code=0)  # EV_SYN / SYN_REPORT
 
+    @pytest.mark.parametrize(
+        "axes",
+        [
+            pytest.param(
+                {ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y]},
+                id="relative",
+            ),
+            pytest.param(
+                {
+                    ecodes.EV_ABS: [
+                        (ecodes.ABS_MT_POSITION_X, MagicMock()),
+                        (ecodes.ABS_MT_POSITION_Y, MagicMock()),
+                    ]
+                },
+                id="multitouch",
+            ),
+        ],
+    )
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._is_virtual_keyboard")
+    def test_open_monitors_keyboard_pointer_ungrabbed(
+        self,
+        mock_is_virtual: Mock,
+        mock_uinput: Mock,
+        mock_input_device: Mock,
+        axes: dict[int, list[object]],
+    ) -> None:
+        """Pointer-axis keyboard combos register without grabbing or cloning."""
+        mock_is_virtual.return_value = False
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.name = "MX Mechanical"
+        device.capabilities.return_value = {
+            ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_RIGHTCTRL],
+            **axes,
+        }
+        mock_input_device.return_value = device
+        backend = EvdevKeyboardBackend()
+        create_forwarder = Mock()
+        backend._create_forwarder = create_forwarder
+
+        assert backend._open_keyboard_device("/dev/input/event5") is True
+
+        mock_is_virtual.assert_called_once_with("/dev/input/event5", "MX Mechanical")
+        create_forwarder.assert_not_called()
+        mock_uinput.assert_not_called()
+        device.grab.assert_not_called()
+        assert backend.device_paths == {"/dev/input/event5"}
+        assert backend.device_fds == [10]
+        assert backend._forwarders == {}
+        assert device in backend.devices
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._is_virtual_keyboard")
+    def test_open_monitors_keyboard_with_unknown_capabilities_ungrabbed(
+        self,
+        mock_is_virtual: Mock,
+        mock_uinput: Mock,
+        mock_input_device: Mock,
+    ) -> None:
+        """Capability read errors choose the safe ungrabbed path."""
+        mock_is_virtual.return_value = False
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.name = "Unknown keyboard"
+        device.capabilities.side_effect = OSError("capabilities unavailable")
+        mock_input_device.return_value = device
+        backend = EvdevKeyboardBackend()
+        create_forwarder = Mock()
+        backend._create_forwarder = create_forwarder
+
+        assert backend._open_keyboard_device("/dev/input/event5") is True
+
+        create_forwarder.assert_not_called()
+        mock_uinput.assert_not_called()
+        device.grab.assert_not_called()
+        assert backend.device_paths == {"/dev/input/event5"}
+        assert backend.device_fds == [10]
+        assert backend._forwarders == {}
+
+    @pytest.mark.parametrize("capabilities", [None, []])
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._is_virtual_keyboard")
+    def test_open_monitors_keyboard_with_non_mapping_capabilities_ungrabbed(
+        self,
+        mock_is_virtual: Mock,
+        mock_uinput: Mock,
+        mock_input_device: Mock,
+        capabilities: object,
+    ) -> None:
+        """Non-mapping capability results are unknown and remain ungrabbed."""
+        mock_is_virtual.return_value = False
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.name = "Unknown keyboard"
+        device.capabilities.return_value = capabilities
+        mock_input_device.return_value = device
+        backend = EvdevKeyboardBackend()
+        create_forwarder = Mock()
+        backend._create_forwarder = create_forwarder
+
+        assert backend._open_keyboard_device("/dev/input/event5") is True
+
+        create_forwarder.assert_not_called()
+        mock_uinput.assert_not_called()
+        device.grab.assert_not_called()
+        assert backend.device_paths == {"/dev/input/event5"}
+        assert backend.device_fds == [10]
+        assert backend._forwarders == {}
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._is_virtual_keyboard")
+    def test_ungrabbed_keyboard_pointer_dispatches_shortcut_without_forwarder(
+        self,
+        mock_is_virtual: Mock,
+        mock_uinput: Mock,
+        mock_input_device: Mock,
+    ) -> None:
+        """RIGHTCTRL events reach the registered engine without a clone."""
+        mock_is_virtual.return_value = False
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.name = "MX Mechanical"
+        device.capabilities.return_value = {
+            ecodes.EV_KEY: [ecodes.KEY_A, ecodes.KEY_RIGHTCTRL],
+            ecodes.EV_REL: [ecodes.REL_X, ecodes.REL_Y],
+        }
+        mock_input_device.return_value = device
+        backend = EvdevKeyboardBackend(shortcut="right_ctrl+right_ctrl", mode="push_to_talk")
+        activated = Mock()
+        released = Mock()
+        backend.register_press_callback(activated)
+        backend.register_release_callback(released)
+
+        assert backend._open_keyboard_device("/dev/input/event5") is True
+        hub = backend._hub
+        press = MagicMock(type=ecodes.EV_KEY, code=ecodes.KEY_RIGHTCTRL, value=1)
+        release = MagicMock(type=ecodes.EV_KEY, code=ecodes.KEY_RIGHTCTRL, value=0)
+        hub._dispatch_event(10, device, press, [backend])
+        hub._dispatch_event(10, device, release, [backend])
+        time.sleep(0.1)
+
+        activated.assert_called_once()
+        released.assert_called_once()
+        mock_uinput.assert_not_called()
+        assert hub._forwarders == {}
+
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_open_grabs_device_and_registers_forwarder(self, mock_input_device, mock_uinput):
+    def test_open_grabs_device_and_registers_forwarder(
+        self, mock_input_device: Mock, mock_uinput: Mock
+    ) -> None:
         """A keyboard that can be cloned is grabbed and paired with a forwarder."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03  # BUS_USB
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         mock_uinput.return_value = forwarder
@@ -1513,6 +1783,7 @@ class TestEvdevGrabAndForwarding:
         device.info.bustype = 0x03
         device.name = "keyd virtual keyboard"
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         forwarder.device.path = "/dev/input/event20"
@@ -1569,12 +1840,13 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     def test_open_falls_back_when_uinput_unavailable(
-        self, mock_input_device, mock_uinput, mock_write_only
-    ):
+        self, mock_input_device: Mock, mock_uinput: Mock, mock_write_only: Mock
+    ) -> None:
         """Without /dev/uinput the device still works ungrabbed (keys leak)."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         mock_uinput.side_effect = OSError("uinput denied")
         mock_write_only.side_effect = OSError(errno.EACCES, "uinput denied")
@@ -1592,8 +1864,8 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     def test_open_retries_uinput_write_only_on_eacces(
-        self, mock_input_device, mock_uinput, mock_write_only
-    ):
+        self, mock_input_device: Mock, mock_uinput: Mock, mock_write_only: Mock
+    ) -> None:
         """An O_RDWR refusal retries O_WRONLY so the device still gets grabbed.
 
         Installs carrying the original write-only udev rule (MODE=0620)
@@ -1604,6 +1876,7 @@ class TestEvdevGrabAndForwarding:
         device.fileno.return_value = 10
         device.info.bustype = 0x03
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         mock_uinput.side_effect = OSError("could not open uinput device in write mode")
         forwarder = MagicMock()
@@ -1622,12 +1895,13 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     def test_open_does_not_retry_write_only_on_other_oserror(
-        self, mock_input_device, mock_uinput, mock_write_only
-    ):
+        self, mock_input_device: Mock, mock_uinput: Mock, mock_write_only: Mock
+    ) -> None:
         """A UInput failure with a real errno is not a permission retry."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         mock_uinput.side_effect = OSError(errno.EIO, "i/o error")
 
@@ -1658,6 +1932,7 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = [54]
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         mock_uinput.return_value = forwarder
@@ -1689,6 +1964,7 @@ class TestEvdevGrabAndForwarding:
         device.fileno.return_value = 10
         device.active_keys.return_value = []
         device.read_one.side_effect = [press, None]
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         mock_uinput.return_value = forwarder
@@ -1724,6 +2000,7 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         # The pre-grab drain comes up empty; the straddle drain sees both.
         device.read_one.side_effect = [None, press, release, None]
         mock_input_device.return_value = device
@@ -1759,6 +2036,7 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         device.read_one.side_effect = [None, stale_press, held_press, None]
         mock_input_device.return_value = device
         forwarder = MagicMock()
@@ -1806,6 +2084,7 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = []
+        device.capabilities.return_value = _keyboard_only_capabilities()
         # First None empties the pre-grab drain; the straddle drain follows.
         device.read_one.side_effect = [None, *queue, None]
         mock_input_device.return_value = device
@@ -1828,11 +2107,14 @@ class TestEvdevGrabAndForwarding:
 
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_open_falls_back_when_grab_fails(self, mock_input_device, mock_uinput):
+    def test_open_falls_back_when_grab_fails(
+        self, mock_input_device: Mock, mock_uinput: Mock
+    ) -> None:
         """A failed grab drops the forwarder but keeps the listener running."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
+        device.capabilities.return_value = _keyboard_only_capabilities()
         device.grab.side_effect = OSError(errno.EBUSY, "device grabbed")
         mock_input_device.return_value = device
         forwarder = MagicMock()
@@ -2237,11 +2519,14 @@ class TestEvdevGrabAndForwarding:
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_stop_closes_forwarders(self, mock_input_device, mock_find_devices, mock_uinput):
+    def test_stop_closes_forwarders(
+        self, mock_input_device: Mock, mock_find_devices: Mock, mock_uinput: Mock
+    ) -> None:
         """stop() releases grabs (via close) and closes every uinput clone."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         mock_uinput.return_value = forwarder
@@ -2473,11 +2758,14 @@ class TestEvdevGrabAndForwarding:
 
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
-    def test_open_device_race_closes_device_and_forwarder(self, mock_input_device, mock_uinput):
+    def test_open_device_race_closes_device_and_forwarder(
+        self, mock_input_device: Mock, mock_uinput: Mock
+    ) -> None:
         """A device that loses the registration race is cleaned up fully."""
         device = MagicMock()
         device.fileno.return_value = 10
         device.info.bustype = 0x03
+        device.capabilities.return_value = _keyboard_only_capabilities()
         mock_input_device.return_value = device
         forwarder = MagicMock()
         mock_uinput.return_value = forwarder

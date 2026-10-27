@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import threading
-from typing import Any, Optional
+from typing import Any, Optional, cast
 
 from ..utils.paths import config_dir
 from ..utils.vosk_model_info import SUPPORTED_LANGUAGES
@@ -126,7 +126,7 @@ DEFAULT_CONFIG = {
         "parakeet_model_size": "v3-european",  # Parakeet TDT 0.6B v3 (25 European languages)
         "faster_whisper_model_size": "tiny",  # Default model for faster-whisper engine
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
-        "silence_timeout": 2.0,  # Seconds of silence before stopping
+        "silence_timeout": 1.2,  # Seconds of silence before stopping
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech
         "voice_commands_enabled": None,  # None = auto (enabled for VOSK, disabled for Whisper)
         "remote_api_url": "",  # Remote speech recognition server URL (e.g. http://192.168.1.100:8080)
@@ -198,6 +198,7 @@ DEFAULT_CONFIG = {
         # Clipboard-paste chord: auto-detect terminals, or force Ctrl+V /
         # Ctrl+Shift+V when a nested terminal panel is not detected.
         "paste_shortcut": "auto",
+        "paste_long_text": False,  # Faster clipboard paste for long X11 dictations
         # Text-injection backend: "auto" autodetects, or pin "ibus"/"wtype"/
         # "ydotool"/"xdotool" when autodetection is wrong (#476).
         # VOCALINUX_FORCE_BACKEND overrides this for a single run.
@@ -240,8 +241,8 @@ DEFAULT_CONFIG = {
         "whispercpp_gpu_device": None,  # None = auto-select discrete GPU; int = specific device index
     },
     "updates": {
-        # "stable" follows GitHub /releases/latest; "nightly" follows nightly-YYYY-MM-DD tags.
-        "channel": "stable",
+        # Background checks control the tray entry and desktop notification.
+        "check_automatically": True,
         # Tag last announced via desktop notification (avoids re-notifying every 6h).
         "last_notified_version": "",
     },
@@ -348,7 +349,8 @@ def resolve_whispercpp_variant(
     # The "layout" sentinel is deliberately not in the catalog, so it reads as
     # non-English here and derives the multilingual variant -- which is what a
     # mode that can land on any language needs (#821).
-    language_is_english = SUPPORTED_LANGUAGES.get(language_id, {}).get("whisper") == "en"
+    language_info = cast(dict[str, str], SUPPORTED_LANGUAGES.get(language_id, {}))
+    language_is_english = language_info.get("whisper") == "en"
 
     def stand_in(variant: str) -> str:
         # Only language-derived results reach this helper; an explicit pick is
@@ -431,7 +433,7 @@ class ConfigManager:
             return
 
         try:
-            detected = detect_system_language(SUPPORTED_LANGUAGES)
+            detected = detect_system_language(cast(dict[str, dict[str, str]], SUPPORTED_LANGUAGES))
         except Exception as exc:  # pragma: no cover - detection must never block startup
             logger.debug(f"Language detection failed: {exc}")
             return
@@ -745,7 +747,7 @@ class ConfigManager:
 
     def get_settings(self) -> dict[str, Any]:
         """Get the entire configuration dictionary."""
-        return self.config
+        return cast(dict[str, Any], self.config)
 
     def get_model_size_for_engine(self, engine: str) -> str:
         """Return the model id the engine should load for ``engine``.
@@ -765,7 +767,7 @@ class ConfigManager:
             saved = sr_config.get("model_size", "small" if engine == "vosk" else "tiny")
 
         if engine.lower() != "whisper_cpp":
-            return saved
+            return cast(str, saved)
 
         # Unpinned configs store the bare size; the engine still needs the
         # language-derived loadable id (and leftover ``{size}.en`` must not
@@ -827,9 +829,9 @@ class ConfigManager:
         if enabled is None:
             # Auto mode: enabled for VOSK, disabled for Whisper engines
             engine = sr_config.get("engine", "whisper_cpp")
-            return engine == "vosk"
+            return bool(engine == "vosk")
 
-        return enabled
+        return cast(bool, enabled)
 
     def update_speech_recognition_settings(self, settings: dict[str, Any]) -> None:
         """Update multiple speech recognition settings at once."""
@@ -914,6 +916,16 @@ class ConfigManager:
         if "text_injection" not in self.config:
             self.config["text_injection"] = {}
         self.config["text_injection"]["paste_shortcut"] = normalize_paste_shortcut(shortcut)
+
+    def get_paste_long_text(self) -> bool:
+        """Return whether long X11 dictations should use clipboard paste."""
+        return self.get_bool("text_injection", "paste_long_text", False)
+
+    def set_paste_long_text(self, enabled: bool) -> None:
+        """Save whether long X11 dictations should use clipboard paste."""
+        if "text_injection" not in self.config:
+            self.config["text_injection"] = {}
+        self.config["text_injection"]["paste_long_text"] = bool(enabled)
 
     def get_language_shortcuts(self) -> list[dict[str, str]]:
         """Return validated ``[{"shortcut", "language"}]`` bindings (#805).

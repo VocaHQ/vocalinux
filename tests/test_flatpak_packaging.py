@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from packaging.markers import Marker
+from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
 from packaging.version import Version
@@ -43,7 +44,7 @@ PORTABLE_GGML_OPTIONS = (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-EXPORT = REPO_ROOT / "requirements" / "runtime.txt"
+EXPORT = REPO_ROOT / "requirements" / "vad.txt"
 FLATPAK_DIR = REPO_ROOT / "packaging" / "flatpak"
 DEPS_YAML = FLATPAK_DIR / "python3-dependencies.yaml"
 MANIFEST = FLATPAK_DIR / "com.vocalinux.Vocalinux.yml"
@@ -70,6 +71,8 @@ RUNTIME_PROVIDED = {"pycairo"}
 #: Build backends for the sdists the sandbox compiles under
 #: --no-build-isolation. Never imported at runtime, so never in the export.
 BUILD_BACKENDS = {"meson-python", "pyproject-metadata"}
+BINARY_ONLY = {"onnxruntime"}
+FLATPAK_ARCHES = ("x86_64", "aarch64")
 
 
 def _locked() -> dict:
@@ -95,7 +98,7 @@ def _locked() -> dict:
     return selected
 
 
-def _flatpak_sources() -> list:
+def _flatpak_sources() -> list[dict[str, str | None]]:
     """Every PyPI artifact the Flatpak downloads: name, version, digest, filename."""
     lines = DEPS_YAML.read_text(encoding="utf-8").splitlines()
     sources = []
@@ -106,6 +109,11 @@ def _flatpak_sources() -> list:
         filename = url.group(1)
         digest = re.match(r"^\s*sha256: ([0-9a-f]{64})\s*$", lines[index + 1])
         assert digest, f"{DEPS_YAML.name}:{index + 2}: PyPI source with no sha256 under it"
+        arch_match = (
+            re.match(r"^\s*only-arches: \[([a-z0-9_]+)\]\s*$", lines[index + 2])
+            if index + 2 < len(lines)
+            else None
+        )
         if filename.endswith(".whl"):
             name, version = filename.split("-")[0], filename.split("-")[1]
         else:
@@ -117,6 +125,7 @@ def _flatpak_sources() -> list:
                 "version": version,
                 "sha256": digest.group(1),
                 "filename": filename,
+                "only_arches": arch_match.group(1) if arch_match else None,
             }
         )
     assert sources, "no PyPI sources found; the parser and the file disagree"
@@ -150,7 +159,7 @@ def test_every_source_is_the_version_the_lock_resolved(source: dict[str, str]) -
     )
     assert source["version"] == locked["version"], (
         f"{source['name']}: Flatpak builds {source['version']},"
-        f" requirements/runtime.txt pins {locked['version']}."
+        f" requirements/vad.txt pins {locked['version']}."
         " Run `just flatpak-deps`."
     )
 
@@ -164,11 +173,11 @@ def test_every_digest_is_one_uv_recorded(source: dict[str, str]) -> None:
     hashes = _locked()[source["name"]]["hashes"]
     assert source["sha256"] in hashes, (
         f"{source['filename']} carries a digest absent from"
-        " requirements/runtime.txt. Run `just flatpak-deps`."
+        " requirements/vad.txt. Run `just flatpak-deps`."
     )
 
 
-def test_the_flatpak_carries_every_runtime_dependency() -> None:
+def test_the_flatpak_carries_every_exported_dependency() -> None:
     """A missing one fails at first launch, not at build time, because the
     project is installed with --no-deps and nothing resolves the gap."""
     missing = sorted(set(_locked()) - set(_flatpak_versions()) - RUNTIME_PROVIDED)
@@ -176,6 +185,49 @@ def test_the_flatpak_carries_every_runtime_dependency() -> None:
         "the lock resolves these for Linux and the Flatpak does not build them:"
         f" {', '.join(missing)}"
     )
+
+
+def test_every_vad_extra_package_is_built_by_the_flatpak() -> None:
+    """Keep optional VAD dependencies in the Flatpak export (#969)."""
+    with PYPROJECT.open("rb") as handle:
+        vad_dependencies = tomllib.load(handle)["project"]["optional-dependencies"]["vad"]
+    vad_packages = {
+        canonicalize_name(Requirement(dependency).name) for dependency in vad_dependencies
+    }
+    missing = sorted(vad_packages - set(_flatpak_versions()))
+    assert not missing, f"the Flatpak does not build [vad] packages: {', '.join(missing)}"
+
+
+def test_the_silero_model_is_included_as_package_data() -> None:
+    """The Flatpak app install must ship the model alongside Silero VAD."""
+    with PYPROJECT.open("rb") as handle:
+        package_data = tomllib.load(handle)["tool"]["setuptools"]["package-data"]
+    assert "data/*.onnx" in package_data["vocalinux.speech_recognition"]
+    assert (
+        REPO_ROOT / "src" / "vocalinux" / "speech_recognition" / "data" / "silero_vad.onnx"
+    ).is_file()
+
+
+def test_each_binary_only_package_has_one_wheel_per_flatpak_architecture() -> None:
+    """Each binary-only wheel is restricted to its matching Flatpak architecture."""
+    sources = _flatpak_sources()
+    for name in BINARY_ONLY:
+        package_sources = [
+            source
+            for source in sources
+            if source["name"] == name and source["filename"] is not None
+        ]
+        for arch in FLATPAK_ARCHES:
+            arch_sources = [
+                source for source in package_sources if source["filename"].endswith(f"_{arch}.whl")
+            ]
+            assert (
+                len(arch_sources) == 1
+            ), f"{name} needs exactly one wheel for {arch}, found {len(arch_sources)}"
+            source = arch_sources[0]
+            assert (
+                source["only_arches"] == arch
+            ), f"{source['filename']} must carry only-arches: [{arch}]"
 
 
 def test_the_flatpak_builds_nothing_the_lock_does_not_resolve() -> None:
@@ -266,18 +318,24 @@ def test_the_manifest_env_agrees_with_the_module() -> None:
 
 @pytest.mark.parametrize("source", _flatpak_sources(), ids=lambda s: s["name"])
 def test_no_source_is_pinned_to_one_python_abi(source: dict[str, str]) -> None:
-    """Universal wheel or sdist, never a cp-tagged wheel.
+    """Keep universal wheels or sdists except binary-only runtime wheels.
 
-    The SDK's Python minor version is not ours to choose and moves with the
-    GNOME runtime. An abi3 or cp313 wheel builds today and stops resolving the
-    day the runtime bumps, with nothing in this repo changed.
+    Binary-only wheels must match the CPython ABI of GNOME 50. An unrelated ABI
+    tag would make a runtime Python bump fail during the offline build.
     """
     if not source["filename"].endswith(".whl"):
         return
-    assert source["filename"].endswith("-none-any.whl"), (
-        f"{source['filename']} is pinned to one interpreter ABI; take the sdist"
-        " and let the sandbox build it against the SDK's own Python"
-    )
+    if source["name"] in BINARY_ONLY:
+        python_tag = TARGET_ENV["python_version"].replace(".", "")
+        assert re.search(
+            rf"-cp{python_tag}-cp{python_tag}-manylinux_.+_(x86_64|aarch64)\.whl$",
+            source["filename"],
+        ), f"{source['filename']} is not a wheel for the Flatpak's CPython runtime"
+    else:
+        assert source["filename"].endswith("-none-any.whl"), (
+            f"{source['filename']} is pinned to one interpreter ABI; take the sdist"
+            " and let the sandbox build it against the SDK's own Python"
+        )
 
 
 def _on_event_block(event: str) -> str:

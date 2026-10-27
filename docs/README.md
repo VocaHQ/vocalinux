@@ -11,6 +11,11 @@ User and maintainer documentation for Vocalinux.
 | [UPDATE.md](UPDATE.md) | Users | How to upgrade; release notes by version |
 | [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md) | Users | Distro matrix, session caveats |
 | [HTTP_REMOTE.md](HTTP_REMOTE.md) | Power users | Remote HTTP transcription |
+| [FLATPAK_REMOTE.md](FLATPAK_REMOTE.md) | Users / maintainers | Self-hosted Flatpak remote and publishing |
+| [GATEWAY_EMBED.md](GATEWAY_EMBED.md) | Users | Optional local VocaGateway integration |
+| [CUSTOM_DICTIONARY_DESIGN.md](CUSTOM_DICTIONARY_DESIGN.md) | Contributors | Custom terms and correction design |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Contributors | Application modules, data flow, and threads |
+| [Performance benchmarks](benchmarks/README.md) | Contributors | Before and after charts for the performance pass |
 | [AUR.md](AUR.md) | Arch users / maintainers | AUR packages and publish secrets |
 | [RELEASE_PROCESS.md](RELEASE_PROCESS.md) | Maintainers | Version bump, checklist, tagging |
 

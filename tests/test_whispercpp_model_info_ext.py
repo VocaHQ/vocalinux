@@ -5,8 +5,62 @@ Tests all functions and constants in the module.
 """
 
 import subprocess
+import sys
 import unittest
+from types import SimpleNamespace
+from typing import Any, Optional
 from unittest.mock import MagicMock, patch
+
+from vocalinux.utils import whispercpp_model_info as _whispercpp_model_info
+
+_REAL_GGML_DEVICE_PROBE = _whispercpp_model_info.detect_ggml_gpu_devices
+
+
+def _fake_ggml_library(registry: list[tuple[str, str, int]]) -> MagicMock:
+    library = MagicMock()
+    library.ggml_backend_dev_count.return_value = len(registry)
+
+    def _get_device(index: int) -> int:
+        return index + 1
+
+    def _get_device_type(pointer: int) -> int:
+        return registry[pointer - 1][2]
+
+    def _get_device_name(pointer: int) -> bytes:
+        return registry[pointer - 1][0].encode("utf-8")
+
+    def _get_device_description(pointer: int) -> bytes:
+        return registry[pointer - 1][1].encode("utf-8")
+
+    library.ggml_backend_dev_get.side_effect = _get_device
+    library.ggml_backend_dev_type.side_effect = _get_device_type
+    library.ggml_backend_dev_name.side_effect = _get_device_name
+    library.ggml_backend_dev_description.side_effect = _get_device_description
+    return library
+
+
+def _run_ggml_probe(
+    registry: list[tuple[str, str, int]],
+    version_string: str = "1.5.0",
+    library: Optional[Any] = None,
+    library_error: Optional[Exception] = None,
+    missing_extension: bool = False,
+) -> Optional[list[dict[str, Any]]]:
+    _REAL_GGML_DEVICE_PROBE.cache_clear()
+    native_library = library if library is not None else _fake_ggml_library(registry)
+    extension = None if missing_extension else SimpleNamespace(__file__="/fake/_pywhispercpp.so")
+    from vocalinux.utils import pywhispercpp_loader
+
+    with (
+        patch.object(_whispercpp_model_info, "version", return_value=version_string),
+        patch.object(pywhispercpp_loader, "preload_shared_libraries"),
+        patch.dict(sys.modules, {"_pywhispercpp": extension}),
+    ):
+        if library_error is not None:
+            with patch.object(_whispercpp_model_info.ctypes, "CDLL", side_effect=library_error):
+                return _REAL_GGML_DEVICE_PROBE()
+        with patch.object(_whispercpp_model_info.ctypes, "CDLL", return_value=native_library):
+            return _REAL_GGML_DEVICE_PROBE()
 
 
 class TestComputeBackendClass(unittest.TestCase):
@@ -435,7 +489,105 @@ class TestPreferDiscreteVulkanDevice(unittest.TestCase):
             from vocalinux.utils.whispercpp_model_info import _prefer_discrete_vulkan_device
 
             preferred_idx = _prefer_discrete_vulkan_device()
-            self.assertEqual(preferred_idx, 0)
+        self.assertEqual(preferred_idx, 0)
+
+
+class TestDetectGgmlGpuDevices(unittest.TestCase):
+    """Test ggml's native GPU registry probe."""
+
+    def test_probe_assigns_zero_to_first_discrete_gpu(
+        self: "TestDetectGgmlGpuDevices",
+    ) -> None:
+        devices = _run_ggml_probe(
+            [
+                ("Vulkan0", "NVIDIA GeForce GTX 1050", 1),
+                ("CPU", "CPU backend", 0),
+            ]
+        )
+
+        self.assertEqual(
+            devices,
+            [
+                {
+                    "index": 0,
+                    "name": "NVIDIA GeForce GTX 1050",
+                    "backend_name": "Vulkan0",
+                    "device_type": "discrete",
+                }
+            ],
+        )
+
+    def test_probe_uses_gpu_and_igpu_ordinals(self: "TestDetectGgmlGpuDevices") -> None:
+        devices = _run_ggml_probe(
+            [
+                ("Vulkan0", "Intel Arc", 2),
+                ("CPU", "CPU backend", 0),
+                ("Vulkan1", "NVIDIA GeForce GTX 1050", 1),
+                ("ACCEL", "Accelerator", 3),
+            ]
+        )
+
+        self.assertEqual(
+            devices,
+            [
+                {
+                    "index": 0,
+                    "name": "Intel Arc",
+                    "backend_name": "Vulkan0",
+                    "device_type": "integrated",
+                },
+                {
+                    "index": 1,
+                    "name": "NVIDIA GeForce GTX 1050",
+                    "backend_name": "Vulkan1",
+                    "device_type": "discrete",
+                },
+            ],
+        )
+
+    def test_probe_returns_empty_list_for_cpu_only_registry(
+        self: "TestDetectGgmlGpuDevices",
+    ) -> None:
+        self.assertEqual(_run_ggml_probe([("CPU", "CPU backend", 0)]), [])
+
+    def test_probe_returns_none_when_runtime_is_unavailable(
+        self: "TestDetectGgmlGpuDevices",
+    ) -> None:
+        self.assertIsNone(_run_ggml_probe([], version_string="1.4.9"))
+        self.assertIsNone(_run_ggml_probe([], missing_extension=True))
+        self.assertIsNone(_run_ggml_probe([], library_error=OSError("unavailable")))
+        self.assertIsNone(_run_ggml_probe([], library=SimpleNamespace()))
+
+    def test_probe_keeps_ordinal_for_device_without_description(
+        self: "TestDetectGgmlGpuDevices",
+    ) -> None:
+        library = _fake_ggml_library(
+            [("Vulkan0", "", 1), ("Vulkan1", "NVIDIA GeForce GTX 1050", 1)]
+        )
+        library.ggml_backend_dev_description.side_effect = lambda pointer: (
+            None if pointer == 1 else b"NVIDIA GeForce GTX 1050"
+        )
+
+        devices = _run_ggml_probe([], library=library)
+
+        assert devices is not None
+        self.assertEqual([device["index"] for device in devices], [0, 1])
+        self.assertEqual(devices[0]["name"], "Vulkan0")
+        self.assertEqual(devices[1]["name"], "NVIDIA GeForce GTX 1050")
+
+    def test_probe_accepts_prerelease_version(self: "TestDetectGgmlGpuDevices") -> None:
+        devices = _run_ggml_probe([("Vulkan0", "GPU", 1)], version_string="1.5.1.dev3")
+        assert devices is not None
+        self.assertEqual(len(devices), 1)
+
+
+class TestPreferDiscreteVulkanDeviceMore(unittest.TestCase):
+    """Exercise additional Vulkan selection edge cases."""
+
+    def setUp(self: "TestPreferDiscreteVulkanDeviceMore") -> None:
+        from vocalinux.utils.whispercpp_model_info import detect_vulkan_devices
+
+        detect_vulkan_devices.cache_clear()
 
     def test_prefer_discrete_returns_none_when_empty(self):
         """Test that None is returned when no devices found."""

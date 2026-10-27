@@ -60,12 +60,14 @@ def test_normalize_language_shortcuts_keeps_valid_bindings() -> None:
         [
             {"shortcut": "alt+d", "language": "de"},
             {"shortcut": "ctrl+alt+g", "language": "hu"},
+            {"shortcut": "ctrl+alt+s", "language": "sl"},
             {"shortcut": "f5", "language": "auto"},
         ]
     )
     assert entries == [
         {"shortcut": "alt+d", "language": "de"},
         {"shortcut": "ctrl+alt+g", "language": "hu"},
+        {"shortcut": "ctrl+alt+s", "language": "sl"},
         {"shortcut": "f5", "language": "auto"},
     ]
 
@@ -164,7 +166,10 @@ def _manager_stub(
     language_preference: str = "en-us",
 ) -> Any:
     """A manager carrying only the fields the one-shot path touches."""
-    from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+    from vocalinux.speech_recognition.recognition_manager import (
+        SpeechRecognitionManager,
+        _ReleaseGate,
+    )
 
     manager = SpeechRecognitionManager.__new__(SpeechRecognitionManager)
     manager.engine = engine
@@ -178,6 +183,9 @@ def _manager_stub(
     manager._pending_language_override = None
     manager._oneshot_language_restore = None
     manager._segment_started_at = None
+    manager._session_cancel = threading.Event()
+    manager._key_release_gate = _ReleaseGate()
+    manager._key_release_gate.set()
     return manager
 
 
@@ -658,7 +666,7 @@ def test_failed_reconfigure_settles_the_pending_oneshot_restore() -> None:
     manager._init_selected_engine = MagicMock(side_effect=[RuntimeError("boom"), None])
 
     with pytest.raises(RuntimeError):
-        manager.reconfigure(language="fr", model_size="tiny")
+        manager.reconfigure(language="fr", model_size="tiny", force_download=False)
 
     assert manager.language == "en-us"
     assert manager._oneshot_language_restore is None
@@ -1023,3 +1031,50 @@ def test_language_shortcut_managers_share_the_evdev_device_layer() -> None:
     assert isinstance(german.backend_instance, EvdevKeyboardBackend)
     assert isinstance(french.backend_instance, EvdevKeyboardBackend)
     assert french.backend_instance._hub is german.backend_instance._hub
+
+
+@pytest.mark.parametrize(
+    "engine,offered",
+    [("whisper_cpp", True), ("whisper", True), ("remote_api", True), ("vosk", False)],
+)
+def test_settings_language_picker_offers_slovenian_on_whisper_engines(
+    settings_dialog: Any, dialog_class: type[Any], engine: str, offered: bool
+) -> None:
+    """Slovenian (#970) is selectable wherever Whisper runs; VOSK has no model for it."""
+    dialog = MagicMock()
+    dialog.engine_combo.get_active_text.return_value = settings_dialog.ENGINE_DISPLAY_NAMES[engine]
+
+    with patch.object(settings_dialog, "_is_vosk_model_downloaded", return_value=False):
+        dialog_class._populate_language_options(dialog)
+
+    appended = [c.args[0] for c in dialog.language_combo.append.call_args_list]
+    assert ("sl" in appended) is offered
+    assert "sk" not in appended
+
+
+def test_slovenian_shortcut_row_persists_through_config(
+    dialog_class: type[Any], tmp_path: Any
+) -> None:
+    """A row picked as Slovenian is saved and read back, not dropped (#970)."""
+    config_dir = tmp_path / "vocalinux"
+    config_dir.mkdir()
+    with (
+        patch("vocalinux.ui.config_manager.CONFIG_DIR", str(config_dir)),
+        patch("vocalinux.ui.config_manager.CONFIG_FILE", str(config_dir / "config.json")),
+        patch("vocalinux.utils.system_language.detect_system_language", return_value=None),
+    ):
+        dialog = _dialog_stub()
+        dialog.config_manager = ConfigManager()
+        dialog.config_manager.save_settings = dialog.config_manager.save_config
+        picker, entry = MagicMock(), MagicMock()
+        picker.get_active_id.return_value = "sl"
+        entry.get_text.return_value = "ctrl+alt+s"
+        refs = {"language_picker": picker, "shortcut_entry": entry, "row": MagicMock()}
+        dialog._language_shortcut_rows = [refs]
+        dialog._report_language_shortcut_rejections = MagicMock()
+
+        dialog_class._persist_language_shortcuts(dialog)
+
+        assert ConfigManager().get_language_shortcuts() == [
+            {"shortcut": "ctrl+alt+s", "language": "sl"}
+        ]
