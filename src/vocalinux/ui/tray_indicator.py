@@ -1019,19 +1019,22 @@ class TrayIndicator:
             )
 
         try:
-            # The worker shares Settings' ordering across reconfigure and save:
-            # another model apply must not overtake this download's receipt.
-            with _apply_settings_lock:
-                self.speech_engine.set_download_progress_callback(on_progress)
-                try:
-                    self.speech_engine.reconfigure(
-                        engine=engine,
-                        model_size=recommendation.model_id,
-                        force_download=True,
-                        # A first-run recommendation often matches the current
-                        # selection; force re-init so it still fetches the model.
-                        force_reinit=True,
-                    )
+            self.speech_engine.set_download_progress_callback(on_progress)
+            try:
+                # The download+load is long; holding _apply_settings_lock across
+                # it would freeze every GTK apply (e.g. Test Dictation). The
+                # engine serializes reconfigures internally, so the lock is
+                # only needed around the verify+save: an apply landing after
+                # the load must keep its own selection and its receipt.
+                self.speech_engine.reconfigure(
+                    engine=engine,
+                    model_size=recommendation.model_id,
+                    force_download=True,
+                    # A first-run recommendation often matches the current
+                    # selection; force re-init so it still fetches the model.
+                    force_reinit=True,
+                )
+                with _apply_settings_lock:
                     if (
                         getattr(self.speech_engine, "engine", None) != engine
                         or getattr(self.speech_engine, "model_size", None)
@@ -1051,23 +1054,23 @@ class TrayIndicator:
                             engine, recommendation.model_id
                         )
                         self.config_manager.save_config()
-                    if paused:
-                        title = "Speech model downloaded"
-                        body = (
-                            f"{recommendation.display_name} is installed. "
-                            "Dictation will be available when Vocalinux resumes."
-                        )
-                    else:
-                        shortcut = self.config_manager.get_str(
-                            "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
-                        )
-                        title = "Speech model ready"
-                        body = (
-                            f"{recommendation.display_name} is installed. "
-                            f"Press {shortcut} to dictate."
-                        )
-                finally:
-                    self.speech_engine.set_download_progress_callback(None)
+                if paused:
+                    title = "Speech model downloaded"
+                    body = (
+                        f"{recommendation.display_name} is installed. "
+                        "Dictation will be available when Vocalinux resumes."
+                    )
+                else:
+                    shortcut = self.config_manager.get_str(
+                        "shortcuts", "toggle_recognition", DEFAULT_SHORTCUT
+                    )
+                    title = "Speech model ready"
+                    body = (
+                        f"{recommendation.display_name} is installed. "
+                        f"Press {shortcut} to dictate."
+                    )
+            finally:
+                self.speech_engine.set_download_progress_callback(None)
             _idle_once(notifications.close, progress)
             _idle_once(
                 notifications.notify,
