@@ -106,7 +106,7 @@ Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.m
 
 ### Also in v0.18.5
 
-- Paste-injection copies stay out of clipboard history managers, so dictated text does not pile up in your clipboard log (#956 by @Nosion)
+- Paste-injection copies are marked sensitive (`wl-copy --sensitive`) on wl-clipboard 2.2+, so clipboard managers that honor the hint, such as Klipper or cliphist, keep dictated text out of their history; the xclip/xsel path and older wl-copy have no such hint (#956 by @Nosion)
 - AUR source publication is gated on attested release sdists: the recipe is prepared only from the canonical sdist whose checksum and build provenance verify against this repository's release workflow (#1020 by @sesav)
 - The tray prefers libayatana-appindicator-glib when it is available (#1019; fixes #1013 reported by @jo-so)
 - The Snap package lists PulseAudio microphones and explains that its whisper.cpp build is CPU-only (#1018; fixes #1011 reported by @cmcclung-ANGENG)

@@ -25,7 +25,7 @@ const releases = [
       "Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland (PR #1024)",
       "Ctrl+mouse-wheel zoom works again in Firefox and other apps (PR #967)",
       "install.sh gains an upgrade mode that keeps your existing configuration and models (PR #1026)",
-      "Paste-injection copies stay out of clipboard history (PR #956), and AUR source publication is gated on attested sdists (PR #1020)",
+      "Paste-injection copies are marked sensitive on wl-clipboard 2.2+, so clipboard managers that honor the hint keep dictated text out of history (PR #956); AUR source publication is gated on attested sdists (PR #1020)",
       "Tray prefers libayatana-appindicator (PR #1019), the Snap lists PulseAudio microphones (PR #1018), and the Wayland fallback overlay survives dock closes (PR #1017)",
     ],
   },

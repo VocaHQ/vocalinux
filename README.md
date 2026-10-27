@@ -39,7 +39,7 @@ Vocalinux turns speech into typed text in whatever app has focus. It is a free, 
 
 No Voca account is required. Models download once. After that, speech-to-text stays on your machine.
 
-**Current release:** [v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5). Patch: a stop that races a recording start can no longer leave the mic recording forever, keyboards stay alive through suspend and the GNOME lock screen, Ctrl+mouse-wheel zoom works again, Dictation Pad and Settings stop travelling workspaces together, paste-injection stays out of clipboard history, and `install.sh` gains an upgrade mode that keeps your existing configuration. Details: [docs/UPDATE.md](docs/UPDATE.md).
+**Current release:** [v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5). Patch: a stop that races a recording start can no longer leave the mic recording forever, keyboards stay alive through suspend and the GNOME lock screen, Ctrl+mouse-wheel zoom works again, Dictation Pad and Settings stop travelling workspaces together, paste-injection copies are marked sensitive for clipboard history on wl-clipboard 2.2+, and `install.sh` gains an upgrade mode that keeps your existing configuration. Details: [docs/UPDATE.md](docs/UPDATE.md).
 
 ## Features
 

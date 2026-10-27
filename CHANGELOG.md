@@ -14,7 +14,7 @@ Release history for Vocalinux.
 
 **[v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5)** (2026-10-27)
 
-Patch on the stable line: a stop that races a recording start can no longer leave the microphone recording with no way to halt it, and a stalled microphone read can no longer hang Stop forever, keyboards survive suspend and the GNOME lock screen again because the evdev grab is released when forwarding cannot run, Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, paste-injection copies stay out of clipboard history, and AUR source publication is gated on attested release sdists.
+Patch on the stable line: a stop that races a recording start can no longer leave the microphone recording with no way to halt it, and a stalled microphone read can no longer hang Stop forever, keyboards survive suspend and the GNOME lock screen again because the evdev grab is released when forwarding cannot run, Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, paste-injection copies are marked sensitive on wl-clipboard 2.2+ so clipboard managers that honor the hint keep them out of history, and AUR source publication is gated on attested release sdists.
 
 See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0185) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5).
 

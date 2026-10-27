@@ -107,7 +107,7 @@
   <releases>
     <release version="0.18.5" date="2026-10-27">
       <description>
-        <p>Patch: a stop that races a recording start can no longer leave the microphone recording forever, capture reads happen outside the buffer lock so a stalled microphone can no longer hang Stop, keyboards stay alive through suspend and the GNOME lock screen, Dictation Pad and Settings no longer bind to other windows on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, and paste-injection copies stay out of clipboard history. This Flatpak still ships whisper.cpp only.</p>
+        <p>Patch: a stop that races a recording start can no longer leave the microphone recording forever, capture reads happen outside the buffer lock so a stalled microphone can no longer hang Stop, keyboards stay alive through suspend and the GNOME lock screen, Dictation Pad and Settings no longer bind to other windows on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, and paste-injection copies are marked sensitive for clipboard history on wl-clipboard 2.2+. This Flatpak still ships whisper.cpp only.</p>
       </description>
     </release>
     <release version="0.18.4" date="2026-10-21">
