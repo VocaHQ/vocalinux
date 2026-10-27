@@ -2847,7 +2847,8 @@ class TestForwardingWatchdog:
         mock_find.return_value = ["/dev/input/event0"]
 
         try:
-            hub._check_forwarding_health(hub._generation)
+            # The monitor re-arms suspended devices at its loop top.
+            hub._rearm_suspended_devices(hub._generation)
 
             old_device.close.assert_called_once()
             assert hub._grab_suspended_devices == {}
@@ -2859,8 +2860,10 @@ class TestForwardingWatchdog:
         finally:
             hub.reset()
 
-    def test_recovery_skips_suspended_device_replaced_by_another(self) -> None:
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    def test_recovery_skips_suspended_device_replaced_by_another(self, mock_find: Mock) -> None:
         """A suspended fd recycled for a different device tears nothing down."""
+        mock_find.return_value = []
         hub, old_device, _ = self._hub_with_grabbed_device(heartbeat=time.monotonic())
         hub._grab_suspended_devices = {10: old_device}
         other_device = MagicMock()
@@ -2868,12 +2871,45 @@ class TestForwardingWatchdog:
         hub.devices = [other_device]  # fd 10 now belongs to a newer device
 
         try:
-            hub._check_forwarding_health(hub._generation)
+            hub._rearm_suspended_devices(hub._generation)
 
             old_device.close.assert_not_called()
             other_device.close.assert_not_called()
             assert other_device in hub.devices
             assert hub._grab_suspended_devices == {}
+        finally:
+            hub.reset()
+
+    def test_monitor_rearms_suspended_devices_in_loop(self) -> None:
+        """The monitor retires watchdog-released devices between selects.
+
+        Recovery must run on the monitor thread: closing an fd from the
+        watchdog would leave a dead descriptor in the select set and the
+        monitor's error handler would tear down every device.
+        """
+        hub, old_device, _ = self._hub_with_grabbed_device(heartbeat=0.0)
+        hub._grab_suspended_devices = {10: old_device}
+        rearmed: list[int] = []
+
+        def _fake_rearm(generation: int) -> None:
+            rearmed.append(generation)
+            hub.running = False
+
+        try:
+            with (
+                patch.object(hub, "_rearm_suspended_devices", side_effect=_fake_rearm),
+                patch(
+                    "vocalinux.ui.keyboard_backends.evdev_backend.select.select",
+                    return_value=([], [], []),
+                ),
+                patch(
+                    "vocalinux.ui.keyboard_backends.evdev_backend.time.monotonic",
+                    side_effect=[0.0, 0.0],
+                ),
+            ):
+                hub._monitor_devices(generation=hub._generation)
+
+            assert rearmed == [3]
         finally:
             hub.reset()
 

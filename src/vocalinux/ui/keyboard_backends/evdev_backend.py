@@ -735,6 +735,7 @@ _HUB_METHOD_ATTRIBUTES = frozenset(
         "_resync_clone_key_state",
         "_forwarding_watchdog",
         "_check_forwarding_health",
+        "_rearm_suspended_devices",
     }
 )
 
@@ -1051,6 +1052,12 @@ class EvdevDeviceHub:
                     # stale while grabs are held means this loop wedged
                     # mid-iteration — the watchdog then releases every grab.
                     self._monitor_heartbeat = now
+                    if self._grab_suspended_devices:
+                        # Watchdog-released devices are retired and re-opened
+                        # HERE, on the monitor thread: closing an fd from the
+                        # watchdog would put a dead descriptor in the select
+                        # set below.
+                        self._rearm_suspended_devices(generation)
                     if now - last_scan >= DEVICE_RESCAN_SECONDS:
                         self._scan_for_new_devices(generation=generation)
                         last_scan = now
@@ -1174,6 +1181,7 @@ class EvdevDeviceHub:
             self._clone_paths = set()
             self._forwarded_held = {}
             self._pending_events = {}
+            self._grab_suspended_devices = {}
         return devices, forwarders
 
     def _close_detached(self, devices: list[InputDevice], forwarders: list[UInput]) -> None:
@@ -1617,8 +1625,10 @@ class EvdevDeviceHub:
         hardware only a dead reader can see and applications stay dead
         (#1021). A heartbeat stale beyond ``_MONITOR_STALL_SECONDS`` while
         grab->clone pairs exist therefore releases each grab, handing
-        input back to the kernel. Once dispatching resumes, the suspended
-        devices are removed so the rescan re-opens them through the
+        input back to the kernel. Once dispatching resumes, the monitor
+        retires the suspended devices at its next iteration — closing
+        their fds from this thread would put dead descriptors in the
+        monitor's select set — so the rescan re-opens them through the
         standard open->clone->grab path.
         """
         if generation is None:
@@ -1634,52 +1644,60 @@ class EvdevDeviceHub:
             logger.debug("Forwarding watchdog thread stopped")
 
     def _check_forwarding_health(self, generation: int) -> None:
-        """One watchdog pass: ungrab on a stalled monitor, re-arm on recovery."""
+        """One watchdog pass: ungrab everything while the monitor is stalled."""
         heartbeat = self._monitor_heartbeat
         if heartbeat == 0.0:
             # The monitor has not run its first iteration yet.
             return
+        if time.monotonic() - heartbeat <= _MONITOR_STALL_SECONDS:
+            return
 
-        if time.monotonic() - heartbeat > _MONITOR_STALL_SECONDS:
-            stalled: list[tuple[int, UInput, InputDevice]] = []
+        stalled: list[tuple[int, UInput, InputDevice]] = []
+        with self._devices_lock:
+            for fd, forwarder in self._forwarders.items():
+                if self._fd_generation.get(fd, generation) != generation:
+                    continue
+                device = next((d for d in self.devices if d.fileno() == fd), None)
+                if device is not None:
+                    stalled.append((fd, forwarder, device))
+        for fd, forwarder, device in stalled:
+            # Passing the captured forwarder keeps the release a no-op
+            # when the fd was recycled for a newer generation's clone.
+            # ungrab/close-clone are safe cross-thread: neither fd sits in
+            # the monitor's select set.
+            self._release_failed_forwarder(fd, forwarder)
             with self._devices_lock:
-                for fd, forwarder in self._forwarders.items():
-                    if self._fd_generation.get(fd, generation) != generation:
-                        continue
-                    device = next((d for d in self.devices if d.fileno() == fd), None)
-                    if device is not None:
-                        stalled.append((fd, forwarder, device))
-            for fd, forwarder, device in stalled:
-                # Passing the captured forwarder keeps the release a no-op
-                # when the fd was recycled for a newer generation's clone.
-                self._release_failed_forwarder(fd, forwarder)
-                with self._devices_lock:
-                    still_monitored = fd in self.device_fds
-                if still_monitored:
+                if fd in self.device_fds:
                     self._grab_suspended_devices[fd] = device
-            if stalled:
-                logger.warning(
-                    f"Keyboard monitor stalled with {len(stalled)} grabbed "
-                    "device(s); released the grabs so keyboards keep working "
-                    "(dictation shortcuts stay live but unsuppressed)"
-                )
-            return
+        if stalled:
+            logger.warning(
+                f"Keyboard monitor stalled with {len(stalled)} grabbed "
+                "device(s); released the grabs so keyboards keep working "
+                "(dictation shortcuts stay live but unsuppressed)"
+            )
 
-        if not self._grab_suspended_devices:
-            return
-        # Dispatching resumed: retire every suspended device so the rescan
-        # re-opens it through the standard grab-and-clone path. The stored
-        # device object is re-verified before removal so an fd recycled for
-        # another device while suspended is never torn down under it.
-        for fd, device in list(self._grab_suspended_devices.items()):
-            self._grab_suspended_devices.pop(fd, None)
+    def _rearm_suspended_devices(self, generation: int) -> None:
+        """Retire watchdog-released devices so the rescan re-opens them.
+
+        Runs on the monitor thread only, at a loop boundary where no
+        select is in flight — closing an fd from the watchdog thread
+        would leave a dead descriptor in the monitor's select set and its
+        error handler would tear down every device. The stored device
+        object is re-verified before removal so an fd recycled for
+        another device while suspended is never torn down under it.
+        """
+        with self._devices_lock:
+            suspended = list(self._grab_suspended_devices.items())
+            self._grab_suspended_devices.clear()
+        for fd, device in suspended:
             with self._devices_lock:
                 still_ours = (
                     device in self.devices and self._fd_generation.get(fd, generation) == generation
                 )
             if still_ours:
                 self._remove_keyboard_device(fd, device, generation)
-        self._scan_for_new_devices(generation=generation)
+        if suspended:
+            self._scan_for_new_devices(generation=generation)
 
 
 class EvdevKeyboardBackend(KeyboardBackend):
