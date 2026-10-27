@@ -309,6 +309,9 @@ class _AutoPauseFlow:
         self.tray = TrayIndicator.__new__(TrayIndicator)
         self.tray.speech_engine = manager
         self.tray._model_keepalive = Mock()
+        # The suspend path releases hotkey listeners before the machine sleeps.
+        self.tray.shortcut_manager = Mock()
+        self.tray._language_shortcut_managers = []
         self.wake_callbacks: list[Callable[[], bool]] = []
 
         def schedule(seconds: int, callback: Callable[..., bool], *args: object) -> int:
