@@ -221,7 +221,8 @@ def test_selected_engine_tracks_a_parakeet_config_repair(tmp_path: Path) -> None
 def test_vosk_fallback_rewrites_an_existing_config_file() -> None:
     """The fallback used to write vosk only when config.json was missing."""
     text = INSTALL_SH.read_text(encoding="utf-8")
-    assert 'set_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"' in text
+    # write_configured_engine wraps the rewrite with the upgrade-mode no-op.
+    assert 'write_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"' in text
     assert '[ ! -f "$FALLBACK_VOSK_CONFIG" ]' not in text
 
 
