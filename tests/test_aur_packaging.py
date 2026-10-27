@@ -86,30 +86,63 @@ def test_the_gate_runs_on_python_changes_and_aur_changes():
     assert "archlinux" in block, "the gate builds on Arch, not the runner"
 
 
-def test_the_gate_builds_this_commit_not_the_last_tag():
-    """The published source= points at the tag tarball, which does not exist
-    until the tag is pushed — the reason nothing could run the PKGBUILD on a
-    PR. The gate swaps it for a git archive of HEAD under the same filename
-    and the same directory prefix build()/package() cd into."""
+def test_the_gate_builds_the_prepared_sdist_without_rewriting() -> None:
+    """PR and release gates build the canonical sdist with real checksums.
+
+    Release publication must consume the exact PKGBUILD tested on Arch, not
+    rewrite its version, source or checksum after a different fixture passed.
+    """
     script = GATE_SH.read_text(encoding="utf-8")
     pkgbuild = PKGBUILD.read_text(encoding="utf-8")
 
-    assert "git archive" in script and '--prefix="${pkgname}-${_tag}/"' in script
-    assert re.search(r'cd "\$\{pkgname\}-\$\{_tag\}"', pkgbuild), (
-        "build()/package() no longer cd into ${pkgname}-${_tag}; the gate's"
-        " archive prefix and the PKGBUILD must agree"
-    )
-    # The substitution itself.
-    assert re.search(r"s\|\^source=.*\|source=", script)
+    assert "git archive" not in script
+    assert not re.search(r"sed\s+-i", script)
+    assert 'cp "$PKGDIR/PKGBUILD" "$BUILD/PKGBUILD"' in script
+    assert 'cmp -s "$PKGDIR/PKGBUILD" "$BUILD/PKGBUILD"' in script
+    assert 'cd "${pkgname}-${_version}"' in pkgbuild
+    assert "releases/download/v${_tag}/${pkgname}-${_version}.tar.gz" in pkgbuild
+    assert "archive/refs/tags" not in pkgbuild
+    assert re.search(r"^sha256sums=\('\w{64}'\)$", pkgbuild, re.M)
+    assert "'SKIP'" not in pkgbuild
 
-    # And the published PKGBUILD still fetches the tag archive — if that
-    # changes, updpkgsums at publish time and this gate both need a relook.
-    assert "archive/refs/tags/v${_tag}.tar.gz" in pkgbuild
-    assert "sha256sums=('SKIP')" in pkgbuild
-    assert "updpkgsums: 'true'" in RELEASE.read_text(encoding="utf-8"), (
-        "release.yml no longer computes the digest at publish time; the"
-        " sha256sums=('SKIP') in the repo would ship to users"
-    )
+
+def test_pr_gate_consumes_this_commits_canonical_distributions() -> None:
+    ci = _pipeline_text()
+    wheel = _job_block(ci, "reproducible-wheel")
+    aur = _job_block(ci, "aur-build-test")
+    assert "name: python-dist" in wheel and "dist/*.tar.gz" in wheel
+    assert "needs: [changes, reproducible-wheel]" in aur
+    assert "name: python-dist" in aur
+    assert "scripts/prepare_aur_source.py" in aur and "--local-unattested" in aur
+    for path in ("MANIFEST.in", "README.md", "LICENSE"):
+        assert f"- '{path}'" in ci
+
+
+def test_release_gate_verifies_published_sources_before_building() -> None:
+    block = _job_block(RELEASE.read_text(), "aur-source-test")
+    assert "needs: [build-and-release, publish-checksums]" in block
+    assert "gh release download" in block and "--pattern SHA256SUMS" in block
+    assert '--tag "$GITHUB_REF_NAME" --source-commit "$GITHUB_SHA"' in block
+    assert "--manifest release-source/SHA256SUMS" in block
+    assert "--local-unattested" not in block
+    assert "continue-on-error" not in block
+    assert "secrets.AUR_" not in block  # Run the gate even without publication credentials.
+    assert "AUR_SOURCE_ONLY=1" in block
+    assert "AUR_FETCH_SOURCE=1" in block
+    assert block.index("scripts/prepare_aur_source.py") < block.index("docker run")
+    assert block.index("docker run") < block.index("name: aur-source-pkgbuild")
+    assert "path: build/aur-source/PKGBUILD" in block
+
+
+def test_aur_publication_uses_only_the_gated_pkgbuild() -> None:
+    block = _job_block(RELEASE.read_text(), "publish-aur")
+    assert "needs: [build-and-release, aur-source-test]" in block
+    assert "name: aur-source-pkgbuild" in block
+    assert "pkgbuild: aur-source/PKGBUILD" in block
+    assert "updpkgsums: 'false'" in block
+    assert "sed -i" not in block
+    assert "scripts/prepare_aur_source.py" not in block
+    assert "actions/checkout@" not in block
 
 
 def test_the_gate_uses_a_non_root_build_user():

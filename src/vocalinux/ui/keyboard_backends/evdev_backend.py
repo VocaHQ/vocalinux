@@ -753,6 +753,7 @@ class EvdevDeviceHub:
         # additionally tells a monitor thread whose join() timed out that its
         # incarnation is over, even when running has gone True again.
         self._lifecycle_lock = threading.Lock()
+        self._dispatch_lock = threading.RLock()
         self._generation = 0
         self._init_device_state()
 
@@ -947,6 +948,18 @@ class EvdevDeviceHub:
             self._dispatch_event(fd, device, event, engines, generation)
 
     def _dispatch_event(
+        self,
+        fd: int,
+        device: InputDevice,
+        event: InputEvent,
+        engines: Sequence["EvdevKeyboardBackend"],
+        generation: Optional[int] = None,
+    ) -> None:
+        """Keep event handling atomic with pass-through changes."""
+        with self._dispatch_lock:
+            self._dispatch_event_locked(fd, device, event, engines, generation)
+
+    def _dispatch_event_locked(
         self,
         fd: int,
         device: InputDevice,
@@ -1649,6 +1662,28 @@ class EvdevKeyboardBackend(KeyboardBackend):
         """Get the evdev key codes for the configured modifier."""
         return MODIFIER_KEY_CODES.get(self._modifier_key, set())
 
+    def set_pass_shortcut_to_apps(self, enabled: bool) -> None:
+        """Apply pass-through, including any modifier already held.
+
+        Replay withheld presses and sync their input frame so mouse-wheel
+        actions can see the modifier before the next keyboard event.
+        """
+        with self._hub._dispatch_lock:
+            enabled = bool(enabled)
+            if enabled and not self.pass_shortcut_to_apps:
+                for fd, withheld in list(self._withheld_modifier.items()):
+                    if not any(not entry[1] for entry in withheld.values()):
+                        continue
+                    self._replay_withheld_modifiers(fd)
+                    forwarder = self._forwarders.get(fd)
+                    if forwarder is not None:
+                        try:
+                            forwarder.syn()
+                        except (OSError, IOError) as exc:
+                            logger.error("Failed to sync replayed shortcut on fd %s: %s", fd, exc)
+                            self._hub._release_failed_forwarder(fd, forwarder)
+            super().set_pass_shortcut_to_apps(enabled)
+
     def set_shortcut(self, shortcut: str) -> None:
         """Update the shortcut and recompute combo key targets."""
         super().set_shortcut(shortcut)
@@ -1865,7 +1900,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
         """Return True if an EV_KEY event belongs to the dictation shortcut.
 
         Consumed events are handled locally and never re-emitted, so the
-        focused application never sees them:
+        focused application never sees them. If pass_shortcut_to_apps is
+        enabled, new hotkey events are forwarded without changing gesture
+        detection:
 
         - Pure-modifier gestures (``right_alt+right_alt``, ``ctrl+ctrl``):
           every event of the configured modifier side(s) is consumed — the
@@ -1887,6 +1924,30 @@ class EvdevKeyboardBackend(KeyboardBackend):
             return False
         spec = getattr(self, "_spec", None)
         if spec is None:
+            return False
+
+        if self.pass_shortcut_to_apps:
+            # Gesture detection still runs through _handle_key_event.
+            # Do not expose the release of a combo press swallowed
+            # before this option was enabled.
+            if spec.is_combo and event.code == self._combo_main_code:
+                if fd in self._combo_swallowed:
+                    if event.value == 0:
+                        self._combo_swallowed.discard(fd)
+                    return True
+            elif not spec.is_combo and event.value == 0:
+                # A previously withheld press was replayed on opt-in.
+                self._withheld_modifier.get(fd, {}).pop(event.code, None)
+            return False
+
+        # Pass-through might have been disabled while a key was held.
+        # A key-down the clone saw needs a matching key-up. Existing
+        # AltGr replay state handles its own withheld entries.
+        if (
+            event.value == 0
+            and event.code in self._forwarded_held.get(fd, set())
+            and (spec.is_combo or event.code not in self._withheld_modifier.get(fd, {}))
+        ):
             return False
 
         if not spec.is_combo:

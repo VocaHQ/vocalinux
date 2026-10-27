@@ -221,6 +221,9 @@ class TrayIndicator:
 
         # Initialize keyboard shortcut manager with configured shortcut and mode
         self.shortcut_manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+        self.shortcut_manager.set_pass_shortcut_to_apps(
+            self.config_manager.get_bool("shortcuts", "pass_shortcut_to_apps", False)
+        )
         # One listener per bound language shortcut (#805); rebuilt by
         # _setup_language_shortcuts alongside the main one.
         self._language_shortcut_managers: list[KeyboardShortcutManager] = []
@@ -418,6 +421,12 @@ class TrayIndicator:
 
         self._setup_language_shortcuts()
 
+    def update_shortcut_passthrough(self, enabled: bool) -> None:
+        """Live-update main and language shortcuts without stopping dictation."""
+        self.shortcut_manager.set_pass_shortcut_to_apps(enabled)
+        for manager in self._language_shortcut_managers:
+            manager.set_pass_shortcut_to_apps(enabled)
+
     def _setup_language_shortcuts(self) -> None:
         """(Re)build a listener per configured language shortcut (#805).
 
@@ -465,6 +474,9 @@ class TrayIndicator:
 
             try:
                 manager = KeyboardShortcutManager(shortcut=shortcut, mode=mode)
+                manager.set_pass_shortcut_to_apps(
+                    self.config_manager.get_bool("shortcuts", "pass_shortcut_to_apps", False)
+                )
             except ValueError as exc:
                 logger.warning(f"Skipping language shortcut {shortcut!r} for {language}: {exc}")
                 continue
@@ -1469,6 +1481,7 @@ class TrayIndicator:
             update_checks_callback=self._on_update_checks_toggled,
             overlay_enabled_callback=self.set_overlay_enabled,
             hotkey_listener_update_callback=self._setup_keyboard_shortcuts,
+            hotkey_passthrough_update_callback=self.update_shortcut_passthrough,
             language_shortcuts_update_callback=self.refresh_language_shortcuts,
             history_update_callback=self._apply_history_settings,
             history_clear_callback=self.clear_transcription_history,

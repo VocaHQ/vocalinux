@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Build the AUR package from this checkout, on Arch as it is today.
+# Build a prepared, checksum-pinned AUR source package on current Arch.
 #
-# Usage (the read-only repo mount is enough — the tree is taken via git archive):
+# Usage (first prepare build/aur-source with scripts/prepare_aur_source.py):
 #   docker run --rm -v "$PWD:/repo:ro" archlinux:latest \
 #     bash /repo/packaging/aur/build-test.sh
 #   or: just aur-gate
@@ -10,10 +10,11 @@
 # build-system.requires still capped it below 82, so the PKGBUILD's
 # --no-isolation build broke for AUR users — and nothing ever ran makepkg on
 # the PKGBUILD before a tag published it.
-# The published source= points at the tag tarball, which does not exist until
-# the tag is pushed, so the gate replaces it with a git archive of HEAD under
-# the same filename: build()/package() run unchanged, and the gate answers
-# "does this commit build on Arch", not "did the last tag build".
+# Both PR and release gates consume the canonical sdist and fully prepared
+# PKGBUILD without rewriting source=, versions or checksums. PR fixtures are
+# explicitly unattested; the release job verifies published bytes and provenance
+# before running this gate. AUR_SOURCE_ONLY=1 leaves the existing -bin smoke out;
+# AUR_FETCH_SOURCE=1 makes makepkg download the real published source URL afresh.
 #
 # Not this gate's, despite reaching Arch users: #736 came through install.sh,
 # not through this package. The AUR build of v0.16.0 was intact, because the
@@ -40,7 +41,7 @@
 set -euo pipefail
 
 REPO="${REPO:-/repo}"
-PKGDIR="$REPO/packaging/aur/vocalinux"
+PKGDIR="${AUR_SOURCE:-$REPO/build/aur-source}"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -71,13 +72,6 @@ pacman_retry() {
 # detecting. It is also what "Arch as it is today" has to mean here.
 pacman_retry -Syu --noconfirm >/dev/null
 
-# The base image ships no git; the tree for makepkg comes from git archive.
-# safe.directory: the mount is owned by another uid than the container user.
-pacman_retry -S --needed --noconfirm git >/dev/null
-git config --global --add safe.directory '*'
-git -C "$REPO" rev-parse --verify HEAD >/dev/null \
-  || fail "$REPO is not a git checkout; git archive needs it"
-
 # Sourcing gives us pkgname, _tag and the depends/makedepends arrays the same
 # way makepkg itself reads them.
 # shellcheck source=/dev/null
@@ -102,7 +96,7 @@ done
 # package (how a python-pywhispercpp-cpu rename would go unnoticed again).
 # base-devel is the documented prerequisite for building any AUR package
 # (fakeroot, debugedit and friends); makepkg aborts without it.
-pacman_retry -S --needed --noconfirm --asdeps base-devel namcap python-pip \
+pacman_retry -S --needed --noconfirm --asdeps base-devel namcap python-pip curl \
   "${repo_deps[@]}" >/dev/null
 
 WORKDIR="$(mktemp -d)"
@@ -122,17 +116,17 @@ arch=('any')
 provides=('python-pywhispercpp' 'python-pynput')
 EOF
 
-echo "== Replace source= with a git archive of this checkout =="
+echo "== Copy the prepared PKGBUILD and original sdist without rewriting =="
 BUILD="$WORKDIR/pkg"
 mkdir -p "$BUILD"
-# Same filename the published source= uses, and the same directory prefix
-# build()/package() cd into — only where the tarball comes from changes.
-git -C "$REPO" archive --prefix="${pkgname}-${_tag}/" -o "$BUILD/${pkgname}-${_tag}.tar.gz" HEAD
+# makepkg consumes the cached archive under the same filename as source= and
+# still verifies its real checksum. No SKIP or --skipchecksums for source builds.
 cp "$PKGDIR/PKGBUILD" "$BUILD/PKGBUILD"
-sed -i "s|^source=.*|source=(\"${pkgname}-${_tag}.tar.gz\")|" "$BUILD/PKGBUILD"
-# sha256sums=('SKIP') stays: the real digest is computed at publish time by
-# release.yml (updpkgsums), and the archive differs from the tag tarball by
-# design.
+if [ "${AUR_FETCH_SOURCE:-0}" = 1 ]; then
+  echo "   release gate: makepkg must download the published source URL afresh"
+else
+  cp "$PKGDIR/${pkgname}-${_version}.tar.gz" "$BUILD/"
+fi
 
 # makepkg refuses to run as root; a build user is the container-standard fix.
 useradd -m builder
@@ -176,7 +170,12 @@ pacman -U --noconfirm "$BUILD"/*.pkg.tar.* >/dev/null
 # every depends entry the package declares (gi/Gtk/AppIndicator, IBus, cairo,
 # pyaudio, numpy, requests, tqdm, psutil, evdev, xlib, pynput).
 vocalinux --version
-python - <<'PY' || fail "the installed package does not import"
+python - "$_version" <<'PY' || fail "the installed package does not import or has the wrong version"
+import sys
+from importlib.metadata import version
+
+assert version("vocalinux") == sys.argv[1], "installed distribution version differs from the sdist"
+
 import vocalinux.main
 import vocalinux.ui.tray_indicator
 import vocalinux.speech_recognition.recognition_manager
@@ -188,6 +187,14 @@ import pywhispercpp.model
 
 print("   main, tray, recognition, injection and keyboard backends import")
 PY
+
+cmp -s "$PKGDIR/PKGBUILD" "$BUILD/PKGBUILD" || fail "the tested PKGBUILD was modified"
+cmp -s "$PKGDIR/${pkgname}-${_version}.tar.gz" "$BUILD/${pkgname}-${_version}.tar.gz" \
+  || fail "the tested source archive was modified"
+echo "PASS: the exact prepared source PKGBUILD builds and installs on current Arch"
+if [ "${AUR_SOURCE_ONLY:-0}" = 1 ]; then
+  exit 0
+fi
 
 echo "== Build vocalinux-bin against a stub AppImage =="
 # The -bin package's arch sources are the published release assets, which do

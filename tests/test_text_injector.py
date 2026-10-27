@@ -2030,7 +2030,9 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
                 with patch.object(injector, "_copy_to_clipboard", return_value=True) as copy:
                     self.assertTrue(injector._inject_via_clipboard_paste("dictation"))
         tools.assert_called_once_with()
-        copy.assert_called_once_with("dictation", tools=["xclip"])
+        copy.assert_called_once()
+        self.assertEqual(copy.call_args.args, ("dictation",))
+        self.assertEqual(copy.call_args.kwargs["tools"], ["xclip"])
 
     def test_terminal_paste_detection_runs_on_plain_x11(self) -> None:
         injector = TextInjector()

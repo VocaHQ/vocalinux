@@ -11,7 +11,7 @@ import threading
 import unittest
 from threading import Thread
 from types import SimpleNamespace
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, call, patch
 
 import pytest
 
@@ -171,6 +171,61 @@ class TestTrayIndicator(unittest.TestCase):
 
         if hasattr(self, "tray_indicator") and hasattr(self.tray_indicator, "shortcut_manager"):
             self.tray_indicator.shortcut_manager.stop()
+
+    def test_passthrough_applied_to_initial_main_shortcut(self) -> None:
+        """Startup reads the saved opt-in state for the primary listener."""
+        self.mock_ksm.set_pass_shortcut_to_apps.assert_called_once_with(False)
+        self.mock_config_manager.get_bool.assert_any_call(
+            "shortcuts", "pass_shortcut_to_apps", False
+        )
+
+    def test_passthrough_live_updates_main_and_language_listeners(self) -> None:
+        """Changing the switch affects all listeners without restarting them."""
+        first, second = MagicMock(), MagicMock()
+        self.tray_indicator._language_shortcut_managers = [first, second]
+
+        self.mock_ksm.set_pass_shortcut_to_apps.reset_mock()
+        self.mock_ksm.stop.reset_mock()
+
+        self.tray_indicator.update_shortcut_passthrough(True)
+        self.tray_indicator.update_shortcut_passthrough(False)
+
+        for manager in (self.mock_ksm, first, second):
+            self.assertEqual(
+                manager.set_pass_shortcut_to_apps.call_args_list,
+                [call(True), call(False)],
+            )
+            manager.stop.assert_not_called()
+
+    def test_language_shortcut_inherits_saved_passthrough(self) -> None:
+        """New per-language shortcuts use the same persisted preference."""
+        language_manager = MagicMock()
+        self.mock_config_manager.get_language_shortcuts.return_value = [
+            {"shortcut": "right_ctrl+right_ctrl", "language": "en-us"}
+        ]
+
+        self.mock_config_manager.get_bool.side_effect = lambda section, key, default=False: (
+            True if (section, key) == ("shortcuts", "pass_shortcut_to_apps") else default
+        )
+
+        with patch(
+            "vocalinux.ui.tray_indicator.KeyboardShortcutManager",
+            return_value=language_manager,
+        ):
+            self.tray_indicator._setup_language_shortcuts()
+
+        language_manager.set_pass_shortcut_to_apps.assert_called_once_with(True)
+        language_manager.start.assert_called_once_with()
+        self.assertIn(language_manager, self.tray_indicator._language_shortcut_managers)
+
+    def test_settings_dialog_receives_passthrough_callback(self) -> None:
+        """The UI must receive the live-apply callback when settings opens."""
+        self.tray_indicator._on_settings_clicked(None)
+
+        callback = self.mock_settings_dialog_class.call_args.kwargs[
+            "hotkey_passthrough_update_callback"
+        ]
+        self.assertEqual(callback, self.tray_indicator.update_shortcut_passthrough)
 
     def test_initialization(self):
         """Test initialization of the tray indicator."""

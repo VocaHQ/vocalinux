@@ -46,6 +46,24 @@ class TestKeyboardShortcuts(unittest.TestCase):
         self.mock_create_backend.assert_called_once()
         self.assertIsNotNone(self.ksm.backend_instance)
 
+    def test_passthrough_is_forwarded_to_backend(self) -> None:
+        """The manager sends both enable and disable to the live backend."""
+        self.ksm.set_pass_shortcut_to_apps(True)
+        self.ksm.set_pass_shortcut_to_apps(False)
+
+        self.assertEqual(
+            self.mock_backend.set_pass_shortcut_to_apps.call_args_list,
+            [call(True), call(False)],
+        )
+
+    def test_passthrough_without_backend_is_safe(self) -> None:
+        """A missing evdev/pynput backend cannot crash settings changes."""
+        self.ksm.backend_instance = None
+
+        self.ksm.set_pass_shortcut_to_apps(True)
+
+        self.mock_backend.set_pass_shortcut_to_apps.assert_not_called()
+
     def test_init_with_custom_shortcut(self):
         """Test initialization with a custom shortcut."""
         # Create a new KSM with alt+alt shortcut

@@ -889,5 +889,114 @@ class TestOverlappingClipboardRestore(unittest.TestCase):
         self.assertIsNone(obj._clipboard_restore_target)
 
 
+class TestSensitivePasteCopy(unittest.TestCase):
+    """The transient paste-injection copy is marked wl-copy --sensitive."""
+
+    def _run_paste(self, obj: Any, copy_to_clipboard: bool) -> list:
+        copy_kwargs: list = []
+        restored = threading.Event()
+
+        def fake_copy(t: str, **kw: Any) -> bool:
+            copy_kwargs.append((t, kw))
+            if t == "original":
+                restored.set()
+            return True
+
+        with patch.object(obj, "_read_clipboard", side_effect=["original", "injected text"]):
+            with patch.object(obj, "_copy_to_clipboard", side_effect=fake_copy):
+                with patch.object(
+                    obj, "_ydotool_ctrl_v_command", return_value=["ydotool", "key", "ctrl+v"]
+                ):
+                    with patch.object(
+                        obj, "_should_copy_to_clipboard", return_value=copy_to_clipboard
+                    ):
+                        with patch(
+                            "vocalinux.text_injection.text_injector.subprocess.run",
+                            return_value=MagicMock(returncode=0),
+                        ):
+                            self.assertTrue(obj._inject_via_clipboard_paste("injected text"))
+                            if not copy_to_clipboard:
+                                # The restore runs on a background thread; wait for it
+                                # while the patches are still active.
+                                self.assertTrue(restored.wait(timeout=5), "never restored")
+        return copy_kwargs
+
+    def test_paste_copy_is_sensitive_and_restore_is_not(self) -> None:
+        """Injection copy asks for --sensitive; the restored user content does not."""
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        calls = self._run_paste(obj, copy_to_clipboard=False)
+        self.assertEqual(calls[0], ("injected text", {"tools": None, "sensitive": True}))
+        self.assertEqual(calls[-1][0], "original")
+        self.assertFalse(calls[-1][1].get("sensitive", False))
+
+    def test_copy_to_clipboard_setting_keeps_copy_non_sensitive(self) -> None:
+        """With copy_to_clipboard on, the dictated text is a real, history-worthy copy."""
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        calls = self._run_paste(obj, copy_to_clipboard=True)
+        self.assertEqual(calls, [("injected text", {"tools": None, "sensitive": False})])
+
+    def _wl_copy_cmd(self, obj: Any, sensitive: bool) -> list:
+        with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(obj._run_clipboard_command("wl-copy", "hello", sensitive=sensitive))
+        return mock_run.call_args[0][0]
+
+    def test_wl_copy_gets_sensitive_flag_when_supported(self) -> None:
+        obj = _make_injector()
+        obj._wl_copy_sensitive_supported = True
+        self.assertEqual(self._wl_copy_cmd(obj, True), ["wl-copy", "--sensitive", "hello"])
+
+    def test_wl_copy_omits_flag_on_old_wl_clipboard(self) -> None:
+        obj = _make_injector()
+        obj._wl_copy_sensitive_supported = False
+        self.assertEqual(self._wl_copy_cmd(obj, True), ["wl-copy", "hello"])
+
+    def test_wl_copy_omits_flag_when_not_sensitive(self) -> None:
+        obj = _make_injector()
+        with patch.object(obj, "_wl_copy_supports_sensitive") as probe:
+            self.assertEqual(self._wl_copy_cmd(obj, False), ["wl-copy", "hello"])
+        probe.assert_not_called()
+
+    def test_copy_to_clipboard_forwards_sensitive_to_each_tool(self) -> None:
+        """A tool that declines falls through to the next with the same hint."""
+        obj = _make_injector()
+        with patch.object(obj, "_run_clipboard_command", side_effect=[False, True]) as run:
+            self.assertTrue(obj._copy_to_clipboard("hi", tools=["xsel", "wl-copy"], sensitive=True))
+        self.assertEqual(
+            [c.args + (c.kwargs["sensitive"],) for c in run.call_args_list],
+            [("xsel", "hi", True), ("wl-copy", "hi", True)],
+        )
+
+    def test_probe_reads_help_and_caches(self) -> None:
+        obj = _make_injector()
+        help_out = MagicMock(
+            stdout="  -s, --sensitive   Hint that the content is sensitive.", stderr=""
+        )
+        with patch(
+            "vocalinux.text_injection.text_injector.subprocess.run", return_value=help_out
+        ) as mock_run:
+            self.assertTrue(obj._wl_copy_supports_sensitive())
+            self.assertTrue(obj._wl_copy_supports_sensitive())
+        mock_run.assert_called_once()
+        self.assertEqual(mock_run.call_args[0][0], ["wl-copy", "--help"])
+
+    def test_probe_false_when_help_lacks_flag_or_fails(self) -> None:
+        obj = _make_injector()
+        with patch(
+            "vocalinux.text_injection.text_injector.subprocess.run",
+            return_value=MagicMock(stdout="Usage: wl-copy [options] text", stderr=""),
+        ):
+            self.assertFalse(obj._wl_copy_supports_sensitive())
+
+        obj = _make_injector()
+        with patch(
+            "vocalinux.text_injection.text_injector.subprocess.run",
+            side_effect=FileNotFoundError("wl-copy"),
+        ):
+            self.assertFalse(obj._wl_copy_supports_sensitive())
+
+
 if __name__ == "__main__":
     unittest.main()

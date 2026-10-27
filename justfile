@@ -127,29 +127,38 @@ native-packages: build
 native-smoke distro="debian:12":
     docker run --rm -v "$PWD/dist:/out:ro" -v "$PWD/packaging/native:/pk:ro" {{distro}} bash /pk/smoke-test.sh
 
-# Build the AUR package from this checkout on current Arch, as the CI gate
-# does. Answers "does this commit build on Arch" — the tag tarball source= is
-# swapped for a git archive of HEAD (needs docker).
-#
-# The checkout is mounted at its own path, and the main .git with it when this
-# is a linked worktree: a worktree's .git is a pointer to a gitdir outside the
-# tree, so git archive inside the container cannot see the objects without it.
+# Build the canonical sdist, prepare an explicitly unattested local PKGBUILD,
+# then build/install it unchanged on current Arch (needs uv and docker).
+# Keep distributions and diagnostics away from other packaging commands' outputs.
 aur-gate:
     #!/usr/bin/env bash
     set -euo pipefail
-    COMMON="$(cd "$(git rev-parse --git-common-dir)" && pwd)"
-    ARGS=(--rm -v "$PWD:$PWD:ro" -e REPO="$PWD")
-    if [ "$COMMON" != "$PWD/.git" ]; then
-        ARGS+=(-v "$COMMON:$COMMON:ro")
-    fi
-    docker run "${ARGS[@]}" archlinux:latest bash "$PWD/packaging/aur/build-test.sh"
+    WORK="$(mktemp -d)"
+    cleanup() {
+        local status=$?
+        if [ "$status" -eq 0 ]; then
+            rm -rf "$WORK"
+        else
+            echo "AUR gate failed; diagnostics retained in $WORK" >&2
+        fi
+    }
+    trap cleanup EXIT
+    python3 scripts/build_reproducible_wheel.py --python "${PYTHON:-python3}" \
+      --output "$WORK/dist" --diagnostics "$WORK/diagnostics"
+    uv venv --no-config --python "${PYTHON:-python3}" "$WORK/venv"
+    uv pip install --no-config --python "$WORK/venv/bin/python" \
+      --require-hashes --no-deps --only-binary=:all: -r requirements/release-build.txt
+    "$WORK/venv/bin/python" scripts/prepare_aur_source.py \
+      --local-unattested --sdist "$WORK"/dist/vocalinux-*.tar.gz --output "$WORK/source"
+    docker run --rm -v "$PWD:/repo:ro" -v "$WORK/source:/aur-source:ro" \
+      -e AUR_SOURCE=/aur-source archlinux:latest bash /repo/packaging/aur/build-test.sh
 
 # Run install.sh unattended in a distro container, as the CI gate does. Answers
 # "does this commit install" (needs docker).
 #
 # The tree is taken via git archive of HEAD and extracted inside the container,
 # so the venv local mode creates lands in the container's copy rather than in
-# your working tree. Same worktree handling as aur-gate above.
+# your working tree. Mount the common gitdir as well for linked worktrees.
 #
 # Usage: `just install-gate` for debian:12, or `just install-gate fedora:42`
 install-gate distro="debian:12":

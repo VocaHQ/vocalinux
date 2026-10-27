@@ -480,6 +480,11 @@ class KeyboardBackend(ABC):
         self._mode = mode
         self._spec = parse_shortcut_spec(shortcut)
         self._modifier_key = self._spec.primary_modifier
+        self.pass_shortcut_to_apps = False
+
+    def set_pass_shortcut_to_apps(self, enabled: bool) -> None:
+        """Forward hotkey events to applications while detecting gestures."""
+        self.pass_shortcut_to_apps = bool(enabled)
 
     @property
     def spec(self) -> ShortcutSpec:

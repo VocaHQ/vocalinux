@@ -129,6 +129,24 @@ active run fails without changing the first run's outputs. Archives are copied t
 an ignored temporary sibling of `dist/` and then atomically renamed into place,
 so interrupted staging leaves only complete archives in `dist/` and can be retried.
 
+### AUR source publication gate
+
+After `publish-checksums`, `aur-source-test` downloads the published canonical
+sdist and `SHA256SUMS`. `scripts/prepare_aur_source.py` checks the digest and
+cryptographically verifies provenance against this repository's release workflow,
+tag ref and source commit before preparing the checksum-pinned PKGBUILD.
+The exact prepared recipe is built, checked with namcap, installed and smoked on
+current Arch. `publish-aur` downloads only that verified PKGBUILD artifact and
+pushes it without further version/checksum rewrites (`updpkgsums: false`).
+
+This gate runs even without AUR publication credentials. Failure prevents the
+AUR push, but does not unpublish GitHub/PyPI artifacts already released. It is
+separate from PR/local `--local-unattested` fixtures, which exercise the same
+preparation/build path but are never used for publication. See [AUR.md](AUR.md)
+for the trust model and the existing AUR-provider smoke-test limitations.
+`vocalinux-bin` publication waits only for release creation and both AppImages;
+source-gate failures or unrelated checksum producers do not block it.
+
 ## Detailed Release Steps
 
 ### Step 1: Determine Version Number
@@ -183,7 +201,7 @@ When shipping bug fixes only (PATCH bump, same MINOR):
 - **Website changelog** (`web/src/app/changelog/page.tsx`) may list only the delta for the new entry; older entries stay historical.
 - **AppStream** (`packaging/flatpak/com.vocalinux.Vocalinux.metainfo.xml`): add a short `<release>` note for the patch delta only; leave the long product feature `<ul>` as series/product-level.
 - **SECURITY.md** supported versions table usually stays on the minor line (`0.14.x`) without a row per patch.
-- **AUR PKGBUILD**: bump `pkgver` / `_tag`; leave `sha256sums=('SKIP')` until the tag tarball exists. The release workflow runs `updpkgsums` when publishing to the AUR.
+- **AUR source PKGBUILD**: the release gate prepares `pkgver`, `_tag`, the normalized `_version`, and the canonical sdist digest, then tests that exact file. Do not introduce `SKIP` or rehash it during publication. The separate `vocalinux-bin` path still pins both AppImage digests before its own publication.
 - **Dates**: patch release dates must not predate the previous release in changelog / AppStream / version history.
 
 ### GitHub Release Notes Writing Rules

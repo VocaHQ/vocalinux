@@ -131,6 +131,11 @@ class KeyboardShortcutManager:
         """Get the current shortcut mode."""
         return self._mode
 
+    def set_pass_shortcut_to_apps(self, enabled: bool) -> None:
+        """Live-apply shortcut pass-through to the active backend."""
+        if self.backend_instance is not None:
+            self.backend_instance.set_pass_shortcut_to_apps(enabled)
+
     @property
     def mode_display_name(self) -> str:
         """Get the human-readable name for the current mode."""
