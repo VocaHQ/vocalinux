@@ -440,6 +440,10 @@ def test_piped_installer_defaults_to_upgrade_on_existing_install(tmp_path: Path)
     inner = (
         f"cat {shlex.quote(str(INSTALL_SH))} | bash -s --"
         f" --tag=v0.0.0-test --venv-dir={shlex.quote(str(venv))}"
+        # The marker sits just ahead of the host-mutating steps; skipping them
+        # means the timed Ctrl+C can never lose a race against sudo or the
+        # package manager on a runner that happens to have either.
+        " --skip-system-deps --skip-models"
     )
     subprocess.run(
         f"{shlex.quote(str(feeder))} | {shlex.quote(str(SCRIPT))} -ec "
