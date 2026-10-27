@@ -15,6 +15,16 @@ bash /tmp/vl.sh
 
 The installer detects a running instance, updates in place, preserves configuration and models, and pulls new dependencies (including neural VAD when available).
 
+On an existing install (a virtual environment plus `~/.config/vocalinux/config.json`), the installer reports the saved configuration and defaults to **Upgrade (keep current settings)**: the configured engine stays selected, `config.json` is never rewritten, the virtual environment is reused, downloaded models are kept, and pywhispercpp is rebuilt only when this release pins a new version or GPU support is missing. Pick the interactive or automatic modes instead if you want to reconfigure the install.
+
+For a scripted, non-interactive upgrade:
+
+```bash
+bash /tmp/vl.sh --upgrade
+```
+
+`--upgrade` on a machine with no existing install falls back to a normal automatic installation.
+
 ### Installed from source
 
 ```bash

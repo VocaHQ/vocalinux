@@ -280,6 +280,7 @@ SKIP_SYSTEM_DEPS="no"
 NON_INTERACTIVE="no"
 INTERACTIVE_MODE="yes"  # Default to interactive mode
 AUTO_MODE="no"
+UPGRADE_MODE="no"
 REBUILD_WHISPERCPP="ask"
 # Pinned pywhispercpp release (sdist, built from source). Keep in sync with
 # uv.lock and the requirements/ exports.
@@ -364,6 +365,13 @@ while [[ $# -gt 0 ]]; do
             NON_INTERACTIVE="yes"
             shift
             ;;
+        --upgrade)
+            UPGRADE_MODE="yes"
+            AUTO_MODE="yes"
+            INTERACTIVE_MODE="no"
+            NON_INTERACTIVE="yes"
+            shift
+            ;;
         --help)
             echo "Vocalinux Installer"
             echo ""
@@ -372,11 +380,15 @@ while [[ $# -gt 0 ]]; do
             echo "Installation Modes:"
             echo "  (no flags)       Interactive mode - guided setup with recommendations"
             echo "  --auto           Automatic mode - install with defaults (whisper.cpp)"
+            echo "  --upgrade        Upgrade mode - update an existing install, keep its settings"
             echo "  --auto --engine=whisper   Auto mode with specific engine"
             echo ""
             echo "Options:"
             echo "  --interactive, -i  Force interactive mode (default)"
             echo "  --auto           Non-interactive automatic installation"
+            echo "  --upgrade        Non-interactive upgrade of an existing install: reuse the"
+            echo "                  venv, update the configured engine's dependencies, never"
+            echo "                  modify config.json"
             echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, faster_whisper, remote_api"
             echo "  --dev            Install in development mode with all dev dependencies"
             echo "  --test           Run tests after installation"
@@ -391,6 +403,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Examples:"
             echo "  $0                           # Interactive mode (recommended)"
+            echo "  $0 --upgrade                 # Update an existing install, keep settings"
             echo "  $0 --auto                    # Auto-install with whisper.cpp"
             echo "  $0 --auto --engine=vosk      # Auto-install VOSK only"
             echo "  $0 --auto --engine=faster_whisper  # Auto-install faster-whisper"
@@ -1286,27 +1299,131 @@ case "$DISTRO_FAMILY" in
         ;;
 esac
 
-# Handle installation mode selection
-if [[ "$INTERACTIVE_MODE" == "ask" ]]; then
-    # Running via curl pipe but we have a terminal - ask user preference
+# Define XDG directories early: existing-install detection and the mode menu
+# need CONFIG_DIR before system dependency installation asks anything.
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vocalinux"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/vocalinux"
+DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
+
+# An existing install is a usable venv plus a saved configuration: re-running
+# the installer on one is an upgrade, not a first-time setup. A leftover
+# config.json without a venv (from an aborted install) is not an install.
+detect_existing_install() {
+    [ -f "$VENV_DIR/bin/activate" ] && [ -f "$CONFIG_DIR/config.json" ]
+}
+
+# Running via curl pipe but with a terminal: ask which mode to run. An existing
+# install gets an upgrade entry as the default so re-running the installer is a
+# non-event instead of a guided redo of the first-time setup.
+choose_installation_mode() {
+    [[ "$INTERACTIVE_MODE" == "ask" ]] || return 0
+
     echo ""
     echo "Installation Mode:"
-    echo "  1. Interactive (recommended) - guided setup with recommendations"
-    echo "  2. Automatic - quick install with defaults (whisper.cpp)"
-    echo ""
-    read_prompt -p "Choose mode [1-2] (default: 1): " MODE_CHOICE
-    MODE_CHOICE=${MODE_CHOICE:-1}
+    if [[ "${EXISTING_INSTALL:-no}" == "yes" ]]; then
+        echo "  1. Upgrade (keep current settings) - update Vocalinux, keep your setup"
+        echo "  2. Interactive - guided setup with recommendations"
+        echo "  3. Automatic - quick install with defaults (whisper.cpp)"
+        echo ""
+        read_prompt -p "Choose mode [1-3] (default: 1): " MODE_CHOICE
+        MODE_CHOICE=${MODE_CHOICE:-1}
 
-    if [[ "$MODE_CHOICE" == "2" ]]; then
-        AUTO_MODE="yes"
-        INTERACTIVE_MODE="no"
-        NON_INTERACTIVE="yes"
+        case "$MODE_CHOICE" in
+            2)
+                INTERACTIVE_MODE="yes"
+                NON_INTERACTIVE="no"
+                ;;
+            3)
+                AUTO_MODE="yes"
+                INTERACTIVE_MODE="no"
+                NON_INTERACTIVE="yes"
+                ;;
+            *)
+                UPGRADE_MODE="yes"
+                AUTO_MODE="yes"
+                INTERACTIVE_MODE="no"
+                NON_INTERACTIVE="yes"
+                ;;
+        esac
     else
-        INTERACTIVE_MODE="yes"
-        NON_INTERACTIVE="no"
+        echo "  1. Interactive (recommended) - guided setup with recommendations"
+        echo "  2. Automatic - quick install with defaults (whisper.cpp)"
+        echo ""
+        read_prompt -p "Choose mode [1-2] (default: 1): " MODE_CHOICE
+        MODE_CHOICE=${MODE_CHOICE:-1}
+
+        if [[ "$MODE_CHOICE" == "2" ]]; then
+            AUTO_MODE="yes"
+            INTERACTIVE_MODE="no"
+            NON_INTERACTIVE="yes"
+        else
+            INTERACTIVE_MODE="yes"
+            NON_INTERACTIVE="no"
+        fi
     fi
     echo ""
+}
+
+# --upgrade on a machine with nothing installed cannot keep settings that do
+# not exist: warn and proceed as a normal automatic install instead of failing.
+resolve_upgrade_request() {
+    if [[ "${UPGRADE_MODE:-no}" == "yes" && "${EXISTING_INSTALL:-no}" != "yes" ]]; then
+        print_warning "--upgrade was given, but no existing install was found"
+        print_warning "(expected a venv in $VENV_DIR plus $CONFIG_DIR/config.json)."
+        print_info "Continuing with a normal automatic installation."
+        UPGRADE_MODE="no"
+    fi
+}
+
+# Print speech_recognition.engine from an existing config.json. Empty output
+# when the file or the key is missing or unreadable.
+read_configured_engine() {
+    local config_file="$1" python=""
+    [ -f "$config_file" ] || return 1
+    if [ -x "$VENV_DIR/bin/python" ]; then
+        python="$VENV_DIR/bin/python"
+    elif command_exists python3; then
+        python="python3"
+    else
+        return 1
+    fi
+    "$python" - "$config_file" <<'PY' 2>/dev/null
+import json
+import sys
+
+try:
+    with open(sys.argv[1]) as handle:
+        print(json.load(handle).get("speech_recognition", {}).get("engine", ""))
+except Exception:
+    pass
+PY
+}
+
+# Upgrade mode installs dependencies for the engine the existing configuration
+# already selected instead of forcing the automatic default.
+apply_upgrade_engine() {
+    [[ "${UPGRADE_MODE:-no}" == "yes" && -z "${SELECTED_ENGINE:-}" ]] || return 0
+
+    SELECTED_ENGINE=$(read_configured_engine "$CONFIG_DIR/config.json" || true)
+    if [ -n "$SELECTED_ENGINE" ]; then
+        print_info "Upgrade mode: keeping configured engine '$SELECTED_ENGINE'."
+    else
+        print_warning "No engine readable in $CONFIG_DIR/config.json; using the default (whisper.cpp)."
+        SELECTED_ENGINE="whisper_cpp"
+    fi
+}
+
+EXISTING_INSTALL="no"
+if detect_existing_install; then
+    EXISTING_INSTALL="yes"
+    print_success "Existing configuration found at $CONFIG_DIR/config.json — it will be kept."
 fi
+
+resolve_upgrade_request
+
+# Handle installation mode selection
+choose_installation_mode
 
 # Run interactive installation if selected
 if [[ "$INTERACTIVE_MODE" == "yes" ]]; then
@@ -1321,6 +1438,8 @@ if [[ "$INTERACTIVE_MODE" == "yes" ]]; then
     # Run interactive installation
     run_interactive_install
 fi
+
+apply_upgrade_engine
 
 # Set default engine for auto/non-interactive mode
 if [[ "$NON_INTERACTIVE" == "yes" ]] && [[ -z "$SELECTED_ENGINE" ]]; then
@@ -1337,12 +1456,6 @@ if [[ "$SKIP_SYSTEM_DEPS" == "yes" ]]; then
 else
     install_system_dependencies
 fi
-
-# Define XDG directories
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/vocalinux"
-DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/vocalinux"
-DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
-ICON_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps"
 
 # Install text input tools based on session type
 install_text_input_tools
@@ -1828,6 +1941,12 @@ should_rebuild_whispercpp() {
     esac
 
     if [[ "$NON_INTERACTIVE" == "yes" ]]; then
+        # An upgrade should pick up the pinned pywhispercpp: a version drift is
+        # the one case where reusing the existing build is not an update.
+        if [ -n "$INSTALLED_VERSION" ] && [ "$INSTALLED_VERSION" != "$PYWHISPERCPP_VERSION" ]; then
+            print_info "pywhispercpp $INSTALLED_VERSION installed; this release pins $PYWHISPERCPP_VERSION. Rebuilding..."
+            return 0
+        fi
         if [[ "$HAS_NVIDIA_GPU" == "yes" || "$HAS_VULKAN" == "yes" ]] && ! is_pywhispercpp_gpu_capable; then
             print_info "Non-interactive mode: GPU detected but pywhispercpp lacks GPU support. Rebuilding..."
             return 0
@@ -1912,6 +2031,16 @@ with open(path, "w") as handle:
     json.dump(config, handle, indent=2)
     handle.write("\n")
 PY
+}
+
+# config.json is user data. Upgrade mode never modifies it: the write becomes
+# a logged no-op so the configured engine survives the update byte-for-byte.
+write_configured_engine() {
+    if [[ "${UPGRADE_MODE:-no}" == "yes" ]]; then
+        print_info "Upgrade mode: $1 is kept unchanged."
+        return 0
+    fi
+    set_configured_engine "$1" "$2"
 }
 
 install_whispercpp_with_gpu_support() {
@@ -2083,12 +2212,13 @@ install_whispercpp_with_gpu_support() {
 
         local FALLBACK_VOSK_CONFIG="$CONFIG_DIR/config.json"
         if [ -f "$FALLBACK_VOSK_CONFIG" ]; then
-            if set_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"; then
-                print_success "Switched $FALLBACK_VOSK_CONFIG to the vosk engine."
+            if write_configured_engine "$FALLBACK_VOSK_CONFIG" "vosk"; then
+                [[ "${UPGRADE_MODE:-no}" != "yes" ]] &&
+                    print_success "Switched $FALLBACK_VOSK_CONFIG to the vosk engine."
             else
                 print_warning "Could not rewrite $FALLBACK_VOSK_CONFIG to vosk."
             fi
-        else
+        elif [[ "${UPGRADE_MODE:-no}" != "yes" ]]; then
             mkdir -p "$CONFIG_DIR"
             cat > "$FALLBACK_VOSK_CONFIG" << 'FALLBACK_VOSK_CONFIG'
 {
@@ -2464,7 +2594,7 @@ VOSK_CONFIG
 }
 PARAKEET_CONFIG
                 fi
-                set_configured_engine "$CONFIG_DIR/config.json" parakeet ||
+                write_configured_engine "$CONFIG_DIR/config.json" parakeet ||
                     print_warning "Could not point $CONFIG_DIR/config.json at the parakeet engine."
                 ;;
 
@@ -2554,7 +2684,7 @@ REMOTE_CONFIG
 }
 FASTER_WHISPER_CONFIG
                     fi
-                    set_configured_engine "$CONFIG_DIR/config.json" faster_whisper ||
+                    write_configured_engine "$CONFIG_DIR/config.json" faster_whisper ||
                         print_warning "Could not point $CONFIG_DIR/config.json at the faster_whisper engine."
                 else
                     print_error "Failed to install the faster-whisper engine"
@@ -2774,6 +2904,14 @@ PY
     venv_can_import "$MODULE" && return 0
 
     print_warning "$CONFIG_FILE selects the $CONFIGURED_ENGINE engine, but it is not importable in $VENV_DIR."
+
+    if [[ "${UPGRADE_MODE:-no}" == "yes" ]]; then
+        # Upgrade mode never rewrites config.json: report instead of repairing.
+        print_error "Vocalinux cannot start with this configuration and the engine is not installed."
+        print_error "Install the engine:  $VENV_DIR/bin/pip install $(engine_pip_name "$CONFIGURED_ENGINE")"
+        print_error "or edit $CONFIG_FILE and set speech_recognition.engine to an installed engine."
+        return 1
+    fi
 
     # Leaving it means the app dies at startup with ModuleNotFoundError. Prefer
     # SELECTED_ENGINE (set by the whisper.cpp -> vosk fallback), then any extra

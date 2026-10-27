@@ -34,6 +34,31 @@ EOF
     echo "Optional Remote API is off unless you choose it; then audio goes only to the server you configure."
     echo ""
 
+    # An existing install is an upgrade by default: keep the saved configuration
+    # and update in place instead of redoing first-time setup. Choosing the full
+    # guided setup continues below and can re-point the engine deliberately.
+    if [[ "${EXISTING_INSTALL:-no}" == "yes" ]]; then
+        echo "An existing Vocalinux installation was detected:"
+        echo "  Configuration: $CONFIG_DIR/config.json (kept unchanged by an upgrade)"
+        echo "  Virtual env:   $VENV_DIR (reused by an upgrade)"
+        echo ""
+        echo "  1. Upgrade (keep current settings) - update Vocalinux only"
+        echo "  2. Full guided setup - choose engine, backend, and model options"
+        echo ""
+
+        read_prompt -p "Choose [1-2] (default: 1): " UPGRADE_CHOICE
+        UPGRADE_CHOICE=${UPGRADE_CHOICE:-1}
+
+        if [[ "$UPGRADE_CHOICE" != "2" ]]; then
+            UPGRADE_MODE="yes"
+            INTERACTIVE_MODE="no"
+            NON_INTERACTIVE="yes"
+            echo ""
+            return 0
+        fi
+        echo ""
+    fi
+
     # Step 1: Detect and display system info
     print_header "Step 1: Your System"
     echo "Detected: $DISTRO_NAME $DISTRO_VERSION"
