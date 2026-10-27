@@ -1744,6 +1744,14 @@ class TrayIndicator:
         keepalive = getattr(self, "_model_keepalive", None)
         if keepalive is not None:
             keepalive.cancel()
+        # Release the internal hotkey listeners (and their EVIOCGRABs)
+        # before the machine sleeps: a grab held through suspend keeps
+        # feeding a forwarder whose liveness across resume cannot be
+        # guaranteed, and the lock screen ends up behind a dead input
+        # path (#1021). The resume flow rebuilds the listeners once
+        # /dev/input settles.
+        self.shortcut_manager.stop()
+        self._stop_language_shortcut_managers()
         if self.speech_engine.state != RecognitionState.IDLE:
             logger.info("System suspending — stopping active recognition")
             self.speech_engine.stop_recognition()

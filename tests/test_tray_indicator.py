@@ -1292,6 +1292,40 @@ class TestTrayIndicator(unittest.TestCase):
 
         self.assertEqual(len(history), 0)
 
+    def test_system_suspend_stops_keyboard_listeners(self) -> None:
+        """Suspend releases the internal listeners' grabs before sleep (#1021).
+
+        A grab held through suspend feeds a forwarder whose liveness across
+        resume cannot be guaranteed; the lock screen ends up behind a dead
+        input path. Suspend therefore tears the listeners down — the resume
+        flow rebuilds them once /dev/input settles.
+        """
+        language_manager = MagicMock()
+        self.tray_indicator._language_shortcut_managers = [language_manager]
+        self.mock_ksm.active = True
+        # _setup_keyboard_shortcuts already stopped/started the manager when
+        # the tray initialized; forget that history before asserting.
+        self.mock_ksm.reset_mock()
+
+        self.tray_indicator._on_system_suspend()
+
+        self.mock_ksm.stop.assert_called_once()
+        language_manager.stop.assert_called_once()
+        self.assertEqual(self.tray_indicator._language_shortcut_managers, [])
+        # Recognition was idle: nothing else to stop.
+        self.mock_speech_engine.stop_recognition.assert_not_called()
+
+    def test_system_suspend_stops_active_recognition(self) -> None:
+        """Suspend still stops a listening session alongside the listeners."""
+        self.tray_indicator._language_shortcut_managers = []
+        self.mock_speech_engine.state = self.RecognitionState.LISTENING
+        self.mock_ksm.reset_mock()
+
+        self.tray_indicator._on_system_suspend()
+
+        self.mock_ksm.stop.assert_called_once()
+        self.mock_speech_engine.stop_recognition.assert_called_once()
+
     def test_construct_with_history_creates_submenu_and_wires_callback(self) -> None:
         from vocalinux.ui.transcription_history import TranscriptionHistory
         from vocalinux.ui.tray_indicator import TrayIndicator
