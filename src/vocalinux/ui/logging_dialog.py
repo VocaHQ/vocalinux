@@ -192,6 +192,11 @@ class LoggingDialog(Gtk.Dialog):
             flags=Gtk.DialogFlags.DESTROY_WITH_PARENT,
             modal=False,
         )
+        # Standalone viewer window: without this the DIALOG type hint makes a
+        # parentless dialog an "orphan" that GTK's Wayland backend binds to the
+        # next focused toplevel (usually the dictation pad), so the two windows
+        # raise, minimize and travel workspaces together (#984).
+        self.set_type_hint(Gdk.WindowTypeHint.NORMAL)
 
         self.logging_manager = get_logging_manager()
         self.auto_scroll = True
