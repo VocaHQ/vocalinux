@@ -39,7 +39,7 @@ Vocalinux turns speech into typed text in whatever app has focus. It is a free, 
 
 No Voca account is required. Models download once. After that, speech-to-text stays on your machine.
 
-**Current release:** [v0.18.4](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.4). Patch: long dictations are no longer cut off, model downloads only start when you confirm them, Test Dictation always gets its own result, the GPU picker and CPU threads match what whisper.cpp really uses, a second press of the hotkey cancels a slow transcription, and Slovenian joins the language list. Details: [docs/UPDATE.md](docs/UPDATE.md).
+**Current release:** [v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5). Patch: a stop that races a recording start can no longer leave the mic recording forever, keyboards stay alive through suspend and the GNOME lock screen, Ctrl+mouse-wheel zoom works again, Dictation Pad and Settings stop travelling workspaces together, paste-injection stays out of clipboard history, and `install.sh` gains an upgrade mode that keeps your existing configuration. Details: [docs/UPDATE.md](docs/UPDATE.md).
 
 ## Features
 
@@ -156,7 +156,7 @@ bash /tmp/vl.sh --auto --engine=vosk                # VOSK only
 bash /tmp/vl.sh --auto --engine=parakeet            # Parakeet (CPU)
 ```
 
-For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.18.4`.
+For a specific release tag, see [GitHub Releases](https://github.com/VocaHQ/vocalinux/releases) or `./install.sh --tag=v0.18.5`.
 
 ### Arch Linux (AUR)
 

@@ -15,6 +15,21 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.5",
+    date: "2026-10-27",
+    type: "stable",
+    highlights: [
+      "A stop pressed while a recording is starting can no longer leave the microphone recording forever (PR #1023)",
+      "A microphone that stalls mid-read can no longer hang dictation in PROCESSING; capture reads happen outside the buffer lock (PR #1023)",
+      "Keyboards survive suspend and the GNOME lock screen again: the evdev grab is released when forwarding cannot run (PR #1025)",
+      "Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland (PR #1024)",
+      "Ctrl+mouse-wheel zoom works again in Firefox and other apps (PR #967)",
+      "install.sh gains an upgrade mode that keeps your existing configuration and models (PR #1026)",
+      "Paste-injection copies stay out of clipboard history (PR #956), and AUR source publication is gated on attested sdists (PR #1020)",
+      "Tray prefers libayatana-appindicator (PR #1019), the Snap lists PulseAudio microphones (PR #1018), and the Wayland fallback overlay survives dock closes (PR #1017)",
+    ],
+  },
+  {
     version: "v0.18.4",
     date: "2026-10-21",
     type: "stable",
@@ -523,7 +538,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-10-21",
+    dateModified: "2026-10-27",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",

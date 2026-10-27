@@ -30,7 +30,7 @@ bash /tmp/vl.sh --upgrade
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.18.4
+git checkout v0.18.5
 ./install.sh
 ```
 
@@ -86,6 +86,36 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.5
+
+0.18.5 is a **patch** on the stable line. Default engine is still whisper.cpp. It closes the reports filed after 0.18.4: a stop pressed while a recording is starting can no longer leave the microphone recording forever, microphones that stall mid-read can no longer wedge dictation, keyboards survive suspend and the GNOME lock screen, Ctrl+mouse-wheel zoom works again, and the installer learns an upgrade mode that keeps your settings.
+
+### 0.18.5 highlights
+
+| Fix | Description |
+|---------|-------------|
+| **A racing stop always wins** | A stop arriving while a recording is still starting is no longer overwritten by the start, so the microphone can never keep recording with no way to halt it (#1023 by @aagprojectsteam-max; fixes #1022 reported by @aagprojectsteam-max) |
+| **Stalled microphones cannot hang Stop** | Capture reads happen outside the buffer lock, so a mic that stalls mid-read (a USB or Bluetooth hiccup, or the audio server reconfiguring the device) no longer leaves dictation stuck in PROCESSING (#1023; supersedes the approach in #974 by @neuroborus) |
+| **Keyboards survive suspend and lock** | The evdev forwarder releases its EVIOCGRAB when forwarding cannot run, so keyboards no longer go dead at the GNOME lock screen after a suspend/resume (#1025; fixes #1021 reported by @iholder101) |
+| **Dialogs stay on their own workspace** | Dictation Pad, Settings and other standalone windows no longer bind to other windows on Wayland, so opening Settings no longer summons or minimizes the Dictation Pad with it (#1024; fixes #984 reported by @hopsayer) |
+| **Ctrl+mouse-wheel zoom works** | Ctrl key events pass through for applications again, so holding Ctrl and scrolling zooms in Firefox and elsewhere even with a double-tap Ctrl shortcut configured (#967 by @loject; fixes #950 reported by @loject) |
+| **Upgrade mode in the installer** | `install.sh` on an existing install offers and defaults to an upgrade that keeps your configuration and models, and `bash /tmp/vl.sh --upgrade` runs it non-interactively (#1026; fixes #1009 reported by @plaffitt) |
+
+### Also in v0.18.5
+
+- Paste-injection copies stay out of clipboard history managers, so dictated text does not pile up in your clipboard log (#956 by @Nosion)
+- AUR source publication is gated on attested release sdists: the recipe is prepared only from the canonical sdist whose checksum and build provenance verify against this repository's release workflow (#1020 by @sesav)
+- The tray prefers libayatana-appindicator-glib when it is available (#1019; fixes #1013 reported by @jo-so)
+- The Snap package lists PulseAudio microphones and explains that its whisper.cpp build is CPU-only (#1018; fixes #1011 reported by @cmcclung-ANGENG)
+- The Wayland fallback overlay stays alive when the dock closes it, covering the leftover case from 0.18.4 (#1017; fixes #1010 reported by @lavoie005)
+- uv pins are aligned across CI and the release workflows (#1016 by @sesav), release build tooling is pinned with a reproducible-wheel gate (#945 by @sesav), the supported uv range is widened with Fedora/AppImage build hardening (#952 by @sesav), and Dependabot bumps cover pip and GitHub Actions plus flagged vulnerable dependencies (#1014, #1015, #1008 by @Mr-Sunglasses)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp only.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5).
 
 ---
 

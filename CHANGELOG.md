@@ -12,6 +12,12 @@ Release history for Vocalinux.
 
 ## Current stable
 
+**[v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5)** (2026-10-27)
+
+Patch on the stable line: a stop that races a recording start can no longer leave the microphone recording with no way to halt it, and a stalled microphone read can no longer hang Stop forever, keyboards survive suspend and the GNOME lock screen again because the evdev grab is released when forwarding cannot run, Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, paste-injection copies stay out of clipboard history, and AUR source publication is gated on attested release sdists.
+
+See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0185) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5).
+
 **[v0.18.4](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.4)** (2026-10-21)
 
 Patch on the stable line: long push-to-talk dictations are queued in segments instead of being cut off at the buffer cap, Settings never downloads or switches a model without an explicit confirmation and a cancelled download stays cancelled, Test Dictation keeps its own result while the Dictation Pad is open, the GPU picker follows ggml's device list and CPU runs use most of your cores, the recording hotkey cancels a transcription in progress, the Flatpak bundles onnxruntime for Silero VAD and uses the X11 listener on X11 sessions, Wayland injection fixes cover the RemoteDesktop portal, XWayland apps outside IBus and the first recording after launch, Parakeet installs work again, update checks can be turned off, and Slovenian is a supported language.
