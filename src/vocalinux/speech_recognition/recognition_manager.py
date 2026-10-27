@@ -3513,6 +3513,13 @@ class SpeechRecognitionManager:
             self._session_cancel = threading.Event()
             self._worker_exited = threading.Event()
             self._idle_on_worker_exit = None
+            # Arm the session before anyone can see LISTENING. A stop racing
+            # this start (a key released on another thread, the tray) acts as
+            # soon as it sees a non-IDLE state; setting should_record after
+            # that point would undo the stop and leave the capture thread
+            # recording with nothing left to stop it.
+            self.should_record = True
+            self._recognition_mode = mode
             self._key_release_gate = _ReleaseGate()
         finally:
             self._buffer_lock.release()
@@ -3533,8 +3540,6 @@ class SpeechRecognitionManager:
             self._reload_pending = False
             self._update_state(RecognitionState.IDLE)
             return False
-        self.should_record = True
-        self._recognition_mode = mode
 
         # Start the audio recording thread
         self.audio_thread = threading.Thread(
