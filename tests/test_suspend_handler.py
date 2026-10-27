@@ -312,6 +312,8 @@ class TestTrayIndicatorResumeFlow(unittest.TestCase):
         indicator.config_manager.get_bool.return_value = False
         indicator._external_activation_unavailable = False
         indicator._setup_keyboard_shortcuts = MagicMock()
+        indicator.shortcut_manager = MagicMock()
+        indicator._language_shortcut_managers = []
         indicator._input_monitor = None
         indicator._settle_timer_id = None
         indicator._monitor_timeout_id = None
@@ -641,6 +643,8 @@ class TestTrayAutoPauseWiring(unittest.TestCase):
         indicator._model_keepalive = MagicMock()
         indicator._auto_pause_monitor = MagicMock()
         indicator._auto_pause_monitor.paused = False
+        indicator.shortcut_manager = MagicMock()
+        indicator._language_shortcut_managers = []
         return indicator
 
     def test_get_auto_pause_config(self):

@@ -1737,13 +1737,13 @@ class TrayIndicator:
             # Replace pending initialization with a current unload obligation;
             # invalidating it alone would lose cleanup until the game exits.
             self._on_auto_pause()
-            return
-        cancel_pending = getattr(self.speech_engine, "cancel_pending_auto_pause", None)
-        if callable(cancel_pending):
-            cancel_pending()
-        keepalive = getattr(self, "_model_keepalive", None)
-        if keepalive is not None:
-            keepalive.cancel()
+        else:
+            cancel_pending = getattr(self.speech_engine, "cancel_pending_auto_pause", None)
+            if callable(cancel_pending):
+                cancel_pending()
+            keepalive = getattr(self, "_model_keepalive", None)
+            if keepalive is not None:
+                keepalive.cancel()
         # Release the internal hotkey listeners (and their EVIOCGRABs)
         # before the machine sleeps: a grab held through suspend keeps
         # feeding a forwarder whose liveness across resume cannot be
