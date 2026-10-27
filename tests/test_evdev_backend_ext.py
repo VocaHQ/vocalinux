@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, Mock, call, mock_open, patch
 import pytest
 
 from vocalinux.ui.keyboard_backends.evdev_backend import (
+    _MONITOR_STALL_SECONDS,
     DEVICE_RESCAN_SECONDS,
     EvdevDeviceHub,
     EvdevKeyboardBackend,
@@ -2721,6 +2722,188 @@ class TestEvdevGrabAndForwarding:
         backend._resync_clone_key_state(fd, device)
 
         assert backend._withheld_modifier[fd] == {}
+
+
+class TestForwardingWatchdog:
+    """A stalled monitor must not hold grabs while nothing forwards (#1021).
+
+    Suspend/resume can leave the reader wedged with every EVIOCGRAB held:
+    keystrokes queue on hardware only a dead reader can see, and the lock
+    screen goes dark. The watchdog stamps the monitor's liveness through
+    ``_monitor_heartbeat``; a heartbeat past ``_MONITOR_STALL_SECONDS``
+    releases every grab, and a recovering monitor re-arms the suspended
+    devices through the standard open->clone->grab path.
+    """
+
+    def _hub_with_grabbed_device(
+        self, heartbeat: float, generation: int = 3
+    ) -> tuple[EvdevDeviceHub, MagicMock, MagicMock]:
+        """Hub state as the monitor left it: one grabbed device + clone."""
+        backend = EvdevKeyboardBackend()
+        hub = backend._hub
+        hub.reset()
+        hub.running = True
+        hub._generation = generation
+        hub._monitor_heartbeat = heartbeat
+        device = MagicMock()
+        device.fileno.return_value = 10
+        device.name = "Keyboard"
+        forwarder = MagicMock()
+        hub.devices = [device]
+        hub.device_fds = [10]
+        hub.device_paths = {"/dev/input/event0"}
+        hub._device_paths_by_fd = {10: "/dev/input/event0"}
+        hub._fd_generation = {10: generation}
+        hub._forwarders = {10: forwarder}
+        hub._forwarded_held = {10: set()}
+        return hub, device, forwarder
+
+    def test_stalled_monitor_releases_every_grab(self) -> None:
+        """A stale heartbeat ungrabs the device, closes its clone, suspends it."""
+        hub, device, forwarder = self._hub_with_grabbed_device(
+            heartbeat=time.monotonic() - _MONITOR_STALL_SECONDS - 1.0
+        )
+        try:
+            hub._check_forwarding_health(hub._generation)
+
+            device.ungrab.assert_called_once()
+            forwarder.close.assert_called_once()
+            assert hub._forwarders == {}
+            assert hub._grab_suspended_devices == {10: device}
+            # Still monitored, ungrabbed: keys reach the lock screen and the
+            # shortcut keeps detecting, just unsuppressed.
+            assert device in hub.devices
+            assert hub.device_fds == [10]
+        finally:
+            hub.reset()
+
+    def test_fresh_heartbeat_keeps_grabs(self) -> None:
+        """A live monitor's grabs are never touched by the watchdog."""
+        hub, device, forwarder = self._hub_with_grabbed_device(heartbeat=time.monotonic())
+        try:
+            hub._check_forwarding_health(hub._generation)
+
+            device.ungrab.assert_not_called()
+            forwarder.close.assert_not_called()
+            assert hub._forwarders == {10: forwarder}
+            assert hub._grab_suspended_devices == {}
+        finally:
+            hub.reset()
+
+    def test_unstarted_monitor_is_ignored(self) -> None:
+        """Heartbeat 0.0 means the first iteration has not run: not a stall."""
+        hub, device, forwarder = self._hub_with_grabbed_device(heartbeat=0.0)
+        try:
+            hub._check_forwarding_health(hub._generation)
+
+            device.ungrab.assert_not_called()
+            forwarder.close.assert_not_called()
+            assert hub._forwarders == {10: forwarder}
+        finally:
+            hub.reset()
+
+    def test_stall_skips_fds_owned_by_a_newer_generation(self) -> None:
+        """An fd recycled for a newer generation is never released under it."""
+        hub, device, forwarder = self._hub_with_grabbed_device(
+            heartbeat=time.monotonic() - _MONITOR_STALL_SECONDS - 1.0, generation=3
+        )
+        hub._fd_generation[10] = 4  # reopened by the newer generation
+        try:
+            hub._check_forwarding_health(3)
+
+            device.ungrab.assert_not_called()
+            forwarder.close.assert_not_called()
+            assert hub._forwarders == {10: forwarder}
+            assert hub._grab_suspended_devices == {}
+        finally:
+            hub.reset()
+
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend._is_virtual_keyboard")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.UInput")
+    def test_recovery_reopens_suspended_devices_through_grab_path(
+        self,
+        mock_uinput: Mock,
+        mock_input_device: Mock,
+        mock_is_virtual: Mock,
+        mock_find: Mock,
+    ) -> None:
+        """A live heartbeat re-arms suspended devices via rescan and re-grab."""
+        hub, old_device, _ = self._hub_with_grabbed_device(heartbeat=time.monotonic())
+        hub._grab_suspended_devices = {10: old_device}
+
+        new_device = MagicMock()
+        new_device.fileno.return_value = 20
+        new_device.info.bustype = 0x03
+        new_device.name = "Keyboard"
+        new_device.capabilities.return_value = _keyboard_only_capabilities()
+        new_device.active_keys.return_value = []
+        mock_input_device.return_value = new_device
+        new_forwarder = MagicMock()
+        new_forwarder.device.path = "/dev/input/event9"
+        mock_uinput.return_value = new_forwarder
+        mock_is_virtual.return_value = False
+        mock_find.return_value = ["/dev/input/event0"]
+
+        try:
+            hub._check_forwarding_health(hub._generation)
+
+            old_device.close.assert_called_once()
+            assert hub._grab_suspended_devices == {}
+            # Reopened through the normal path: grabbed, cloned, registered.
+            new_device.grab.assert_called_once()
+            assert hub._forwarders[20] is new_forwarder
+            assert new_device in hub.devices
+            assert hub.device_paths == {"/dev/input/event0"}
+        finally:
+            hub.reset()
+
+    def test_recovery_skips_suspended_device_replaced_by_another(self) -> None:
+        """A suspended fd recycled for a different device tears nothing down."""
+        hub, old_device, _ = self._hub_with_grabbed_device(heartbeat=time.monotonic())
+        hub._grab_suspended_devices = {10: old_device}
+        other_device = MagicMock()
+        other_device.fileno.return_value = 10
+        hub.devices = [other_device]  # fd 10 now belongs to a newer device
+
+        try:
+            hub._check_forwarding_health(hub._generation)
+
+            old_device.close.assert_not_called()
+            other_device.close.assert_not_called()
+            assert other_device in hub.devices
+            assert hub._grab_suspended_devices == {}
+        finally:
+            hub.reset()
+
+    def test_watchdog_exits_when_running_stops(self) -> None:
+        """The watchdog returns immediately once the layer is not running."""
+        hub, _, _ = self._hub_with_grabbed_device(heartbeat=time.monotonic())
+        hub.running = False
+        try:
+            # Returns instead of looping: running is already False.
+            hub._forwarding_watchdog(generation=hub._generation)
+        finally:
+            hub.reset()
+
+    def test_unregister_stops_and_joins_watchdog(self) -> None:
+        """Teardown clears the watchdog slot once the last engine leaves."""
+        hub, _, _ = self._hub_with_grabbed_device(heartbeat=time.monotonic())
+        engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        engine.active = True
+        watchdog = MagicMock(spec=threading.Thread)
+        hub._watchdog_thread = watchdog
+        try:
+            with hub._engines_lock:
+                hub._engines.add(engine)
+            hub.unregister(engine)
+
+            watchdog.join.assert_called_once()
+            assert hub._watchdog_thread is None
+            assert hub.running is False
+        finally:
+            hub.reset()
 
 
 class TestWriteOnlyUInput:
