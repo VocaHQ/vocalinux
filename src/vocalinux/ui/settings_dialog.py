@@ -2524,6 +2524,13 @@ class SettingsDialog(AboutSectionMixin):
         # has a visible way to dismiss it, even on window managers that hide
         # the title-bar close button for Gtk.Dialog windows (fixes #323).
         self.set_decorated(True)
+        # A parentless Gtk.Dialog carries the DIALOG type hint, which lands it
+        # on GTK's Wayland "orphan dialog" list: the next toplevel to receive
+        # keyboard focus silently becomes its xdg_toplevel parent, and GNOME
+        # then minimizes, raises and moves the two windows as a unit (#984).
+        # Settings is a standalone window, so keep the NORMAL hint and stay
+        # independent of the dictation pad and overlay.
+        self.set_type_hint(Gdk.WindowTypeHint.NORMAL)
 
         self.config_manager = config_manager
         self.speech_engine = speech_engine
