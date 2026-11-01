@@ -1727,7 +1727,9 @@
     text-transform: uppercase;
   }
 
-  .install-alt h2 {
+  /* /install/ uses h2 (heading order); the home page cards sit under an h2. */
+  .install-alt h2,
+  .install-alt h3 {
     margin: 0.35rem 0 0;
     font-size: 1.2rem;
     letter-spacing: -0.03em;
