@@ -40,8 +40,17 @@ export const buildPageMetadata = ({
 }: PageMetadataOptions): Metadata => {
   const canonical = absoluteUrl(path);
 
+  // The root layout applies the "%s | Vocalinux" template. Titles that already
+  // carry the brand suffix are emitted as-is so search results do not show
+  // "| Vocalinux | Vocalinux".
+  const pageTitle: Metadata["title"] = new RegExp(
+    `[|\\-–—]\\s*${SITE_NAME}$`,
+  ).test(title)
+    ? { absolute: title }
+    : title;
+
   return {
-    title,
+    title: pageTitle,
     description,
     keywords,
     alternates: {

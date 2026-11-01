@@ -59,7 +59,8 @@ const howItWorks = [
   {
     step: 1,
     title: "Enable in Vocalinux",
-    description: "Open Vocalinux and enable 'Start on Login' via the tray menu or Settings dialog.",
+    description:
+      "Answer yes on the first-run prompt, or open Settings → General and turn on 'Start on Login'.",
     code: null,
   },
   {
@@ -78,8 +79,8 @@ const howItWorks = [
 
 const managementMethods = [
   {
-    method: "System Tray",
-    description: "Right-click the Vocalinux tray icon → Start on Login",
+    method: "First-run prompt",
+    description: "The welcome dialog asks once whether to start on login",
     icon: Power,
   },
   {
@@ -117,7 +118,7 @@ export default function AutostartPage() {
     headline: "Autostart Voice Dictation on Linux Login",
     description:
       "How to configure Vocalinux to start automatically on Linux login. XDG autostart guide for all desktop environments.",
-    dateModified: "2026-02-22",
+    dateModified: "2026-11-01",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
@@ -233,6 +234,15 @@ export default function AutostartPage() {
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section className="mb-12 rounded-[12px] border border-border bg-background p-6">
+        <h2 className="mb-3 text-xl font-semibold text-foreground">Moved out of the tray in v0.18.1</h2>
+        <p className="text-sm text-muted-foreground">
+          Older guides say to right-click the tray icon. Since v0.18.1 the tray menu is slimmer:
+          Start on Login lives only in Settings → General, where the settings search also finds it
+          as &ldquo;autostart&rdquo;.
+        </p>
       </section>
 
       <section className="mb-12 rounded-[12px] border border-border bg-primary/5 p-6">
