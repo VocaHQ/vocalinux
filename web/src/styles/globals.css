@@ -1522,7 +1522,8 @@
     font-size: clamp(1.5rem, 3vw, 1.85rem);
   }
 
-  .subpage-content h3 {
+  .subpage-content h3,
+  .subpage-content .subpage-card-title {
     margin-top: 1.6rem;
     font-size: 1.15rem;
     letter-spacing: -0.03em;
@@ -1726,6 +1727,8 @@
     text-transform: uppercase;
   }
 
+  /* /install/ uses h2 (heading order); the home page cards sit under an h2. */
+  .install-alt h2,
   .install-alt h3 {
     margin: 0.35rem 0 0;
     font-size: 1.2rem;

@@ -56,9 +56,9 @@ const comparisonTable = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Vocalinux Alternatives - Linux Voice Dictation Comparison",
+  title: "Linux Alternatives to Dragon, Otter.ai and Speechnotes",
   description:
-    "Compare Vocalinux to Dragon, Otter.ai, Google Voice Typing, and other speech-to-text alternatives. See why Vocalinux is the best choice for Linux voice dictation.",
+    "Looking for Dragon NaturallySpeaking, Otter.ai or Google Voice Typing on Linux? Compare offline Linux dictation options, including Vocalinux and Nerd Dictation.",
   path: "/alternatives",
   keywords: [
     "vocalinux alternatives",

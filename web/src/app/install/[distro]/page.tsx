@@ -431,7 +431,9 @@ export async function generateMetadata({
   const config = distroConfig[distro];
 
   return buildPageMetadata({
-    title: config.title,
+    // Search title leads with the query people type ("ubuntu speech to text");
+    // the on-page h1 stays config.title.
+    title: `${config.name} Speech to Text: Offline Voice Typing Setup`,
     description: config.description,
     path: `/install/${distro}`,
     keywords: distroKeywords[distro],

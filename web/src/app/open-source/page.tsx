@@ -85,9 +85,9 @@ const techStack = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Open Source Voice Dictation for Linux | Vocalinux",
+  title: "Open Source Dictation Software for Linux (AGPL-3.0)",
   description:
-    "100% free and open source voice dictation for Linux. AGPL-3.0 licensed, no vendor lock-in, transparent code, community-driven development. Your voice data stays private.",
+    "Free, open source dictation software for Linux under AGPL-3.0. Offline speech recognition with whisper.cpp or VOSK, no required account, all code on GitHub.",
   path: "/open-source",
   keywords: [
     "open source voice dictation",

@@ -225,7 +225,7 @@ export default function MultilingualDictationPage() {
       <section className="mb-12 grid gap-4 sm:grid-cols-3">
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Globe className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Auto-detect</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Auto-detect</h2>
           <p className="text-sm text-muted-foreground">
             The engine guesses the language for each utterance. Easiest to set
             up, but short clips can be guessed wrong.
@@ -233,7 +233,7 @@ export default function MultilingualDictationPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Keyboard className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Language shortcuts</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Language shortcuts</h2>
           <p className="text-sm text-muted-foreground">
             A dedicated key per language. Explicit and reliable, for one
             dictation at a time.
@@ -241,7 +241,7 @@ export default function MultilingualDictationPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Languages className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Follow keyboard layout</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Follow keyboard layout</h2>
           <p className="text-sm text-muted-foreground">
             Switch layout to switch dictation language. Best on GNOME, where the
             active layout can be read.

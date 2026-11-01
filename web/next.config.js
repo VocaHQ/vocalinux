@@ -1,3 +1,5 @@
+import { PHASE_PRODUCTION_BUILD } from 'next/constants.js';
+
 // @ts-ignore
 /** @type {import("next").NextConfig} */
 const config = {
@@ -70,4 +72,30 @@ const config = {
 		return config;
 	},
 };
-export default config;
+
+// The header star count is fetched once per production build and inlined, so
+// visitors never call api.github.com (Lighthouse flagged it as third-party
+// code on every page). Any failure falls back to the plain "GitHub" label.
+async function fetchGitHubStars() {
+	try {
+		const res = await fetch('https://api.github.com/repos/VocaHQ/vocalinux', {
+			headers: process.env.GITHUB_TOKEN
+				? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
+				: {},
+			signal: AbortSignal.timeout(5000),
+		});
+		if (!res.ok) return '';
+		const data = await res.json();
+		return data.stargazers_count ? String(data.stargazers_count) : '';
+	} catch {
+		return '';
+	}
+}
+
+export default async function nextConfig(phase) {
+	if (phase !== PHASE_PRODUCTION_BUILD) return config;
+	return {
+		...config,
+		env: { NEXT_PUBLIC_GITHUB_STARS: await fetchGitHubStars() },
+	};
+}

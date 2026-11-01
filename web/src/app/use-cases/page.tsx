@@ -92,7 +92,7 @@ const useCases = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Use Cases - Who Uses Vocalinux Voice Dictation",
+  title: "Use Cases for Linux Voice Dictation",
   description:
     "Discover how developers, writers, students, and professionals use Vocalinux for Linux voice dictation. Find your use case and boost productivity.",
   path: "/use-cases",

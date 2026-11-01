@@ -129,4 +129,9 @@ describe('VocalinuxLogo', () => {
     const img = screen.getByAltText('Vocalinux');
     expect(img).toHaveAttribute('loading', 'eager');
   });
+
+  it('uses empty alt text when decorative', () => {
+    const { container } = render(<VocalinuxLogo decorative />);
+    expect(container.querySelector('img')).toHaveAttribute('alt', '');
+  });
 });

@@ -25,6 +25,13 @@ const normalizePath = (path: string): string => {
   }
 
   const trimmed = path.replace(/^\/+|\/+$/g, "");
+
+  // Files such as /vocalinux.png must not get the page trailing slash:
+  // /vocalinux.png/ is a 404 on GitHub Pages.
+  if (/\.[a-z0-9]+$/i.test(trimmed)) {
+    return `/${trimmed}`;
+  }
+
   return `/${trimmed}/`;
 };
 

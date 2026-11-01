@@ -164,7 +164,7 @@ export default function CustomDictionaryPage() {
       <section className="mb-12 grid gap-4 sm:grid-cols-3">
         <div className="rounded-[12px] border border-border bg-background p-5">
           <BookOpen className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Custom terms</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Custom terms</h2>
           <p className="text-sm text-muted-foreground">
             A plain text list, one term per line, passed to the engine as
             context so it is more likely to spell those words your way.
@@ -175,7 +175,7 @@ export default function CustomDictionaryPage() {
             className="mb-3 h-6 w-6 text-primary"
             aria-hidden="true"
           />
-          <h3 className="mb-2 font-semibold">Transcript corrections</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Transcript corrections</h2>
           <p className="text-sm text-muted-foreground">
             Heard-as and replace-with pairs applied to every finished
             transcript, whatever the engine.
@@ -183,7 +183,7 @@ export default function CustomDictionaryPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Code className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Post-processing script</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Post-processing script</h2>
           <p className="text-sm text-muted-foreground">
             Any executable that reads text on stdin and writes the replacement
             on stdout.
