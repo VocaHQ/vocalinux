@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import math
 from types import ModuleType
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 if TYPE_CHECKING:
     from gi.repository import Gdk, Gtk
@@ -120,8 +120,15 @@ class DictationOverlay:
     window is passive: no keyboard focus, click-through input region.
     """
 
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(
+        self,
+        enabled: bool = True,
+        on_close_request: Optional[Callable[[], None]] = None,
+    ) -> None:
         self.controller = DictationOverlayController(enabled=enabled)
+        # Called when the dock or taskbar asks to close the window (#1028).
+        self._on_close_request = on_close_request
+        self._close_request_pending = False
         self._window: Optional[Gtk.Window] = None
         self._drawing_area: Optional[Gtk.DrawingArea] = None
         self._anim_id: Optional[int] = None
@@ -263,12 +270,27 @@ class DictationOverlay:
         destroy the window; the next recording would then map a new toplevel
         that takes focus from the editor (#1010). Disabling the overlay in
         Settings unmaps it instead.
+
+        The window stays, but the request is passed to ``on_close_request``
+        so "Quit" from the dock quits Vocalinux like the tray's Quit (#1028).
         """
-        logger.info(
-            "Ignoring a close request for the dictation overlay; "
-            "turn the overlay off in Settings to remove it"
-        )
+        if self._on_close_request is None:
+            logger.info(
+                "Ignoring a close request for the dictation overlay; "
+                "turn the overlay off in Settings to remove it"
+            )
+            return True
+        if not self._close_request_pending:
+            logger.info("Dock or taskbar asked to close the dictation overlay; quitting")
+            self._close_request_pending = True
+            self._GLib.idle_add(self._run_close_request)
         return True
+
+    def _run_close_request(self) -> bool:
+        """Run the close callback from the main loop (one-shot idle source)."""
+        if self._on_close_request is not None:
+            self._on_close_request()
+        return False
 
     def _on_size_allocate(self, widget, allocation) -> None:
         """Keep the empty input shape after size changes."""
