@@ -30,6 +30,7 @@ def _make_injector() -> Any:
     obj._clipboard_timeout = 0.35
     obj._clipboard_restore_generation = 0
     obj._clipboard_restore_target = None
+    obj._should_copy_to_clipboard = MagicMock(return_value=False)
     return obj
 
 
@@ -212,7 +213,11 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
 
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
-    def test_clipboard_paste_uses_wtype_argv_when_chosen(self, mock_run, mock_which):
+    @patch("vocalinux.text_injection.text_injector.threading.Thread")
+    def test_clipboard_paste_uses_wtype_argv_when_chosen(
+        self, mock_thread: MagicMock, mock_run: MagicMock, mock_which: MagicMock
+    ) -> None:
+        """Check wtype arguments without launching an unrelated restore worker."""
         mock_which.side_effect = lambda cmd: cmd in ("wl-copy", "wtype", "ydotool")
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         injector = _make_injector()
@@ -222,6 +227,9 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
                 with patch.object(injector, "_read_clipboard", return_value="old"):
                     with patch.object(injector, "_should_use_terminal_paste", return_value=False):
                         self.assertTrue(injector._inject_via_clipboard_paste("hello"))
+        # Restore behaviour is covered separately; never let a delayed worker
+        # outlive these clipboard/subprocess patches and reach the next test.
+        mock_thread.return_value.start.assert_called_once_with()
         paste_cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
         self.assertTrue(
             any(c == ["wtype", "-M", "ctrl", "v"] for c in paste_cmds),
@@ -244,7 +252,11 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
 
     @patch("vocalinux.text_injection.text_injector.shutil.which")
     @patch("vocalinux.text_injection.text_injector.subprocess.run")
-    def test_clipboard_paste_sends_terminal_chord(self, mock_run, mock_which):
+    @patch("vocalinux.text_injection.text_injector.threading.Thread")
+    def test_clipboard_paste_sends_terminal_chord(
+        self, mock_thread: MagicMock, mock_run: MagicMock, mock_which: MagicMock
+    ) -> None:
+        """Check the terminal chord without launching an unrelated restore worker."""
         mock_which.side_effect = lambda cmd: cmd in ("wl-copy", "ydotool")
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
         injector = _make_injector()
@@ -258,8 +270,10 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
                     ) as mock_cmd:
                         self.assertTrue(injector._inject_via_clipboard_paste("hello"))
                         mock_cmd.assert_called_once_with(terminal=True)
+        mock_thread.return_value.start.assert_called_once_with()
 
-    def test_clipboard_paste_survives_mocked_subprocess_run(self):
+    @patch("vocalinux.text_injection.text_injector.threading.Thread")
+    def test_clipboard_paste_survives_mocked_subprocess_run(self, mock_thread: MagicMock) -> None:
         """Patching text_injector.subprocess.run also shadows stdlib subprocess.
 
         Existing clipboard-restore tests do that. Window detection must fail
@@ -279,3 +293,4 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
                             return_value=MagicMock(returncode=0),
                         ):
                             self.assertTrue(injector._inject_via_clipboard_paste("hello"))
+        mock_thread.return_value.start.assert_called_once_with()
