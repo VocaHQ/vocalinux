@@ -34,7 +34,7 @@ const waylandFeatures = [
   {
     title: "Desktop Agnostic",
     description:
-      "Works with GNOME, KDE Plasma, Sway, Hyprland, river, and other Wayland compositors.",
+      "Full support on GNOME and KDE Plasma, good support on sway, and experimental support on Hyprland.",
     icon: Zap,
   },
   {
@@ -61,19 +61,19 @@ const compositorSupport = [
   {
     name: "Sway",
     method: "IBus / wtype",
-    status: "Full support",
+    status: "Good support",
     notes: "i3-compatible Wayland compositor",
   },
   {
     name: "Hyprland",
     method: "IBus / wtype",
-    status: "Full support",
-    notes: "Dynamic tiling Wayland compositor",
+    status: "Experimental",
+    notes: "May need wtype configuration; see the Hyprland and sway guide",
   },
   {
     name: "river",
     method: "IBus / wtype",
-    status: "Full support",
+    status: "Untested",
     notes: "Dynamic tiling Wayland compositor",
   },
   {
