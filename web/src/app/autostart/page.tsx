@@ -165,7 +165,7 @@ export default function AutostartPage() {
               className="rounded-[12px] border border-border bg-background p-5"
             >
               <Icon className="mb-3 h-6 w-6 text-primary" />
-              <h3 className="mb-2 font-semibold">{method.method}</h3>
+              <h2 className="subpage-card-title mb-2 font-semibold">{method.method}</h2>
               <p className="text-sm text-muted-foreground">{method.description}</p>
             </div>
           );

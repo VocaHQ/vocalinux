@@ -176,7 +176,7 @@ export default function WaylandPage() {
               className="rounded-[12px] border border-border bg-background p-6"
             >
               <Icon className="mb-3 h-8 w-8 text-primary" />
-              <h3 className="mb-2 font-semibold">{feature.title}</h3>
+              <h2 className="subpage-card-title mb-2 font-semibold">{feature.title}</h2>
               <p className="text-sm text-muted-foreground">
                 {feature.description}
               </p>

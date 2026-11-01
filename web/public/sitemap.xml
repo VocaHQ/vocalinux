@@ -2,37 +2,37 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://vocalinux.com/</loc>
-    <lastmod>2026-06-11</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/install/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/install/ubuntu/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/install/fedora/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/install/arch/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/compare/</loc>
-    <lastmod>2026-06-11</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -50,7 +50,7 @@
   </url>
   <url>
     <loc>https://vocalinux.com/faq/</loc>
-    <lastmod>2026-06-11</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -80,14 +80,14 @@
   </url>
   <url>
     <loc>https://vocalinux.com/alternatives/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <!-- New SEO pages -->
   <url>
     <loc>https://vocalinux.com/languages/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -129,13 +129,13 @@
   </url>
   <url>
     <loc>https://vocalinux.com/gpu-acceleration/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
     <loc>https://vocalinux.com/open-source/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
@@ -153,7 +153,7 @@
   </url>
   <url>
     <loc>https://vocalinux.com/offline/</loc>
-    <lastmod>2026-02-22</lastmod>
+    <lastmod>2026-11-01</lastmod>
     <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>

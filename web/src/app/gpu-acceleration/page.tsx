@@ -130,9 +130,9 @@ const hardwareRequirements = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "GPU Accelerated Voice Dictation - AMD, Intel, NVIDIA | Vocalinux",
+  title: "Vulkan GPU Speech to Text on Linux: AMD, Intel, NVIDIA",
   description:
-    "GPU-accelerated speech recognition for Linux. Support for AMD, Intel, and NVIDIA GPUs via Vulkan. Compare CPU vs GPU performance and model sizes.",
+    "Run whisper.cpp speech recognition on your GPU with Vulkan on Linux: AMD, Intel and NVIDIA. CPU vs GPU speed, model sizes, and automatic CPU fallback.",
   path: "/gpu-acceleration",
   keywords: [
     "GPU voice dictation",

@@ -68,7 +68,7 @@ export default function PrivacyPage() {
           <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
             <Lock className="h-6 w-6 text-primary" />
           </div>
-          <h3 className="mb-2 text-xl font-semibold">Local engines</h3>
+          <h2 className="subpage-card-title mb-2 text-xl font-semibold">Local engines</h2>
           <p className="text-sm text-muted-foreground">
             Local engines do not need the internet after the model is downloaded. Processing stays
             on your device unless you turn on Remote API.
@@ -79,7 +79,7 @@ export default function PrivacyPage() {
           <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
             <Server className="h-6 w-6 text-primary" />
           </div>
-          <h3 className="mb-2 text-xl font-semibold">No Cloud Processing</h3>
+          <h2 className="subpage-card-title mb-2 text-xl font-semibold">No Cloud Processing</h2>
           <p className="text-sm text-muted-foreground">
             Local engines do not send your voice to our servers. Remote API sends audio only to the
             URL you configure.
@@ -90,7 +90,7 @@ export default function PrivacyPage() {
           <div className="mb-4 inline-flex rounded-[12px] bg-primary/10 p-3">
             <Eye className="h-6 w-6 text-primary" />
           </div>
-          <h3 className="mb-2 text-xl font-semibold">Open Source</h3>
+          <h2 className="subpage-card-title mb-2 text-xl font-semibold">Open Source</h2>
           <p className="text-sm text-muted-foreground">
             Fully open source under AGPL-3.0. Inspect the code yourself on GitHub. The installed
             app does not send usage telemetry.

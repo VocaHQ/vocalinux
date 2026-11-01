@@ -576,6 +576,9 @@ jobs:
 
       - name: Install and build
         working-directory: ./web
+        env:
+          # next.config.js reads the repo star count at build time
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm ci || npm install
           npm run deploy

@@ -168,7 +168,7 @@ const troubleshootingItems = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Troubleshooting Guide - Vocalinux Voice Dictation",
+  title: "Linux Voice Dictation Troubleshooting Guide",
   description:
     "Fix common Vocalinux issues: microphone problems, text injection, installation errors, and performance. Step-by-step solutions for Linux voice dictation.",
   path: "/troubleshooting",

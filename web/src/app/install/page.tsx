@@ -67,7 +67,7 @@ const distroGuides = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Install Voice Dictation on Linux (Ubuntu, Fedora, Arch)",
+  title: "Install Speech to Text on Linux (Ubuntu, Fedora, Arch)",
   description:
     "Linux voice dictation install guides for Ubuntu, Debian, Fedora, Arch, openSUSE, Mint, Pop!_OS, NixOS, and Flatpak. Start offline speech-to-text.",
   path: "/install",
@@ -108,7 +108,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">No installer</p>
-            <h3>AppImage</h3>
+            <h2>AppImage</h2>
             <p>
               x86_64 or aarch64 from GitHub Releases. No root. Host
               text-injection tools are still required.
@@ -120,7 +120,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">New</p>
-            <h3>Native packages</h3>
+            <h2>Native packages</h2>
             <p>
               .deb for Debian 12+ and Ubuntu 24.04+. .rpm for Fedora.
               x86_64 and aarch64 on every release.
@@ -131,7 +131,7 @@ export default function InstallGuidesPage() {
             href="/flatpak/"
           >
             <p className="install-alt-kicker">Auto-updates</p>
-            <h3>Flatpak</h3>
+            <h2>Flatpak</h2>
             <p>
               Install once from the VocaHQ remote and{" "}
               <code>flatpak update</code> carries each stable release. Or
@@ -144,7 +144,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">Snap Store</p>
-            <h3>Snap</h3>
+            <h2>Snap</h2>
             <p>
               <code>snap install vocalinux --edge</code>. amd64 only for
               now; a .snap is attached to every release too.
@@ -156,7 +156,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">Arch</p>
-            <h3>AUR</h3>
+            <h2>AUR</h2>
             <p>
               <code>yay -S vocalinux</code>, or vocalinux-bin for the
               prebuilt package.
@@ -168,7 +168,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">From source</p>
-            <h3>Build it yourself</h3>
+            <h2>Build it yourself</h2>
             <p>
               Clone the repo and run <code>./install.sh</code>. The install
               guide has the full source path.

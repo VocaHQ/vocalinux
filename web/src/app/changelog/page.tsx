@@ -519,7 +519,7 @@ const getTypeStyles = (type: string) => {
 };
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Vocalinux Changelog - Release History",
+  title: "Changelog and Release Notes",
   description:
     "Track Vocalinux release history and version updates. See what's new in each version of our Linux voice dictation software.",
   path: "/changelog",

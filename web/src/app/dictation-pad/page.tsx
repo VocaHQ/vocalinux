@@ -179,7 +179,7 @@ export default function DictationPadPage() {
       <section className="mb-12 grid gap-4 sm:grid-cols-3">
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Monitor className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Who it is for</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Who it is for</h2>
           <p className="text-sm text-muted-foreground">
             Wayland users whose compositor blocks or garbles injected text, and
             anyone who wants to read and fix a draft before it reaches the real
@@ -188,7 +188,7 @@ export default function DictationPadPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Copy className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">How text gets out</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">How text gets out</h2>
           <p className="text-sm text-muted-foreground">
             Copy All puts the whole pad on the clipboard. You can also select
             part of the text and copy it like any other text box.
@@ -196,7 +196,7 @@ export default function DictationPadPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Keyboard className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">What stays the same</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">What stays the same</h2>
           <p className="text-sm text-muted-foreground">
             Your shortcut, engine, transcript corrections and post-processing
             script all work as before. Only the destination of the text changes.

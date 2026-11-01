@@ -174,9 +174,9 @@ export default function TranscribeAudioFilesPage() {
       <section className="mb-12 grid gap-4 sm:grid-cols-3">
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Mic className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">
+          <h2 className="subpage-card-title mb-2 font-semibold">
             For recordings, not live dictation
-          </h3>
+          </h2>
           <p className="text-sm text-muted-foreground">
             File transcription is separate from the dictation pipeline. It never
             types into other apps and does not change your dictation model.
@@ -184,7 +184,7 @@ export default function TranscribeAudioFilesPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Users className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Speaker turns, English only</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Speaker turns, English only</h2>
           <p className="text-sm text-muted-foreground">
             The model is <code>small.en-tdrz</code>. It is English-only, so use
             it for English recordings.
@@ -192,7 +192,7 @@ export default function TranscribeAudioFilesPage() {
         </div>
         <div className="rounded-[12px] border border-border bg-background p-5">
           <Lock className="mb-3 h-6 w-6 text-primary" aria-hidden="true" />
-          <h3 className="mb-2 font-semibold">Local processing</h3>
+          <h2 className="subpage-card-title mb-2 font-semibold">Local processing</h2>
           <p className="text-sm text-muted-foreground">
             Audio is decoded and transcribed on your computer. Nothing is sent
             to a server.
