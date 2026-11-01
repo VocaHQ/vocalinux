@@ -84,14 +84,16 @@ def test_snap_docs_explain_typing_without_uinput_plug() -> None:
         assert "portal" in lowered
 
 
-def test_snap_strips_pygobject_and_uses_gnome_gi() -> None:
-    """Pip must not build PyGObject; GI comes from the gnome extension."""
+def test_snap_preserves_metadata_and_uses_gnome_gi() -> None:
+    """GI comes from GNOME without rewriting project dependencies."""
     text = SNAPCRAFT_YAML.read_text(encoding="utf-8")
     doc = yaml.safe_load(text)
-    override_pull = doc["parts"]["vocalinux"]["override-pull"]
-    assert "PyGObject" in override_pull
-    assert "pyproject.toml" in override_pull
-    assert "gnome extension" in override_pull
+    part = doc["parts"]["vocalinux"]
+    assert part["plugin"] == "nil"
+    assert "python-packages" not in part
+    assert "sed -i" not in part["override-pull"]
+    assert "snap/local/build.py" in part["override-build"]
+    assert "craftctl default" not in part["override-build"]
     stage = doc["parts"]["vocalinux"].get("stage-packages") or []
     assert "python3-gi" not in stage
     assert "python3-gi-cairo" not in stage
@@ -222,9 +224,9 @@ def test_snap_builds_pywhispercpp_at_the_portable_baseline() -> None:
     env: dict = {}
     for entry in doc["parts"]["vocalinux"].get("build-environment") or []:
         env.update(entry)
-    assert (
-        env.get("PIP_NO_BINARY") == "pywhispercpp"
-    ), "without --no-binary the snap installs the AVX2+FMA wheel (#957)"
+    build = (REPO_ROOT / "snap/local/build.py").read_text()
+    assert '"--no-binary=pywhispercpp"' in build
+    assert '"--no-cache-dir"' in build
     cmake_args = env.get("CMAKE_ARGS") or ""
     for flag in PORTABLE_GGML_OPTIONS:
         assert (

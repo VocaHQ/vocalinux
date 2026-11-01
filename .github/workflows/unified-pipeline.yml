@@ -25,6 +25,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       aur: ${{ steps.filter.outputs.aur }}
       native: ${{ steps.filter.outputs.native }}
+      snap: ${{ steps.filter.outputs.snap }}
       deploy_website: ${{ steps.deploy_check.outputs.deploy }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,6 +58,7 @@ jobs:
               # lint job: a scripts-only change that skipped this filter would
               # skip both the checker and the tests that validate it.
               - 'scripts/**'
+              - 'snap/local/*.py'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
               - '.github/workflows/release.yml'
@@ -77,6 +79,13 @@ jobs:
             # python matrix.
             native:
               - 'packaging/native/**'
+              - '.github/workflows/unified-pipeline.yml'
+            snap:
+              - 'snap/**'
+              - 'MANIFEST.in'
+              - 'README.md'
+              - 'LICENSE'
+              - '.github/workflows/release.yml'
               - '.github/workflows/unified-pipeline.yml'
       - name: Check if website should deploy
         id: deploy_check
@@ -157,15 +166,15 @@ jobs:
       # tool versions are the ones `just lint` uses locally.
       - name: Lint with flake8 (critical errors)
         run: |
-          uv run --locked --only-group lint flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          uv run --locked --only-group lint flake8 src/ tests/ snap/local/ --count --select=E9,F63,F7,F82 --show-source --statistics
 
       - name: Check formatting with black
         run: |
-          uv run --locked --only-group lint black --check --diff src/ tests/
+          uv run --locked --only-group lint black --check --diff src/ tests/ snap/local/
 
       - name: Check import sorting with isort
         run: |
-          uv run --locked --only-group lint isort --check-only --diff --profile black src/ tests/
+          uv run --locked --only-group lint isort --check-only --diff --profile black src/ tests/ snap/local/
 
       - name: Type check (mypy)
         run: |
@@ -500,6 +509,33 @@ jobs:
             -v "$PWD/packaging/native:/pk:ro" \
             "${{ matrix.distro }}" \
             bash /pk/smoke-test.sh
+
+  # Build the same recipe as release.yml and inspect the installed artifact.
+  # No Store credentials or publication are needed, including on fork PRs.
+  snap-build-test:
+    name: 📦 Build and install Snap (gate)
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.snap == 'true'
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build snap
+        id: build
+        uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+      - name: Verify the installed snap
+        env:
+          SNAP_FILE: ${{ steps.build.outputs.snap }}
+        run: bash snap/local/smoke-test.sh "$SNAP_FILE"
+      - name: Upload the verified snap
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vocalinux-snap-amd64
+          path: ${{ steps.build.outputs.snap }}
+          if-no-files-found: error
+          retention-days: 7
 
   web-build:
     name: 🌐 Build Website
