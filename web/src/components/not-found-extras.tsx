@@ -13,7 +13,14 @@ function useMissingPath(): string | null {
   useEffect(() => {
     const { pathname } = window.location;
     if (pathname && pathname !== "/404/" && pathname !== "/404.html") {
-      setPath(decodeURIComponent(pathname).slice(0, 80));
+      // Malformed escapes such as /%FF/ make decodeURIComponent throw.
+      let decoded = pathname;
+      try {
+        decoded = decodeURIComponent(pathname);
+      } catch {
+        // Keep the raw path; it still gets a suggestion attempt.
+      }
+      setPath(decoded.slice(0, 80));
     }
   }, []);
   return path;
