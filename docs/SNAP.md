@@ -30,8 +30,9 @@ packages over incidental copies in the GNOME platform.
 
 The build audits build-tool and installed runtime versions against the active
 export pins and records expected runtime versions and both export digests in
-`usr/share/vocalinux/python-inputs.json` inside the snap. Missing, extra,
-duplicate or wrong-version Python distributions fail the build.
+`usr/share/vocalinux/python-inputs.json` inside the snap. Missing or wrong-version
+build tools fail the build. For the packaged runtime, extra and duplicate
+Python distributions are rejected as well.
 
 Regenerate exports with the repository's `just lock` workflow, not by editing
 them or adding independent pins to `snapcraft.yaml`. `just export-check` checks

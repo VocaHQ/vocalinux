@@ -80,6 +80,7 @@ def test_locked_versions_evaluates_markers_and_normalizes_names(tmp_path: Path) 
     ],
 )
 def test_locked_versions_fails_closed(tmp_path: Path, text: str, message: str) -> None:
+    """Reject exports that cannot define an unambiguous locked runtime."""
     export = tmp_path / "runtime.txt"
     export.write_text(text)
     with pytest.raises(RuntimeError, match=message):
@@ -88,6 +89,7 @@ def test_locked_versions_fails_closed(tmp_path: Path, text: str, message: str) -
 
 @pytest.mark.parametrize("change", ["missing", "extra", "version", "duplicate"])
 def test_runtime_audit_rejects_drift(tmp_path: Path, change: str) -> None:
+    """Reject missing, extra, duplicate and wrong-version runtime distributions."""
     distribution(tmp_path, "demo", "1.0")
     expected = {"demo": "1.0"}
     if change == "missing":
@@ -103,6 +105,7 @@ def test_runtime_audit_rejects_drift(tmp_path: Path, change: str) -> None:
 
 
 def test_record_audits_payload_and_preserves_export_digests(tmp_path: Path) -> None:
+    """Record audited runtime pins and the exact input export digests."""
     source = tmp_path / "source"
     (source / "requirements").mkdir(parents=True)
     (source / "requirements/runtime.txt").write_text(export_pin("demo"))
@@ -130,6 +133,7 @@ def test_record_audits_payload_and_preserves_export_digests(tmp_path: Path) -> N
     ],
 )
 def test_record_rejects_unlocked_build_tools(tmp_path: Path, text: str, message: str) -> None:
+    """Refuse incorrect build-tool versions or an empty toolchain export."""
     source = tmp_path / "source"
     (source / "requirements").mkdir(parents=True)
     (source / "requirements/installer-build.txt").write_text(text)
@@ -141,6 +145,7 @@ def test_record_rejects_unlocked_build_tools(tmp_path: Path, text: str, message:
 def test_launchers_are_relocatable_and_keep_locked_packages_first(
     tmp_path: Path, long_shebang: bool
 ) -> None:
+    """Run relocated launchers against locked packages despite platform copies."""
     install = tmp_path / "install"
     binary = install / "bin"
     binary.mkdir(parents=True)
@@ -249,6 +254,7 @@ def test_build_orchestration_uses_hashes_and_separates_tooling(
 
 
 def test_ci_builds_recipe_only_changes_and_checks_before_publication() -> None:
+    """Require equivalent PR/release artifact gates before uploading the Snap."""
     ci = yaml.safe_load((ROOT / ".github/workflows/unified-pipeline.yml").read_text())
     jobs = ci["jobs"]
     changes = jobs["changes"]
