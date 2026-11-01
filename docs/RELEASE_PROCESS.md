@@ -451,7 +451,9 @@ After pushing the tag, the GitHub Actions workflow will automatically:
    `FLATPAK_GPG_PRIVATE_KEY` + `FLATPAK_REPO_TOKEN` are configured — see
    docs/FLATPAK_REMOTE.md)
 8. Deploy the website to vocalinux.com
-9. Build the amd64 snap, attach it to the GitHub Release, and try Snap Store
+9. Build the amd64 snap from locked Python exports and run the installed-artifact
+   gate described in [SNAP.md](SNAP.md), then attach it to the GitHub Release and
+   try Snap Store
    `edge`/`candidate`. Store human review (for example a super-privileged
    `allow-installation` plug) must not block the GitHub `.snap`. `stable` does not auto-release (#783):
    after candidate QA, dispatch `snap-promote.yml`, which releases the

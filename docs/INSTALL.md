@@ -170,6 +170,9 @@ Desktop shortcuts only toggle dictation, so they cannot support push-to-talk.
 
 Listing: [snapcraft.io/vocalinux](https://snapcraft.io/vocalinux) (issue [#48](https://github.com/VocaHQ/vocalinux/issues/48)). Recipe: `snap/snapcraft.yaml`. Tagged `v*` releases attach `vocalinux_<version>_amd64.snap` to the GitHub Release and try Snap Store `edge` and `candidate` when credentials are set. `stable` is promoted from `candidate` after QA.
 
+Build inputs, the PR/release artifact gate, and its verification limits are
+documented in [SNAP.md](SNAP.md).
+
 Store install, once Canonical lists the revision:
 
 ```bash
