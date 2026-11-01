@@ -58,6 +58,8 @@ export const footerGroups: { title: string; links: NavLink[] }[] = [
       { href: "/install/ubuntu/", label: "Ubuntu" },
       { href: "/install/fedora/", label: "Fedora" },
       { href: "/install/arch/", label: "Arch" },
+      { href: "/install/debian/", label: "Debian" },
+      { href: "/flatpak/", label: "Flatpak" },
     ],
   },
   {
@@ -68,6 +70,16 @@ export const footerGroups: { title: string; links: NavLink[] }[] = [
       { href: "/gpu-acceleration/", label: "GPU acceleration" },
       { href: "/desktop-reliability/", label: "Reliability" },
       { href: "/remote-api/", label: "Remote API" },
+    ],
+  },
+  {
+    title: "Features",
+    links: [
+      { href: "/dictation-pad/", label: "Dictation Pad" },
+      { href: "/transcribe-audio-files/", label: "Transcribe audio files" },
+      { href: "/custom-dictionary/", label: "Custom dictionary" },
+      { href: "/global-shortcuts/", label: "Global shortcuts" },
+      { href: "/parakeet/", label: "Parakeet engine" },
     ],
   },
   {

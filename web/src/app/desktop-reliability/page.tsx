@@ -203,6 +203,33 @@ export default function DesktopReliabilityPage() {
         </div>
       </section>
 
+      <section className="mb-12 rounded-[12px] border border-border bg-background p-6">
+        <h2 className="mb-3 font-display text-2xl font-semibold">Guides for the v0.17 and v0.18 features</h2>
+        <p className="mb-4 text-sm text-muted-foreground">
+          Each of these features has its own setup guide with settings, limits, and troubleshooting.
+        </p>
+        <ul className="grid gap-2 text-sm sm:grid-cols-2">
+          {[
+            { href: "/dictation-pad/", label: "Dictation Pad" },
+            { href: "/transcribe-audio-files/", label: "File transcription with speaker labels" },
+            { href: "/pipewire/", label: "PipeWire capture and system-audio sources" },
+            { href: "/global-shortcuts/", label: "D-Bus activation and desktop shortcuts" },
+            { href: "/multilingual-dictation/", label: "Per-language shortcuts and layout-follow" },
+            { href: "/custom-dictionary/", label: "Custom dictionary and postprocessing hook" },
+            { href: "/hyprland-sway/", label: "Hyprland, sway, and i3" },
+            { href: "/faster-whisper/", label: "Faster Whisper engine" },
+            { href: "/parakeet/", label: "Parakeet engine" },
+            { href: "/flatpak/", label: "VocaHQ Flatpak remote" },
+          ].map((guide) => (
+            <li key={guide.href}>
+              <Link href={guide.href} className="font-medium text-primary hover:underline">
+                {guide.label}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       <section className="mb-12 grid gap-6 lg:grid-cols-[1fr_1fr]">
         <div className="rounded-[12px] border border-border bg-background p-6">
           <h2 className="mb-4 font-display text-2xl font-semibold">Why This Matters</h2>

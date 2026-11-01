@@ -368,10 +368,14 @@ export default function HomePage() {
                 </div>
                 <div className="workbench-meta">
                   <span className="chip">whisper.cpp default</span>
-                  <span className="chip">Faster Whisper</span>
+                  <Link className="chip" href="/faster-whisper/">
+                    Faster Whisper
+                  </Link>
                   <span className="chip">Whisper</span>
                   <span className="chip">VOSK</span>
-                  <span className="chip">Parakeet</span>
+                  <Link className="chip" href="/parakeet/">
+                    Parakeet
+                  </Link>
                   <span className="chip">Remote API</span>
                 </div>
               </div>
@@ -1035,12 +1039,12 @@ export default function HomePage() {
                   </span>
                   iPhone + Android
                 </span>
-                <span className="chip">Android beta / iOS TestFlight</span>
+                <span className="chip">Android on Google Play / iOS TestFlight</span>
               </div>
               <h3>VocaPhone</h3>
               <p>
-                Android beta and iOS TestFlight. On-device first, gateway
-                optional.
+                Android on Google Play and iOS TestFlight. On-device first,
+                gateway optional.
               </p>
             </a>
             <a

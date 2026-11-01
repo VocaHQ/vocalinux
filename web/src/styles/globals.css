@@ -1870,7 +1870,7 @@ nextjs-portal {
   }
 
   .footer-inner {
-    grid-template-columns: minmax(0, 1.4fr) repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.2fr) repeat(5, minmax(0, 1fr));
   }
 }
 

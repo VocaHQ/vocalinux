@@ -36,6 +36,22 @@ const pageTitles: Record<string, string> = {
   "/troubleshooting": "Troubleshooting",
   "/shortcuts": "Voice Commands",
   "/alternatives": "Alternatives",
+  "/parakeet": "Parakeet",
+  "/faster-whisper": "Faster Whisper",
+  "/dictation-pad": "Dictation Pad",
+  "/transcribe-audio-files": "Transcribe Audio Files",
+  "/custom-dictionary": "Custom Dictionary",
+  "/multilingual-dictation": "Multilingual Dictation",
+  "/pipewire": "PipeWire",
+  "/global-shortcuts": "Global Shortcuts",
+  "/hyprland-sway": "Hyprland and Sway",
+  "/local-gateway": "Local Gateway",
+  "/flatpak": "Flatpak",
+  "/install/nixos": "NixOS",
+  "/install/debian": "Debian",
+  "/install/opensuse": "openSUSE",
+  "/install/linux-mint": "Linux Mint",
+  "/install/pop-os": "Pop!_OS",
 };
 
 function titleFromSegment(segment: string): string {
