@@ -531,6 +531,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         monitor = MagicMock()
         monitor.get_geometry.return_value = geom
         display = MagicMock()
+        display.__gtype__ = SimpleNamespace(name="GdkX11Display")
         display.get_primary_monitor.return_value = monitor
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = display
@@ -539,6 +540,35 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         # Full-width strip along the bottom of the monitor.
         mock_window.resize.assert_called_once_with(1920, _STRIP_HEIGHT)
         mock_window.move.assert_called_once_with(100, 50 + 1080 - _STRIP_HEIGHT - _BOTTOM_MARGIN)
+
+    def test_layout_wayland_fallback_is_compact_and_centered(self):
+        """Wayland without layer shell gets a compact centered window (#1030).
+
+        GTK3's Gdk typelib has no ``WaylandDisplay`` class, so the display
+        must be recognized by its GType name, as ``_display_is_wayland`` does.
+        """
+        from vocalinux.ui.dictation_overlay import _ORB_SIZE, _STRIP_HEIGHT
+
+        overlay = _overlay_without_gtk(enabled=True)
+        mock_window = MagicMock()
+        overlay._window = mock_window
+        overlay._drawing_area = MagicMock()
+        geom = MagicMock(x=0, y=0, width=2560, height=1600)
+        monitor = MagicMock()
+        monitor.get_geometry.return_value = geom
+        display = MagicMock()
+        display.__gtype__ = SimpleNamespace(name="GdkWaylandDisplay")
+        display.get_primary_monitor.return_value = monitor
+        # Mirror the real GTK3 typelib: Gdk has Display but no WaylandDisplay.
+        overlay._Gdk = SimpleNamespace(Display=MagicMock())
+        overlay._Gdk.Display.get_default.return_value = display
+        overlay._Gtk = MagicMock()
+
+        overlay._layout_bottom_strip()
+
+        mock_window.resize.assert_called_once_with(_ORB_SIZE, _STRIP_HEIGHT)
+        mock_window.set_position.assert_called_once_with(overlay._Gtk.WindowPosition.CENTER_ALWAYS)
+        mock_window.move.assert_not_called()
 
     def test_layout_falls_back_to_first_monitor(self):
         overlay = _overlay_without_gtk(enabled=True)

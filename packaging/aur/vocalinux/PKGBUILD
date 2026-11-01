@@ -56,6 +56,7 @@ optdepends=(
   'xclip: X11 clipboard tools (copy/paste injection fallbacks)'
   'wl-clipboard: Wayland clipboard (wl-copy/wl-paste) injection fallbacks'
   'wtype: Wayland keystroke injection fallback'
+  'gtk-layer-shell: dictation overlay as a layer surface on KDE and wlroots Wayland'
 )
 conflicts=('vocalinux-git')
 source=("${pkgname}-${_version}.tar.gz::https://github.com/VocaHQ/vocalinux/releases/download/v${_tag}/${pkgname}-${_version}.tar.gz")

@@ -284,16 +284,6 @@ class DictationOverlay:
         """Re-evaluate the hide strategy when a compositor appears or leaves."""
         self._sync_window()
 
-    def _is_wayland(self) -> bool:
-        """True when the default display is a Wayland one."""
-        try:
-            wayland_cls = getattr(self._Gdk, "WaylandDisplay", None)
-            if wayland_cls is None:
-                return False
-            return isinstance(self._Gdk.Display.get_default(), wayland_cls)
-        except Exception:
-            return False
-
     def _display_is_wayland(self) -> bool:
         """Check the GType name; GTK3's Gdk typelib does not expose GdkWaylandDisplay as a class."""
         display = self._Gdk.Display.get_default()
@@ -458,7 +448,7 @@ class DictationOverlay:
                 return
             geom = monitor.get_geometry()
             height = _STRIP_HEIGHT
-            wayland = self._is_wayland()
+            wayland = self._display_is_wayland()
             if wayland:
                 self._window.set_position(self._Gtk.WindowPosition.CENTER_ALWAYS)
                 width = _ORB_SIZE
