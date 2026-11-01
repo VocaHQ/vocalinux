@@ -633,6 +633,52 @@ class TestSettingsPersistsServerName:
         dialog.audio_device_combo.set_active_id.assert_called_with(str(PULSE_INDEX_BASE - 1))
 
 
+class TestAudioDeviceTooltip:
+    """The fixed-width dropdown truncates long names; the tooltip shows them whole (#1029)."""
+
+    _SOF = "sof-hda-dsp: - (hw:0,6)"
+
+    def _combo(self, device_id: Optional[str], label: Optional[str]) -> MagicMock:
+        combo = MagicMock()
+        combo.get_active_id.return_value = device_id
+        combo.get_active_text.return_value = label
+        return combo
+
+    def test_choosing_a_device_shows_its_full_name_in_the_tooltip(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock(_initializing=False, _pulse_source_names={})
+        dialog.audio_device_combo = self._combo("1", self._SOF)
+        settings_dialog.SettingsDialog._on_audio_device_changed(dialog, None)
+        dialog.audio_device_combo.set_tooltip_text.assert_called_with(self._SOF)
+
+    def test_system_default_keeps_the_generic_tooltip(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock(_initializing=False, _pulse_source_names={})
+        dialog.audio_device_combo = self._combo("-1", "System Default")
+        settings_dialog.SettingsDialog._on_audio_device_changed(dialog, None)
+        dialog.audio_device_combo.set_tooltip_text.assert_called_with(
+            "Select the microphone to use for voice recognition"
+        )
+
+    def test_populating_shows_the_saved_device_in_the_tooltip(self) -> None:
+        """The saved device is selected before the change handler is wired up."""
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock()
+        dialog.config_manager.get_optional_int.return_value = 1
+        dialog.config_manager.get.return_value = self._SOF
+        dialog.audio_device_combo = self._combo("1", self._SOF)
+        devices = [(0, "sof-hda-dsp: - (hw:0,0)", False), (1, self._SOF, False)]
+        with (
+            patch.object(settings_dialog, "get_pulse_sources", return_value=[]),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.get_audio_input_devices",
+                return_value=devices,
+            ),
+        ):
+            settings_dialog.SettingsDialog._populate_audio_devices(dialog)
+        dialog.audio_device_combo.set_tooltip_text.assert_called_with(self._SOF)
+
+
 def _load_settings_dialog() -> ModuleType:
     """Import settings_dialog with real GTK base classes so its methods are callable.
 
