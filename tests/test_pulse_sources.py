@@ -679,6 +679,38 @@ class TestAudioDeviceTooltip:
         dialog.audio_device_combo.set_tooltip_text.assert_called_with(self._SOF)
 
 
+class TestAudioStatusMarkup:
+    """Device names and errors are free text; the status label parses Pango markup."""
+
+    def _glib(self) -> MagicMock:
+        from xml.sax.saxutils import escape
+
+        return MagicMock(markup_escape_text=MagicMock(side_effect=escape))
+
+    def test_selected_device_name_is_escaped(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock(_initializing=False, _pulse_source_names={})
+        dialog.audio_device_combo.get_active_id.return_value = "2"
+        dialog.audio_device_combo.get_active_text.return_value = "Mic & Line <A2DP>"
+        with patch.object(settings_dialog, "GLib", self._glib()):
+            settings_dialog.SettingsDialog._on_audio_device_changed(dialog, None)
+        dialog.audio_test_status.set_markup.assert_called_with(
+            "<i>Selected: Mic &amp; Line &lt;A2DP&gt;</i>"
+        )
+
+    def test_test_failure_message_is_escaped(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock()
+        with patch.object(settings_dialog, "GLib", self._glib()):
+            settings_dialog.SettingsDialog._handle_audio_test_result(
+                dialog, {"success": False, "error": "Invalid device <hw:0,6> & busy"}
+            )
+        dialog.audio_test_status.set_markup.assert_called_with(
+            "<span foreground='#c01c28'>✗ Test failed:</span> "
+            "Invalid device &lt;hw:0,6&gt; &amp; busy"
+        )
+
+
 def _load_settings_dialog() -> ModuleType:
     """Import settings_dialog with real GTK base classes so its methods are callable.
 
