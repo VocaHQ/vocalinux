@@ -2140,6 +2140,18 @@ def _combo_chrome(combo: Gtk.Widget, tooltip: Optional[str] = None) -> None:
     _prevent_scroll_on_hover(combo)
 
 
+_AUDIO_DEVICE_TOOLTIP = "Select the microphone to use for voice recognition"
+
+
+def _sync_audio_device_tooltip(combo: Gtk.ComboBoxText) -> None:
+    """Show the selected microphone's full name, which the fixed-width combo truncates."""
+    label = combo.get_active_text()
+    if not label or combo.get_active_id() in (None, "-1"):
+        combo.set_tooltip_text(_AUDIO_DEVICE_TOOLTIP)
+    else:
+        combo.set_tooltip_text(label)
+
+
 def _new_spin(
     lower: float, upper: float, step: float, digits: int, tooltip: Optional[str] = None
 ) -> Gtk.SpinButton:
@@ -3137,7 +3149,7 @@ class SettingsDialog(AboutSectionMixin):
         self.audio_device_combo = Gtk.ComboBoxText()
         _combo_chrome(
             self.audio_device_combo,
-            tooltip="Select the microphone to use for voice recognition",
+            tooltip=_AUDIO_DEVICE_TOOLTIP,
         )
 
         refresh_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
@@ -9925,6 +9937,7 @@ For now, the engine has been reverted to VOSK."""
                 if self.speech_engine is not None:
                     self.speech_engine.set_audio_device(None, None)
 
+        _sync_audio_device_tooltip(self.audio_device_combo)
         logger.info(f"Found {len(devices)} audio input devices")
 
     def _on_refresh_audio_devices(self, widget):
@@ -9934,6 +9947,7 @@ For now, the engine has been reverted to VOSK."""
 
     def _on_audio_device_changed(self, widget):
         """Handle changes in the selected audio device."""
+        _sync_audio_device_tooltip(self.audio_device_combo)
         if self._initializing:
             return
 
