@@ -49,10 +49,10 @@ snapcraft pack
 On a **disposable Ubuntu host with snapd**, inspect the resulting artifact:
 
 ```bash
-bash snap/local/smoke-test.sh ./vocalinux_0.18.5_amd64.snap
+bash snap/local/smoke-test.sh ./vocalinux_<version>_amd64.snap
 ```
 
-Substitute the version that was built. The script refuses to overwrite an
+Replace `<version>` with the version that was built. The script refuses to overwrite an
 existing Vocalinux snap. It installs the supplied file with `--dangerous`,
 runs the actual application launcher with `--version`, then enters the GNOME
 command-chain environment to audit Python versions and import the native,
