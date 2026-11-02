@@ -115,8 +115,9 @@ class DictationOverlay:
     """
     Floating glowing dictation indicator backed by a GTK window.
 
-    Uses a full-width bottom strip so the orb is always bottom-center of the
-    monitor (Wayland often ignores move() on a small centered popup). The
+    On X11 and with layer shell, a full-width bottom strip keeps the orb
+    bottom-center of the monitor. A plain Wayland toplevel cannot be
+    positioned, so there it is a compact window the compositor places. The
     window is passive: no keyboard focus, click-through input region.
     """
 
@@ -427,7 +428,7 @@ class DictationOverlay:
 
     def _layout_bottom_strip(self) -> None:
         """
-        Size the window as a full-width bottom strip and place it on the primary monitor.
+        Size and place the fallback window (no layer shell) on the primary monitor.
 
         Drawing the orb at the strip's horizontal center always yields bottom-center
         of the screen, even when the compositor only roughly honors move().
