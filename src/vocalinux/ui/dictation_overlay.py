@@ -287,9 +287,15 @@ class DictationOverlay:
         return True
 
     def _run_close_request(self) -> bool:
-        """Run the close callback from the main loop (one-shot idle source)."""
-        if self._on_close_request is not None:
-            self._on_close_request()
+        """Run the close callback from the main loop (one-shot idle source).
+
+        ``destroy()`` drops the callback, so a request still queued when the
+        app is already quitting (tray Quit, SIGTERM) does not quit it twice.
+        """
+        self._close_request_pending = False
+        callback = self._on_close_request
+        if callback is not None:
+            callback()
         return False
 
     def _on_size_allocate(self, widget, allocation) -> None:
@@ -358,6 +364,8 @@ class DictationOverlay:
 
     def destroy(self) -> None:
         """Tear down animation and window."""
+        # Teardown is underway; a queued dock close must not run the callback.
+        self._on_close_request = None
         self._stop_animation()
         if self._window is not None:
             try:
