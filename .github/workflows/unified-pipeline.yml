@@ -58,7 +58,10 @@ jobs:
               # lint job: a scripts-only change that skipped this filter would
               # skip both the checker and the tests that validate it.
               - 'scripts/**'
-              - 'snap/local/*.py'
+              # Same for snap/: tests/test_snap_*.py check the recipe, the
+              # portable whisper.cpp flags (#957) and smoke-test.sh, and the
+              # lint job checks snap/local/*.py.
+              - 'snap/**'
               - '.pre-commit-config.yaml'
               - '.github/workflows/unified-pipeline.yml'
               - '.github/workflows/release.yml'

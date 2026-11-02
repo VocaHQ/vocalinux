@@ -266,7 +266,8 @@ def test_ci_builds_recipe_only_changes_and_checks_before_publication() -> None:
         )
     )
     assert "snap/**" in filters["snap"]
-    assert "snap/local/*.py" in filters["python"]
+    # A recipe- or smoke-script-only change must still run the tests guarding them.
+    assert "snap/**" in filters["python"]
     assert changes["outputs"]["snap"] == "${{ steps.filter.outputs.snap }}"
     pr = jobs["snap-build-test"]
     assert "outputs.snap == 'true'" in pr["if"]
