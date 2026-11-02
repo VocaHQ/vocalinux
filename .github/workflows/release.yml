@@ -1028,7 +1028,8 @@ jobs:
   # Secret: SNAPCRAFT_STORE_CREDENTIALS (snapcraft export-login).
   build-snap:
     name: Build Snap
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
@@ -1038,6 +1039,11 @@ jobs:
       - name: Build snap
         id: build
         uses: snapcore/action-build@3bdaa03e1ba6bf59a65f84a751d943d549a54e79 # v1
+
+      - name: Verify the installed snap
+        env:
+          SNAP_FILE: ${{ steps.build.outputs.snap }}
+        run: bash snap/local/smoke-test.sh "$SNAP_FILE"
 
       - name: Upload the snap
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
