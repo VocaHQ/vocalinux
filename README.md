@@ -452,8 +452,12 @@ offline and does not send audio or usage events. The model occupies about
 Settings → Speech Model → Parakeet also offers two builds of
 [Underdog Bark 3.0](https://huggingface.co/ConwayResearch/Underdog-Bark-3.0), an
 English fine-tune of Parakeet TDT 0.6B v3 (CC BY 4.0): `bark-3.0` (int8, 653 MiB)
-and `bark-3.0-int4` (4-bit, 379 MiB, about half the memory, slower). Both run on
-the existing sherpa-onnx recognizer from pinned, checksummed downloads that
-include their license and attribution notice.
+and `bark-3.0-int4` (4-bit, 379 MiB, about half the memory, slower). Both come
+from a pinned revision of
+[velddev/Underdog-Bark-3.0-sherpa-onnx](https://huggingface.co/velddev/Underdog-Bark-3.0-sherpa-onnx),
+an unofficial sherpa-onnx conversion not made or endorsed by Conway Research.
+They run on the existing sherpa-onnx recognizer, every file is checked against
+its bundled SHA-256 pin, and the downloads include the license and attribution
+notice.
 Choose one for English dictation of conversational speech, `bark-3.0-int4` when
 memory is tight; for read or multilingual speech keep `v3-european`.
