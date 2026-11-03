@@ -134,6 +134,7 @@ def test_real_bootstrap_selects_release_and_executes_its_installer_and_modules(
 def test_api_outage_without_tag_fails_with_network_exit_and_hint(
     tmp_path: Path, releases: tuple[Path, Path]
 ) -> None:
+    """Stop with a network error and a --tag hint when latest cannot be resolved."""
     result = _bootstrap(tmp_path, releases)
     assert result.returncode == 3, result.stdout + result.stderr
     assert "No release tag available:" in result.stdout + result.stderr
@@ -144,6 +145,7 @@ def test_api_outage_without_tag_fails_with_network_exit_and_hint(
 def test_nonexistent_tag_does_not_fall_back_to_an_existing_release(
     tmp_path: Path, releases: tuple[Path, Path]
 ) -> None:
+    """Reject a missing tag instead of installing another available release."""
     result = _bootstrap(tmp_path, releases, f"--tag={TAG}-nonexistent")
     assert result.returncode == 3, result.stdout + result.stderr
     assert f"Remote branch {TAG}-nonexistent not found" in result.stdout + result.stderr
@@ -154,6 +156,7 @@ def test_nonexistent_tag_does_not_fall_back_to_an_existing_release(
 def test_handoff_bypass_is_a_behavioral_failure_even_with_the_correct_checkout(
     tmp_path: Path, releases: tuple[Path, Path]
 ) -> None:
+    """Reject a skipped handoff even when the clone points at the requested tag."""
     tree, output = releases
     bootstrap = output / "bootstrap.sh"
     source = bootstrap.read_text()
@@ -172,6 +175,7 @@ def test_handoff_bypass_is_a_behavioral_failure_even_with_the_correct_checkout(
 
 @pytest.mark.parametrize("events", ["bootstrap\n", "bootstrap\ninstaller:latest\n"])
 def test_gate_rejects_missing_or_wrong_execution_witnesses(tmp_path: Path, events: str) -> None:
+    """Reject traces that omit the tagged installer or execute a different release."""
     gate = (ROOT / "scripts/install-remote-test.sh").read_text()
     assertion = re.search(r"^assert_trace\(\) \{\n.*?^\}", gate, re.M | re.S)
     assert assertion
@@ -194,6 +198,7 @@ def test_gate_rejects_missing_or_wrong_execution_witnesses(tmp_path: Path, event
 def test_latest_shim_delegates_every_other_url_and_preserves_arguments(
     tmp_path: Path, helper: ModuleType
 ) -> None:
+    """Keep unrelated curl requests and their arguments unchanged."""
     real = tmp_path / "real curl"
     real.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\nexit 17\n')
     real.chmod(0o755)
@@ -208,6 +213,7 @@ def test_latest_shim_delegates_every_other_url_and_preserves_arguments(
 
 @pytest.mark.parametrize("args", [[], [f"--tag={TAG}"]])
 def test_gate_runner_preserves_an_empty_or_explicit_argument_list(args: list[str]) -> None:
+    """Start the remote installer without adding or losing arguments."""
     gate = (ROOT / "scripts/install-remote-test.sh").read_text()
     runner = re.search(r"^run_remote_install\(\) \{\n.*?^\}", gate, re.M | re.S)
     assert runner
@@ -241,6 +247,7 @@ def test_gate_runner_preserves_an_empty_or_explicit_argument_list(args: list[str
 def test_both_export_witnesses_are_real_hash_pinned_installable_wheels(
     tmp_path: Path, helper: ModuleType, role: str, version: str
 ) -> None:
+    """Verify both exports supply hashed wheels that real pip can install offline."""
     tree, output = tmp_path / "tree", tmp_path / "gate fixtures"
     _copy_source(tree)
     helper.prepare_fixture(tree, output, role)
