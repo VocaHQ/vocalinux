@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import re
 import shlex
 import shutil
 import zipfile
@@ -78,7 +79,8 @@ def write_latest_shim(path: Path, real_curl: Path) -> None:
 
 def prepare_fixture(tree: Path, output: Path, role: str) -> None:
     """Instrument a disposable tree without replacing any installation actions."""
-    version = {"explicit": "1.0", "latest": "2.0"}[role]
+    revision = {"explicit": 1, "latest": 2}[role]
+    version = f"{revision}.0"
     output.mkdir(parents=True, exist_ok=True)
     installer = tree / "install.sh"
     source = installer.read_text(encoding="utf-8")
@@ -94,6 +96,17 @@ def prepare_fixture(tree: Path, output: Path, role: str) -> None:
     installer.write_text(
         _replace_once(source, anchor, anchor + _witness(f"installer:{role}")), encoding="utf-8"
     )
+    # A skipped project reinstall must not pass an upgrade's version smoke.
+    version_file = tree / "src/vocalinux/version.py"
+    version_source, count = re.subn(
+        r'^__version__ = "[^"]+"\n__version_info__ = \([^\n]+\)',
+        f'__version__ = "0.0.{revision}"\n__version_info__ = (0, 0, {revision})',
+        version_file.read_text(encoding="utf-8"),
+        flags=re.MULTILINE,
+    )
+    if count != 1:
+        raise ValueError("Expected exactly one fixture version declaration")
+    version_file.write_text(version_source, encoding="utf-8")
     for module in MODULES:
         path = tree / "install.d" / module
         path.write_text(

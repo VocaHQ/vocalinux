@@ -313,6 +313,20 @@ def test_the_remote_gate_covers_controlled_latest_and_api_failure() -> None:
     assert re.search(r"^assert_api_unused$", gate, re.M)
 
 
+def test_the_remote_gate_upgrades_between_releases_without_replacing_user_state() -> None:
+    """An upgrade must install the new release while keeping the venv and config."""
+    gate = _without_comments(_remote_gate_text())
+    assert re.search(r"^run_remote_install --upgrade \|\| fail", gate, re.M)
+    assert re.search(r'^cmp "\$WORK/upgrade-config.json"', gate, re.M)
+    assert '"$UPGRADE_VENV_ID"' in gate
+    assert re.search(r'^  && grep -qx "\$GATE_TAG" "\$REMOTE_VENV/remote-gate.keep"', gate, re.M)
+    assert '"$UPGRADE_FROM_VERSION"' in gate
+    assert 'assert version("vocalinux") == sys.argv[1]' in gate
+    assert "Upgrade mode: keeping configured engine 'remote_api'." in gate
+    # Latest still gets its own fresh-HOME install after upgrading the old one.
+    assert gate.index("run_remote_install --upgrade") < gate.index("select_scenario latest")
+
+
 def test_the_remote_gate_rejects_each_incomplete_release_in_isolation() -> None:
     """A failed case must identify its missing input and cannot reuse a venv."""
     gate = _without_comments(_remote_gate_text())

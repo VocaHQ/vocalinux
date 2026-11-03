@@ -102,7 +102,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: syntax
     # Explicit-tag clone/fetch (including a terminal-backed streaming pipe),
-    # controlled latest with a fresh HOME, and fail-closed incomplete releases.
+    # a cross-release --upgrade, controlled latest with a fresh HOME, and
+    # fail-closed incomplete releases.
     # Real system/Python installs; only the latest API response is substituted.
     timeout-minutes: 45
     steps:
