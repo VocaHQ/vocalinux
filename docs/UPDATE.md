@@ -324,7 +324,7 @@ See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.
 - Distro matrix runs `install.sh` (#810)
 - `install.sh` Faster Whisper box is CPU CTranslate2 / INT8, not NVIDIA CUDA. The whisper.cpp GPU step does not install the CUDA toolkit; Vulkan is first, CUDA only if a toolkit is already on the machine (#826)
 
-AppImage and Flatpak remain whisper.cpp only. Snap ships whisper.cpp plus VOSK. Faster Whisper and Parakeet are optional extras on `install.sh` / source installs.
+AppImage, Flatpak and Snap remain whisper.cpp only. Faster Whisper and Parakeet are optional extras on `install.sh` / source installs.
 
 See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.17.0).
 

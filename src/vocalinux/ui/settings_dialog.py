@@ -9977,7 +9977,10 @@ For now, the engine has been reverted to VOSK."""
             self.speech_engine.set_audio_device(device_index, device_name)
 
         logger.info(f"Audio device changed to: [{device_index}] {device_name}")
-        self.audio_test_status.set_markup(f"<i>Selected: {device_label}</i>")
+        # Device names are free text ("Mic & Line", "<A2DP>"); escape them for Pango.
+        self.audio_test_status.set_markup(
+            f"<i>Selected: {GLib.markup_escape_text(device_label or '')}</i>"
+        )
 
     def _cancel_audio_test(self, *_args: object) -> None:
         """Cancel capture and invalidate any queued result when Settings closes."""
@@ -10048,7 +10051,7 @@ For now, the engine has been reverted to VOSK."""
                     "<small>Check if microphone is muted or try a different device</small>"
                 )
         else:
-            error_msg = result.get("error", "Unknown error")
+            error_msg = GLib.markup_escape_text(str(result.get("error", "Unknown error")))
             self.audio_test_status.set_markup(
                 f"<span foreground='#c01c28'>✗ Test failed:</span> {error_msg}"
             )
