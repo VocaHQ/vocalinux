@@ -53,13 +53,21 @@ export const VocalinuxLogo: React.FC<{
   width?: number;
   height?: number;
   priority?: boolean;
-}> = ({ className = "", width = 32, height = 32, priority = false }) => {
+  /** Set when the visible "Vocalinux" text sits next to the mark. */
+  decorative?: boolean;
+}> = ({
+  className = "",
+  width = 32,
+  height = 32,
+  priority = false,
+  decorative = false,
+}) => {
   return (
     // SVG lockup; next/image is for raster.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       src="/brand/vocalinux-mark-circle.svg"
-      alt="Vocalinux"
+      alt={decorative ? "" : "Vocalinux"}
       width={width}
       height={height}
       className={className}

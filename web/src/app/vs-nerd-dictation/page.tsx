@@ -67,7 +67,7 @@ const comparisonRows = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Vocalinux vs Nerd Dictation: Best Offline Voice Dictation for Linux",
+  title: "Nerd Dictation Alternative for Linux | Vocalinux",
   description:
     "Comparing Vocalinux and Nerd Dictation for offline Linux voice dictation. CLI vs GUI, GPU vs CPU-only, Wayland support, and more.",
   path: "/vs-nerd-dictation",

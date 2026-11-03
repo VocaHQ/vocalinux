@@ -77,18 +77,18 @@ test-cov: _tooling
 # Run linters (flake8, black, isort)
 lint: _tooling
     @echo "Running flake8..."
-    uv run --no-sync flake8 src/ tests/ --count --select=E9,F63,F7,F82 --show-source --statistics
+    uv run --no-sync flake8 src/ tests/ snap/local/ --count --select=E9,F63,F7,F82 --show-source --statistics
     @echo "Checking black formatting..."
-    uv run --no-sync black --check --diff src/ tests/
+    uv run --no-sync black --check --diff src/ tests/ snap/local/
     @echo "Checking isort..."
-    uv run --no-sync isort --check-only --diff --profile black src/ tests/
+    uv run --no-sync isort --check-only --diff --profile black src/ tests/ snap/local/
 
 # Auto-format code (black + isort)
 format: _tooling
     @echo "Formatting with black..."
-    uv run --no-sync black src/ tests/
+    uv run --no-sync black src/ tests/ snap/local/
     @echo "Sorting imports with isort..."
-    uv run --no-sync isort --profile black src/ tests/
+    uv run --no-sync isort --profile black src/ tests/ snap/local/
 
 # Run type checking (mypy)
 typecheck: _tooling

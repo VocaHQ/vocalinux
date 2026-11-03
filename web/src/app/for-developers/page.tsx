@@ -179,7 +179,7 @@ export default function ForDevelopersPage() {
             key={benefit.title}
             className="rounded-[12px] border border-border bg-background p-5 text-center"
           >
-            <h3 className="mb-2 font-semibold">{benefit.title}</h3>
+            <h2 className="subpage-card-title mb-2 font-semibold">{benefit.title}</h2>
             <p className="text-sm text-muted-foreground">{benefit.description}</p>
           </div>
         ))}

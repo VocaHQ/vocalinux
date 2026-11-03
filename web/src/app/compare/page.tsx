@@ -81,9 +81,9 @@ const engineTable = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Whisper.cpp vs Whisper vs VOSK vs Remote API for Linux",
+  title: "Vosk vs Whisper vs whisper.cpp: Linux Speech Engines",
   description:
-    "Compare whisper.cpp, Whisper, VOSK, and Remote API for Linux speech-to-text. See speed, hardware requirements, privacy tradeoffs, and best use cases.",
+    "Vosk vs Whisper vs whisper.cpp for offline Linux speech to text, plus Faster Whisper, Parakeet and Remote API: speed, accuracy, hardware needs and privacy.",
   path: "/compare",
   keywords: [
     "whisper.cpp vs vosk",

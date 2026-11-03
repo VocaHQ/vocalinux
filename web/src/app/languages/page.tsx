@@ -306,9 +306,9 @@ const features = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Multilingual Voice Dictation - 30+ Languages | Vocalinux",
+  title: "Linux Speech to Text in 30+ Languages, Offline",
   description:
-    "Dictate in 30+ languages including Spanish, French, German, Hungarian, Japanese, Korean, Arabic, and more. Free offline multilingual voice typing for Linux.",
+    "Offline voice typing on Linux in 30+ languages, including Spanish, French, German, Hungarian, Japanese, Korean and Arabic. Full language list and model picks.",
   path: "/languages",
   keywords: [
     "multilingual voice dictation",
@@ -383,7 +383,7 @@ export default function LanguagesPage() {
               className="rounded-[12px] border border-border bg-background p-6"
             >
               <Icon className="mb-3 h-8 w-8 text-primary" />
-              <h3 className="mb-2 font-semibold">{feature.title}</h3>
+              <h2 className="subpage-card-title mb-2 font-semibold">{feature.title}</h2>
               <p className="text-sm text-muted-foreground">{feature.description}</p>
             </div>
           );

@@ -2336,10 +2336,11 @@ class SpeechRecognitionManager:
             # reconfigure()/reinitialize_after_resume() already hold it when they
             # call this, so acquiring it would deadlock the caller.
             self.model = None
+            precision = parakeet.PARAKEET_MODEL_INFO[self.model_size].get("precision", "int8")
             self.model = sherpa_onnx.OfflineRecognizer.from_transducer(
-                encoder=os.path.join(model_dir, "encoder.int8.onnx"),
-                decoder=os.path.join(model_dir, "decoder.int8.onnx"),
-                joiner=os.path.join(model_dir, "joiner.int8.onnx"),
+                encoder=os.path.join(model_dir, f"encoder.{precision}.onnx"),
+                decoder=os.path.join(model_dir, f"decoder.{precision}.onnx"),
+                joiner=os.path.join(model_dir, f"joiner.{precision}.onnx"),
                 tokens=os.path.join(model_dir, "tokens.txt"),
                 model_type="nemo_transducer",
                 feature_dim=128,
@@ -2377,7 +2378,7 @@ class SpeechRecognitionManager:
                 stream = self.model.create_stream()
                 stream.accept_waveform(16000, audio_float)
                 self.model.decode_stream(stream)
-                return cast(str, stream.result.text.strip())
+                return " ".join(stream.result.text.replace("<unk>", " ").split())
 
         except (RuntimeError, OSError, ValueError) as e:
             audio_info = (

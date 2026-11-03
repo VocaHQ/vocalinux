@@ -34,7 +34,7 @@ const waylandFeatures = [
   {
     title: "Desktop Agnostic",
     description:
-      "Works with GNOME, KDE Plasma, Sway, Hyprland, river, and other Wayland compositors.",
+      "Full support on GNOME and KDE Plasma, good support on sway, and experimental support on Hyprland.",
     icon: Zap,
   },
   {
@@ -61,19 +61,19 @@ const compositorSupport = [
   {
     name: "Sway",
     method: "IBus / wtype",
-    status: "Full support",
+    status: "Good support",
     notes: "i3-compatible Wayland compositor",
   },
   {
     name: "Hyprland",
     method: "IBus / wtype",
-    status: "Full support",
-    notes: "Dynamic tiling Wayland compositor",
+    status: "Experimental",
+    notes: "May need wtype configuration; see the Hyprland and sway guide",
   },
   {
     name: "river",
     method: "IBus / wtype",
-    status: "Full support",
+    status: "Untested",
     notes: "Dynamic tiling Wayland compositor",
   },
   {
@@ -176,7 +176,7 @@ export default function WaylandPage() {
               className="rounded-[12px] border border-border bg-background p-6"
             >
               <Icon className="mb-3 h-8 w-8 text-primary" />
-              <h3 className="mb-2 font-semibold">{feature.title}</h3>
+              <h2 className="subpage-card-title mb-2 font-semibold">{feature.title}</h2>
               <p className="text-sm text-muted-foreground">
                 {feature.description}
               </p>

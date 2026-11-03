@@ -25,6 +25,13 @@ const normalizePath = (path: string): string => {
   }
 
   const trimmed = path.replace(/^\/+|\/+$/g, "");
+
+  // Files such as /vocalinux.png must not get the page trailing slash:
+  // /vocalinux.png/ is a 404 on GitHub Pages.
+  if (/\.[a-z0-9]+$/i.test(trimmed)) {
+    return `/${trimmed}`;
+  }
+
   return `/${trimmed}/`;
 };
 
@@ -40,8 +47,17 @@ export const buildPageMetadata = ({
 }: PageMetadataOptions): Metadata => {
   const canonical = absoluteUrl(path);
 
+  // The root layout applies the "%s | Vocalinux" template. Titles that already
+  // carry the brand suffix are emitted as-is so search results do not show
+  // "| Vocalinux | Vocalinux".
+  const pageTitle: Metadata["title"] = new RegExp(
+    `[|\\-–—]\\s*${SITE_NAME}$`,
+  ).test(title)
+    ? { absolute: title }
+    : title;
+
   return {
-    title,
+    title: pageTitle,
     description,
     keywords,
     alternates: {

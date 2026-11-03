@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SiteChrome } from "@/components/site-chrome";
+import { absoluteUrl } from "@/lib/seo";
 
 const pageTitles: Record<string, string> = {
   "/install": "Install Guides",
@@ -36,6 +37,22 @@ const pageTitles: Record<string, string> = {
   "/troubleshooting": "Troubleshooting",
   "/shortcuts": "Voice Commands",
   "/alternatives": "Alternatives",
+  "/parakeet": "Parakeet",
+  "/faster-whisper": "Faster Whisper",
+  "/dictation-pad": "Dictation Pad",
+  "/transcribe-audio-files": "Transcribe Audio Files",
+  "/custom-dictionary": "Custom Dictionary",
+  "/multilingual-dictation": "Multilingual Dictation",
+  "/pipewire": "PipeWire",
+  "/global-shortcuts": "Global Shortcuts",
+  "/hyprland-sway": "Hyprland and Sway",
+  "/local-gateway": "Local Gateway",
+  "/flatpak": "Flatpak",
+  "/install/nixos": "NixOS",
+  "/install/debian": "Debian",
+  "/install/opensuse": "openSUSE",
+  "/install/linux-mint": "Linux Mint",
+  "/install/pop-os": "Pop!_OS",
 };
 
 function titleFromSegment(segment: string): string {
@@ -56,20 +73,40 @@ function Breadcrumbs() {
     };
   });
 
+  // Same trail as the visible breadcrumbs, so the markup matches the page.
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [{ href: "/", label: "Home" }, ...crumbs].map(
+      (crumb, index) => ({
+        "@type": "ListItem",
+        position: index + 1,
+        name: crumb.label,
+        item: absoluteUrl(crumb.href),
+      }),
+    ),
+  };
+
   return (
-    <nav className="breadcrumbs" aria-label="Breadcrumb">
-      <Link href="/">Home</Link>
-      {crumbs.map((crumb, index) => (
-        <React.Fragment key={crumb.href}>
-          <span aria-hidden="true">/</span>
-          {index === crumbs.length - 1 ? (
-            <span>{crumb.label}</span>
-          ) : (
-            <Link href={crumb.href}>{crumb.label}</Link>
-          )}
-        </React.Fragment>
-      ))}
-    </nav>
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+      <nav className="breadcrumbs" aria-label="Breadcrumb">
+        <Link href="/">Home</Link>
+        {crumbs.map((crumb, index) => (
+          <React.Fragment key={crumb.href}>
+            <span aria-hidden="true">/</span>
+            {index === crumbs.length - 1 ? (
+              <span>{crumb.label}</span>
+            ) : (
+              <Link href={crumb.href}>{crumb.label}</Link>
+            )}
+          </React.Fragment>
+        ))}
+      </nav>
+    </>
   );
 }
 
