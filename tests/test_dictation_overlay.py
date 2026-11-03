@@ -592,6 +592,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         monitor = MagicMock()
         monitor.get_geometry.return_value = geom
         display = MagicMock()
+        display.__gtype__ = SimpleNamespace(name="GdkX11Display")
         display.get_primary_monitor.return_value = monitor
         overlay._Gdk = MagicMock()
         overlay._Gdk.Display.get_default.return_value = display
@@ -600,6 +601,55 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         # Full-width strip along the bottom of the monitor.
         mock_window.resize.assert_called_once_with(1920, _STRIP_HEIGHT)
         mock_window.move.assert_called_once_with(100, 50 + 1080 - _STRIP_HEIGHT - _BOTTOM_MARGIN)
+
+    def _layout_on_wayland(self, desktop: str) -> DictationOverlay:
+        """Lay out the no-layer-shell fallback on a 2560x1600 Wayland monitor.
+
+        GTK3's Gdk typelib has no ``WaylandDisplay`` class, so the display
+        must be recognized by its GType name, as ``_display_is_wayland`` does.
+        """
+        overlay = _overlay_without_gtk(enabled=True)
+        overlay._window = MagicMock()
+        overlay._drawing_area = MagicMock()
+        geom = MagicMock(x=0, y=0, width=2560, height=1600)
+        monitor = MagicMock()
+        monitor.get_geometry.return_value = geom
+        display = MagicMock()
+        display.__gtype__ = SimpleNamespace(name="GdkWaylandDisplay")
+        display.get_primary_monitor.return_value = monitor
+        # Mirror the real GTK3 typelib: Gdk has Display but no WaylandDisplay.
+        overlay._Gdk = SimpleNamespace(Display=MagicMock())
+        overlay._Gdk.Display.get_default.return_value = display
+        overlay._Gtk = MagicMock()
+        env = {"XDG_CURRENT_DESKTOP": desktop, "DESKTOP_SESSION": "", "GDMSESSION": ""}
+        with patch.dict(os.environ, env):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay._layout_bottom_strip()
+        return overlay
+
+    def test_layout_wayland_fallback_on_kde_is_compact_and_centered(self):
+        """KWin lists the full-width strip in the taskbar; KDE gets a compact window (#1030)."""
+        from vocalinux.ui.dictation_overlay import _ORB_SIZE, _STRIP_HEIGHT
+
+        overlay = self._layout_on_wayland("KDE")
+
+        overlay._window.resize.assert_called_once_with(_ORB_SIZE, _STRIP_HEIGHT)
+        overlay._window.set_position.assert_called_once_with(
+            overlay._Gtk.WindowPosition.CENTER_ALWAYS
+        )
+        overlay._window.move.assert_not_called()
+
+    def test_layout_wayland_fallback_on_gnome_keeps_full_width_strip(self):
+        """Mutter ignores CENTER_ALWAYS, so a compact window would sit top-left.
+
+        GNOME keeps the full-width strip, which leaves the orb horizontally centered.
+        """
+        from vocalinux.ui.dictation_overlay import _STRIP_HEIGHT
+
+        overlay = self._layout_on_wayland("ubuntu:GNOME")
+
+        overlay._window.resize.assert_called_once_with(2560, _STRIP_HEIGHT)
+        overlay._window.set_position.assert_not_called()
 
     def test_layout_falls_back_to_first_monitor(self):
         overlay = _overlay_without_gtk(enabled=True)
