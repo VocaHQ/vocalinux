@@ -172,10 +172,10 @@ install-gate distro="debian:12":
     docker run "${ARGS[@]}" {{distro}} bash "$PWD/scripts/install-test.sh"
 
 # Run install.sh's remote path end to end in a distro container, as the CI gate
-# does: bootstrap outside a checkout, tag selection, clone/fetch of a mirror
-# published from HEAD, handoff to the tagged installer. Answers "does the
-# public curl|bash path install this commit" (needs docker). Same worktree
-# handling as install-gate above.
+# does: differing bootstrap/tag trees derived from HEAD, explicit/controlled
+# latest selection, clone/fetch/streaming handoff, installed-app smoke, and
+# incomplete-release failures (needs docker). Same worktree handling as
+# install-gate above. Only the latest API response is substituted.
 #
 # Usage: `just remote-install-gate` for debian:12, or `just remote-install-gate fedora:42`
 remote-install-gate distro="debian:12":

@@ -93,7 +93,7 @@ just native-packages  # build the .deb and .rpm in the pinned base image (needs 
 just native-smoke fedora:42  # install the built package in a distro container
 just aur-gate      # build canonical sdist + unchanged AUR fixture on current Arch (needs uv/docker)
 just install-gate debian:12  # run install.sh unattended in a distro container
-just remote-install-gate debian:12  # remote curl|bash path end to end against HEAD (needs docker)
+just remote-install-gate debian:12  # HEAD-derived remote releases: selection, integrity, failures (docker)
 just verify-release  # check a published release as published (needs gh)
 just reproducible-wheel  # independent locked wheel builds; stages verified dist/ (needs uv)
 just pre-commit    # pre-commit run --all-files

@@ -276,8 +276,7 @@ def test_the_remote_gate_can_fail_a_build():
 
 
 def test_the_remote_gate_selects_a_tag():
-    """Tag selection is half the remote contract; a run without --tag resolves
-    whatever the latest release API returns instead of a chosen ref."""
+    """Explicit selection must remain covered alongside the controlled latest."""
     gate = _without_comments(_remote_gate_text())
     assert re.search(r"--tag=", gate), (
         "the remote gate no longer passes --tag; it tests the latest-release"
@@ -287,8 +286,7 @@ def test_the_remote_gate_selects_a_tag():
 
 def test_the_remote_gate_fails_closed_on_the_selected_tag():
     """Guardrail: installer, sourced modules and requirement exports must all
-    come from the selected tag. The only evidence is the clone's HEAD equalling
-    the tag commit the gate published."""
+    come from the selected tag. Check the revision as well as execution."""
     gate = _without_comments(_remote_gate_text())
     assert re.search(r"rev-parse HEAD", gate)
     assert re.search(r'"\$cloned_sha" = "\$EXPECTED_SHA"', gate), (
@@ -296,8 +294,42 @@ def test_the_remote_gate_fails_closed_on_the_selected_tag():
         " installing a different revision would pass"
     )
     assert re.search(
-        r'rev-parse "\$GATE_TAG\^\{commit\}"', gate
+        r'rev-parse "\$tag\^\{commit\}"', gate
     ), "the remote gate no longer checks the selected tag ref reached the clone"
+    assert re.search(r'^  assert_trace "\$role"$', gate, re.M)
+    assert "vocalinux-remote-{kind}-fixture" in gate
+    assert "assert version(name) == sys.argv[1]" in gate
+
+
+def test_the_remote_gate_covers_controlled_latest_and_api_failure():
+    """The public no-tag path must use the controlled API, not GitHub's release."""
+    gate = _without_comments(_remote_gate_text())
+    assert re.search(r'^LATEST_TAG="\$GATE_TAG-latest"$', gate, re.M)
+    assert re.search(r'^LATEST_RESPONSE="\$WORK/latest.json"$', gate, re.M)
+    assert re.search(r"^run_remote_install \|\| fail", gate, re.M)
+    assert re.search(r'^assert_remote_install "\$LATEST_TAG" latest 2\.0$', gate, re.M)
+    assert re.search(r"^expect_failure 3 'No release tag available:", gate, re.M)
+    assert re.search(r"^grep -Fq 'Re-run with an explicit release tag'", gate, re.M)
+    assert re.search(r"^assert_api_unused$", gate, re.M)
+
+
+def test_the_remote_gate_rejects_each_incomplete_release_in_isolation():
+    """A failed case must identify its missing input and cannot reuse a venv."""
+    gate = _without_comments(_remote_gate_text())
+    for case in ("missing-tag", "missing-module", "missing-runtime", "missing-build", "no-handoff"):
+        assert re.search(rf"^select_scenario {case}$", gate, re.M)
+    for reason in (
+        "Failed to clone Vocalinux repository",
+        "Installer module is missing or unreadable:",
+        "Missing or empty pinned requirements: $CLONE_DIR/requirements/runtime.txt",
+        "Missing or empty pinned requirements: $CLONE_DIR/requirements/installer-build.txt",
+        "REMOTE_GATE: bootstrap continued past tagged handoff",
+    ):
+        assert any(
+            line.startswith("expect_failure ") and reason in line for line in gate.splitlines()
+        )
+    assert re.search(r'^  INSTALL_HOME="\$USER_HOME/remote-gate/\$name"$', gate, re.M)
+    assert re.search(r"^  assert_no_success$", gate, re.M)
 
 
 def test_the_remote_gate_bootstraps_outside_a_checkout():

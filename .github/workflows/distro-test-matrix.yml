@@ -101,15 +101,16 @@ jobs:
     name: remote install.sh on debian:12
     runs-on: ubuntu-latest
     needs: syntax
-    # Two sequential remote installs (fresh clone, then fetch+reset) plus a
-    # real package install on each.
+    # Explicit-tag clone/fetch (including a terminal-backed streaming pipe),
+    # controlled latest with a fresh HOME, and fail-closed incomplete releases.
+    # Real system/Python installs; only the latest API response is substituted.
     timeout-minutes: 45
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # The gate publishes HEAD as a tag in its mirror; it needs the
-          # commit's objects, not history.
+          # The gate derives distinguishable release fixtures from HEAD's tree;
+          # it needs the commit's objects, not history.
           fetch-depth: 1
 
       - name: Run the remote install path in debian:12
