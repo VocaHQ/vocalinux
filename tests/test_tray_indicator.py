@@ -1219,6 +1219,10 @@ class TestTrayIndicator(unittest.TestCase):
             pad.show_pad,
         )
 
+    def test_overlay_close_request_quits_app(self):
+        """A dock/taskbar close of the overlay window quits Vocalinux (#1028)."""
+        self.assertEqual(self.tray_indicator.overlay._on_close_request, self.tray_indicator._quit)
+
     def test_quit_destroys_overlay(self):
         mock_overlay = MagicMock()
         self.tray_indicator.overlay = mock_overlay

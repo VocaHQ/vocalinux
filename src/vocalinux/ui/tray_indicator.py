@@ -278,7 +278,11 @@ class TrayIndicator:
         # Lazy import keeps tray import light for tests that mock gi.
         from .dictation_overlay import DictationOverlay
 
-        self.overlay = DictationOverlay(enabled=self.config_manager.is_overlay_enabled())
+        # Quit from the dock closes the overlay toplevel; treat it as Quit (#1028).
+        self.overlay = DictationOverlay(
+            enabled=self.config_manager.is_overlay_enabled(),
+            on_close_request=self._quit,
+        )
         self.speech_engine.register_audio_level_callback(self.overlay.set_audio_level)
 
         # Initialize the icon files and validate resources

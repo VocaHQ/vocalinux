@@ -382,6 +382,67 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay._window = None
         overlay.destroy()
 
+    def test_dock_quit_runs_close_request_callback(self) -> None:
+        """Quit from GNOME's dock closes the overlay toplevel; it must quit the app (#1028)."""
+        on_close = MagicMock()
+        with patch.object(
+            DictationOverlay,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            overlay = DictationOverlay(enabled=True, on_close_request=on_close)
+        mock_window = MagicMock()
+        overlay._window = mock_window
+        overlay._gtk_ready = True
+        overlay._GLib = MagicMock()
+
+        # The window is still kept alive (#1010), but the request is forwarded.
+        self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+        mock_window.destroy.assert_not_called()
+        overlay._GLib.idle_add.assert_called_once()
+        on_close.assert_not_called()
+
+        # A second close (the dock closes every window) is not queued twice.
+        self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+        overlay._GLib.idle_add.assert_called_once()
+
+        scheduled = overlay._GLib.idle_add.call_args.args[0]
+        self.assertFalse(scheduled())
+        on_close.assert_called_once_with()
+        overlay._window = None
+        overlay.destroy()
+
+    def test_queued_close_request_is_dropped_once_overlay_is_destroyed(self) -> None:
+        """A dock close queued while the app is already quitting must not quit again."""
+        on_close = MagicMock()
+        with patch.object(
+            DictationOverlay,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            overlay = DictationOverlay(enabled=True, on_close_request=on_close)
+        mock_window = MagicMock()
+        overlay._window = mock_window
+        overlay._gtk_ready = True
+        overlay._GLib = MagicMock()
+
+        overlay._on_delete_event(mock_window, MagicMock())
+        scheduled = overlay._GLib.idle_add.call_args.args[0]
+
+        # Tray Quit (or SIGTERM) tears the overlay down before the idle runs.
+        overlay.destroy()
+        self.assertFalse(scheduled())
+        on_close.assert_not_called()
+
+    def test_close_request_without_callback_schedules_nothing(self) -> None:
+        overlay, mock_window = self._mock_window_overlay()
+
+        self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+
+        overlay._GLib.idle_add.assert_not_called()
+        overlay._window = None
+        overlay.destroy()
+
     def test_disabling_unmaps_prewarmed_window(self) -> None:
         """Turning the overlay off removes the transparent window from the dock (#1010)."""
         overlay, mock_window = self._mock_window_overlay()
