@@ -173,9 +173,9 @@ install-gate distro="debian:12":
 
 # Run install.sh's remote path end to end in a distro container, as the CI gate
 # does: differing bootstrap/tag trees derived from HEAD, explicit/controlled
-# latest selection, clone/fetch/streaming handoff, installed-app smoke, and
-# incomplete-release failures (needs docker). Same worktree handling as
-# install-gate above. Only the latest API response is substituted.
+# latest selection, clone/fetch/streaming handoff, cross-release --upgrade,
+# installed-app smoke, and incomplete-release failures (needs docker). Same
+# worktree handling as install-gate above. Only the latest API response is substituted.
 #
 # Usage: `just remote-install-gate` for debian:12, or `just remote-install-gate fedora:42`
 remote-install-gate distro="debian:12":

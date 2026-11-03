@@ -44,6 +44,11 @@ Remote installs run the installer from the selected release tag. Older tags
 therefore retain their original dependency-install behavior; downloading a new
 bootstrap script does not change an older release's pins.
 
+Without `--tag`, the remote installer asks GitHub for the latest release. If that
+request fails, it stops and suggests an explicit `--tag=TAG`; it does not silently
+choose another release. A missing tag, required installer module or mandatory
+dependency export also stops installation.
+
 ### Installer modes
 
 ```bash
@@ -335,6 +340,10 @@ See [UPDATE.md](UPDATE.md).
 curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh
 bash /tmp/vl.sh
 ```
+
+For an unattended update, run `bash /tmp/vl.sh --upgrade`. It selects the latest
+release, reuses the existing virtual environment and keeps `config.json`
+unchanged. Add `--tag=TAG` to select a particular release instead.
 
 ## More documentation
 

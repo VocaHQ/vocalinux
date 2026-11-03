@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import re
+import runpy
 import shlex
 import shutil
 import subprocess
@@ -39,6 +40,8 @@ def _copy_source(tree: Path) -> None:
     (tree / "requirements").mkdir(exist_ok=True)
     for name in ("runtime.txt", "installer-build.txt"):
         shutil.copyfile(ROOT / "requirements" / name, tree / "requirements" / name)
+    (tree / "src/vocalinux").mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT / "src/vocalinux/version.py", tree / "src/vocalinux/version.py")
 
 
 def _git(tree: Path, *args: str) -> str:
@@ -211,7 +214,7 @@ def test_latest_shim_delegates_every_other_url_and_preserves_arguments(
     assert result.stdout.splitlines() == args
 
 
-@pytest.mark.parametrize("args", [[], [f"--tag={TAG}"]])
+@pytest.mark.parametrize("args", [[], [f"--tag={TAG}"], ["--upgrade"]])
 def test_gate_runner_preserves_an_empty_or_explicit_argument_list(args: list[str]) -> None:
     """Start the remote installer without adding or losing arguments."""
     gate = (ROOT / "scripts/install-remote-test.sh").read_text()
@@ -251,6 +254,10 @@ def test_both_export_witnesses_are_real_hash_pinned_installable_wheels(
     tree, output = tmp_path / "tree", tmp_path / "gate fixtures"
     _copy_source(tree)
     helper.prepare_fixture(tree, output, role)
+    app_version = runpy.run_path(str(tree / "src/vocalinux/version.py"))
+    revision = int(version.split(".")[0])
+    assert app_version["__version__"] == f"0.0.{revision}"
+    assert app_version["__version_info__"] == (0, 0, revision)
     witnesses = []
     for name in ("runtime.txt", "installer-build.txt"):
         original = (ROOT / "requirements" / name).read_text()
