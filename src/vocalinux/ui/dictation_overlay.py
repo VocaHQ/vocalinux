@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from types import ModuleType
 from typing import TYPE_CHECKING, Optional
 
@@ -92,6 +93,16 @@ class DictationOverlayController:
         return MODE_PROCESSING
 
 
+def _is_kde_session() -> bool:
+    """Whether the session is KDE Plasma (KWin), from the usual desktop variables."""
+    if os.environ.get("KDE_FULL_SESSION", "").lower() == "true":
+        return True
+    desktop = " ".join(
+        os.environ.get(var, "") for var in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION", "GDMSESSION")
+    ).lower()
+    return "kde" in desktop or "plasma" in desktop
+
+
 def _try_import_layer_shell() -> Optional[ModuleType]:
     """
     Soft-import GtkLayerShell when available (Wayland, wlroots-based).
@@ -117,8 +128,9 @@ class DictationOverlay:
 
     On X11 and with layer shell, a full-width bottom strip keeps the orb
     bottom-center of the monitor. A plain Wayland toplevel cannot be
-    positioned, so there it is a compact window the compositor places. The
-    window is passive: no keyboard focus, click-through input region.
+    positioned: on KDE it is a compact window KWin places, elsewhere the
+    strip stays so the orb is at least horizontally centered. The window is
+    passive: no keyboard focus, click-through input region.
     """
 
     def __init__(self, enabled: bool = True) -> None:
@@ -433,8 +445,11 @@ class DictationOverlay:
         Drawing the orb at the strip's horizontal center always yields bottom-center
         of the screen, even when the compositor only roughly honors move().
         On Wayland without layer shell, move() is a hint the compositor can
-        ignore entirely, so ask for a centered compact window instead of
-        promising a bottom position it cannot place.
+        ignore. KWin lists the full-width strip in the taskbar as a wide empty
+        window (#1030), so on KDE ask for a centered compact window instead.
+        Mutter ignores CENTER_ALWAYS and would put a compact window in the
+        top-left corner, so GNOME and other compositors keep the strip, which
+        at least keeps the orb horizontally centered.
         """
         if self._window is None:
             return
@@ -449,8 +464,8 @@ class DictationOverlay:
                 return
             geom = monitor.get_geometry()
             height = _STRIP_HEIGHT
-            wayland = self._display_is_wayland()
-            if wayland:
+            compact = self._display_is_wayland() and _is_kde_session()
+            if compact:
                 self._window.set_position(self._Gtk.WindowPosition.CENTER_ALWAYS)
                 width = _ORB_SIZE
             else:
@@ -458,7 +473,7 @@ class DictationOverlay:
             self._window.resize(width, height)
             if self._drawing_area is not None:
                 self._drawing_area.set_size_request(width, height)
-            if not wayland:
+            if not compact:
                 x = geom.x
                 y = geom.y + geom.height - height - _BOTTOM_MARGIN
                 self._window.move(x, y)
