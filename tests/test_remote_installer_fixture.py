@@ -299,3 +299,87 @@ def test_both_export_witnesses_are_real_hash_pinned_installable_wheels(
         check=True,
         timeout=10,
     )
+
+
+@pytest.mark.timeout(60)
+@pytest.mark.parametrize("stale_kind", [None, "build", "runtime"])
+def test_gate_checks_witness_upgrade_despite_stale_metadata(
+    tmp_path: Path, helper: ModuleType, stale_kind: str | None
+) -> None:
+    """Accept updated modules despite old metadata, but reject either stale module."""
+    gate = (ROOT / "scripts/install-remote-test.sh").read_text()
+    assertion = re.search(
+        r'^\s+\|\| fail "pip did not install the selected release\'s export witnesses"\n(.*?)^PY$',
+        gate,
+        re.M | re.S,
+    )
+    assert assertion
+    venv = tmp_path / "venv"
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(venv)], check=True, timeout=30
+    )
+    python = str(venv / "bin/python")
+    for version in ("1.0", "2.0"):
+        wheels = [
+            str(helper.write_wheel(tmp_path / "wheels", kind, version))
+            for kind in ("build", "runtime")
+            if version == "1.0" or kind != stale_kind
+        ]
+        subprocess.run(
+            [
+                python,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                "--only-binary=:all:",
+                "--ignore-installed",
+                *wheels,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    site_packages = Path(
+        subprocess.check_output(
+            [python, "-c", "import sysconfig; print(sysconfig.get_path('purelib'))"],
+            text=True,
+            timeout=10,
+        ).strip()
+    )
+    # Force old metadata to be discovered first, independent of directory order.
+    # No witness modules go on this path; imports must still use the real venv.
+    stale_metadata = tmp_path / "stale-metadata"
+    for kind in ("build", "runtime"):
+        name = f"vocalinux_remote_{kind}_fixture"
+        shutil.copytree(
+            site_packages / f"{name}-1.0.dist-info", stale_metadata / f"{name}-1.0.dist-info"
+        )
+        if kind != stale_kind:
+            assert (site_packages / f"{name}-2.0.dist-info").is_dir()
+    prelude = f"import sys\nsys.path.insert(0, {str(stale_metadata)!r})\n"
+    subprocess.run(
+        [
+            python,
+            "-c",
+            prelude + "from importlib.metadata import version\n"
+            "for kind in ('build', 'runtime'):\n"
+            "    assert version(f'vocalinux-remote-{kind}-fixture') == '1.0'\n",
+        ],
+        check=True,
+        timeout=10,
+    )
+    result = subprocess.run(
+        [python, "-c", prelude + assertion[1], "2.0"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    if stale_kind is None:
+        assert result.returncode == 0, result.stdout + result.stderr
+    else:
+        assert result.returncode == 1
+        assert "AssertionError" in result.stderr
+        assert f"vocalinux_remote_{stale_kind}_fixture" in result.stderr
