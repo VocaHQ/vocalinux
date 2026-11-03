@@ -301,7 +301,7 @@ def test_the_remote_gate_fails_closed_on_the_selected_tag():
     assert "assert version(name) == sys.argv[1]" in gate
 
 
-def test_the_remote_gate_covers_controlled_latest_and_api_failure():
+def test_the_remote_gate_covers_controlled_latest_and_api_failure() -> None:
     """The public no-tag path must use the controlled API, not GitHub's release."""
     gate = _without_comments(_remote_gate_text())
     assert re.search(r'^LATEST_TAG="\$GATE_TAG-latest"$', gate, re.M)
@@ -313,7 +313,7 @@ def test_the_remote_gate_covers_controlled_latest_and_api_failure():
     assert re.search(r"^assert_api_unused$", gate, re.M)
 
 
-def test_the_remote_gate_rejects_each_incomplete_release_in_isolation():
+def test_the_remote_gate_rejects_each_incomplete_release_in_isolation() -> None:
     """A failed case must identify its missing input and cannot reuse a venv."""
     gate = _without_comments(_remote_gate_text())
     for case in ("missing-tag", "missing-module", "missing-runtime", "missing-build", "no-handoff"):
