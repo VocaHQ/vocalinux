@@ -61,7 +61,7 @@ const modelComparison = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Whisper Model Sizes Explained: Tiny, Base, Small, Medium, Large for Linux",
+  title: "Whisper Model Sizes: Tiny to Large for Linux Dictation",
   description:
     "Complete guide to Whisper model sizes for Linux voice dictation. Compare tiny vs base vs small vs medium vs large models - download size, RAM usage, accuracy, GPU requirements, and speed.",
   path: "/whisper-model-guide",

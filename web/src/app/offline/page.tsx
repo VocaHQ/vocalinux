@@ -76,9 +76,9 @@ const sensitiveUseCases = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Offline Voice Dictation - Local Engines | Vocalinux",
+  title: "Offline Speech to Text for Linux: No Cloud Needed",
   description:
-    "Local engines run on your Linux machine with no cloud account. Remote API is optional if you want a server you configure.",
+    "Offline speech to text on Linux. whisper.cpp, VOSK and other local engines transcribe on your machine after a one-time model download. No cloud account.",
   path: "/offline",
   keywords: [
     "offline voice dictation",
@@ -149,7 +149,7 @@ export default function OfflinePage() {
               <div className={`mb-3 inline-flex rounded-lg p-2 ${benefit.iconBg}`}>
                 <Icon className={`h-5 w-5 ${benefit.iconColor}`} />
               </div>
-              <h3 className="mb-2 font-semibold">{benefit.title}</h3>
+              <h2 className="subpage-card-title mb-2 font-semibold">{benefit.title}</h2>
               <p className="text-sm text-muted-foreground">{benefit.description}</p>
             </article>
           );

@@ -6,7 +6,7 @@
 #
 # Build (from repo root, with snapcraft + LXD or Multipass):
 #   snapcraft pack
-# See docs/INSTALL.md for pack and store upload steps.
+# See docs/SNAP.md for controlled inputs, the build gate and verification limits.
 
 name: vocalinux
 base: core24  # Ubuntu 24.04 / Python 3.12 (project requires-python >=3.11)
@@ -20,7 +20,7 @@ description: |
 
   Speech recognition runs on your machine after you download a model. No Voca account. No cloud transcription on the default path.
 
-  This snap ships the whisper.cpp engine plus VOSK. The optional OpenAI Whisper / PyTorch stack is not bundled (too large for the snap).
+  This snap ships the whisper.cpp engine. Optional local speech engines are not bundled.
 
   Features:
     - System tray control and GTK settings
@@ -104,28 +104,27 @@ layout:
 
 parts:
   vocalinux:
-    plugin: python
+    # The Python plugin would resolve dependencies and build tools again.
+    plugin: nil
     source: .
     source-type: local
     build-environment:
-      - PIP_DISABLE_PIP_VERSION_CHECK: "1"
       # pywhispercpp's PyPI wheel ships a libggml-cpu compiled for AVX2+FMA,
       # which dies with SIGILL at model load on pre-Haswell CPUs (#957), so
       # the pinned sdist is built instead of installing that wheel.
       # GGML_NATIVE=OFF alone is not the portable baseline either: while
       # ggml's native default is on it turns every GGML_* SIMD option on, so
       # each one is pinned off for the plain x86-64 baseline.
-      - PIP_NO_BINARY: pywhispercpp
       - CMAKE_ARGS: "-DGGML_NATIVE=OFF -DGGML_SSE42=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_BMI2=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF"
     build-packages:
       - build-essential
-      - cmake
       - git
       - pkg-config
       - portaudio19-dev
       - libgirepository1.0-dev
       - libcairo2-dev
       - python3-dev
+      - python3-venv
       - libdbus-1-dev
     stage-packages:
       # Only extras not provided by the gnome-46-2404 platform content snap.
@@ -141,18 +140,18 @@ parts:
       - xsel
       - xclip
       - wl-clipboard
-    python-packages:
-      - pip
-      - setuptools
-      - wheel
     override-pull: |
       craftctl default
       version="$(python3 -c "import pathlib, re; t = pathlib.Path('${CRAFT_PART_SRC}/src/vocalinux/version.py').read_text(); m = re.search(r'__version__\\s*=\\s*[\\'\"]([^\\'\"]+)', t); assert m, 'version not found'; print(m.group(1))")"
       craftctl set version="$version"
-      # PyGObject/GI provided by gnome extension.
-      sed -i '/^[[:space:]]*"PyGObject/d' "${CRAFT_PART_SRC}/pyproject.toml"
     override-build: |
-      craftctl default
+      # The runtime export already excludes PyGObject; GI comes from the gnome
+      # extension. Keep pyproject.toml and installed metadata unchanged.
+      /usr/bin/python3 "${CRAFT_PART_SRC}/snap/local/build.py" \
+        --source "${CRAFT_PART_BUILD}" --install "${CRAFT_PART_INSTALL}" \
+        --work "${CRAFT_PART_BUILD}/.snap-python-build"
+      install -Dm644 "${CRAFT_PART_SRC}/snap/local/check_runtime.py" \
+        "${CRAFT_PART_INSTALL}/usr/lib/vocalinux/check_runtime.py"
       install -Dm644 "${CRAFT_PROJECT_DIR}/snap/gui/vocalinux.desktop" \
         "${CRAFT_PART_INSTALL}/usr/share/applications/vocalinux.desktop"
       install -Dm644 "${CRAFT_PROJECT_DIR}/resources/icons/scalable/vocalinux.svg" \

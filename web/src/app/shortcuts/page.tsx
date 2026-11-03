@@ -100,7 +100,7 @@ function Mic(props: { className?: string }) {
 }
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Keyboard Shortcuts & Voice Commands - Vocalinux",
+  title: "Keyboard Shortcuts and Voice Commands",
   description:
     "Learn Vocalinux keyboard shortcut modes and voice commands. Use toggle mode or push-to-talk, then customize activation and command behavior.",
   path: "/shortcuts",

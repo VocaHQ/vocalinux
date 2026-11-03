@@ -23,11 +23,11 @@ export const viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Vocalinux: Offline Voice Dictation for Linux",
+    default: "Vocalinux: Offline Speech to Text & Voice Dictation for Linux",
     template: "%s | Vocalinux",
   },
   description:
-    "Free and open-source voice dictation for Linux. Convert speech to text with whisper.cpp, VOSK, Remote API servers, Silero VAD, X11, and Wayland.",
+    "Free, open-source speech to text for Linux. Offline voice dictation and voice typing in any app with whisper.cpp, VOSK or Parakeet, on X11 and Wayland.",
   applicationName: SITE_NAME,
   keywords: [
     "voice dictation linux",
@@ -80,7 +80,7 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: absoluteUrl("/"),
     siteName: SITE_NAME,
-    title: "Vocalinux: Offline Voice Dictation for Linux",
+    title: "Vocalinux: Offline Speech to Text & Voice Dictation for Linux",
     description:
       "Voice dictation for Linux with local engines or an optional Remote API. Install in minutes and dictate in any app on Ubuntu, Fedora, Arch, X11, or Wayland.",
     images: [
@@ -94,7 +94,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Vocalinux: Offline Voice Dictation for Linux",
+    title: "Vocalinux: Offline Speech to Text & Voice Dictation for Linux",
     description:
       "Speech-to-text for Linux with whisper.cpp and VOSK. Local engines by default, optional Remote API, open source.",
     images: [DEFAULT_OG_IMAGE_PATH],
@@ -178,7 +178,6 @@ export default function RootLayout({
   return (
     <html lang="en" className="scroll-smooth" suppressHydrationWarning>
       <head>
-        <link rel="preconnect" href="https://api.github.com" />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(siteWideJsonLd) }}

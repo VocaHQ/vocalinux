@@ -1522,7 +1522,8 @@
     font-size: clamp(1.5rem, 3vw, 1.85rem);
   }
 
-  .subpage-content h3 {
+  .subpage-content h3,
+  .subpage-content .subpage-card-title {
     margin-top: 1.6rem;
     font-size: 1.15rem;
     letter-spacing: -0.03em;
@@ -1726,6 +1727,8 @@
     text-transform: uppercase;
   }
 
+  /* /install/ uses h2 (heading order); the home page cards sit under an h2. */
+  .install-alt h2,
   .install-alt h3 {
     margin: 0.35rem 0 0;
     font-size: 1.2rem;
@@ -1736,6 +1739,103 @@
     margin: 0.45rem 0 0;
     color: var(--muted-copy);
     font-size: 0.95rem;
+  }
+
+  /* 404 page */
+  .nf {
+    display: grid;
+    gap: 3rem;
+    padding: 3.5rem 0 5.5rem;
+  }
+
+  .nf-kicker {
+    margin: 0 0 1rem;
+    color: var(--brand-dark);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .nf-hero h1 {
+    margin: 0;
+    font-size: clamp(2.6rem, 7vw, 5.2rem);
+  }
+
+  .nf-lede {
+    margin: 1.2rem 0 0;
+    color: var(--muted-copy);
+    font-size: 1.1rem;
+    line-height: 1.65;
+  }
+
+  .nf-suggest {
+    margin: 1rem 0 0;
+    font-size: 1.05rem;
+  }
+
+  .nf-next > :first-child {
+    margin-top: 0;
+  }
+
+  .nf-suggest a,
+  .nf-links a {
+    color: var(--brand);
+    font-weight: 600;
+  }
+
+  .nf-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.8rem;
+  }
+
+  .nf-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.2rem;
+    margin-top: 1.4rem;
+    font-size: 0.95rem;
+  }
+
+  .nf-stats h2 {
+    margin: 0;
+    font-size: clamp(1.5rem, 3vw, 1.85rem);
+  }
+
+  .nf-stat-grid {
+    display: grid;
+    gap: 1rem;
+    margin-top: 1.2rem;
+  }
+
+  .nf-stat {
+    padding: 1.1rem 1.2rem 1.2rem;
+    background: var(--paper-bright);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+  }
+
+  .nf-stat h3 {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .nf-stat p {
+    margin: 0.5rem 0 0;
+    color: var(--muted-copy);
+    font-size: 0.95rem;
+  }
+
+  @media (min-width: 760px) {
+    .nf-stat-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
   }
 
   @keyframes halo {
@@ -1870,7 +1970,7 @@ nextjs-portal {
   }
 
   .footer-inner {
-    grid-template-columns: minmax(0, 1.4fr) repeat(4, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1.2fr) repeat(5, minmax(0, 1fr));
   }
 }
 

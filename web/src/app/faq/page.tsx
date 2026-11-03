@@ -125,9 +125,9 @@ const faqCategories = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Frequently Asked Questions - Vocalinux Voice Dictation",
+  title: "Linux Dictation FAQ: Offline, Wayland, GPU and Privacy",
   description:
-    "Get answers to common questions about Vocalinux Linux voice dictation. Learn about installation, privacy, features, and troubleshooting.",
+    "Does Vocalinux work offline or on Wayland? How much RAM does it need, and which engines and languages does it support? Answers on install, privacy and GPU use.",
   path: "/faq",
   keywords: [
     "vocalinux faq",

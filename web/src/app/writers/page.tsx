@@ -70,7 +70,7 @@ const integrations = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Voice Dictation for Writers on Linux: Dictate Novels, Articles & Notes",
+  title: "Voice Dictation for Writers on Linux",
   description:
     "Complete guide to voice dictation for writers on Linux. How to dictate novels, blog posts, and notes using Vocalinux. Hands-free writing workflow tips.",
   path: "/writers",

@@ -14,7 +14,9 @@ import {
   type NavLink,
 } from "@/lib/site-nav";
 
-const GITHUB_API_REPO_URL = `https://api.github.com/repos/${GITHUB_REPO_URL.replace("https://github.com/", "")}`;
+// Star count is fetched once at build time (next.config.js) so visitors never
+// call api.github.com. Empty or missing falls back to the "GitHub" label.
+const GITHUB_STARS = Number(process.env.NEXT_PUBLIC_GITHUB_STARS) || null;
 
 function SmartLink({
   href,
@@ -63,7 +65,7 @@ export function SiteChrome({
   variant?: "home" | "page";
 }) {
   const [open, setOpen] = useState(false);
-  const [stars, setStars] = useState<number | null>(null);
+  const stars = GITHUB_STARS;
   const navId = useId();
   const nav = variant === "home" ? homeNav : pageNav;
   const ctaHref = variant === "home" ? "#install" : "/#install";
@@ -91,15 +93,6 @@ export function SiteChrome({
     };
   }, []);
 
-  useEffect(() => {
-    fetch(GITHUB_API_REPO_URL)
-      .then((res) => res.json())
-      .then((data: { stargazers_count?: number }) => {
-        if (data.stargazers_count) setStars(data.stargazers_count);
-      })
-      .catch(() => setStars(null));
-  }, []);
-
   return (
     <div className="min-h-[100dvh] max-w-[100vw] overflow-x-clip">
       <a className="skip-link" href="#main">
@@ -109,7 +102,13 @@ export function SiteChrome({
       <header className="site-header">
         <div className="shell header-inner">
           <Link href="/" className="brand" aria-label="Vocalinux home">
-            <VocalinuxLogo width={28} height={28} className="h-7 w-7" priority />
+            <VocalinuxLogo
+              width={28}
+              height={28}
+              className="h-7 w-7"
+              priority
+              decorative
+            />
             <span>Vocalinux</span>
           </Link>
 
@@ -128,7 +127,7 @@ export function SiteChrome({
               rel="noopener noreferrer"
               aria-label={
                 stars !== null
-                  ? `Vocalinux on GitHub, ${stars.toLocaleString()} stars`
+                  ? `Vocalinux on GitHub, ${stars.toLocaleString("en-US")} stars`
                   : "Vocalinux on GitHub"
               }
             >
@@ -138,7 +137,7 @@ export function SiteChrome({
                 fill="currentColor"
                 aria-hidden="true"
               />
-              <span>{stars !== null ? stars.toLocaleString() : "GitHub"}</span>
+              <span>{stars !== null ? stars.toLocaleString("en-US") : "GitHub"}</span>
             </a>
             <button
               className="nav-toggle"
@@ -192,7 +191,12 @@ export function SiteChrome({
           <div className="footer-inner">
             <div className="footer-brand">
               <Link href="/" className="brand">
-                <VocalinuxLogo width={28} height={28} className="h-7 w-7" />
+                <VocalinuxLogo
+                  width={28}
+                  height={28}
+                  className="h-7 w-7"
+                  decorative
+                />
                 <span>Vocalinux</span>
               </Link>
               <p>

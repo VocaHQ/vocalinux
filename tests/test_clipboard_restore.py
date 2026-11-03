@@ -10,6 +10,8 @@ import subprocess
 import threading
 import time
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -207,6 +209,25 @@ class TestReadClipboard(unittest.TestCase):
         self.assertEqual(result, "x11 clipboard")
 
 
+@contextmanager
+def _joined_restore_workers() -> Iterator[None]:
+    """Finish real restore workers before the enclosing clipboard mocks exit."""
+    started: list[threading.Thread] = []
+    original_start = threading.Thread.start
+
+    def capture_start(worker: threading.Thread) -> None:
+        original_start(worker)
+        started.append(worker)
+
+    with patch.object(threading.Thread, "start", capture_start):
+        try:
+            yield
+        finally:
+            for worker in started:
+                worker.join(timeout=3)
+            assert not any(worker.is_alive() for worker in started), "restore worker leaked"
+
+
 class TestClipboardRestoreAfterInjection(unittest.TestCase):
     """Behavioural tests for the save/restore logic in _inject_via_clipboard_paste."""
 
@@ -234,8 +255,8 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
                             "vocalinux.text_injection.text_injector.subprocess.run",
                             return_value=MagicMock(returncode=0),
                         ):
-                            result = obj._inject_via_clipboard_paste("injected text")
-                            time.sleep(0.5)  # wait for the 300ms restore thread
+                            with _joined_restore_workers():
+                                result = obj._inject_via_clipboard_paste("injected text")
 
         self.assertTrue(result)
         self.assertEqual(copy_calls[0], "injected text")
@@ -267,8 +288,8 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
                             "vocalinux.text_injection.text_injector.subprocess.run",
                             return_value=MagicMock(returncode=0),
                         ):
-                            obj._inject_via_clipboard_paste("text")
-                            time.sleep(0.5)
+                            with _joined_restore_workers():
+                                obj._inject_via_clipboard_paste("text")
 
         self.assertEqual(call_order[0], "read", "read must happen before any copy")
         self.assertIn("copy:text", call_order)
@@ -365,7 +386,7 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
         # First copy: injection; second copy: immediate restore after paste failure
         self.assertEqual(copy_calls, ["text", "prev"])
 
-    def test_restore_thread_is_a_daemon(self):
+    def test_restore_thread_is_a_daemon(self) -> None:
         """The restore thread is a daemon so it never blocks interpreter shutdown."""
         obj = _make_injector()
         obj.wayland_tool = "ydotool"
@@ -390,6 +411,11 @@ class TestClipboardRestoreAfterInjection(unittest.TestCase):
                         ):
                             with patch.object(threading.Thread, "start", capture_start):
                                 obj._inject_via_clipboard_paste("text")
+                                # Keep the clipboard mocks installed until the
+                                # real worker exits, not merely until start().
+                                for worker in started:
+                                    worker.join(timeout=3)
+                                    self.assertFalse(worker.is_alive(), "restore worker leaked")
 
         self.assertEqual(len(started), 1, "exactly one restore thread should start")
         self.assertTrue(started[0].daemon, "restore thread must be a daemon")

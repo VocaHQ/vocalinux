@@ -103,7 +103,7 @@ const settingsShots: Screenshot[] = [
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Vocalinux Screenshots | Linux Voice Dictation UI",
+  title: "Screenshots: Linux Voice Dictation App UI",
   description:
     "See Vocalinux in action: system tray, log viewer, and settings pages for speech model, dictation, audio, performance, application, advanced options, and about/updates. Flip between light and dark app shots.",
   path: "/screenshots",

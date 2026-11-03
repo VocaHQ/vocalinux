@@ -50,10 +50,57 @@ describe("SEO Assets", () => {
       "https://vocalinux.com/advanced-settings/",
       "https://vocalinux.com/desktop-reliability/",
       "https://vocalinux.com/screenshots/",
+      "https://vocalinux.com/parakeet/",
+      "https://vocalinux.com/faster-whisper/",
+      "https://vocalinux.com/dictation-pad/",
+      "https://vocalinux.com/transcribe-audio-files/",
+      "https://vocalinux.com/custom-dictionary/",
+      "https://vocalinux.com/multilingual-dictation/",
+      "https://vocalinux.com/pipewire/",
+      "https://vocalinux.com/global-shortcuts/",
+      "https://vocalinux.com/hyprland-sway/",
+      "https://vocalinux.com/local-gateway/",
+      "https://vocalinux.com/flatpak/",
+      "https://vocalinux.com/install/nixos/",
+      "https://vocalinux.com/install/debian/",
+      "https://vocalinux.com/install/opensuse/",
+      "https://vocalinux.com/install/linux-mint/",
+      "https://vocalinux.com/install/pop-os/",
     ];
 
     expectedUrls.forEach((url) => {
       expect(sitemapContent).toContain(`<loc>${url}</loc>`);
+    });
+  });
+
+  it("lists every static route in the sitemap exactly once", () => {
+    const appDir = path.join(process.cwd(), "src", "app");
+    const routes: string[] = [];
+    const walk = (dir: string, prefix: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (
+          !entry.isDirectory() ||
+          entry.name.startsWith("__") ||
+          entry.name.startsWith("[")
+        ) {
+          continue;
+        }
+        const routePath = `${prefix}/${entry.name}`;
+        if (fs.existsSync(path.join(dir, entry.name, "page.tsx"))) {
+          routes.push(`https://vocalinux.com${routePath}/`);
+        }
+        walk(path.join(dir, entry.name), routePath);
+      }
+    };
+    walk(appDir, "");
+
+    const locs = Array.from(
+      sitemapContent.matchAll(/<loc>([^<]+)<\/loc>/g),
+      (match) => match[1],
+    );
+    expect(new Set(locs).size).toBe(locs.length);
+    routes.forEach((url) => {
+      expect(locs).toContain(url);
     });
   });
 });

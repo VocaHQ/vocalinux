@@ -34,12 +34,42 @@ const distroGuides = [
       "Install Vocalinux on Arch, Manjaro, and EndeavourOS with package prerequisites and tips.",
     icon: Cpu,
   },
+  {
+    name: "Debian",
+    href: "/install/debian/",
+    description: "Debian 12+ with the install script or the native .deb package.",
+    icon: Terminal,
+  },
+  {
+    name: "openSUSE",
+    href: "/install/opensuse/",
+    description: "Set up offline voice typing on openSUSE Tumbleweed.",
+    icon: Cpu,
+  },
+  {
+    name: "Linux Mint",
+    href: "/install/linux-mint/",
+    description: "Voice dictation on Linux Mint releases built on Ubuntu 24.04.",
+    icon: Laptop,
+  },
+  {
+    name: "Pop!_OS",
+    href: "/install/pop-os/",
+    description: "Install Vocalinux on Pop!_OS 24.04 and later.",
+    icon: Laptop,
+  },
+  {
+    name: "NixOS",
+    href: "/install/nixos/",
+    description: "Use the Nix flake or the NixOS module shipped since v0.18.2.",
+    icon: Terminal,
+  },
 ];
 
 export const metadata: Metadata = buildPageMetadata({
-  title: "Install Voice Dictation on Linux (Ubuntu, Fedora, Arch)",
+  title: "Install Speech to Text on Linux (Ubuntu, Fedora, Arch)",
   description:
-    "Step-by-step Linux voice dictation installation guides for Ubuntu, Fedora, and Arch. Install Vocalinux in minutes and start offline speech-to-text.",
+    "Linux voice dictation install guides for Ubuntu, Debian, Fedora, Arch, openSUSE, Mint, Pop!_OS, NixOS, and Flatpak. Start offline speech-to-text.",
   path: "/install",
   keywords: [
     "install voice dictation linux",
@@ -78,7 +108,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">No installer</p>
-            <h3>AppImage</h3>
+            <h2>AppImage</h2>
             <p>
               x86_64 or aarch64 from GitHub Releases. No root. Host
               text-injection tools are still required.
@@ -90,7 +120,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">New</p>
-            <h3>Native packages</h3>
+            <h2>Native packages</h2>
             <p>
               .deb for Debian 12+ and Ubuntu 24.04+. .rpm for Fedora.
               x86_64 and aarch64 on every release.
@@ -98,11 +128,10 @@ export default function InstallGuidesPage() {
           </a>
           <a
             className="install-alt"
-            href="https://github.com/VocaHQ/vocalinux/blob/main/docs/INSTALL.md#flatpak"
-            rel="noopener noreferrer"
+            href="/flatpak/"
           >
             <p className="install-alt-kicker">Auto-updates</p>
-            <h3>Flatpak</h3>
+            <h2>Flatpak</h2>
             <p>
               Install once from the VocaHQ remote and{" "}
               <code>flatpak update</code> carries each stable release. Or
@@ -115,7 +144,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">Snap Store</p>
-            <h3>Snap</h3>
+            <h2>Snap</h2>
             <p>
               <code>snap install vocalinux --edge</code>. amd64 only for
               now; a .snap is attached to every release too.
@@ -127,7 +156,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">Arch</p>
-            <h3>AUR</h3>
+            <h2>AUR</h2>
             <p>
               <code>yay -S vocalinux</code>, or vocalinux-bin for the
               prebuilt package.
@@ -139,7 +168,7 @@ export default function InstallGuidesPage() {
             rel="noopener noreferrer"
           >
             <p className="install-alt-kicker">From source</p>
-            <h3>Build it yourself</h3>
+            <h2>Build it yourself</h2>
             <p>
               Clone the repo and run <code>./install.sh</code>. The install
               guide has the full source path.
