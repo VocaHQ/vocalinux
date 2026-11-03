@@ -64,6 +64,10 @@ RPM_PROVIDES = {
 #: recommend them; install.d documents the same set for install.sh.
 HOST_TOOLS = ("xdotool", "wtype", "ydotool", "wl-clipboard", "xclip", "xsel")
 
+#: The GtkLayerShell-0.1 typelib per format. Fedora's gtk-layer-shell ships
+#: the typelib itself; Debian splits it into the gir1.2 package.
+LAYER_SHELL_TYPELIB = {"deb": "gir1.2-gtklayershell-0.1", "rpm": "gtk-layer-shell"}
+
 #: pywhispercpp's own Requires-Dist (extras excluded): the vendored wheel's
 #: dependencies are the package's dependencies too.
 PYWHISPERCPP_DEPS = ("numpy", "requests", "tqdm", "platformdirs")
@@ -220,6 +224,16 @@ def test_deb_recommends_the_appindicator_glib_tray_backend() -> None:
     deps = _nfpm()["overrides"]["deb"]
     assert "gir1.2-ayatanaappindicatorglib-2.0" in deps["recommends"]
     assert "gir1.2-ayatanaappindicator3-0.1" in deps["depends"]
+
+
+def test_layer_shell_typelib_is_recommended_in_both_formats() -> None:
+    """Without GtkLayerShell the overlay is a plain toplevel, which KWin lists
+    in the taskbar (#1030). dictation_overlay.py soft-imports it and Mutter has
+    no layer shell, so it is a recommendation: GNOME gains nothing from it."""
+    deps = _nfpm()["overrides"]
+    for packager, name in LAYER_SHELL_TYPELIB.items():
+        assert name in deps[packager]["recommends"], f"{name} missing from {packager} recommends"
+        assert name not in deps[packager]["depends"], f"{name} must not be a hard {packager} dep"
 
 
 def test_the_pins_are_digests_rather_than_names() -> None:
