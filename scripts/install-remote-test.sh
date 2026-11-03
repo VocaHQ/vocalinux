@@ -277,11 +277,14 @@ assert_remote_install() {
   su - "$INSTALL_USER" -c "export HOME='$INSTALL_HOME'; '$REMOTE_VENV/bin/python' - '$version'" <<'PY' \
     || fail "pip did not install the selected release's export witnesses"
 import sys
-from importlib.metadata import version
+from importlib import import_module
 
+# --ignore-installed can leave metadata for both versions. Check the module
+# Python actually imports, not whichever .dist-info is discovered first.
 for kind in ("build", "runtime"):
-    name = f"vocalinux-remote-{kind}-fixture"
-    assert version(name) == sys.argv[1], (name, version(name), sys.argv[1])
+    name = f"vocalinux_remote_{kind}_fixture"
+    witness = import_module(name)
+    assert witness.VERSION == sys.argv[1], (name, witness.VERSION, sys.argv[1])
 PY
 
   # The artifacts the #701 guardrail names: the tagged installer, its sourced

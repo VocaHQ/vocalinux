@@ -284,7 +284,7 @@ def test_the_remote_gate_selects_a_tag():
     )
 
 
-def test_the_remote_gate_fails_closed_on_the_selected_tag():
+def test_the_remote_gate_fails_closed_on_the_selected_tag() -> None:
     """Guardrail: installer, sourced modules and requirement exports must all
     come from the selected tag. Check the revision as well as execution."""
     gate = _without_comments(_remote_gate_text())
@@ -297,8 +297,9 @@ def test_the_remote_gate_fails_closed_on_the_selected_tag():
         r'rev-parse "\$tag\^\{commit\}"', gate
     ), "the remote gate no longer checks the selected tag ref reached the clone"
     assert re.search(r'^  assert_trace "\$role"$', gate, re.M)
-    assert "vocalinux-remote-{kind}-fixture" in gate
-    assert "assert version(name) == sys.argv[1]" in gate
+    assert "vocalinux_remote_{kind}_fixture" in gate
+    assert "witness = import_module(name)" in gate
+    assert "assert witness.VERSION == sys.argv[1]" in gate
 
 
 def test_the_remote_gate_covers_controlled_latest_and_api_failure() -> None:
