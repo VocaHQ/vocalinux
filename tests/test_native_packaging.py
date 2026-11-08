@@ -236,6 +236,16 @@ def test_layer_shell_typelib_is_recommended_in_both_formats() -> None:
         assert name not in deps[packager]["depends"], f"{name} must not be a hard {packager} dep"
 
 
+def test_smoke_installs_recommends_and_loads_the_layer_shell_typelib() -> None:
+    """A recommendation can be skipped silently, and the overlay hides a missing
+    typelib, so the smoke must install recommends and load GtkLayerShell itself."""
+    smoke = SMOKE_SH.read_text(encoding="utf-8")
+    assert "APT::Install-Recommends=true" in smoke
+    assert "install_weak_deps=True" in smoke
+    assert 'gi.require_version("GtkLayerShell", "0.1")' in smoke
+    assert "from gi.repository import GtkLayerShell" in smoke
+
+
 def test_the_pins_are_digests_rather_than_names() -> None:
     for name, (kind, value, source) in _pins().items():
         if kind == "sha256":
