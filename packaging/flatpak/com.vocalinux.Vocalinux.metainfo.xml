@@ -105,6 +105,11 @@
   </content_rating>
 
   <releases>
+    <release version="0.18.6" date="2026-11-08">
+      <description>
+        <p>Patch: the paste chord no longer leaves Ctrl held on Sway and other wlroots compositors, Quit from the dock or taskbar closes Vocalinux on GNOME Wayland, the Wayland fallback overlay no longer opens as a large empty window, this Flatpak bundles gtk-layer-shell so the overlay stays out of the taskbar on KDE and wlroots, the Settings layout readout follows layout switches, and the microphone tooltip shows the full device name. This Flatpak still ships whisper.cpp only.</p>
+      </description>
+    </release>
     <release version="0.18.5" date="2026-10-27">
       <description>
         <p>Patch: a stop that races a recording start can no longer leave the microphone recording forever, capture reads happen outside the buffer lock so a stalled microphone can no longer hang Stop, keyboards stay alive through suspend and the GNOME lock screen, Dictation Pad and Settings no longer bind to other windows on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, and paste-injection copies are marked sensitive for clipboard history on wl-clipboard 2.2+. This Flatpak still ships whisper.cpp only.</p>
