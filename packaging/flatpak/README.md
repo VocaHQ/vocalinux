@@ -42,10 +42,11 @@ contributors (below).
 
 ## Current Scope
 
-The manifest ships the default `whisper_cpp` engine and Silero VAD
-(`onnxruntime`). VOSK is omitted because the PyPI package is wheel-only (no
-sdist), so a Flathub-ready VOSK build would need to compile VOSK and its native
-deps from source.
+The manifest ships the default `whisper_cpp` engine, the Parakeet engine
+(`sherpa-onnx`, #1032) and Silero VAD (`onnxruntime`). Parakeet's
+`sherpa-onnx-core` wheel bundles its own `libonnxruntime.so`, separate from the
+`onnxruntime` package Silero VAD uses, as it does in a `pip`/`install.sh`
+install. OpenAI Whisper, faster-whisper and VOSK are not shipped.
 
 Global keyboard shortcuts use **evdev** (`/dev/input`) on Wayland and
 XWayland. On native X11, they use the X11 **pynput** listener through
@@ -128,10 +129,10 @@ flatpak-builder --run build-dir packaging/flatpak/com.vocalinux.Vocalinux.yml \
 
 ## Python Dependencies
 
-`python3-dependencies.yaml` is generated from `requirements/vad.txt`, the
-hash-pinned export `just lock` writes out of `uv.lock`. This includes the
-runtime dependencies plus the `[vad]` extra. Refresh it whenever the dependency
-set changes:
+`python3-dependencies.yaml` is generated from `requirements/vad.txt` and
+`requirements/parakeet.txt`, the hash-pinned exports `just lock` writes out of
+`uv.lock`. Together they cover the runtime dependencies plus the `[vad]` and
+`[parakeet]` extras. Refresh it whenever the dependency set changes:
 
 ```bash
 just flatpak-deps        # rewrite the manifest (needs PyPI)
@@ -144,9 +145,11 @@ no extra step.
 The script resolves each package's URL by looking up the digest uv already
 recorded, so the bytes this build downloads are the bytes in `uv.lock`, not
 merely the same version number. It takes a universal wheel where one exists and
-the sdist otherwise. `onnxruntime` has no sdist, so its CPython-ABI wheel is
-pinned to GNOME 50's Python version and selected separately for each Flatpak
-architecture.
+the sdist otherwise. `onnxruntime` and `sherpa-onnx-core` have no sdist, and
+`sherpa-onnx`'s sdist builds its native libraries with CMake, so all three come
+as binary wheels selected separately for each Flatpak architecture. The
+CPython-ABI wheels (`onnxruntime`, `sherpa-onnx`) are pinned to GNOME 50's
+Python version; `sherpa-onnx-core` is `py3-none`.
 
 This replaced a `flatpak-pip-generator` invocation whose package list was typed
 out on the command line. Nothing regenerated it and no test compared it to
