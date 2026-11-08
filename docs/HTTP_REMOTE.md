@@ -136,6 +136,42 @@ FunASR/SenseVoice example:
 }
 ```
 
+### Custom terms
+
+When **Custom terms** are enabled (**Settings → Custom Dictionary**), requests to
+the OpenAI-compatible endpoint (`/v1/audio/transcriptions`) carry the terms so
+the server can bias recognition. The terms file is re-read before every request.
+`speech_recognition.remote_api_bias_mode` in the config file chooses the format:
+
+| Value | Behaviour |
+| --- | --- |
+| `auto` (default) | `context_bias` when the server URL host is `mistral.ai` or a subdomain of it (for example `https://api.mistral.ai`), otherwise `prompt` |
+| `context_bias` | One `context_bias` form field per term ([Mistral context biasing](https://docs.mistral.ai/studio/audio/speech-to-text/bias-context-and-vocabulary)) |
+| `prompt` | All terms joined by spaces in a single `prompt` field, as OpenAI's API accepts |
+| `off` | No terms are sent |
+
+`dictionary.max_words` limits how many terms are sent. If the server answers a
+request that carries terms with HTTP 400, 413 or 422 (for example an unknown
+field or a context that is too large), Vocalinux logs a warning and retries that
+request once without the terms, so dictation keeps working. Requests to the
+whisper.cpp `/inference` endpoint never include terms. With custom terms disabled
+or empty, requests are unchanged.
+
+Mistral example:
+
+```json
+{
+  "speech_recognition": {
+    "engine": "remote_api",
+    "remote_api_url": "https://api.mistral.ai",
+    "remote_api_key": "<your Mistral API key>",
+    "remote_api_endpoint": "/v1/audio/transcriptions",
+    "remote_api_model": "voxtral-small-transcribe-3-0",
+    "remote_api_bias_mode": "auto"
+  }
+}
+```
+
 ## Wire protocol reference
 
 If you're writing a custom server, this is exactly what the client sends.
@@ -191,8 +227,16 @@ whisper-1
 Content-Disposition: form-data; name="language"
 
 en
+--boundary
+Content-Disposition: form-data; name="prompt"   # only with custom terms in prompt mode
+
+VocaLinux PyGObject
 --boundary--
 ```
+
+In `context_bias` mode the `prompt` part is replaced by one
+`Content-Disposition: form-data; name="context_bias"` part per term. See
+[Custom terms](#custom-terms).
 
 ### Response (`/inference` and `/v1/audio/transcriptions`)
 

@@ -152,6 +152,27 @@ def test_prompt_read_stops_at_the_terms_limit(tmp_path: Path, monkeypatch) -> No
     assert manager.build_initial_prompt() == "one two"
 
 
+def test_bias_terms_follow_enablement_and_terms_limit(tmp_path: Path, monkeypatch) -> None:
+    """List-form terms (Remote API context_bias) share the prompt's enablement and cap."""
+    config = FakeConfig({"dictionary": {"enabled": True, "max_words": 2}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+    (tmp_path / TERMS_FILENAME).write_text(
+        "Alder Creek Design\nNorthwind\nthree\n", encoding="utf-8"
+    )
+
+    assert manager.build_bias_terms() == ["Alder Creek Design", "Northwind"]
+
+    config.values["dictionary"]["enabled"] = False
+    assert manager.build_bias_terms() == []
+
+
+def test_bias_terms_are_empty_without_a_terms_file(tmp_path: Path, monkeypatch) -> None:
+    """A missing terms file yields no list-form terms."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+
+    assert manager.build_bias_terms() == []
+
+
 def test_partially_invalid_terms_file_fails_closed(tmp_path: Path, monkeypatch) -> None:
     """Valid lines before corrupt UTF-8 must not reach recognition."""
     manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))

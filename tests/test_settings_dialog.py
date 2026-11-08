@@ -1120,7 +1120,8 @@ class TestSettingsNavigation(unittest.TestCase):
         body = self.source_code.split("def _build_dictionary_section")[1].split("\n    def ")[0]
         self.assertIn('title="Custom terms"', body)
         self.assertIn('title="Transcript corrections"', body)
-        self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper", body)
+        self.assertIn("Vocabulary bias works with Whisper, whisper.cpp, Faster Whisper, and", body)
+        self.assertIn("OpenAI-compatible Remote API servers", body)
         self.assertIn("self.dictionary_management_switcher = Gtk.StackSwitcher()", body)
         self.assertIn(
             "self.dictionary_tab.pack_start(self.dictionary_management_stack, True, True, 0)",

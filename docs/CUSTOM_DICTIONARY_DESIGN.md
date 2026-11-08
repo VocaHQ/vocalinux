@@ -67,7 +67,8 @@ for matching, so composed/decomposed accents are handled consistently.
 | Faster Whisper | `initial_prompt` | Yes |
 | VOSK | No prompt-bias API | Yes |
 | Parakeet | No prompt-bias API | Yes |
-| Remote API | No prompt is added to current request formats | Yes |
+| Remote API (`/v1/audio/transcriptions`) | One `context_bias` field per term for Mistral hosts, otherwise `prompt` (`speech_recognition.remote_api_bias_mode`); retried once without terms on HTTP 400/413/422 | Yes |
+| Remote API (`/inference`) | No prompt is added | Yes |
 
 `--dictionary-file PATH` preserves the #767 session-only behavior: `PATH` is
 used as the custom terms file, it enables terms for that session, and Settings
@@ -113,9 +114,9 @@ paths are safely ignored and shown as unavailable rather than raising.
    the Settings status/save feedback is clear.
 5. Test the UI with keyboard only: Add buttons via Enter, empty validation,
    update/remove feedback, narrow window, long entries, and high-contrast theme.
-6. Test all engines: Whisper, whisper.cpp, and Faster Whisper should use terms and
-   corrections; VOSK, Parakeet, and remote API should use corrections only, with
-   the VOSK terms warning.
+6. Test all engines: Whisper, whisper.cpp, Faster Whisper, and the OpenAI-compatible
+   remote API should use terms and corrections; VOSK, Parakeet, and the whisper.cpp
+   `/inference` remote API should use corrections only, with the VOSK terms warning.
 7. Start with `--dictionary-file /path/to/terms.txt`; confirm the session uses
    that file, Settings disables terms editing, saved settings remain unchanged,
    and corrections still apply.
