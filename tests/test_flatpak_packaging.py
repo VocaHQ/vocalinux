@@ -23,6 +23,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import yaml
 from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
@@ -347,6 +348,29 @@ def _on_event_block(event: str) -> str:
     )
     assert match, f"flatpak.yml has no on.{event} block"
     return match.group(1)
+
+
+def test_the_overlay_layer_shell_typelib_is_bundled() -> None:
+    """dictation_overlay.py soft-imports GtkLayerShell-0.1; without it the
+    overlay is a plain toplevel that KWin lists in the taskbar (#1030). The
+    GNOME runtime does not ship it, so the manifest builds it with
+    introspection, pinned like every other module, and GI_TYPELIB_PATH must
+    reach /app where the typelib lands."""
+    manifest = yaml.safe_load(MANIFEST.read_text(encoding="utf-8"))
+    modules = [m for m in manifest["modules"] if isinstance(m, dict)]
+    layer_shell = next((m for m in modules if m["name"] == "gtk-layer-shell"), None)
+    assert layer_shell, "the Flatpak manifest has no gtk-layer-shell module"
+    assert layer_shell["buildsystem"] == "meson"
+    assert "-Dintrospection=true" in layer_shell["config-opts"]
+    assert "/lib/girepository-1.0" not in layer_shell.get("cleanup", [])
+    (source,) = layer_shell["sources"]
+    assert source["type"] == "archive"
+    assert re.fullmatch(
+        r"https://github\.com/wmww/gtk-layer-shell/archive/refs/tags/v[\d.]+\.tar\.gz",
+        source["url"],
+    ), f"{source['url']} is not a release tag archive"
+    assert re.fullmatch(r"[0-9a-f]{64}", source["sha256"])
+    assert "--env=GI_TYPELIB_PATH=/app/lib/girepository-1.0" in manifest["finish-args"]
 
 
 def test_a_lock_refresh_reaches_the_flatpak_build() -> None:
