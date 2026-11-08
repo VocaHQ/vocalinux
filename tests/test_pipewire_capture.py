@@ -16,8 +16,11 @@ from vocalinux.audio.pipewire import (
     SYSTEM_AUDIO_PREFIX,
     PipeWireCaptureSource,
     PipeWireSource,
+    _parse_alsa_capture_descriptions,
     _parse_pw_dump,
     _test_pipewire_input,
+    friendly_device_label,
+    get_alsa_capture_descriptions,
     get_system_audio_sources,
     is_pipewire_device,
     is_pipewire_device_index,
@@ -225,6 +228,87 @@ class TestGetSystemAudioSources(unittest.TestCase):
             which=lambda name: "/usr/bin/pw-dump",
         )
         assert [s.node_name for s in sources] == ["alsa_output.dac", "obs_sink"]
+
+
+def _alsa_source(description: str, **props: Any) -> Dict[str, Any]:
+    node = _node(70, 70, "Audio/Source", "alsa_input.x", description)
+    node["info"]["props"].update(props)
+    return node
+
+
+class TestAlsaCaptureDescriptions(unittest.TestCase):
+    """PipeWire descriptions for PortAudio's cryptic ALSA names (#1029)."""
+
+    def test_maps_card_and_device_to_description(self) -> None:
+        objects = [
+            _alsa_source("Digital Microphone", **{"alsa.card": "0", "alsa.device": "6"}),
+            _alsa_source("Headset Microphone", **{"alsa.card": 0, "alsa.device": 0}),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {
+            "hw:0,6": "Digital Microphone",
+            "hw:0,0": "Headset Microphone",
+        }
+
+    def test_falls_back_to_hw_alsa_path(self) -> None:
+        objects = [_alsa_source("USB Mic Mono", **{"api.alsa.path": "hw:2,0"})]
+        assert _parse_alsa_capture_descriptions(objects) == {"hw:2,0": "USB Mic Mono"}
+
+    def test_ignores_sinks_unaddressed_and_non_hw_paths(self) -> None:
+        sink = _node(80, 80, "Audio/Sink", "alsa_output.x", "Speakers")
+        sink["info"]["props"].update({"alsa.card": "0", "alsa.device": "0"})
+        objects = [
+            sink,
+            _alsa_source("Front Mic", **{"api.alsa.path": "front:0"}),
+            _alsa_source("Virtual", **{"alsa.card": "x", "alsa.device": "1"}),
+            _alsa_source("", **{"alsa.card": "1", "alsa.device": "0"}),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {}
+
+    def test_first_description_wins_and_malformed_entries_are_skipped(self) -> None:
+        objects = [
+            None,
+            {"type": "PipeWire:Interface:Node", "info": "bad"},
+            _alsa_source("First", **{"alsa.card": "1", "alsa.device": "0"}),
+            _alsa_source("Second", **{"alsa.card": "1", "alsa.device": "0"}),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {"hw:1,0": "First"}
+        assert _parse_alsa_capture_descriptions("not a list") == {}
+
+    def test_missing_pw_dump_returns_empty(self) -> None:
+        runner = MagicMock()
+        assert get_alsa_capture_descriptions(runner=runner, which=lambda name: None) == {}
+        runner.assert_not_called()
+
+    def test_failed_or_unparsable_dump_returns_empty(self) -> None:
+        def which(name: str) -> str:
+            return "/usr/bin/pw-dump"
+
+        assert get_alsa_capture_descriptions(runner=lambda a: (1, "", "x"), which=which) == {}
+        assert get_alsa_capture_descriptions(runner=lambda a: (0, "{no", ""), which=which) == {}
+
+    def test_does_not_need_pw_record(self) -> None:
+        dump = [_alsa_source("Digital Microphone", **{"alsa.card": "0", "alsa.device": "6"})]
+
+        def which(name: str) -> Optional[str]:
+            return "/usr/bin/pw-dump" if name == "pw-dump" else None
+
+        descriptions = get_alsa_capture_descriptions(
+            runner=lambda args: (0, json.dumps(dump), ""), which=which
+        )
+        assert descriptions == {"hw:0,6": "Digital Microphone"}
+
+
+class TestFriendlyDeviceLabel(unittest.TestCase):
+    def test_replaces_driver_name_and_keeps_address(self) -> None:
+        label = friendly_device_label("sof-hda-dsp: - (hw:0,6)", {"hw:0,6": "Digital Microphone"})
+        assert label == "Digital Microphone (hw:0,6)"
+
+    def test_unknown_address_keeps_portaudio_name(self) -> None:
+        name = "HDA Intel PCH: ALC257 Analog (hw:1,0)"
+        assert friendly_device_label(name, {"hw:0,6": "Digital Microphone"}) == name
+
+    def test_name_without_address_is_unchanged(self) -> None:
+        assert friendly_device_label("Blue Yeti", {"hw:0,6": "Digital Microphone"}) == "Blue Yeti"
 
 
 class TestDevicePredicates(unittest.TestCase):

@@ -20,12 +20,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import select
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..utils.host_process import host_env
 from .errors import CaptureStalledError
@@ -48,6 +49,16 @@ PIPEWIRE_INDEX_FLOOR = -999
 
 #: pw-dump media classes whose monitor a user can meaningfully record.
 _MONITOR_CLASSES = frozenset({"Audio/Sink", "Audio/Sink/Virtual"})
+
+#: pw-dump media classes of capture nodes a PortAudio ALSA device can map to.
+_CAPTURE_CLASSES = frozenset({"Audio/Source", "Audio/Duplex"})
+
+#: ALSA hardware address in a PipeWire ``api.alsa.path`` (``hw:0,6``).
+_ALSA_HW_PATH = re.compile(r"^hw:(\d+),(\d+)$")
+
+#: Trailing ALSA hardware address PortAudio appends to its device names, as
+#: in ``sof-hda-dsp: - (hw:0,6)``.
+_PORTAUDIO_HW_SUFFIX = re.compile(r"\((hw:\d+,\d+)\)\s*$")
 
 #: Metadata keys carrying the effective and configured default sink.
 _DEFAULT_SINK_KEYS = ("default.audio.sink", "default.configured.audio.sink")
@@ -165,6 +176,59 @@ def _parse_pw_dump(objects: object) -> List[PipeWireSource]:
     return labelled
 
 
+def _parse_alsa_capture_descriptions(objects: object) -> Dict[str, str]:
+    """Map ALSA hardware addresses (``hw:C,D``) to PipeWire capture descriptions.
+
+    PortAudio names ALSA devices after the driver's card and PCM names, which
+    are often cryptic (``sof-hda-dsp: - (hw:0,6)``). PipeWire describes the
+    same PCM through ``node.description`` ("Digital Microphone"), and its ALSA
+    nodes carry the card and device numbers that make up the ``hw:`` address.
+    """
+    if not isinstance(objects, list):
+        return {}
+    descriptions: Dict[str, str] = {}
+    for obj in objects:
+        if not isinstance(obj, dict) or obj.get("type") != "PipeWire:Interface:Node":
+            continue
+        info = obj.get("info") or {}
+        props = info.get("props") if isinstance(info, dict) else None
+        if not isinstance(props, dict) or props.get("media.class") not in _CAPTURE_CLASSES:
+            continue
+        description = str(props.get("node.description") or props.get("node.nick") or "").strip()
+        if not description:
+            continue
+        card = props.get("alsa.card", props.get("api.alsa.pcm.card"))
+        device = props.get("alsa.device", props.get("api.alsa.pcm.device"))
+        address: Optional[str] = None
+        if str(card).isdigit() and str(device).isdigit():
+            address = f"hw:{int(str(card))},{int(str(device))}"
+        else:
+            match = _ALSA_HW_PATH.match(str(props.get("api.alsa.path") or ""))
+            if match:
+                address = f"hw:{int(match.group(1))},{int(match.group(2))}"
+        if address:
+            descriptions.setdefault(address, description)
+    return descriptions
+
+
+def _load_pw_dump(runner: Optional[CommandRunner] = None) -> Optional[object]:
+    """Run ``pw-dump`` and parse its JSON, or None when that is not possible."""
+    runner = runner or _run_host_command
+    try:
+        code, stdout, _stderr = runner(["pw-dump"])
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.debug("pw-dump failed: %s", exc)
+        return None
+    if code != 0 or not stdout.strip():
+        return None
+    try:
+        objects: object = json.loads(stdout)
+    except ValueError:
+        logger.debug("Could not parse pw-dump output as JSON")
+        return None
+    return objects
+
+
 def get_system_audio_sources(
     runner: Optional[CommandRunner] = None,
     which: Optional[Which] = None,
@@ -181,20 +245,46 @@ def get_system_audio_sources(
     # be opened.
     if which("pw-dump") is None or which("pw-record") is None:
         return []
-    runner = runner or _run_host_command
-    try:
-        code, stdout, _stderr = runner(["pw-dump"])
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.debug("pw-dump failed: %s", exc)
-        return []
-    if code != 0 or not stdout.strip():
-        return []
-    try:
-        objects = json.loads(stdout)
-    except ValueError:
-        logger.debug("Could not parse pw-dump output as JSON")
+    objects = _load_pw_dump(runner)
+    if objects is None:
         return []
     return _parse_pw_dump(objects)
+
+
+def get_alsa_capture_descriptions(
+    runner: Optional[CommandRunner] = None,
+    which: Optional[Which] = None,
+) -> Dict[str, str]:
+    """Readable names for ALSA capture devices, keyed by ``hw:C,D`` address.
+
+    Empty when ``pw-dump`` is missing or the daemon does not answer; callers
+    then keep PortAudio's own names.
+    """
+    which = which or shutil.which
+    if which("pw-dump") is None:
+        return {}
+    objects = _load_pw_dump(runner)
+    if objects is None:
+        return {}
+    return _parse_alsa_capture_descriptions(objects)
+
+
+def friendly_device_label(device_name: str, descriptions: Mapping[str, str]) -> str:
+    """Label a PortAudio ALSA device with PipeWire's description when one is known.
+
+    ``sof-hda-dsp: - (hw:0,6)`` becomes ``Digital Microphone (hw:0,6)``. The
+    ``hw:`` address stays in the label so two inputs that share a description
+    remain distinguishable. Names without an address, or with no matching
+    description, are returned unchanged. The label is for display only: the
+    PortAudio name is still what Settings saves and resolves.
+    """
+    match = _PORTAUDIO_HW_SUFFIX.search(device_name or "")
+    if not match:
+        return device_name
+    description = descriptions.get(match.group(1))
+    if not description:
+        return device_name
+    return f"{description} ({match.group(1)})"
 
 
 def pipewire_available(which: Optional[Which] = None) -> bool:
