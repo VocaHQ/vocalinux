@@ -205,8 +205,10 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
         with patch.object(injector, "_wtype_usable_for_paste", return_value=True):
             cmd = injector._clipboard_paste_command()
             terminal = injector._clipboard_paste_command(terminal=True)
-        self.assertEqual(cmd, ["wtype", "-M", "ctrl", "v"])
-        self.assertEqual(terminal, ["wtype", "-M", "ctrl", "-M", "shift", "v"])
+        self.assertEqual(cmd, ["wtype", "-M", "ctrl", "v", "-m", "ctrl"])
+        self.assertEqual(
+            terminal, ["wtype", "-M", "ctrl", "-M", "shift", "v", "-m", "shift", "-m", "ctrl"]
+        )
         self.assertIn("v", cmd)
         self.assertNotIn("47", cmd)
         self.assertNotIn("47:1", cmd)
@@ -232,10 +234,22 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
         mock_thread.return_value.start.assert_called_once_with()
         paste_cmds = [c.args[0] for c in mock_run.call_args_list if c.args]
         self.assertTrue(
-            any(c == ["wtype", "-M", "ctrl", "v"] for c in paste_cmds),
+            any(c == ["wtype", "-M", "ctrl", "v", "-m", "ctrl"] for c in paste_cmds),
             paste_cmds,
         )
         self.assertFalse(any("47:1" in c for c in paste_cmds))
+
+    def test_wtype_paste_chord_releases_every_pressed_modifier(self):
+        """A wtype paste must not leave Ctrl/Shift held after it exits (#1048)."""
+        injector = _make_injector()
+        for terminal in (False, True):
+            cmd = injector._wtype_paste_command(terminal=terminal)
+            pressed = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "-M"]
+            released = [cmd[i + 1] for i, tok in enumerate(cmd) if tok == "-m"]
+            self.assertTrue(pressed, cmd)
+            # Released in reverse press order, after the letter is typed.
+            self.assertEqual(released, list(reversed(pressed)), cmd)
+            self.assertLess(cmd.index("v"), cmd.index("-m"), cmd)
 
     def test_wtype_paste_skipped_on_kde_when_typing_backend_is_ydotool(self):
         injector = _make_injector()

@@ -2596,10 +2596,16 @@ class TextInjector:
         return usable
 
     def _wtype_paste_command(self, *, terminal: bool = False) -> list:
-        """wtype argv that types Latin 'v' as a keysym, with Ctrl (and Shift)."""
+        """wtype argv that types Latin 'v' as a keysym, with Ctrl (and Shift).
+
+        Every modifier pressed with ``-M`` is released again with ``-m``.
+        wtype does not lift held modifiers when it exits, and some compositors
+        (Sway, #1048) keep the seat's Ctrl latched after the virtual keyboard
+        goes away, so scrolling zooms until another key is pressed.
+        """
         if terminal:
-            return ["wtype", "-M", "ctrl", "-M", "shift", "v"]
-        return ["wtype", "-M", "ctrl", "v"]
+            return ["wtype", "-M", "ctrl", "-M", "shift", "v", "-m", "shift", "-m", "ctrl"]
+        return ["wtype", "-M", "ctrl", "v", "-m", "ctrl"]
 
     def _clipboard_paste_command(self, *, terminal: bool = False) -> list:
         """Return argv for the clipboard paste chord.
