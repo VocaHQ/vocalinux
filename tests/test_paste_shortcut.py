@@ -239,7 +239,7 @@ class TestYdotoolTerminalPasteCommand(unittest.TestCase):
         )
         self.assertFalse(any("47:1" in c for c in paste_cmds))
 
-    def test_wtype_paste_chord_releases_every_pressed_modifier(self):
+    def test_wtype_paste_chord_releases_every_pressed_modifier(self) -> None:
         """A wtype paste must not leave Ctrl/Shift held after it exits (#1048)."""
         injector = _make_injector()
         for terminal in (False, True):
