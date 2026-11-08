@@ -443,6 +443,21 @@ def test_a_failed_lookup_keeps_the_poll_alive(
     glib.idle_add.assert_called_once_with(dialog._finish_follow_layout_lookup)
 
 
+def test_an_unexpected_lookup_error_is_not_swallowed(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """Only host lookup failures are treated as a failed lookup; bugs still raise."""
+    dialog = Mock()
+    with (
+        patch.object(settings_dialog, "language_for_active_layout", side_effect=TypeError("x")),
+        patch.object(settings_dialog, "GLib") as glib,
+        pytest.raises(TypeError),
+    ):
+        dialog_class._lookup_follow_layout_language(dialog)
+
+    glib.idle_add.assert_not_called()
+
+
 def _readout_dialog(settings_dialog: Any, shown: Any, combo: str = "en-us") -> Mock:
     dialog = Mock()
     dialog._follow_layout_active = True

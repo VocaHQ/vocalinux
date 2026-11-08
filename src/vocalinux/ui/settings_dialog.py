@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -8463,7 +8464,8 @@ class SettingsDialog(AboutSectionMixin):
         """Worker: resolve the active layout and hand the answer to the GTK thread."""
         try:
             resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
-        except Exception as exc:  # A failed lookup must not kill the poll.
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            # A failed host lookup must not kill the poll; programming errors still raise.
             logger.debug(f"Keyboard layout lookup for the settings readout failed: {exc}")
             GLib.idle_add(self._finish_follow_layout_lookup)
             return
