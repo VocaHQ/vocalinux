@@ -3403,9 +3403,9 @@ class SettingsDialog(AboutSectionMixin):
         terms_group = PreferencesGroup(
             title="Custom terms",
             description=(
-                "Terms bias Whisper, whisper.cpp, and Faster Whisper recognition. The UTF-8 "
-                "terms file is live-reloaded and has one term per line, so accessibility tools "
-                "can edit it."
+                "Terms bias Whisper, whisper.cpp, Faster Whisper, and OpenAI-compatible Remote "
+                "API recognition. The UTF-8 terms file is live-reloaded and has one term per "
+                "line, so accessibility tools can edit it."
             ),
             keywords=("dictionary", "terms", "vocabulary", "whisper", "scanner"),
         )
@@ -3415,8 +3415,8 @@ class SettingsDialog(AboutSectionMixin):
             PreferenceRow(
                 title="Use custom terms",
                 subtitle=(
-                    "Vocabulary bias works with Whisper, whisper.cpp, and Faster Whisper; "
-                    "corrections work with every engine."
+                    "Vocabulary bias works with Whisper, whisper.cpp, Faster Whisper, and "
+                    "OpenAI-compatible Remote API servers; corrections work with every engine."
                 ),
                 widget=self.dictionary_terms_enabled_switch,
             )

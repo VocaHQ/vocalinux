@@ -133,6 +133,8 @@ DEFAULT_CONFIG = {
         "remote_api_key": "",  # Remote server API key (optional)
         "remote_api_endpoint": "/inference",  # Remote server API endpoint format
         "remote_api_model": "whisper-1",  # Model name sent to compatible remote APIs
+        # How custom terms reach OpenAI-compatible remote APIs: auto | context_bias | prompt | off
+        "remote_api_bias_mode": "auto",
     },
     "audio": {
         "device_index": None,  # Audio input device index (None for system default)

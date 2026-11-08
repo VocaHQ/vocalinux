@@ -479,16 +479,33 @@ class CustomDictionaryManager:
             return False
         return self._atomic_write(path, "".join(remaining_lines))
 
+    def _max_bias_terms(self) -> int:
+        """Return the configured ``dictionary.max_words`` limit, defaulting on bad values."""
+        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
+        try:
+            return max(0, int(max_terms))
+        except (TypeError, ValueError):
+            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
+            return DEFAULT_MAX_TERMS
+
+    def build_bias_terms(self) -> list[str]:
+        """Return the enabled terms as a list, bounded by ``dictionary.max_words``.
+
+        Used by engines that accept vocabulary as discrete entries (for
+        example Mistral's ``context_bias``) rather than one prompt string.
+        """
+        if not self.terms_enabled():
+            return []
+        path = self.terms_path()
+        if path is None:
+            return []
+        return list(self._iter_terms_for_prompt(path, self._max_bias_terms()))
+
     def build_initial_prompt(self) -> Optional[str]:
         """Build the current Whisper prompt from enabled terms, if any."""
         if not self.terms_enabled():
             return None
-        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
-        try:
-            max_terms = max(0, int(max_terms))
-        except (TypeError, ValueError):
-            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
-            max_terms = DEFAULT_MAX_TERMS
+        max_terms = self._max_bias_terms()
         path = self.terms_path()
         if path is None:
             return None

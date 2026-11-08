@@ -22,6 +22,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, NamedTuple, Optional, Union, cast
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     import numpy as np
@@ -98,6 +99,13 @@ _RECOGNITION_JOIN_SECONDS = 5.0
 _RECOGNITION_FINAL_JOIN_SECONDS = 1.0
 _FINAL_BUFFER_SECONDS = 1.0
 _STOP_WAIT_SECONDS = 9.0
+
+# How custom terms reach the Remote API engine: "auto" picks "context_bias" for
+# Mistral hosts and "prompt" elsewhere.
+REMOTE_API_BIAS_MODES = ("auto", "context_bias", "prompt", "off")
+# Client errors after which a request carrying custom terms is retried once
+# without them (unknown field, oversized context, validation failure).
+REMOTE_API_BIAS_REJECTED_STATUSES = frozenset({400, 413, 422})
 
 
 class _CaptureSession:
@@ -611,6 +619,9 @@ class SpeechRecognitionManager:
         self.remote_api_key = kwargs.get("remote_api_key", "")
         self.remote_api_endpoint = kwargs.get("remote_api_endpoint", "/inference")
         self.remote_api_model = kwargs.get("remote_api_model", "whisper-1")
+        self.remote_api_bias_mode = self._normalize_remote_api_bias_mode(
+            kwargs.get("remote_api_bias_mode", "auto")
+        )
         self._http_session = None
 
         self._faster_whisper_engine: Any = None
@@ -825,6 +836,7 @@ class SpeechRecognitionManager:
         "remote_api_key",
         "remote_api_endpoint",
         "remote_api_model",
+        "remote_api_bias_mode",
     )
 
     def _snapshot_reconfigure_state(self) -> dict[str, object]:
@@ -2528,8 +2540,66 @@ class SpeechRecognitionManager:
             logger.error(f"Remote API transcription error: {e} ({audio_info})", exc_info=True)
             return ""
 
+    @staticmethod
+    def _normalize_remote_api_bias_mode(value: object) -> str:
+        """Return a supported ``remote_api_bias_mode``, falling back to ``auto``."""
+        mode = value.strip().lower() if isinstance(value, str) else ""
+        if mode in REMOTE_API_BIAS_MODES:
+            return mode
+        if value not in (None, ""):
+            logger.warning("Unknown remote_api_bias_mode %r; using 'auto'", value)
+        return "auto"
+
+    def _resolve_remote_api_bias_mode(self) -> str:
+        """Resolve ``auto`` to ``context_bias`` for Mistral hosts, else ``prompt``."""
+        mode = self.remote_api_bias_mode
+        if mode != "auto":
+            return mode
+        try:
+            host = (urlparse(self.remote_api_url or "").hostname or "").lower()
+        except ValueError:
+            host = ""
+        if host == "mistral.ai" or host.endswith(".mistral.ai"):
+            return "context_bias"
+        return "prompt"
+
+    def _remote_api_bias_fields(self) -> dict[str, Any]:
+        """Return extra multipart fields carrying custom terms for the remote API.
+
+        Mistral's transcription endpoint takes one ``context_bias`` field per
+        term; other OpenAI-compatible servers take the terms as ``prompt``.
+        Terms are read live, so edits to the terms file apply next request.
+        """
+        if self.dictionary_manager is None:
+            return {}
+        mode = self._resolve_remote_api_bias_mode()
+        if mode == "off":
+            return {}
+        try:
+            if mode == "context_bias":
+                terms = self.dictionary_manager.build_bias_terms()
+                if not terms:
+                    return {}
+                logger.debug("Remote API: sending %d custom terms as context_bias", len(terms))
+                logger.debug("Remote API context_bias terms: %r", terms)
+                return {"context_bias": terms}
+            prompt = self.dictionary_manager.build_initial_prompt()
+        except (OSError, TypeError, ValueError) as error:
+            logger.warning("Could not build custom terms for the remote API: %s", error)
+            return {}
+        if not prompt:
+            return {}
+        logger.debug("Remote API: sending custom terms as prompt (%d words)", len(prompt.split()))
+        logger.debug("Remote API prompt: %r", prompt)
+        return {"prompt": prompt}
+
     def _try_openai_api(self, wav_bytes: bytes, lang, headers: dict, session):
         """Try to transcribe using OpenAI compatible API format.
+
+        Custom terms are added as ``context_bias`` or ``prompt`` fields (see
+        ``_remote_api_bias_fields``). If the server rejects a request carrying
+        them with a client error, the request is retried once without them so
+        dictation keeps working.
 
         Args:
             wav_bytes: Audio data in WAV format
@@ -2545,12 +2615,24 @@ class SpeechRecognitionManager:
         url = f"{self.remote_api_url}{self.remote_api_endpoint}"
 
         files = {"file": ("audio.wav", wav_bytes, "audio/wav")}
-        data = {"model": self.remote_api_model or "whisper-1"}
+        data: dict[str, Any] = {"model": self.remote_api_model or "whisper-1"}
         if lang:
             data["language"] = lang
+        bias_fields = self._remote_api_bias_fields()
 
         try:
-            response = session.post(url, headers=headers, files=files, data=data, timeout=30)
+            response = session.post(
+                url, headers=headers, files=files, data={**data, **bias_fields}, timeout=30
+            )
+
+            if bias_fields and response.status_code in REMOTE_API_BIAS_REJECTED_STATUSES:
+                logger.warning(
+                    "Remote API rejected the request with custom terms (HTTP %s: %s); "
+                    "retrying without them",
+                    response.status_code,
+                    ", ".join(sorted(bias_fields)),
+                )
+                response = session.post(url, headers=headers, files=files, data=data, timeout=30)
 
             if response.status_code == 404:
                 logger.debug("OpenAI API endpoint does not exist, try other formats")
@@ -5028,6 +5110,10 @@ class SpeechRecognitionManager:
             self.remote_api_endpoint = kwargs.get("remote_api_endpoint", "/inference")
         if "remote_api_model" in kwargs:
             self.remote_api_model = kwargs.get("remote_api_model", "whisper-1")
+        if "remote_api_bias_mode" in kwargs:
+            self.remote_api_bias_mode = self._normalize_remote_api_bias_mode(
+                kwargs.get("remote_api_bias_mode", "auto")
+            )
 
         self._voice_commands_enabled = self._resolve_voice_commands_enabled()
 
