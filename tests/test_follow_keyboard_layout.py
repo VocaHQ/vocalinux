@@ -351,3 +351,189 @@ def test_layout_sentinel_does_not_retarget_a_bare_size_onto_english_only(
 ) -> None:
     assert settings_dialog._whispercpp_variant_for_language("tiny", "layout") == "tiny"
     assert settings_dialog._whispercpp_variant_for_language("tiny.en", "layout") == "tiny"
+
+
+# --- An open Settings window tracks layout switches (#1047) -----------------
+
+
+def test_turning_the_mode_on_starts_the_layout_poll(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = Mock()
+    dialog._follow_layout_poll_id = None
+    with patch.object(settings_dialog, "GLib") as glib:
+        glib.timeout_add_seconds.return_value = 42
+        dialog_class._update_follow_layout_poll(dialog, True)
+
+    glib.timeout_add_seconds.assert_called_once_with(
+        settings_dialog.FOLLOW_LAYOUT_POLL_SECONDS, dialog._poll_follow_layout
+    )
+    assert dialog._follow_layout_poll_id == 42
+
+
+def test_turning_the_mode_off_stops_the_layout_poll(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = Mock()
+    dialog._follow_layout_poll_id = 42
+    dialog._stop_follow_layout_poll = lambda: dialog_class._stop_follow_layout_poll(dialog)
+    with patch.object(settings_dialog, "GLib") as glib:
+        dialog_class._update_follow_layout_poll(dialog, False)
+
+    glib.source_remove.assert_called_once_with(42)
+    assert dialog._follow_layout_poll_id is None
+
+
+def test_the_poll_is_not_scheduled_twice(settings_dialog: Any, dialog_class: type[Any]) -> None:
+    dialog = Mock()
+    dialog._follow_layout_poll_id = 42
+    with patch.object(settings_dialog, "GLib") as glib:
+        dialog_class._update_follow_layout_poll(dialog, True)
+
+    glib.timeout_add_seconds.assert_not_called()
+    assert dialog._follow_layout_poll_id == 42
+
+
+def test_the_poll_ends_itself_once_the_mode_is_off(dialog_class: type[Any]) -> None:
+    dialog = Mock()
+    dialog._follow_layout_active = False
+    dialog._follow_layout_poll_id = 42
+
+    assert dialog_class._poll_follow_layout(dialog) is False
+    assert dialog._follow_layout_poll_id is None
+
+
+def test_the_lookup_runs_off_the_gtk_thread(settings_dialog: Any, dialog_class: type[Any]) -> None:
+    dialog = Mock()
+    dialog._follow_layout_active = True
+    dialog._follow_layout_lookup_running = False
+    with patch.object(settings_dialog.threading, "Thread") as thread:
+        assert dialog_class._poll_follow_layout(dialog) is True
+        # A lookup still in flight is not doubled up.
+        assert dialog_class._poll_follow_layout(dialog) is True
+
+    thread.assert_called_once()
+    assert thread.call_args.kwargs["target"] == dialog._lookup_follow_layout_language
+    thread.return_value.start.assert_called_once()
+
+
+def test_the_worker_hands_the_layout_language_to_the_gtk_thread(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = Mock()
+    with (
+        patch.object(settings_dialog, "language_for_active_layout", return_value="ru"),
+        patch.object(settings_dialog, "GLib") as glib,
+    ):
+        dialog_class._lookup_follow_layout_language(dialog)
+
+    glib.idle_add.assert_called_once_with(dialog._apply_follow_layout_language, "ru")
+
+
+def test_a_failed_lookup_keeps_the_poll_alive(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = Mock()
+    with (
+        patch.object(settings_dialog, "language_for_active_layout", side_effect=OSError("x")),
+        patch.object(settings_dialog, "GLib") as glib,
+    ):
+        dialog_class._lookup_follow_layout_language(dialog)
+
+    glib.idle_add.assert_called_once_with(dialog._finish_follow_layout_lookup)
+
+
+def _readout_dialog(settings_dialog: Any, shown: Any, combo: str = "en-us") -> Mock:
+    dialog = Mock()
+    dialog._follow_layout_active = True
+    dialog._follow_layout_poll_id = 42
+    dialog._follow_layout_lookup_running = True
+    dialog._follow_layout_shown = shown
+    dialog._processing_language_change = False
+    dialog.language_combo.get_active_id.return_value = combo
+    return dialog
+
+
+def test_a_layout_switch_updates_the_picker_and_readout(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """The bug: the readout kept naming the layout seen when Settings opened."""
+    dialog = _readout_dialog(settings_dialog, shown="en-us")
+
+    assert dialog_class._apply_follow_layout_language(dialog, "ru") is False
+
+    dialog._set_combo_active_id_or_first.assert_called_once_with(dialog.language_combo, "ru")
+    dialog._update_language_warning.assert_called_once_with("ru")
+    dialog._refresh_simple_readout.assert_called_once_with()
+    assert dialog._follow_layout_shown == "ru"
+    assert dialog._follow_layout_lookup_running is False
+    # The picker change is a readout, not a user edit.
+    assert dialog._processing_language_change is False
+
+
+def test_an_unchanged_layout_leaves_the_ui_alone(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = _readout_dialog(settings_dialog, shown="ru", combo="ru")
+
+    dialog_class._apply_follow_layout_language(dialog, "ru")
+
+    dialog._set_combo_active_id_or_first.assert_not_called()
+    dialog._update_language_warning.assert_not_called()
+    assert dialog._follow_layout_lookup_running is False
+
+
+def test_an_unmappable_layout_reads_as_auto_detect(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    """An IBus engine we cannot map resolves to None: keep the picker, say auto-detect."""
+    dialog = _readout_dialog(settings_dialog, shown="ru", combo="ru")
+
+    dialog_class._apply_follow_layout_language(dialog, None)
+
+    dialog._set_combo_active_id_or_first.assert_not_called()
+    dialog._update_language_warning.assert_called_once_with(None)
+
+
+def test_a_late_answer_after_close_is_dropped(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = _readout_dialog(settings_dialog, shown="en-us")
+    dialog._follow_layout_poll_id = None  # destroyed or mode turned off
+
+    dialog_class._apply_follow_layout_language(dialog, "ru")
+
+    dialog._set_combo_active_id_or_first.assert_not_called()
+    dialog._update_language_warning.assert_not_called()
+
+
+def _warning_dialog() -> Mock:
+    dialog = Mock()
+    dialog._get_selected_engine.return_value = "whisper_cpp"
+    dialog._is_selected_whispercpp_model_english_only.return_value = False
+    dialog._follow_layout_active = True
+    dialog.language_combo.get_active_id.return_value = "en-us"
+    return dialog
+
+
+def test_the_readout_uses_the_language_it_is_handed(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = _warning_dialog()
+    with patch.object(settings_dialog, "language_for_active_layout") as lookup:
+        dialog_class._update_language_warning(dialog, "ru")
+
+    lookup.assert_not_called()
+    markup = dialog.language_warning.set_markup.call_args.args[0]
+    assert "Right now that is Russian" in markup
+
+
+def test_the_readout_still_resolves_the_layout_by_default(
+    settings_dialog: Any, dialog_class: type[Any]
+) -> None:
+    dialog = _warning_dialog()
+    with patch.object(settings_dialog, "language_for_active_layout", return_value=None):
+        dialog_class._update_language_warning(dialog)
+
+    markup = dialog.language_warning.set_markup.call_args.args[0]
+    assert "Right now that is auto-detect" in markup
