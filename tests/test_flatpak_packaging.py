@@ -44,7 +44,11 @@ PORTABLE_GGML_OPTIONS = (
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO_ROOT / "pyproject.toml"
-EXPORT = REPO_ROOT / "requirements" / "vad.txt"
+#: runtime + [vad] and runtime + [parakeet]; both come from the same uv.lock.
+EXPORTS = (
+    REPO_ROOT / "requirements" / "vad.txt",
+    REPO_ROOT / "requirements" / "parakeet.txt",
+)
 FLATPAK_DIR = REPO_ROOT / "packaging" / "flatpak"
 DEPS_YAML = FLATPAK_DIR / "python3-dependencies.yaml"
 MANIFEST = FLATPAK_DIR / "com.vocalinux.Vocalinux.yml"
@@ -71,15 +75,31 @@ RUNTIME_PROVIDED = {"pycairo"}
 #: Build backends for the sdists the sandbox compiles under
 #: --no-build-isolation. Never imported at runtime, so never in the export.
 BUILD_BACKENDS = {"meson-python", "pyproject-metadata"}
-BINARY_ONLY = {"onnxruntime"}
+BINARY_ONLY = {"onnxruntime", "sherpa-onnx", "sherpa-onnx-core"}
 FLATPAK_ARCHES = ("x86_64", "aarch64")
 
 
 def _locked() -> dict:
-    """Every package the export selects for the Flatpak target: version, digests."""
+    """Every package the exports select for the Flatpak target: version, digests."""
+    merged: dict = {}
+    for export in EXPORTS:
+        for name, locked in _locked_from(export).items():
+            if name in merged:
+                assert merged[name]["version"] == locked["version"], (
+                    f"{name} resolves to {merged[name]['version']} and"
+                    f" {locked['version']} across the Flatpak's exports. Run `just lock`."
+                )
+                merged[name]["hashes"] |= locked["hashes"]
+            else:
+                merged[name] = locked
+    return merged
+
+
+def _locked_from(export: Path) -> dict:
+    """Every package one export selects for the Flatpak target: version, digests."""
     selected = {}
     current = None
-    for raw in EXPORT.read_text(encoding="utf-8").splitlines():
+    for raw in export.read_text(encoding="utf-8").splitlines():
         line = raw.strip().rstrip("\\").strip()
         if not line or line.startswith("#"):
             continue
@@ -159,7 +179,7 @@ def test_every_source_is_the_version_the_lock_resolved(source: dict[str, str]) -
     )
     assert source["version"] == locked["version"], (
         f"{source['name']}: Flatpak builds {source['version']},"
-        f" requirements/vad.txt pins {locked['version']}."
+        f" the lock pins {locked['version']}."
         " Run `just flatpak-deps`."
     )
 
@@ -173,7 +193,7 @@ def test_every_digest_is_one_uv_recorded(source: dict[str, str]) -> None:
     hashes = _locked()[source["name"]]["hashes"]
     assert source["sha256"] in hashes, (
         f"{source['filename']} carries a digest absent from"
-        " requirements/vad.txt. Run `just flatpak-deps`."
+        " requirements/vad.txt and requirements/parakeet.txt. Run `just flatpak-deps`."
     )
 
 
@@ -196,6 +216,20 @@ def test_every_vad_extra_package_is_built_by_the_flatpak() -> None:
     }
     missing = sorted(vad_packages - set(_flatpak_versions()))
     assert not missing, f"the Flatpak does not build [vad] packages: {', '.join(missing)}"
+
+
+def test_every_parakeet_extra_package_is_built_by_the_flatpak() -> None:
+    """A saved `"engine": "parakeet"` config must start in the Flatpak (#1032)."""
+    with PYPROJECT.open("rb") as handle:
+        parakeet_dependencies = tomllib.load(handle)["project"]["optional-dependencies"]["parakeet"]
+    parakeet_packages = {
+        canonicalize_name(Requirement(dependency).name)
+        for dependency in parakeet_dependencies
+        if Requirement(dependency).marker is None
+        or Requirement(dependency).marker.evaluate(TARGET_ENV)
+    }
+    missing = sorted(parakeet_packages - set(_flatpak_versions()))
+    assert not missing, f"the Flatpak does not build [parakeet] packages: {', '.join(missing)}"
 
 
 def test_the_silero_model_is_included_as_package_data() -> None:
@@ -320,7 +354,8 @@ def test_the_manifest_env_agrees_with_the_module() -> None:
 def test_no_source_is_pinned_to_one_python_abi(source: dict[str, str]) -> None:
     """Keep universal wheels or sdists except binary-only runtime wheels.
 
-    Binary-only wheels must match the CPython ABI of GNOME 50. An unrelated ABI
+    Binary-only wheels must match the CPython ABI of GNOME 50, or carry no
+    Python ABI at all (py3-none, as sherpa-onnx-core ships). An unrelated ABI
     tag would make a runtime Python bump fail during the offline build.
     """
     if not source["filename"].endswith(".whl"):
@@ -328,7 +363,7 @@ def test_no_source_is_pinned_to_one_python_abi(source: dict[str, str]) -> None:
     if source["name"] in BINARY_ONLY:
         python_tag = TARGET_ENV["python_version"].replace(".", "")
         assert re.search(
-            rf"-cp{python_tag}-cp{python_tag}-manylinux_.+_(x86_64|aarch64)\.whl$",
+            rf"-(cp{python_tag}-cp{python_tag}|py3-none)-manylinux[^-]*_(x86_64|aarch64)\.whl$",
             source["filename"],
         ), f"{source['filename']} is not a wheel for the Flatpak's CPython runtime"
     else:

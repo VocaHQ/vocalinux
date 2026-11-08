@@ -10,14 +10,19 @@ pywhispercpp, which sat at 1.4.1 under the project's own `>=1.5.0` floor. The
 Flatpak installs the project with `pip3 install --no-deps`, so that constraint
 is never evaluated and nothing there could notice. It now reads
 `requirements/vad.txt`, the runtime dependencies plus the `[vad]` extra, so
-Silero VAD's onnxruntime ships too (#969).
+Silero VAD's onnxruntime ships too (#969), and `requirements/parakeet.txt`, the
+runtime dependencies plus the `[parakeet]` extra, so the Parakeet engine's
+sherpa-onnx ships as well (#1032). Both come from the same lock, so a package
+the two share must resolve to one version.
 
 This script closes the loop the other way round: it reads the hash-pinned export
 that `just lock` produces and rewrites every source in the manifest to the
 artifact whose digest uv already recorded. The bytes the Flatpak downloads are
 then the bytes in `uv.lock`, verified by hash rather than by convention. The
-`onnxruntime` sources are selected as CPython-ABI wheels for each Flatpak
-architecture because PyPI publishes no sdist for it.
+`onnxruntime`, `sherpa-onnx` and `sherpa-onnx-core` sources are selected as
+binary wheels for each Flatpak architecture: PyPI publishes no sdist for
+onnxruntime or sherpa-onnx-core, and sherpa-onnx's sdist builds its native
+libraries with CMake, which the offline sandbox cannot feed.
 
 It edits in place rather than regenerating, because two things in that file are
 hand-written and no generator produces them: pywhispercpp's Vulkan build with
@@ -45,7 +50,12 @@ from packaging.markers import Marker
 from packaging.utils import canonicalize_name
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPORT = REPO_ROOT / "requirements" / "vad.txt"
+#: The exports the Flatpak ships: runtime + [vad] and runtime + [parakeet].
+EXPORTS = (
+    REPO_ROOT / "requirements" / "vad.txt",
+    REPO_ROOT / "requirements" / "parakeet.txt",
+)
+EXPORT_LABEL = "requirements/vad.txt and requirements/parakeet.txt"
 DEPS_YAML = REPO_ROOT / "packaging" / "flatpak" / "python3-dependencies.yaml"
 MANIFEST = REPO_ROOT / "packaging" / "flatpak" / "com.vocalinux.Vocalinux.yml"
 
@@ -70,11 +80,14 @@ TARGET_ENV = {
 #: `just lock` builds with --no-emit-package pygobject for the same reason.
 RUNTIME_PROVIDED = {"pycairo"}
 
-#: onnxruntime has no sdist on PyPI, and building it from source is out of reach
-#: in the sandbox. These come as CPython-ABI wheels, one per Flatpak arch, tagged
-#: for TARGET_ENV's python_version; a runtime Python bump makes pip --no-index
-#: fail loudly at build time rather than silently.
-BINARY_ONLY = {"onnxruntime"}
+#: onnxruntime and sherpa-onnx-core have no sdist on PyPI, and sherpa-onnx's
+#: sdist compiles its native libraries with CMake; building any of them from
+#: source is out of reach in the sandbox. These come as binary wheels, one per
+#: Flatpak arch. Wheels with a CPython ABI are tagged for TARGET_ENV's
+#: python_version, so a runtime Python bump makes pip --no-index fail loudly at
+#: build time rather than silently; sherpa-onnx-core carries no Python ABI and
+#: is tagged py3-none.
+BINARY_ONLY = {"onnxruntime", "sherpa-onnx", "sherpa-onnx-core"}
 FLATPAK_ARCHES = ("x86_64", "aarch64")
 
 #: Build backends for the sdists the manifest builds offline under
@@ -83,6 +96,25 @@ FLATPAK_ARCHES = ("x86_64", "aarch64")
 BUILD_BACKENDS = {"meson-python", "pyproject-metadata"}
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/{version}/json"
+
+
+def parse_exports(paths: tuple[Path, ...] = EXPORTS) -> dict[str, tuple[str, set[str]]]:
+    """Merge the exports the Flatpak ships into one selection.
+
+    They are all written from the same uv.lock, so a package two exports share
+    must carry the same version in both; anything else means an export is
+    stale against the lock, and the Flatpak cannot install two versions.
+    """
+    merged: dict[str, tuple[str, set[str]]] = {}
+    for path in paths:
+        for name, (version, digests) in parse_export(path).items():
+            if name in merged and merged[name][0] != version:
+                raise SystemExit(
+                    f"{name} resolves to {merged[name][0]} and {version} across "
+                    f"{EXPORT_LABEL}; re-run `just lock`"
+                )
+            merged.setdefault(name, (version, set()))[1].update(digests)
+    return merged
 
 
 def parse_export(path: Path) -> dict[str, tuple[str, set[str]]]:
@@ -120,6 +152,19 @@ def parse_export(path: Path) -> dict[str, tuple[str, set[str]]]:
     return selected
 
 
+def binary_wheel_pattern(arch: str) -> re.Pattern[str]:
+    """Filenames of a binary-only wheel the Flatpak can install on `arch`.
+
+    Either the CPython ABI of TARGET_ENV's python_version, or no Python ABI at
+    all (py3-none, as sherpa-onnx-core ships). The platform tag can be a
+    legacy alias such as manylinux2014, alone or ahead of a PEP 600 tag.
+    """
+    python_tag = TARGET_ENV["python_version"].replace(".", "")
+    return re.compile(
+        rf"-(?:cp{python_tag}-cp{python_tag}|py3-none)-manylinux[^-]*_{re.escape(arch)}\.whl$"
+    )
+
+
 def pypi_artifacts(name: str, version: str) -> list[dict]:
     url = PYPI_JSON.format(name=name, version=version)
     with urllib.request.urlopen(url, timeout=30) as response:  # noqa: S310
@@ -131,7 +176,8 @@ def choose_artifact(
 ) -> tuple[str, str]:
     """The one file the Flatpak should download, as (url, sha256).
 
-    Binary-only packages use an architecture-specific CPython wheel. For every
+    Binary-only packages use an architecture-specific wheel, CPython-ABI or
+    py3-none. For every
     other package, prefer a universal wheel and fall back to the sdist so the
     sandbox builds compiled dependencies against the SDK's interpreter.
     """
@@ -143,9 +189,7 @@ def choose_artifact(
                 f"{', '.join(FLATPAK_ARCHES)}, got {arch!r}"
             )
         python_tag = TARGET_ENV["python_version"].replace(".", "")
-        wheel_pattern = re.compile(
-            rf"-cp{python_tag}-cp{python_tag}-manylinux_.+_{re.escape(arch)}\.whl$"
-        )
+        wheel_pattern = binary_wheel_pattern(arch)
         candidates = [
             artifact
             for artifact in artifacts
@@ -154,8 +198,9 @@ def choose_artifact(
         ]
         if not candidates:
             raise SystemExit(
-                f"{name} {version} publishes no CPython cp{python_tag} manylinux "
-                f"wheel for {arch}; update the Flatpak Python runtime or package"
+                f"{name} {version} publishes no cp{python_tag} or py3-none "
+                f"manylinux wheel for {arch}; update the Flatpak Python runtime "
+                "or package"
             )
     else:
         wheels = [
@@ -217,7 +262,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    locked = parse_export(EXPORT)
+    locked = parse_exports()
     text = DEPS_YAML.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
 
@@ -317,15 +362,15 @@ def main() -> int:
 
     if updated == text and manifest_updated == manifest_text:
         print(
-            "Flatpak dependencies already match requirements/vad.txt "
-            "(runtime dependencies plus the [vad] extra)"
+            f"Flatpak dependencies already match {EXPORT_LABEL} "
+            "(runtime dependencies plus the [vad] and [parakeet] extras)"
         )
         return 0
 
     if args.check:
         print(
-            "Flatpak dependencies are behind requirements/vad.txt "
-            "(runtime dependencies plus the [vad] extra):",
+            f"Flatpak dependencies are behind {EXPORT_LABEL} "
+            "(runtime dependencies plus the [vad] and [parakeet] extras):",
             file=sys.stderr,
         )
         for change in changes:
