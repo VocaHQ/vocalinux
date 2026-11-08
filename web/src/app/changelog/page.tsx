@@ -15,6 +15,19 @@ import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
+    version: "v0.18.6",
+    date: "2026-11-08",
+    type: "stable",
+    highlights: [
+      "Ctrl no longer stays held after a paste on Sway and other wlroots compositors when ydotool and wtype are both installed (PR #1049)",
+      "Quit from the dock or taskbar right-click menu closes Vocalinux on GNOME Wayland (PR #1036)",
+      "The Wayland fallback overlay no longer opens as a large empty window (PR #1035)",
+      "The .deb, .rpm and Flatpak ship gtk-layer-shell, so the overlay stays out of the taskbar on KDE and wlroots (PR #1044)",
+      "With Follow keyboard layout on, Settings updates its readout when you switch layouts (PR #1050)",
+      "The microphone tooltip shows the selected device's full name (PR #1037), and Parakeet gains optional Underdog Bark 3.0 models (PR #1031)",
+    ],
+  },
+  {
     version: "v0.18.5",
     date: "2026-10-27",
     type: "stable",
@@ -538,7 +551,7 @@ export default function ChangelogPage() {
     headline: "Vocalinux Changelog - Release History",
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
-    dateModified: "2026-10-27",
+    dateModified: "2026-11-08",
     author: {
       "@type": "Person",
       name: "Jatin K Malik",
