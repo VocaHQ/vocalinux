@@ -1,0 +1,53 @@
+# Cache headers for static assets
+# Improves PageSpeed Insights score by setting proper cache lifetimes
+
+# Assets with long cache lifetime (1 year) - versioned by content hash
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Font files - long cache (1 year)
+/*.woff
+/*.woff2
+/*.ttf
+/*.otf
+  Cache-Control: public, max-age=31536000, immutable
+
+# Images - long cache (1 year)
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+/*.svg
+/*.ico
+/*.webp
+/*.avif
+  Cache-Control: public, max-age=31536000, immutable
+
+# Favicon and app icons
+/apple-touch-icon.png
+/favicon.ico
+/android-chrome-*
+  Cache-Control: public, max-age=31536000, immutable
+
+# HTML pages - short cache for revalidation
+/*.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# JSON and other data files
+/*.json
+  Cache-Control: public, max-age=86400
+
+# JavaScript chunks
+/*.js
+  Cache-Control: public, max-age=31536000, immutable
+
+# CSS files
+/*.css
+  Cache-Control: public, max-age=31536000, immutable
+
+# Security headers
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  X-XSS-Protection: 1; mode=block
+  Referrer-Policy: strict-origin-when-cross-origin
