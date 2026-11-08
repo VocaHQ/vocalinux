@@ -3082,7 +3082,7 @@ class TextInjector:
         if self.wayland_tool == "wtype":
             # wtype does support combinations: -M presses a modifier, -k types a
             # key, -m releases it. Modifiers must be released explicitly -- wtype
-            # only auto-releases them when the process exits.
+            # does not lift them on exit, and Sway keeps them latched (#1048).
             cmd = ["wtype"]
             for modifiers, key in steps:
                 for mod in modifiers:
