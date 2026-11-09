@@ -7,40 +7,37 @@
 #   docker run --rm -v "$PWD:/repo:ro" debian:12 bash /repo/scripts/install-remote-test.sh
 #   or: just remote-install-gate debian:12
 #
-# The path under test is the one a `curl | bash` user takes and
-# scripts/install-test.sh never reaches: bootstrap outside a checkout, --tag
-# selection, clone of the selected tag, handoff to the tagged installer with
-# the original arguments plus the remote venv path, then a second run's
-# fetch+reset over the existing clone.
+# The mirror carries controlled releases based on HEAD, with behavioral
+# witnesses in the installer, every sourced module, and both mandatory exports.
+# The bootstrap deliberately cannot install: continuing past the tagged handoff
+# is an error. Real pip installs tiny hashed wheel witnesses *alongside* the
+# unchanged locked dependencies, proving which exports it consumed.
 #
-# The remote is a local mirror so the gate answers for *this commit*: the tag
-# is published from HEAD's tree and VOCALINUX_REPO_URL points the bootstrap at
-# it. A gate that cloned the public repo would install the last release, not
-# the checkout under test. The tag's own install.sh is the bootstrap: the #701
-# guardrail allows the bootstrap to come from main, and this commit's copy is
-# what a merged PR would serve anyway.
-#
-# Flags the installer sees: --auto, --skip-models (a model is 40-75 MB
-# per run and the download path is checksum-verified elsewhere), --tag (the
-# selection under test). Not --skip-system-deps: the per-distro package
-# installation is the point. Run 1 is headless; run 2 pipes the bootstrap in
-# under a `script` pty so the real `curl | bash` fd-0 shape stays covered.
-#
-# Fail closed: after the install, the clone's tree must equal HEAD's tree —
-# the #701 guardrail that installer, sourced modules and requirement exports
-# all come from the selected tag is only as strong as that equality.
+# Only curl's exact latest-release endpoint is substituted. Git, other network
+# calls, system/Python dependencies, and the installed-app smoke are real.
+# Cover explicit-tag clone/fetch (including a terminal-backed streaming pipe),
+# controlled latest selection, cross-release --upgrade, API outage, and incomplete
+# releases. Each case gets a fresh HOME except the reinstall/upgrade sequence.
+# --skip-models avoids repeated model downloads, whose checksums are exercised elsewhere;
+# never skip system dependency installation here.
 set -euo pipefail
 
 REPO="${REPO:-/repo}"
 INSTALL_USER="${INSTALL_USER:-installer}"
-INSTALL_HOME="/home/$INSTALL_USER"
+USER_HOME="/home/$INSTALL_USER"
+INSTALL_HOME="$USER_HOME"
 # Opaque on purpose: a name the public repository cannot already carry, so a
 # silent fallback to GitHub fails loudly instead of installing the wrong ref.
 GATE_TAG="${GATE_TAG:-v0.0.0-remote-gate}"
 MIRROR="/srv/vocalinux-remote.git"
-BOOTSTRAP="/tmp/vl.sh"
-CLONE_DIR="$INSTALL_HOME/.local/share/vocalinux-install"
-REMOTE_VENV="$INSTALL_HOME/.local/share/vocalinux/venv"
+WORK="/srv/remote-gate"
+FIXTURE_SOURCE="/tmp/gate-source"
+BOOTSTRAP="$WORK/bootstrap.sh"
+LATEST_TAG="$GATE_TAG-latest"
+LATEST_RESPONSE="unavailable"
+MISSING_MODULE_TAG="$GATE_TAG-missing-module"
+MISSING_RUNTIME_TAG="$GATE_TAG-missing-runtime"
+MISSING_BUILD_TAG="$GATE_TAG-missing-build"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -79,27 +76,27 @@ retry() {
 echo "== ${NAME:-unknown} ${VERSION_ID:-} =="
 
 echo "== Bootstrap: sudo, git and an unprivileged user =="
-# The minimum for install.sh to start, and nothing it should install itself.
-# git is for the mirror below; the remote path ensures it again for real users.
+# git and Python build the fixtures; curl is needed for the exact-endpoint shim.
+# All remaining system dependencies must be installed by install.sh itself.
 # Same arms as scripts/install-test.sh so `just remote-install-gate <distro>`
 # works everywhere the local gate does.
 case "$ID" in
   ubuntu | debian)
     export DEBIAN_FRONTEND=noninteractive
     retry apt-get update -qq
-    retry apt-get install -y -qq sudo git ca-certificates >/dev/null
+    retry apt-get install -y -qq sudo git curl python3 ca-certificates >/dev/null
     ;;
   fedora | rhel | centos)
-    retry dnf install -y -q sudo git shadow-utils >/dev/null
+    retry dnf install -y -q sudo git curl python3 shadow-utils >/dev/null
     ;;
   arch)
     # -Syu, never -Sy: archlinux:latest lags the mirrors, and a partial upgrade
     # would be this script's breakage rather than the installer's.
-    retry pacman -Syu --noconfirm --needed sudo git >/dev/null
+    retry pacman -Syu --noconfirm --needed sudo git curl python >/dev/null
     ;;
   opensuse-tumbleweed | opensuse-leap | sles)
     retry zypper --non-interactive --gpg-auto-import-keys refresh >/dev/null
-    retry zypper --non-interactive install -y sudo git >/dev/null
+    retry zypper --non-interactive install -y sudo git curl python3 >/dev/null
     ;;
   *)
     fail "no bootstrap arm for ID='$ID'; add one when adding the container"
@@ -110,41 +107,91 @@ id -u "$INSTALL_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$INSTALL_USER"
 echo "$INSTALL_USER ALL=(ALL) NOPASSWD: ALL" >"/etc/sudoers.d/$INSTALL_USER"
 chmod 0440 "/etc/sudoers.d/$INSTALL_USER"
 
-echo "== Publish HEAD's tree as tag $GATE_TAG in a local mirror =="
+echo "== Publish controlled releases based on HEAD in a local mirror =="
 # safe.directory: the mounted checkout and, for a linked worktree, its mounted
 # common gitdir are owned by another uid.
 git config --global --add safe.directory '*'
 # CI checks out with fetch-depth 1, and a shallow boundary commit can neither
 # be pushed nor fetched into a ref ("shallow update not allowed"). The tag
-# therefore carries an orphan commit built from HEAD's tree: a root commit is
-# not a shallow root, and tree equality below still binds the gate to this
-# commit's exact contents.
+# therefore carries an orphan commit: a root commit is not a shallow root.
+# Only the fixture helper's explicit witnesses differ from HEAD's tree.
 SOURCE_TREE="$(git -C "$REPO" rev-parse 'HEAD^{tree}')" \
   || fail "$REPO is not a git checkout; the gate publishes the tag from git"
-git clone --quiet --depth 1 "file://$REPO" /tmp/gate-source
+git clone --quiet --depth 1 "file://$REPO" "$FIXTURE_SOURCE"
 # commit-tree needs an identity the bare container does not carry.
-EXPECTED_SHA="$(GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@local \
-  GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@local \
-  git -C /tmp/gate-source commit-tree "$SOURCE_TREE" -m "remote-install gate")"
+export GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@local
+export GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@local
+mkdir -p "$WORK"
 git init --bare "$MIRROR" >/dev/null
-git -C /tmp/gate-source push "$MIRROR" "$EXPECTED_SHA:refs/tags/$GATE_TAG" >/dev/null
-[ "$(git -C "$MIRROR" rev-parse "$GATE_TAG^{tree}")" = "$SOURCE_TREE" ] \
-  || fail "the mirror's $GATE_TAG does not carry HEAD's tree"
+publish_tree() {
+  local tree=$1 ref=$2 sha
+  sha="$(git -C "$FIXTURE_SOURCE" commit-tree "$tree" -m "remote-install gate: $ref")"
+  git -C "$FIXTURE_SOURCE" push "$MIRROR" "$sha:$ref" >/dev/null
+}
+
+publish_fixture() {
+  local role=$1 tag=$2 tree
+  git -C "$FIXTURE_SOURCE" reset --hard HEAD >/dev/null
+  python3 "$REPO/scripts/remote_installer_fixture.py" "$FIXTURE_SOURCE" "$WORK" "$role"
+  git -C "$FIXTURE_SOURCE" add install.sh install.d requirements/runtime.txt requirements/installer-build.txt src/vocalinux/version.py
+  tree="$(git -C "$FIXTURE_SOURCE" write-tree)"
+  [ "$tree" != "$SOURCE_TREE" ] || fail "the $role fixture is indistinguishable from HEAD"
+  publish_tree "$tree" "refs/tags/$tag"
+}
+
+publish_fixture explicit "$GATE_TAG"
+publish_fixture latest "$LATEST_TAG"
+# A valid default branch makes a wrong-ref fallback observable rather than
+# relying on git having no other revision available.
+publish_tree "$SOURCE_TREE" refs/heads/main
+git -C "$MIRROR" symbolic-ref HEAD refs/heads/main
+
+publish_incomplete() {
+  local missing=$1 tag=$2
+  git -C "$FIXTURE_SOURCE" read-tree "$(git -C "$MIRROR" rev-parse "$GATE_TAG^{tree}")"
+  git -C "$FIXTURE_SOURCE" update-index --force-remove "$missing"
+  publish_tree "$(git -C "$FIXTURE_SOURCE" write-tree)" "refs/tags/$tag"
+}
+publish_incomplete install.d/system_dependencies.sh "$MISSING_MODULE_TAG"
+publish_incomplete requirements/runtime.txt "$MISSING_RUNTIME_TAG"
+publish_incomplete requirements/installer-build.txt "$MISSING_BUILD_TAG"
 # The installer clones as $INSTALL_USER, and git refuses a root-owned remote
 # for anyone else as "dubious ownership".
 chown -R "$INSTALL_USER:$INSTALL_USER" "$MIRROR"
 
-# A remote user downloads install.sh over HTTPS; the gate takes the same file
-# out of the tag instead. The tagged copy is this commit's bootstrap, and the
-# handoff target is identical either way.
-git -C "$MIRROR" show "$GATE_TAG:install.sh" >"$BOOTSTRAP"
-chmod 0644 "$BOOTSTRAP"
+printf '{"tag_name":"%s"}\n' "$LATEST_TAG" > "$WORK/latest.json"
+# Mutation control: deliberately bypass handoff. A SHA-only fixture used to
+# accept this behavior; this bootstrap must reject it even after a real clone.
+sed '/^    handoff_to_tagged_installer$/,+1d' "$BOOTSTRAP" > "$WORK/no-handoff.sh"
+
+select_scenario() {
+  local name=$1
+  INSTALL_HOME="$USER_HOME/remote-gate/$name"
+  [ ! -e "$INSTALL_HOME" ] || fail "scenario $name is not isolated: $INSTALL_HOME already exists"
+  mkdir -p "$INSTALL_HOME"
+  chown "$INSTALL_USER:$INSTALL_USER" "$INSTALL_HOME"
+  CLONE_DIR="$INSTALL_HOME/.local/share/vocalinux-install"
+  REMOTE_VENV="$INSTALL_HOME/.local/share/vocalinux/venv"
+  CASE_OUTPUT="$WORK/$name.log"
+}
 
 run_remote_install() {
   # cd to $INSTALL_HOME so the bootstrap sees no checkout: local mode is chosen
   # by a pyproject.toml naming vocalinux in the working directory, and the
   # remote path is the one under test.
-  su - "$INSTALL_USER" -c "cd '$INSTALL_HOME' && VOCALINUX_REPO_URL='file://$MIRROR' bash '$BOOTSTRAP' --auto --skip-models '--tag=$GATE_TAG'"
+  local args=""
+  if [ "$#" -gt 0 ]; then
+    printf -v args ' %q' "$@"
+  fi
+  run_remote_command "bash '$BOOTSTRAP' --auto --skip-models $args"
+}
+
+run_remote_command() {
+  local command=$1
+  su - "$INSTALL_USER" -c "export HOME='$INSTALL_HOME'; cd '$INSTALL_HOME' && \
+    PATH='$WORK/bin':\"\$PATH\" VOCALINUX_REPO_URL='file://$MIRROR' \
+    REMOTE_GATE_LATEST='$LATEST_RESPONSE' $command" \
+    2>&1 | tee "$CASE_OUTPUT"
 }
 
 # The user's literal `curl | bash`: installer code reaches bash on a pipe while
@@ -187,24 +234,58 @@ drip "$bootstrap" | bash -s -- "$@"
 EOF
 chmod 0755 "$PIPED_FEED"
 run_remote_install_piped() {
-  su - "$INSTALL_USER" -c "cd '$INSTALL_HOME' && VOCALINUX_REPO_URL='file://$MIRROR' script -qec \"'$PIPED_FEED' '$BOOTSTRAP' --auto --skip-models '--tag=$GATE_TAG'\" /dev/null"
+  run_remote_command "script -qec \"'$PIPED_FEED' '$BOOTSTRAP' --auto --skip-models '--tag=$GATE_TAG'\" /dev/null"
+}
+
+assert_trace() {
+  local role=$1 module
+  {
+    echo bootstrap
+    echo "installer:$role"
+    for module in package_map.sh interactive.sh system_dependencies.sh models.sh desktop.sh; do
+      echo "module:$role:$module"
+    done
+  } > "$WORK/expected.trace"
+  diff -u "$WORK/expected.trace" "$INSTALL_HOME/remote-gate.trace" \
+    || fail "the tagged installer and modules did not execute exactly once ($role)"
+}
+
+assert_selected_revision() {
+  local tag=$1
+  EXPECTED_SHA="$(git -C "$MIRROR" rev-parse "$tag^{commit}")"
+  local expected_tree cloned_sha cloned_tree
+  expected_tree="$(git -C "$MIRROR" rev-parse "$tag^{tree}")"
+  [ -d "$CLONE_DIR/.git" ] || fail "remote install left no clone at $CLONE_DIR"
+  cloned_sha="$(git -C "$CLONE_DIR" rev-parse HEAD)"
+  [ "$cloned_sha" = "$EXPECTED_SHA" ] || fail \
+    "installed from the wrong revision: clone HEAD is $cloned_sha, $tag is $EXPECTED_SHA"
+  [ "$(git -C "$CLONE_DIR" rev-parse "$tag^{commit}" 2>/dev/null || true)" = "$EXPECTED_SHA" ] \
+    || fail "the clone does not carry the selected tag ref $tag"
+  cloned_tree="$(git -C "$CLONE_DIR" rev-parse 'HEAD^{tree}')"
+  [ "$cloned_tree" = "$expected_tree" ] || fail "the clone's tree is not the selected fixture's tree"
+  git -C "$CLONE_DIR" diff --exit-code HEAD -- install.sh install.d requirements src/vocalinux/version.py >/dev/null \
+    || fail "the installer, modules, exports or app version were modified after checkout"
 }
 
 assert_remote_install() {
+  local tag=$1 role=$2 version=$3
   echo "== Assert: the clone is exactly the selected tag =="
-  [ -d "$CLONE_DIR/.git" ] || fail "remote install left no clone at $CLONE_DIR"
-  local cloned_sha cloned_tree
-  cloned_sha="$(git -C "$CLONE_DIR" rev-parse HEAD)" \
-    || fail "the clone at $CLONE_DIR is not a git checkout"
-  [ "$cloned_sha" = "$EXPECTED_SHA" ] || fail \
-    "installed from the wrong revision: clone HEAD is $cloned_sha, $GATE_TAG is $EXPECTED_SHA"
-  [ "$(git -C "$CLONE_DIR" rev-parse "$GATE_TAG^{commit}" 2>/dev/null || true)" = "$EXPECTED_SHA" ] \
-    || fail "the clone does not carry the selected tag ref $GATE_TAG"
-  # The tag's commit is an orphan; tree equality is the check that installer,
-  # modules and exports are this commit's files and not a neighbour revision's.
-  cloned_tree="$(git -C "$CLONE_DIR" rev-parse 'HEAD^{tree}')"
-  [ "$cloned_tree" = "$SOURCE_TREE" ] || fail \
-    "the clone's tree $cloned_tree is not HEAD's tree $SOURCE_TREE"
+  assert_selected_revision "$tag"
+  assert_trace "$role"
+
+  echo "== Assert: real pip consumed both tagged exports =="
+  su - "$INSTALL_USER" -c "export HOME='$INSTALL_HOME'; '$REMOTE_VENV/bin/python' - '$version'" <<'PY' \
+    || fail "pip did not install the selected release's export witnesses"
+import sys
+from importlib import import_module
+
+# --ignore-installed can leave metadata for both versions. Check the module
+# Python actually imports, not whichever .dist-info is discovered first.
+for kind in ("build", "runtime"):
+    name = f"vocalinux_remote_{kind}_fixture"
+    witness = import_module(name)
+    assert witness.VERSION == sys.argv[1], (name, witness.VERSION, sys.argv[1])
+PY
 
   # The artifacts the #701 guardrail names: the tagged installer, its sourced
   # modules, and the exports pip installs with --require-hashes.
@@ -244,7 +325,7 @@ assert_remote_install() {
   local expected_version version_output
   expected_version="$(grep -oP '__version__\s*=\s*"\K[^"]+' "$CLONE_DIR/src/vocalinux/version.py")" \
     || fail "cannot read __version__ from the clone's version.py"
-  version_output="$(su - "$INSTALL_USER" -c "'$INSTALL_HOME/.local/bin/vocalinux' --version")" \
+  version_output="$(su - "$INSTALL_USER" -c "export HOME='$INSTALL_HOME'; '$INSTALL_HOME/.local/bin/vocalinux' --version")" \
     || fail "the installed wrapper cannot report a version"
   case "$version_output" in
     *"$expected_version"*) ;;
@@ -265,13 +346,18 @@ assert_remote_install() {
       ;;
   esac
 
-  su - "$INSTALL_USER" -c "'$REMOTE_VENV/bin/python' - " <<'PY' || fail "the installation does not import"
+  su - "$INSTALL_USER" -c "export HOME='$INSTALL_HOME'; '$REMOTE_VENV/bin/python' - '$expected_version'" <<'PY' || fail "the installation does not import"
+import sys
+from importlib.metadata import version
+
 import vocalinux.main
 import vocalinux.ui.tray_indicator
 import vocalinux.speech_recognition.recognition_manager
 import vocalinux.text_injection.text_injector
 from vocalinux.ui.keyboard_backends import EVDEV_AVAILABLE, PYNPUT_AVAILABLE
 import gi
+
+assert version("vocalinux") == sys.argv[1], "installed package metadata is not the selected release"
 
 # keyboard_backends imports each backend under `except ImportError`, so the
 # import above stays clean when evdev and pynput both failed to build. Assert
@@ -294,11 +380,49 @@ print(
 PY
 }
 
-echo "== Run 1: remote install (fresh clone) as $INSTALL_USER =="
+assert_api_unused() {
+  [ ! -e "$INSTALL_HOME/remote-gate.api" ] || fail "an explicit --tag consulted the latest API"
+}
+
+assert_no_success() {
+  local artifact
+  for artifact in .local/bin/vocalinux .local/bin/vocalinux-gui .local/share/applications/vocalinux.desktop; do
+    [ ! -e "$INSTALL_HOME/$artifact" ] || fail "failed install created $artifact"
+  done
+  if grep -Fq 'Installation Complete!' "$CASE_OUTPUT"; then
+    fail "failed install printed the success banner"
+  fi
+  if [ -x "$REMOTE_VENV/bin/python" ]; then
+    su - "$INSTALL_USER" -c "'$REMOTE_VENV/bin/python' -" <<'PY' \
+      || fail "failed install continued with a project installation"
+from importlib.metadata import PackageNotFoundError, distribution
+
+try:
+    distribution("vocalinux")
+except PackageNotFoundError:
+    pass
+else:
+    raise AssertionError("vocalinux was installed despite missing release inputs")
+PY
+  fi
+}
+
+expect_failure() {
+  local expected_rc=$1 reason=$2 rc=0
+  shift 2
+  run_remote_install "$@" || rc=$?
+  [ "$rc" -eq "$expected_rc" ] || fail "expected exit $expected_rc ($reason), got $rc"
+  grep -Fq -- "$reason" "$CASE_OUTPUT" || fail "failure did not explain: $reason"
+  assert_no_success
+}
+
+echo "== Run 1: explicit tag with unavailable API (fresh clone) as $INSTALL_USER =="
+select_scenario explicit
 START=$(date +%s)
-run_remote_install || fail "the remote install exited non-zero on a fresh clone"
+run_remote_install "--tag=$GATE_TAG" || fail "the remote install exited non-zero on a fresh clone"
 echo "   install took $(( $(date +%s) - START ))s"
-assert_remote_install
+assert_remote_install "$GATE_TAG" explicit 1.0
+assert_api_unused
 
 echo "== Run 2: re-run over the existing clone (fetch + reset), piped under a terminal =="
 # The second bootstrap sees $CLONE_DIR/.git and updates it instead of cloning:
@@ -308,10 +432,16 @@ echo "== Run 2: re-run over the existing clone (fetch + reset), piped under a te
 # Move the clone off the tag and drop its local tag ref first: a run that only
 # had to notice the right commit was already checked out would pass even if
 # the fetch and reset were both no-ops.
+# Remove export witnesses too: a rerun that stops consuming either export must
+# not pass on packages left by run 1.
+su - "$INSTALL_USER" -c "'$REMOTE_VENV/bin/python' -m pip uninstall -y \
+  vocalinux-remote-build-fixture vocalinux-remote-runtime-fixture \
+  && rm '$INSTALL_HOME/remote-gate.trace'" >/dev/null
 AWAY_SHA="$(su - "$INSTALL_USER" -c "cd '$CLONE_DIR' && \
+  printf '\\nexit 98\\n' >> install.sh && git add install.sh && \
   GIT_AUTHOR_NAME=gate GIT_AUTHOR_EMAIL=gate@local \
   GIT_COMMITTER_NAME=gate GIT_COMMITTER_EMAIL=gate@local \
-  git commit-tree 'HEAD^{tree}' -p HEAD -m moved")"
+  git commit-tree \"\$(git write-tree)\" -p HEAD -m moved")"
 su - "$INSTALL_USER" -c "git -C '$CLONE_DIR' reset --hard '$AWAY_SHA' \
   && git -C '$CLONE_DIR' update-ref -d 'refs/tags/$GATE_TAG'" \
   || fail "could not move the clone off $GATE_TAG for the re-run arm"
@@ -320,8 +450,96 @@ su - "$INSTALL_USER" -c "git -C '$CLONE_DIR' reset --hard '$AWAY_SHA' \
 [ -z "$(git -C "$CLONE_DIR" tag -l "$GATE_TAG")" ] \
   || fail "the clone kept refs/tags/$GATE_TAG; the re-run proves nothing"
 run_remote_install_piped || fail "the terminal-backed piped install exited non-zero over the existing clone"
-grep -l "Updating existing clone" "$INSTALL_HOME"/.local/state/vocalinux/install-*.log >/dev/null 2>&1 \
+grep -l "Updating existing clone" "$CASE_OUTPUT" >/dev/null 2>&1 \
   || fail "no install log shows 'Updating existing clone'; the fetch arm did not run"
-assert_remote_install
+assert_remote_install "$GATE_TAG" explicit 1.0
+assert_api_unused
 
-echo "PASS: the remote install path (bootstrap -> tag -> clone/fetch -> handoff) installs ${NAME:-this distro}'s app"
+echo "== Run 3: --upgrade moves the existing install to the latest release and keeps user settings =="
+# Keep the old export witnesses installed: real pip must replace 1.0 with 2.0,
+# not pass on packages inherited from the previous release.
+CASE_OUTPUT="$WORK/upgrade.log"
+LATEST_RESPONSE="$WORK/latest.json"
+UPGRADE_FROM_VERSION="$(grep -oP '__version__\s*=\s*"\K[^"]+' "$CLONE_DIR/src/vocalinux/version.py")"
+UPGRADE_VENV_ID="$(stat -c '%d:%i' "$REMOTE_VENV")"
+cat > "$WORK/upgrade-config.json" <<'JSON'
+{
+  "speech_recognition": {"engine": "remote_api", "remote_api_url": "http://127.0.0.1:9999/transcribe"},
+  "shortcuts": {"mode": "toggle", "toggle_recognition": "ctrl+alt+space"},
+  "ui": {"show_notifications": false},
+  "remote_gate_custom_setting": "keep this, including whitespace"
+}
+JSON
+install -o "$INSTALL_USER" -g "$INSTALL_USER" -m 0600 \
+  "$WORK/upgrade-config.json" "$INSTALL_HOME/.config/vocalinux/config.json"
+su - "$INSTALL_USER" -c "printf '%s\\n' '$GATE_TAG' > '$REMOTE_VENV/remote-gate.keep' \
+  && rm '$INSTALL_HOME/remote-gate.trace'"
+run_remote_install --upgrade || fail "cross-release remote upgrade failed"
+grep -Fq "Upgrade mode: keeping configured engine 'remote_api'." "$CASE_OUTPUT" \
+  || fail "--upgrade did not reach the tagged installer or retain the configured engine"
+grep -Fq 'Updating existing clone' "$CASE_OUTPUT" || fail "upgrade did not fetch the new release"
+grep -qx latest "$INSTALL_HOME/remote-gate.api" || fail "upgrade did not consult the latest API"
+cmp "$WORK/upgrade-config.json" "$INSTALL_HOME/.config/vocalinux/config.json" \
+  || fail "upgrade changed config.json"
+[ "$(stat -c '%d:%i' "$REMOTE_VENV")" = "$UPGRADE_VENV_ID" ] \
+  && grep -qx "$GATE_TAG" "$REMOTE_VENV/remote-gate.keep" \
+  || fail "upgrade replaced the existing venv"
+assert_remote_install "$LATEST_TAG" latest 2.0
+[ "$(grep -oP '__version__\s*=\s*"\K[^"]+' "$CLONE_DIR/src/vocalinux/version.py")" != "$UPGRADE_FROM_VERSION" ] \
+  || fail "the upgrade fixture did not change the app version"
+
+echo "== Run 4: no --tag selects the controlled latest release on a fresh install =="
+select_scenario latest
+LATEST_RESPONSE="$WORK/latest.json"
+run_remote_install || fail "controlled latest-release installation failed"
+grep -qx latest "$INSTALL_HOME/remote-gate.api" || fail "no latest-release API request was observed"
+assert_remote_install "$LATEST_TAG" latest 2.0
+
+echo "== Run 5: unavailable latest API without --tag fails with EXIT_NETWORK and a hint =="
+select_scenario api-unavailable
+LATEST_RESPONSE=unavailable
+expect_failure 3 'No release tag available: the GitHub API was unreachable and no --tag was given.'
+grep -Fq 'Re-run with an explicit release tag' "$CASE_OUTPUT" || fail "API failure gave no --tag hint"
+[ ! -e "$CLONE_DIR" ] || fail "unresolved latest release continued into a clone"
+
+echo "== Run 6: a nonexistent tag cannot fall back to another revision =="
+select_scenario missing-tag
+expect_failure 3 'Failed to clone Vocalinux repository' "--tag=$GATE_TAG-nonexistent"
+grep -Fq "Remote branch $GATE_TAG-nonexistent not found" "$CASE_OUTPUT" \
+  || fail "the clone did not fail because the requested tag was missing"
+[ ! -e "$CLONE_DIR/.git" ] || fail "a missing tag left a checkout of another revision"
+assert_api_unused
+
+echo "== Run 7: a missing required installer module fails in the selected tree =="
+select_scenario missing-module
+expect_failure 1 "Installer module is missing or unreadable: $CLONE_DIR/install.d/system_dependencies.sh" \
+  "--tag=$MISSING_MODULE_TAG"
+assert_selected_revision "$MISSING_MODULE_TAG"
+[ ! -e "$REMOTE_VENV" ] || fail "a missing module continued into venv setup"
+assert_api_unused
+
+echo "== Run 8: missing runtime pins cannot install an unpinned project =="
+select_scenario missing-runtime
+expect_failure 3 "Missing or empty pinned requirements: $CLONE_DIR/requirements/runtime.txt" \
+  "--tag=$MISSING_RUNTIME_TAG"
+assert_selected_revision "$MISSING_RUNTIME_TAG"
+assert_trace explicit
+assert_api_unused
+
+echo "== Run 9: missing build-tool pins cannot bootstrap an unpinned toolchain =="
+select_scenario missing-build
+expect_failure 3 "Missing or empty pinned requirements: $CLONE_DIR/requirements/installer-build.txt" \
+  "--tag=$MISSING_BUILD_TAG"
+assert_selected_revision "$MISSING_BUILD_TAG"
+assert_trace explicit
+assert_api_unused
+
+echo "== Run 10: mutation control rejects continuing the bootstrap instead of handing off =="
+select_scenario no-handoff
+BOOTSTRAP="$WORK/no-handoff.sh"
+expect_failure 97 'REMOTE_GATE: bootstrap continued past tagged handoff' "--tag=$GATE_TAG"
+assert_selected_revision "$GATE_TAG"
+[ "$(cat "$INSTALL_HOME/remote-gate.trace")" = bootstrap ] || fail "handoff mutation ran the tagged installer"
+[ ! -e "$REMOTE_VENV" ] || fail "handoff mutation continued into dependency installation"
+
+echo "PASS: remote release selection, revision integrity, clone/fetch/streaming handoff, cross-release upgrade, app smoke, and fail-closed releases on ${NAME:-this distro}"
