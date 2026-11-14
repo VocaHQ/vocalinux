@@ -8,6 +8,8 @@ Always try once with debug logs:
 vocalinux --debug
 ```
 
+Debug logging is on automatically when stderr is connected to a terminal. Use `--debug` for launchers, autostart, or redirected output, such as `vocalinux --debug 2>&1 | tee vocalinux.log`.
+
 ## Command not found: `vocalinux`
 
 ```bash
