@@ -2469,5 +2469,52 @@ class TestSessionHistoryRecording(unittest.TestCase):
             stack.close()
 
 
+class TestDebugLoggingOnTerminal(unittest.TestCase):
+    """The tray app turns debug logging on by itself when run from a terminal (#1058)."""
+
+    def _run_main(self, *, debug_flag: bool, isatty: bool, trigger: bool = False) -> int:
+        """Run main() up to an early exit and return the root logger level it left."""
+        import logging
+
+        root = logging.getLogger()
+        saved = root.level
+        root.setLevel(logging.INFO)
+        args = SimpleNamespace(debug=debug_flag, transcribe_file=None, toggle=trigger)
+        try:
+            with (
+                patch("vocalinux.main.parse_arguments", return_value=args),
+                patch("vocalinux.main._dispatch_trigger", return_value=0),
+                patch("vocalinux.single_instance.acquire_lock", return_value=False),
+                patch("vocalinux.main.sys.stderr") as stderr,
+                patch("vocalinux.main.time.sleep"),
+            ):
+                stderr.isatty.return_value = isatty
+                with self.assertRaises(SystemExit):
+                    main()
+            return root.level
+        finally:
+            root.setLevel(saved)
+
+    def test_terminal_enables_debug(self):
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=False, isatty=True), logging.DEBUG)
+
+    def test_non_terminal_keeps_info(self):
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=False, isatty=False), logging.INFO)
+
+    def test_debug_flag_still_works_without_terminal(self):
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=True, isatty=False), logging.DEBUG)
+
+    def test_trigger_commands_stay_quiet_on_terminal(self):
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=False, isatty=True, trigger=True), logging.INFO)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,6 +8,8 @@ Always try once with debug logs:
 vocalinux --debug
 ```
 
+When Vocalinux is started from a terminal, debug logging is already on, so `--debug` only matters for launchers and autostart.
+
 ## Command not found: `vocalinux`
 
 ```bash
