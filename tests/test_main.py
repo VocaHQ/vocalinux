@@ -2495,22 +2495,22 @@ class TestDebugLoggingOnTerminal(unittest.TestCase):
         finally:
             root.setLevel(saved)
 
-    def test_terminal_enables_debug(self):
+    def test_terminal_enables_debug(self) -> None:
         import logging
 
         self.assertEqual(self._run_main(debug_flag=False, isatty=True), logging.DEBUG)
 
-    def test_non_terminal_keeps_info(self):
+    def test_non_terminal_keeps_info(self) -> None:
         import logging
 
         self.assertEqual(self._run_main(debug_flag=False, isatty=False), logging.INFO)
 
-    def test_debug_flag_still_works_without_terminal(self):
+    def test_debug_flag_still_works_without_terminal(self) -> None:
         import logging
 
         self.assertEqual(self._run_main(debug_flag=True, isatty=False), logging.DEBUG)
 
-    def test_trigger_commands_stay_quiet_on_terminal(self):
+    def test_trigger_commands_stay_quiet_on_terminal(self) -> None:
         import logging
 
         self.assertEqual(self._run_main(debug_flag=False, isatty=True, trigger=True), logging.INFO)
