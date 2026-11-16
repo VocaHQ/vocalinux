@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
 import { TerminalBlock } from "@/components/terminal-block";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const PAGE_PATH = "/transcribe-audio-files";
 
@@ -104,11 +104,7 @@ export default function TranscribeAudioFilesPage() {
     description:
       "How to transcribe recordings locally with Vocalinux from the tray or the --transcribe-file CLI, and how TinyDiarize speaker labels work.",
     dateModified: "2026-11-01",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",

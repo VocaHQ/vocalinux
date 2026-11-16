@@ -12,7 +12,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const PAGE_PATH = "/flatpak";
 const PAGE_TITLE = "Install Vocalinux via Flatpak (VocaHQ Remote) | Vocalinux";
@@ -112,11 +112,7 @@ export default function FlatpakPage() {
     headline: "Install Vocalinux with Flatpak from the VocaHQ remote",
     description: PAGE_DESCRIPTION,
     dateModified: "2026-11-01",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",
