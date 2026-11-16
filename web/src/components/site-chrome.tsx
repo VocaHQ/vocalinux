@@ -242,10 +242,7 @@ export function SiteChrome({
           <div className="footer-base">
             <span>
               AGPL-3.0. Built in public by{" "}
-              <a
-                href="https://github.com/jatinkrmalik"
-                rel="noopener noreferrer"
-              >
+              <a href="https://jatinkrmalik.com/" rel="author noopener">
                 Jatin K Malik
               </a>
               .

@@ -50,7 +50,7 @@ export const metadata: Metadata = {
     "voice typing fedora",
     "voice typing arch linux",
   ],
-  authors: [{ name: "Jatin K Malik", url: "https://github.com/jatinkrmalik" }],
+  authors: [{ name: "Jatin K Malik", url: "https://jatinkrmalik.com/" }],
   creator: "Jatin K Malik",
   publisher: SITE_NAME,
   icons: {
