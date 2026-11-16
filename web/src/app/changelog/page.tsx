@@ -11,7 +11,7 @@ import {
   Zap,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const releases = [
   {
@@ -552,11 +552,7 @@ export default function ChangelogPage() {
     description:
       "Complete release history for Vocalinux, the offline voice dictation software for Linux.",
     dateModified: "2026-11-08",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",

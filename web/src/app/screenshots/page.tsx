@@ -6,7 +6,7 @@ import {
   type Screenshot,
 } from "@/components/screenshot-gallery";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 /** Pixel size of the captured settings/log dialog screenshots. */
 const SETTINGS_SIZE = { width: 2128, height: 1698 } as const;
@@ -124,11 +124,7 @@ export default function ScreenshotsPage() {
     description:
       "Product and settings screenshots of Vocalinux, offline voice dictation for Linux.",
     dateModified: "2026-08-03", // refreshed after About moved into Settings sidebar
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",

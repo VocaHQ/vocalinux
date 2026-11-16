@@ -10,7 +10,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const comparisonRows = [
   {
@@ -66,11 +66,7 @@ export default function GnomeVsKdePage() {
     description:
       "Compare voice dictation on GNOME vs KDE Plasma. How desktop environment affects text injection, IBus setup, and Wayland compatibility for Linux voice typing.",
     dateModified: "2026-03-30",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",

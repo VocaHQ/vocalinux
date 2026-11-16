@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
 import { TerminalBlock } from "@/components/terminal-block";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const PAGE_PATH = "/custom-dictionary";
 
@@ -94,11 +94,7 @@ export default function CustomDictionaryPage() {
     description:
       "How Vocalinux custom terms, transcript corrections and the post-processing script hook work, with exact file formats and safe example scripts.",
     dateModified: "2026-11-01",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",
