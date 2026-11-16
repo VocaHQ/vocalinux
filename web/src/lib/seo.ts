@@ -36,6 +36,7 @@ export const AUTHOR_PERSON_REF = { "@id": AUTHOR_PERSON_ID };
 
 export const VOCAHQ_ORGANIZATION = {
   "@type": "Organization",
+  "@id": "https://vocahq.com/#organization",
   name: "VocaHQ",
   url: "https://vocahq.com/",
   sameAs: [
