@@ -8,7 +8,7 @@ import {
   Monitor,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const PAGE_PATH = "/dictation-pad";
 
@@ -108,11 +108,7 @@ export default function DictationPadPage() {
     description:
       "How the Vocalinux Dictation Pad receives dictation in its own window so text never depends on cross-application injection, and how to copy it out.",
     dateModified: "2026-11-01",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",

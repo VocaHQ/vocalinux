@@ -10,7 +10,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const installCommands = [
   "curl -fsSL https://raw.githubusercontent.com/VocaHQ/vocalinux/main/install.sh -o /tmp/vl.sh",
@@ -185,11 +185,7 @@ export default function ParakeetPage() {
       description:
         "How to install and use the Parakeet speech engine in Vocalinux on Linux, including model variants, languages, package availability and troubleshooting.",
       dateModified: "2026-11-01",
-      author: {
-        "@type": "Person",
-        name: "Jatin K Malik",
-        url: "https://github.com/jatinkrmalik",
-      },
+      author: AUTHOR_PERSON,
       publisher: {
         "@type": "Organization",
         name: "Vocalinux",
