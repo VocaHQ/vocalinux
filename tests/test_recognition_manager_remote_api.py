@@ -9,7 +9,6 @@ import unittest
 from unittest.mock import ANY, MagicMock, Mock
 
 import pytest
-import requests as _REAL_REQUESTS
 
 
 # autouse fixture: inject mock modules before each test, restore sys.modules after test,
@@ -606,12 +605,28 @@ class TestRemoteAPIDictionaryBias(unittest.TestCase):
         self.manager._try_openai_api(b"RIFFDATA", "de", {}, self.manager._http_session)
 
         call_kwargs = mock_post.call_args[1]
-        prepared = _REAL_REQUESTS.Request(
-            "POST",
-            "https://api.mistral.ai/v1/audio/transcriptions",
-            files=call_kwargs["files"],
-            data=call_kwargs["data"],
-        ).prepare()
+        saved = {
+            name: mod
+            for name, mod in list(sys.modules.items())
+            if name == "requests" or name.startswith("requests.")
+        }
+        try:
+            for name in saved:
+                sys.modules.pop(name, None)
+            import requests as real_requests
+
+            prepared = real_requests.Request(
+                "POST",
+                "https://api.mistral.ai/v1/audio/transcriptions",
+                files=call_kwargs["files"],
+                data=call_kwargs["data"],
+            ).prepare()
+        finally:
+            for name in list(sys.modules):
+                if name == "requests" or name.startswith("requests."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(saved)
+
         body = prepared.body.decode("utf-8") if isinstance(prepared.body, bytes) else prepared.body
         self.assertIn('name="context_bias"\r\n\r\nNorthwind\r\n', body)
         self.assertIn('name="context_bias"\r\n\r\nAlder Creek Design\r\n', body)
