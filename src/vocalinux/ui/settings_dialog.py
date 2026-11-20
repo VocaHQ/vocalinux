@@ -40,6 +40,7 @@ from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 from ..audio.pipewire import (  # noqa: E402
     friendly_device_label,
     get_alsa_capture_descriptions,
+    has_alsa_hw_address,
 )
 from ..audio.pulse_sources import (  # noqa: E402
     PULSE_INDEX_BASE,
@@ -2169,7 +2170,11 @@ def _sync_audio_device_tooltip(
     if not label or device_id in (None, "-1"):
         combo.set_tooltip_text(_AUDIO_DEVICE_TOOLTIP)
         return
-    raw_name = (device_names or {}).get(int(device_id))
+    try:
+        parsed_id: Optional[int] = int(device_id)
+    except (TypeError, ValueError):
+        parsed_id = None
+    raw_name = (device_names or {}).get(parsed_id) if parsed_id is not None else None
     if raw_name and _raw_audio_device_name(label) != raw_name:
         combo.set_tooltip_text(f"{label}\n{raw_name}")
     else:
@@ -10016,12 +10021,21 @@ For now, the engine has been reverted to VOSK."""
         devices = get_audio_input_devices(pulse_sources=pulse_sources)
         # PortAudio names ALSA inputs after the driver ("sof-hda-dsp: - (hw:0,6)");
         # show PipeWire's description instead, and keep the PortAudio name, which
-        # is what gets saved and resolved (#1029).
-        descriptions = get_alsa_capture_descriptions()
+        # is what gets saved and resolved (#1029). Negative indices belong to
+        # PipeWire system-audio monitors and snap PulseAudio sources, never ALSA.
+        has_portaudio_hw = any(
+            device_index >= 0 and has_alsa_hw_address(device_name)
+            for device_index, device_name, _is_default in devices
+        )
+        descriptions = get_alsa_capture_descriptions() if has_portaudio_hw else {}
         self._audio_device_names = {}
 
         for device_index, device_name, is_default in devices:
-            label = friendly_device_label(device_name, descriptions)
+            label = (
+                friendly_device_label(device_name, descriptions)
+                if device_index >= 0
+                else device_name
+            )
             self._audio_device_names[device_index] = device_name
             if is_default:
                 label += " (default)"

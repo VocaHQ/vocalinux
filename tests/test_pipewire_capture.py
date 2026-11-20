@@ -6,6 +6,7 @@ integration into recognition_manager (issue #751).
 import io
 import json
 import os
+import subprocess
 import sys
 import unittest
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -22,6 +23,7 @@ from vocalinux.audio.pipewire import (
     friendly_device_label,
     get_alsa_capture_descriptions,
     get_system_audio_sources,
+    has_alsa_hw_address,
     is_pipewire_device,
     is_pipewire_device_index,
     pipewire_available,
@@ -249,17 +251,92 @@ class TestAlsaCaptureDescriptions(unittest.TestCase):
             "hw:0,0": "Headset Microphone",
         }
 
-    def test_falls_back_to_hw_alsa_path(self) -> None:
-        objects = [_alsa_source("USB Mic Mono", **{"api.alsa.path": "hw:2,0"})]
-        assert _parse_alsa_capture_descriptions(objects) == {"hw:2,0": "USB Mic Mono"}
+    def test_falls_back_to_pcm_card_and_device_when_primary_missing_or_none(self) -> None:
+        objects = [
+            _alsa_source(
+                "DMIC",
+                **{
+                    "alsa.card": None,
+                    "alsa.device": "",
+                    "api.alsa.pcm.card": "0",
+                    "api.alsa.pcm.device": 6,
+                },
+            ),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {"hw:0,6": "DMIC"}
 
-    def test_ignores_sinks_unaddressed_and_non_hw_paths(self) -> None:
+    def test_falls_back_to_hw_alsa_path(self) -> None:
+        objects = [
+            _alsa_source("USB Mic Mono", **{"api.alsa.path": "hw:2,0"}),
+            _alsa_source("USB Subdevice", **{"api.alsa.path": "hw:2,1,0"}),
+            _alsa_source("Plug Mic", **{"api.alsa.path": "plughw:3,0"}),
+            _alsa_source("Keyed Mic", **{"api.alsa.path": "hw:CARD=4,DEV=2"}),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {
+            "hw:2,0": "USB Mic Mono",
+            "hw:2,1": "USB Subdevice",
+            "hw:3,0": "Plug Mic",
+            "hw:4,2": "Keyed Mic",
+        }
+
+    def test_resolves_sof_ucm_named_card_paths_with_card_index(self) -> None:
+        device_obj = {
+            "id": 42,
+            "type": "PipeWire:Interface:Device",
+            "info": {"props": {"alsa.card": "0", "alsa.id": "sofhdadsp"}},
+        }
+        objects = [
+            device_obj,
+            _alsa_source(
+                "Digital Microphone",
+                **{"api.alsa.pcm.card": "0", "api.alsa.path": "hw:sofhdadsp,6"},
+            ),
+            _alsa_source(
+                "Headset Microphone",
+                **{"device.id": 42, "api.alsa.path": "_ucm0001.hw:sofhdadsp,0"},
+            ),
+            _alsa_source(
+                "UCM Keyed Mic",
+                **{"alsa.card": "1", "api.alsa.path": "_ucm0002.hw:CARD=sofhdadsp,DEV=7,SUBDEV=0"},
+            ),
+            # Named card without any numeric card index cannot map to hw:C,D.
+            _alsa_source("Orphan UCM", **{"api.alsa.path": "_ucm0001.hw:sofhdadsp,9"}),
+        ]
+        assert _parse_alsa_capture_descriptions(objects) == {
+            "hw:0,6": "Digital Microphone",
+            "hw:0,0": "Headset Microphone",
+            "hw:1,7": "UCM Keyed Mic",
+        }
+
+    def test_supports_audio_duplex_and_nick_fallback_and_unicode(self) -> None:
+        duplex = _node(75, 75, "Audio/Duplex", "alsa_input.usb", "   ")
+        duplex["info"]["props"].update(
+            {"node.nick": "Mikrofon — Büro\nStereo", "alsa.card": "2", "alsa.device": "0"}
+        )
+        assert _parse_alsa_capture_descriptions([duplex]) == {"hw:2,0": "Mikrofon — Büro Stereo"}
+
+    def test_ignores_sinks_unaddressed_non_hw_paths_and_bad_digits(self) -> None:
         sink = _node(80, 80, "Audio/Sink", "alsa_output.x", "Speakers")
         sink["info"]["props"].update({"alsa.card": "0", "alsa.device": "0"})
+        non_str_desc = _alsa_source("", **{"alsa.card": "1", "alsa.device": "1"})
+        non_str_desc["info"]["props"]["node.description"] = ["not", "a", "string"]
         objects = [
+            {"id": None, "type": "PipeWire:Interface:Device", "info": "bad"},
+            {"id": 99, "type": "PipeWire:Interface:Device", "info": {"props": {}}},
             sink,
+            non_str_desc,
             _alsa_source("Front Mic", **{"api.alsa.path": "front:0"}),
+            _alsa_source("Card Only", **{"alsa.card": "0", "api.alsa.path": "hw:0"}),
+            _alsa_source("Bad Dev", **{"api.alsa.path": "hw:0,bad"}),
+            _alsa_source("Bad Subdev", **{"api.alsa.path": "hw:0,6,bad"}),
+            _alsa_source("Bad Keyed", **{"api.alsa.path": "hw:CARD=0,garbage"}),
+            _alsa_source("Keyed No Dev", **{"api.alsa.path": "hw:CARD=0"}),
+            _alsa_source("Keyed No Card", **{"api.alsa.path": "hw:CARD=sofhdadsp,DEV=6"}),
             _alsa_source("Virtual", **{"alsa.card": "x", "alsa.device": "1"}),
+            _alsa_source("Unicode Superscript", **{"alsa.card": "²", "alsa.device": "0"}),
+            _alsa_source("Unicode Digit", **{"alsa.card": "٣", "alsa.device": "0"}),
+            _alsa_source("Bool Card", **{"alsa.card": True, "alsa.device": 0}),
+            _alsa_source("Negative Card", **{"alsa.card": -1, "alsa.device": 0}),
             _alsa_source("", **{"alsa.card": "1", "alsa.device": "0"}),
         ]
         assert _parse_alsa_capture_descriptions(objects) == {}
@@ -279,12 +356,20 @@ class TestAlsaCaptureDescriptions(unittest.TestCase):
         assert get_alsa_capture_descriptions(runner=runner, which=lambda name: None) == {}
         runner.assert_not_called()
 
-    def test_failed_or_unparsable_dump_returns_empty(self) -> None:
+    def test_failed_timeout_decode_or_unparsable_dump_returns_empty(self) -> None:
         def which(name: str) -> str:
             return "/usr/bin/pw-dump"
 
+        def _timeout(args: List[str]) -> Tuple[int, str, str]:
+            raise subprocess.TimeoutExpired(args, 3.0)
+
+        def _decode_err(args: List[str]) -> Tuple[int, str, str]:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
+
         assert get_alsa_capture_descriptions(runner=lambda a: (1, "", "x"), which=which) == {}
         assert get_alsa_capture_descriptions(runner=lambda a: (0, "{no", ""), which=which) == {}
+        assert get_alsa_capture_descriptions(runner=_timeout, which=which) == {}
+        assert get_alsa_capture_descriptions(runner=_decode_err, which=which) == {}
 
     def test_does_not_need_pw_record(self) -> None:
         dump = [_alsa_source("Digital Microphone", **{"alsa.card": "0", "alsa.device": "6"})]
@@ -309,6 +394,21 @@ class TestFriendlyDeviceLabel(unittest.TestCase):
 
     def test_name_without_address_is_unchanged(self) -> None:
         assert friendly_device_label("Blue Yeti", {"hw:0,6": "Digital Microphone"}) == "Blue Yeti"
+
+    def test_blank_description_and_existing_suffix_and_leading_zeros(self) -> None:
+        name = "sof-hda-dsp: - (hw:0,6)"
+        assert friendly_device_label(name, {"hw:0,6": "   "}) == name
+        assert (
+            friendly_device_label(name, {"hw:0,6": "Digital Microphone (hw:0,6)"})
+            == "Digital Microphone (hw:0,6)"
+        )
+        assert (
+            friendly_device_label("sof-hda-dsp: - (hw:00,06)", {"hw:0,6": "Digital\tMic"})
+            == "Digital Mic (hw:0,6)"
+        )
+        assert has_alsa_hw_address("sof-hda-dsp: - (hw:0,6)")
+        assert not has_alsa_hw_address("Blue Yeti")
+        assert not has_alsa_hw_address("Mic (hw:٠,٦)")
 
 
 class TestDevicePredicates(unittest.TestCase):

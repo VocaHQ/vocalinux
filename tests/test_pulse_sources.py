@@ -678,6 +678,12 @@ class TestAudioDeviceTooltip:
             settings_dialog.SettingsDialog._populate_audio_devices(dialog)
         dialog.audio_device_combo.set_tooltip_text.assert_called_with(self._SOF)
 
+    def test_non_integer_device_id_keeps_label_tooltip_without_crashing(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        combo = self._combo("not-an-int", self._SOF)
+        settings_dialog._sync_audio_device_tooltip(combo, {1: self._SOF})
+        combo.set_tooltip_text.assert_called_with(self._SOF)
+
 
 class TestFriendlyAlsaLabels:
     """Settings shows PipeWire's description but saves PortAudio's name (#1029)."""
@@ -706,6 +712,76 @@ class TestFriendlyAlsaLabels:
         dialog.audio_device_combo.append.assert_any_call("1", f"{self._FRIENDLY} (default)")
         dialog.audio_device_combo.append.assert_any_call("2", "Blue Yeti")
         assert dialog._audio_device_names == {1: self._SOF, 2: "Blue Yeti"}
+
+    def test_non_portaudio_devices_are_never_relabelled(self) -> None:
+        """PipeWire system-audio monitors and snap PulseAudio entries keep their labels."""
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock()
+        dialog.config_manager.get_optional_int.return_value = None
+        system_sink = "System audio: Pro Audio (hw:0,6)"
+        devices = [(1, self._SOF, False), (-2, system_sink, True)]
+        with (
+            patch.object(settings_dialog, "get_pulse_sources", return_value=[]),
+            patch.object(
+                settings_dialog,
+                "get_alsa_capture_descriptions",
+                return_value={"hw:0,6": "Digital Microphone"},
+            ),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.get_audio_input_devices",
+                return_value=devices,
+            ),
+        ):
+            settings_dialog.SettingsDialog._populate_audio_devices(dialog)
+        dialog.audio_device_combo.append.assert_any_call("1", self._FRIENDLY)
+        dialog.audio_device_combo.append.assert_any_call("-2", f"{system_sink} (default)")
+        assert dialog._audio_device_names == {1: self._SOF, -2: system_sink}
+
+    def test_skips_pipewire_lookup_when_no_portaudio_hw_devices_present(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock()
+        dialog.config_manager.get_optional_int.return_value = None
+        devices = [(0, "Blue Yeti", True), (-2, "System audio: Speakers (hw:0,0)", False)]
+        with (
+            patch.object(settings_dialog, "get_pulse_sources", return_value=[]),
+            patch.object(
+                settings_dialog,
+                "get_alsa_capture_descriptions",
+                return_value={"hw:0,0": "Headset Microphone"},
+            ) as lookup,
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.get_audio_input_devices",
+                return_value=devices,
+            ),
+        ):
+            settings_dialog.SettingsDialog._populate_audio_devices(dialog)
+        lookup.assert_not_called()
+
+    def test_saved_relabelled_device_restores_selection_and_dual_line_tooltip(self) -> None:
+        settings_dialog = _load_settings_dialog()
+        dialog = MagicMock()
+        dialog.config_manager.get_optional_int.return_value = 99  # stale index
+        dialog.config_manager.get.return_value = self._SOF
+        dialog.audio_device_combo.get_active_id.return_value = "1"
+        dialog.audio_device_combo.get_active_text.return_value = self._FRIENDLY
+        devices = [(1, self._SOF, False)]
+        with (
+            patch.object(settings_dialog, "get_pulse_sources", return_value=[]),
+            patch.object(
+                settings_dialog,
+                "get_alsa_capture_descriptions",
+                return_value={"hw:0,6": "Digital Microphone"},
+            ),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager.get_audio_input_devices",
+                return_value=devices,
+            ),
+        ):
+            settings_dialog.SettingsDialog._populate_audio_devices(dialog)
+        dialog.audio_device_combo.set_active_id.assert_called_with("1")
+        dialog.audio_device_combo.set_tooltip_text.assert_called_with(
+            f"{self._FRIENDLY}\n{self._SOF}"
+        )
 
     def test_choosing_a_relabelled_device_saves_its_portaudio_name(self) -> None:
         settings_dialog = _load_settings_dialog()
