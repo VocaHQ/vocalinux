@@ -92,7 +92,7 @@ FLATPAK_ARCHES = ("x86_64", "aarch64")
 
 #: Build backends for the sdists the manifest builds offline under
 #: --no-build-isolation. They are not runtime dependencies, so they never appear
-#: in requirements/vad.txt and stay pinned here by hand.
+#: in the Flatpak's exports and stay pinned here by hand.
 BUILD_BACKENDS = {"meson-python", "pyproject-metadata"}
 
 PYPI_JSON = "https://pypi.org/pypi/{name}/{version}/json"

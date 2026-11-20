@@ -84,3 +84,37 @@ jobs:
           # Flathub mirrors screenshots at submission time; mirror locally so the
           # builddir linter does not flag the external screenshot URL.
           mirror-screenshots-url: https://dl.flathub.org/media
+
+      - name: Smoke test built Flatpak
+        run: |
+          # Verify Parakeet (sherpa_onnx) and Silero VAD (onnxruntime) load
+          # together in either import order inside the built GNOME 50 sandbox,
+          # and that Settings engine discovery sees both whisper_cpp and parakeet.
+          flatpak-builder --run flatpak_app packaging/flatpak/com.vocalinux.Vocalinux.yml \
+            python3 -c '
+          from pathlib import Path
+          import onnxruntime
+          import sherpa_onnx
+          import vocalinux.speech_recognition as sr
+          from vocalinux.speech_recognition.engines import available_engines
+
+          assert hasattr(sherpa_onnx, "OfflineRecognizer"), "sherpa_onnx missing OfflineRecognizer"
+          engines = available_engines()
+          assert "whisper_cpp" in engines, f"whisper_cpp missing from {engines}"
+          assert "parakeet" in engines, f"parakeet missing from {engines}"
+          vad_model = Path(sr.__file__).resolve().parent / "data" / "silero_vad.onnx"
+          assert vad_model.is_file(), f"missing {vad_model}"
+          onnxruntime.InferenceSession(str(vad_model), providers=["CPUExecutionProvider"])
+          print("Flatpak smoke (onnxruntime -> sherpa_onnx) OK:", engines)
+          '
+          flatpak-builder --run flatpak_app packaging/flatpak/com.vocalinux.Vocalinux.yml \
+            python3 -c '
+          from pathlib import Path
+          import sherpa_onnx
+          import onnxruntime
+          import vocalinux.speech_recognition as sr
+
+          vad_model = Path(sr.__file__).resolve().parent / "data" / "silero_vad.onnx"
+          onnxruntime.InferenceSession(str(vad_model), providers=["CPUExecutionProvider"])
+          print("Flatpak smoke (sherpa_onnx -> onnxruntime) OK:", sherpa_onnx.__version__, onnxruntime.__version__)
+          '

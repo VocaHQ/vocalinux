@@ -32,8 +32,8 @@
       <li>Graphical settings dialog for easy configuration</li>
     </ul>
     <p>
-      This Flatpak ships the whisper.cpp engine. On a Wayland session, text is
-      injected through XWayland.
+      This Flatpak ships the whisper.cpp and Parakeet engines. On a Wayland
+      session, text is injected through XWayland.
     </p>
   </description>
 
