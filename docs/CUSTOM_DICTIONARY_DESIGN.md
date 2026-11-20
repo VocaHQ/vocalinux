@@ -4,8 +4,8 @@
 
 Custom dictionary support has two separate jobs:
 
-1. **Custom terms** bias local Whisper, whisper.cpp, and Faster Whisper recognition
-   toward names and jargon.
+1. **Custom terms** bias local Whisper, whisper.cpp, Faster Whisper, and
+   OpenAI-compatible Remote API recognition toward names and jargon.
 2. **Transcript corrections** deterministically replace a known misheard phrase
    after transcription.
 
@@ -36,10 +36,11 @@ restart. Missing, unreadable, malformed, or unsupported correction files are
 ignored safely; dictation continues without their entries.
 
 The terms file may contain any number of lines, but VocaLinux limits a single
-prompt to the first 200 valid terms and 2,000 characters. This bounds decoding
-work while leaving the scanner's complete line-file contract intact. The Custom
-Dictionary page keeps both an add/remove editor and a validated file chooser
-for the terms file.
+prompt to the first 200 valid terms and 2,000 characters (and list-form
+`context_bias` to `dictionary.max_words` valid terms of up to 200 characters
+each). This bounds decoding work while leaving the scanner's complete line-file
+contract intact. The Custom Dictionary page keeps both an add/remove editor and
+a validated file chooser for the terms file.
 
 ## Processing and engine behavior
 

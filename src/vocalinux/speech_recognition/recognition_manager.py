@@ -2556,7 +2556,9 @@ class SpeechRecognitionManager:
         if mode != "auto":
             return mode
         try:
-            host = (urlparse(self.remote_api_url or "").hostname or "").lower()
+            host = (
+                (urlparse((self.remote_api_url or "").strip()).hostname or "").lower().rstrip(".")
+            )
         except ValueError:
             host = ""
         if host == "mistral.ai" or host.endswith(".mistral.ai"):

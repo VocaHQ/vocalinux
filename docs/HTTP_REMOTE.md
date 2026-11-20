@@ -150,12 +150,14 @@ the server can bias recognition. The terms file is re-read before every request.
 | `prompt` | All terms joined by spaces in a single `prompt` field, as OpenAI's API accepts |
 | `off` | No terms are sent |
 
-`dictionary.max_words` limits how many terms are sent. If the server answers a
-request that carries terms with HTTP 400, 413 or 422 (for example an unknown
-field or a context that is too large), Vocalinux logs a warning and retries that
-request once without the terms, so dictation keeps working. Requests to the
-whisper.cpp `/inference` endpoint never include terms. With custom terms disabled
-or empty, requests are unchanged.
+`dictionary.max_words` limits how many terms are sent; `context_bias` skips
+individual terms longer than 200 characters, and `prompt` is capped at 2,000
+characters. If the server answers a request that carries terms with HTTP 400,
+413 or 422 (for example an unknown field or a context that is too large),
+Vocalinux logs a warning and retries that request once without the terms, so
+dictation keeps working. Requests to the whisper.cpp `/inference` endpoint
+never include terms. With custom terms disabled or empty, requests are
+unchanged.
 
 Mistral example:
 
