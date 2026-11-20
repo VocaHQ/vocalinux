@@ -2472,48 +2472,116 @@ class TestSessionHistoryRecording(unittest.TestCase):
 class TestDebugLoggingOnTerminal(unittest.TestCase):
     """The tray app turns debug logging on by itself when run from a terminal (#1058)."""
 
-    def _run_main(self, *, debug_flag: bool, isatty: bool, trigger: bool = False) -> int:
+    def _run_main(
+        self,
+        *,
+        debug_flag: bool,
+        stderr_obj: Any,
+        trigger: bool = False,
+        transcribe_file: Optional[str] = None,
+    ) -> int:
         """Run main() up to an early exit and return the root logger level it left."""
         import logging
 
         root = logging.getLogger()
         saved = root.level
         root.setLevel(logging.INFO)
-        args = SimpleNamespace(debug=debug_flag, transcribe_file=None, toggle=trigger)
+        args = SimpleNamespace(debug=debug_flag, transcribe_file=transcribe_file, toggle=trigger)
         try:
             with (
                 patch("vocalinux.main.parse_arguments", return_value=args),
                 patch("vocalinux.main._dispatch_trigger", return_value=0),
+                patch("vocalinux.main._run_file_transcription", return_value=0),
                 patch("vocalinux.single_instance.acquire_lock", return_value=False),
-                patch("vocalinux.main.sys.stderr") as stderr,
+                patch("vocalinux.main.sys.stderr", stderr_obj),
                 patch("vocalinux.main.time.sleep"),
             ):
-                stderr.isatty.return_value = isatty
                 with self.assertRaises(SystemExit):
                     main()
             return root.level
         finally:
             root.setLevel(saved)
 
+    @staticmethod
+    def _mock_stderr(*, isatty: bool) -> MagicMock:
+        stderr = MagicMock()
+        stderr.isatty.return_value = isatty
+        return stderr
+
     def test_terminal_enables_debug(self) -> None:
         import logging
 
-        self.assertEqual(self._run_main(debug_flag=False, isatty=True), logging.DEBUG)
+        self.assertEqual(
+            self._run_main(debug_flag=False, stderr_obj=self._mock_stderr(isatty=True)),
+            logging.DEBUG,
+        )
 
     def test_non_terminal_keeps_info(self) -> None:
         import logging
 
-        self.assertEqual(self._run_main(debug_flag=False, isatty=False), logging.INFO)
+        self.assertEqual(
+            self._run_main(debug_flag=False, stderr_obj=self._mock_stderr(isatty=False)),
+            logging.INFO,
+        )
 
     def test_debug_flag_still_works_without_terminal(self) -> None:
         import logging
 
-        self.assertEqual(self._run_main(debug_flag=True, isatty=False), logging.DEBUG)
+        self.assertEqual(
+            self._run_main(debug_flag=True, stderr_obj=self._mock_stderr(isatty=False)),
+            logging.DEBUG,
+        )
 
     def test_trigger_commands_stay_quiet_on_terminal(self) -> None:
         import logging
 
-        self.assertEqual(self._run_main(debug_flag=False, isatty=True, trigger=True), logging.INFO)
+        self.assertEqual(
+            self._run_main(
+                debug_flag=False, stderr_obj=self._mock_stderr(isatty=True), trigger=True
+            ),
+            logging.INFO,
+        )
+
+    def test_transcribe_file_stays_quiet_on_terminal(self) -> None:
+        import logging
+
+        self.assertEqual(
+            self._run_main(
+                debug_flag=False,
+                stderr_obj=self._mock_stderr(isatty=True),
+                transcribe_file="sample.wav",
+            ),
+            logging.INFO,
+        )
+
+    def test_transcribe_file_honors_explicit_debug_flag(self) -> None:
+        import logging
+
+        self.assertEqual(
+            self._run_main(
+                debug_flag=True,
+                stderr_obj=self._mock_stderr(isatty=False),
+                transcribe_file="sample.wav",
+            ),
+            logging.DEBUG,
+        )
+
+    def test_none_stderr_keeps_info_without_crashing(self) -> None:
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=False, stderr_obj=None), logging.INFO)
+
+    def test_closed_stderr_keeps_info_without_crashing(self) -> None:
+        import logging
+
+        closed_stderr = MagicMock()
+        closed_stderr.isatty.side_effect = ValueError("I/O operation on closed file")
+        self.assertEqual(self._run_main(debug_flag=False, stderr_obj=closed_stderr), logging.INFO)
+
+    def test_stderr_without_isatty_keeps_info_without_crashing(self) -> None:
+        import logging
+
+        self.assertEqual(self._run_main(debug_flag=False, stderr_obj=object()), logging.INFO)
 
 
 if __name__ == "__main__":

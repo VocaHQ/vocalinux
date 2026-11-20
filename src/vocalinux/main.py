@@ -349,6 +349,17 @@ def check_appindicator_support():
     return True
 
 
+def _stderr_is_tty() -> bool:
+    """Return True when stderr is an open interactive terminal."""
+    stderr = sys.stderr
+    if stderr is None:
+        return False
+    try:
+        return bool(stderr.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def main():
     """Main entry point for the application."""
     # Parse arguments first so flags like --version work even when
@@ -374,8 +385,9 @@ def main():
     # Started from a terminal (logs go to stderr): show debug output without
     # requiring --debug. Launchers and autostart have no terminal, so they
     # keep INFO logging.
-    if not args.debug and sys.stderr.isatty():
+    if not args.debug and _stderr_is_tty():
         logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled (stderr is a terminal)")
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
