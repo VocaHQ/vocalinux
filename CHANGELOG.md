@@ -12,6 +12,12 @@ Release history for Vocalinux.
 
 ## Current stable
 
+**[v0.18.6](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.6)** (2026-11-08)
+
+Patch on the stable line: the wtype paste chord used alongside ydotool releases Ctrl and Shift, so Ctrl no longer stays held after a paste on Sway and other wlroots compositors, Quit from the dock or taskbar right-click menu closes Vocalinux on GNOME Wayland, the Wayland fallback overlay is detected correctly and no longer opens as a large empty window, the .deb, .rpm and Flatpak ship gtk-layer-shell so the overlay stays out of the taskbar on KDE and wlroots, the Settings readout and language picker follow keyboard layout switches while Settings is open, the microphone tooltip shows the full device name, and Parakeet gains optional Underdog Bark 3.0 models.
+
+See [docs/UPDATE.md](docs/UPDATE.md#whats-new-in-v0186) for the highlight table, or the [GitHub Release](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.6).
+
 **[v0.18.5](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.5)** (2026-10-27)
 
 Patch on the stable line: a stop that races a recording start can no longer leave the microphone recording with no way to halt it, and a stalled microphone read can no longer hang Stop forever, keyboards survive suspend and the GNOME lock screen again because the evdev grab is released when forwarding cannot run, Dictation Pad and Settings no longer bind to other windows or travel workspaces together on Wayland, Ctrl+mouse-wheel zoom works again, the installer gains an upgrade mode that keeps your existing configuration, paste-injection copies are marked sensitive on wl-clipboard 2.2+ so clipboard managers that honor the hint keep them out of history, and AUR source publication is gated on attested release sdists.

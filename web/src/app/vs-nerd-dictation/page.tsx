@@ -12,7 +12,7 @@ import {
   Waypoints,
 } from "lucide-react";
 import { SeoSubpageShell } from "@/components/seo-subpage-shell";
-import { absoluteUrl, buildPageMetadata } from "@/lib/seo";
+import { absoluteUrl, AUTHOR_PERSON, buildPageMetadata } from "@/lib/seo";
 
 const comparisonRows = [
   {
@@ -86,11 +86,7 @@ export default function VsNerdDictationPage() {
     description:
       "Comparing Vocalinux and Nerd Dictation for offline Linux voice dictation. CLI vs GUI, GPU vs CPU-only, Wayland support, and more.",
     dateModified: "2026-03-30",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    author: AUTHOR_PERSON,
     publisher: {
       "@type": "Organization",
       name: "Vocalinux",
