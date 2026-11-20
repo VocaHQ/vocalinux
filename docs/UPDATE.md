@@ -30,7 +30,7 @@ bash /tmp/vl.sh --upgrade
 ```bash
 cd vocalinux
 git fetch origin
-git checkout v0.18.5
+git checkout v0.18.6
 ./install.sh
 ```
 
@@ -86,6 +86,32 @@ vocalinux
 ```
 
 Missing system packages: see [INSTALL.md](INSTALL.md) or [DISTRO_COMPATIBILITY.md](DISTRO_COMPATIBILITY.md).
+
+---
+
+## What's New in v0.18.6
+
+0.18.6 is a **patch** on the stable line. Default engine is still whisper.cpp. It closes the reports filed after 0.18.5: a stuck Ctrl key after paste on Sway, a dock Quit that did nothing on GNOME, an empty overlay window on KDE, and a Settings layout readout that did not follow layout switches.
+
+### 0.18.6 highlights
+
+| Fix | Description |
+|---------|-------------|
+| **Ctrl no longer sticks after paste** | When ydotool types and wtype sends the paste shortcut, the chord now releases Ctrl and Shift, so scrolling no longer zooms until you press Escape on Sway and other wlroots compositors (#1049; fixes #1048 reported by @rafaeln) |
+| **Dock Quit closes Vocalinux** | Quit from the dock or taskbar right-click menu on GNOME Wayland now quits the app the same way the tray menu does (#1036; fixes #1028 reported by @lavoie005) |
+| **No more empty overlay window** | The Wayland fallback overlay is detected by GType, so it stays compact instead of opening as a large empty window (#1035; refs #1030 reported by @Satlinker) |
+| **gtk-layer-shell in native packages and Flatpak** | The .deb and .rpm recommend gtk-layer-shell and the Flatpak bundles it, so the overlay is a layer surface on KDE and wlroots compositors and stays out of the taskbar (#1044; refs #1030) |
+| **Settings follows layout switches** | With "Follow keyboard layout" on, the readout and language picker update when you switch layouts while Settings is open (#1050; fixes #1047 reported by @hopsayer) |
+
+### Also in v0.18.6
+
+- The microphone dropdown's tooltip shows the selected device's full name, and device names and test errors are escaped in the audio status label (#1037, #1043; refs #1029 reported by @cmcclung-ANGENG)
+- Parakeet gains optional Underdog Bark 3.0 models (`bark-3.0` int8 and `bark-3.0-int4`), English only, each pinned by SHA-256 (#1031 by @AlexThunder1989)
+- The Snap is built from the locked Python exports and its installed artifact is verified before publication (#1041 by @sesav)
+
+AppImage, Flatpak, and Snap still ship whisper.cpp only.
+
+See the [full changelog](https://github.com/VocaHQ/vocalinux/releases/tag/v0.18.6).
 
 ---
 

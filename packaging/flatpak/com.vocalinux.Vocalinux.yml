@@ -35,7 +35,8 @@ finish-args:
   # System tray / status-notifier icon.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.gnome.Shell
-  # Find the bundled AppIndicator typelib under /app (searched before the runtime).
+  # Find the bundled AppIndicator and GtkLayerShell typelibs under /app
+  # (searched before the runtime).
   - --env=GI_TYPELIB_PATH=/app/lib/girepository-1.0
 
 modules:
@@ -57,6 +58,28 @@ modules:
         sha256: 5af29ba58bbdbb7bbcefaaecc77ec8fc413f0db6f4c4e286c40c3e1b83174fa0
 
   - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+
+  # Dictation overlay as a layer surface on KWin and wlroots compositors, so it
+  # never shows in the taskbar (#1030). dictation_overlay.py soft-imports the
+  # GtkLayerShell-0.1 typelib; Mutter has no layer shell, so GNOME keeps the
+  # plain-window fallback.
+  - name: gtk-layer-shell
+    buildsystem: meson
+    config-opts:
+      - -Dintrospection=true
+      - -Dvapi=false
+      - -Ddocs=false
+      - -Dexamples=false
+      - -Dtests=false
+    cleanup:
+      - /include
+      - /lib/pkgconfig
+      - /share/gir-1.0
+    sources:
+      - type: archive
+        url: https://github.com/wmww/gtk-layer-shell/archive/refs/tags/v0.10.1.tar.gz
+        sha256: 88c3a3e0a5300532f3d368d5df64838a87f1fb85273f22d41df0a6b8d0ec59c6
+
   - name: xsel
     buildsystem: simple
     build-commands:

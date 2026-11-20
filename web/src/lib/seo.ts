@@ -12,6 +12,42 @@ export const X_URL = "https://x.com/vocahq";
 export const DISCORD_URL = "https://discord.gg/t6muquAJbm";
 export const EMAIL_URL = "mailto:hello@vocahq.com";
 
+// Structured-data identity for the author and the publisher. The Person @id
+// matches the one on jatinkrmalik.com/about/ so search engines merge the two
+// descriptions into one entity; the Wikidata links anchor both.
+export const AUTHOR_PERSON_ID = "https://jatinkrmalik.com/about/#person";
+
+export const AUTHOR_PERSON = {
+  "@type": "Person",
+  "@id": AUTHOR_PERSON_ID,
+  name: "Jatin K Malik",
+  alternateName: "Jatin Kumar Malik",
+  url: "https://jatinkrmalik.com/",
+  sameAs: [
+    "https://www.wikidata.org/wiki/Q142178778",
+    "https://jatinkrmalik.com/about/",
+    "https://github.com/jatinkrmalik",
+    "https://x.com/jatinkrmalik",
+    "https://www.linkedin.com/in/jatinkrmalik/",
+  ],
+};
+
+export const AUTHOR_PERSON_REF = { "@id": AUTHOR_PERSON_ID };
+
+export const VOCAHQ_ORGANIZATION = {
+  "@type": "Organization",
+  "@id": "https://vocahq.com/#organization",
+  name: "VocaHQ",
+  url: "https://vocahq.com/",
+  sameAs: [
+    "https://www.wikidata.org/wiki/Q142179028",
+    "https://github.com/VocaHQ",
+  ],
+};
+
+export const VOCALINUX_WIKIDATA_URL =
+  "https://www.wikidata.org/wiki/Q142178915";
+
 interface PageMetadataOptions {
   title: string;
   description: string;

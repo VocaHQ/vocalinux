@@ -34,12 +34,14 @@ case "$ID" in
         PKG="$(find /out -name '*.deb' -print -quit)"
         [ -n "$PKG" ] || fail "no .deb under /out"
         apt-get update
-        apt-get install -y "$PKG"
+        # Recommends on, as on a desktop install: the layer-shell typelib is one.
+        apt-get install -y -o APT::Install-Recommends=true "$PKG"
         ;;
     fedora)
         PKG="$(find /out -name '*.rpm' -print -quit)"
         [ -n "$PKG" ] || fail "no .rpm under /out"
-        dnf install -y "$PKG"
+        # Fedora container images turn weak deps off; a desktop install has them on.
+        dnf install -y --setopt=install_weak_deps=True "$PKG"
         ;;
     *)
         fail "no smoke recipe for distro ID '$ID' — add one alongside the dependency list it is meant to exercise"
@@ -91,7 +93,16 @@ exts = [p.name for p in Path("/usr/lib/vocalinux/vendor").glob("_pywhispercpp.*.
 assert any(tag in name for name in exts), \
     f"no _pywhispercpp extension for {tag[:-1]} among {exts}"
 
-print("import-smoke OK:", ", ".join(MODULES))
+# The overlay soft-imports GtkLayerShell and silently falls back to a plain
+# toplevel that KWin lists in the taskbar (#1030), so prove the recommended
+# typelib actually installed and loads.
+import gi
+
+gi.require_version("Gtk", "3.0")
+gi.require_version("GtkLayerShell", "0.1")
+from gi.repository import GtkLayerShell  # noqa: E402,F401
+
+print("import-smoke OK:", ", ".join(MODULES), "+ GtkLayerShell-0.1")
 PY
 
 echo "SMOKE-TEST PASSED"
