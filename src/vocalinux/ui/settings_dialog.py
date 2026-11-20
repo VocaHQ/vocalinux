@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+import subprocess
 import threading
 import time
 from contextlib import contextmanager
@@ -655,6 +656,14 @@ FOLLOW_LAYOUT_TOOLTIP = (
     "than one language. Needs a multilingual model; not available for VOSK, "
     "which loads a separate model per language."
 )
+
+#: How often an open Settings window re-reads the active keyboard layout while
+#: Follow keyboard layout is on, so the "Right now that is ..." readout and the
+#: greyed-out picker track a layout switch instead of the one seen at open (#1047).
+FOLLOW_LAYOUT_POLL_SECONDS = 2
+
+#: Default for ``_update_language_warning``: resolve the active layout itself.
+_RESOLVE_LAYOUT: Any = object()
 
 LANGUAGE_TOOLTIP = (
     "Choose the language you dictate in. Search the list. Picking a language "
@@ -2570,6 +2579,11 @@ class SettingsDialog(AboutSectionMixin):
         )
         self._audio_test_cancel: Optional[threading.Event] = None
         self.connect("destroy", self._cancel_audio_test)
+        # Re-reads the active layout while follow mode is on (#1047).
+        self._follow_layout_poll_id: Optional[int] = None
+        self._follow_layout_lookup_running = False
+        self._follow_layout_shown: Optional[str] = _RESOLVE_LAYOUT
+        self.connect("destroy", self._stop_follow_layout_poll)
         self._test_active = False
         self._test_token = 0
         self._test_cancelled = False
@@ -8336,15 +8350,20 @@ class SettingsDialog(AboutSectionMixin):
 
             self.language_combo.append(lang_code, display_text)
 
-    def _update_language_warning(self):
-        """Update language help text for the selected engine/model/language."""
+    def _update_language_warning(self, layout_language: Optional[str] = _RESOLVE_LAYOUT):
+        """Update language help text for the selected engine/model/language.
+
+        *layout_language* is what the active layout already resolved to, passed
+        by the follow-layout poll so it does not look the layout up a second time
+        on the GTK thread. Left out, the layout is resolved here.
+        """
         if self._get_selected_engine() == "parakeet":
             self.language_warning.set_markup("")
             self.language_warning.hide()
             return
 
         lang_code = self.language_combo.get_active_id()
-        lang_info = SUPPORTED_LANGUAGES.get(lang_code, {})
+        lang_info = cast(dict[str, Any], SUPPORTED_LANGUAGES.get(lang_code, {}))
 
         if self._is_selected_whispercpp_model_english_only():
             self.language_warning.set_markup(
@@ -8352,8 +8371,15 @@ class SettingsDialog(AboutSectionMixin):
             )
             self.language_warning.show()
         elif _is_following_layout(self):
-            resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
-            resolved_name = SUPPORTED_LANGUAGES.get(resolved, {}).get("name") if resolved else None
+            resolved = (
+                language_for_active_layout(SUPPORTED_LANGUAGES)
+                if layout_language is _RESOLVE_LAYOUT
+                else layout_language
+            )
+            resolved_info = (
+                cast(dict[str, Any], SUPPORTED_LANGUAGES.get(resolved, {})) if resolved else {}
+            )
+            resolved_name = resolved_info.get("name")
             self.language_warning.set_markup(
                 "<span foreground='#3584e4'>Follows your active keyboard layout. "
                 f"Right now that is {resolved_name or 'auto-detect'}.</span>"
@@ -8394,6 +8420,77 @@ class SettingsDialog(AboutSectionMixin):
         # the layout resolves to right now -- so it reads as a live readout
         # rather than going blank, and turning the mode off pins what is shown.
         self.language_row.set_sensitive(not active)
+        self._update_follow_layout_poll(active)
+
+    def _update_follow_layout_poll(self, active: bool) -> None:
+        """Keep re-reading the layout while the mode is on, and stop when it is off.
+
+        The readout used to be resolved only when the mode was switched on or the
+        window opened, so switching layouts with Settings open left it naming the
+        old language until the window was reopened (#1047).
+        """
+        poll_id = getattr(self, "_follow_layout_poll_id", None)
+        if active and poll_id is None:
+            self._follow_layout_poll_id = GLib.timeout_add_seconds(
+                FOLLOW_LAYOUT_POLL_SECONDS, self._poll_follow_layout
+            )
+        elif not active and poll_id is not None:
+            self._stop_follow_layout_poll()
+
+    def _stop_follow_layout_poll(self, *_args: object) -> None:
+        """Cancel the follow-layout poll, if one is scheduled."""
+        poll_id = getattr(self, "_follow_layout_poll_id", None)
+        self._follow_layout_poll_id = None
+        # Forget the last answer, so a restarted poll reports the layout afresh.
+        self._follow_layout_shown = _RESOLVE_LAYOUT
+        if poll_id is not None:
+            GLib.source_remove(poll_id)
+
+    def _poll_follow_layout(self) -> bool:
+        """Timer tick: look the layout up off the GTK thread (gsettings is a subprocess)."""
+        if not _is_following_layout(self):
+            self._follow_layout_poll_id = None
+            return False
+        if not self._follow_layout_lookup_running:
+            self._follow_layout_lookup_running = True
+            threading.Thread(
+                target=self._lookup_follow_layout_language,
+                name="vocalinux-follow-layout",
+                daemon=True,
+            ).start()
+        return True
+
+    def _lookup_follow_layout_language(self) -> None:
+        """Worker: resolve the active layout and hand the answer to the GTK thread."""
+        try:
+            resolved = language_for_active_layout(SUPPORTED_LANGUAGES)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            # A failed host lookup must not kill the poll; programming errors still raise.
+            logger.debug(f"Keyboard layout lookup for the settings readout failed: {exc}")
+            GLib.idle_add(self._finish_follow_layout_lookup)
+            return
+        GLib.idle_add(self._apply_follow_layout_language, resolved)
+
+    def _finish_follow_layout_lookup(self) -> bool:
+        """Allow the next tick to start a lookup."""
+        self._follow_layout_lookup_running = False
+        return False
+
+    def _apply_follow_layout_language(self, resolved: Optional[str]) -> bool:
+        """Show a freshly resolved layout language in the picker and readout (#1047)."""
+        self._follow_layout_lookup_running = False
+        # A destroyed window or a mode turned off since the lookup started.
+        if self._follow_layout_poll_id is None or not _is_following_layout(self):
+            return False
+        if resolved == getattr(self, "_follow_layout_shown", _RESOLVE_LAYOUT):
+            return False
+        self._follow_layout_shown = resolved
+        if resolved and resolved != self.language_combo.get_active_id():
+            with _suppressed(self, "_processing_language_change"):
+                self._set_combo_active_id_or_first(self.language_combo, resolved)
+        self._update_language_warning(resolved)
+        self._refresh_simple_readout()
+        return False
 
     def _on_follow_layout_toggled(self, *_args: Any) -> None:
         """Apply the follow mode, or pin whatever the picker shows when it goes off."""

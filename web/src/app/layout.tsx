@@ -4,12 +4,15 @@ import { type Metadata } from "next";
 import Script from "next/script";
 import {
   absoluteUrl,
+  AUTHOR_PERSON,
+  AUTHOR_PERSON_REF,
   DEFAULT_OG_IMAGE_ALT,
   DEFAULT_OG_IMAGE_PATH,
   GITHUB_REPO_URL,
   SITE_NAME,
   SITE_URL,
   TWITTER_HANDLE,
+  VOCAHQ_ORGANIZATION,
   VOCAHQ_URL,
 } from "@/lib/seo";
 
@@ -47,7 +50,7 @@ export const metadata: Metadata = {
     "voice typing fedora",
     "voice typing arch linux",
   ],
-  authors: [{ name: "Jatin K Malik", url: "https://github.com/jatinkrmalik" }],
+  authors: [{ name: "Jatin K Malik", url: "https://jatinkrmalik.com/" }],
   creator: "Jatin K Malik",
   publisher: SITE_NAME,
   icons: {
@@ -130,16 +133,8 @@ const organizationJsonLd = {
   logo: absoluteUrl("/vocalinux.png"),
   description: "Open-source, offline voice dictation software for Linux.",
   sameAs: [GITHUB_REPO_URL, VOCAHQ_URL],
-  founder: {
-    "@type": "Person",
-    name: "Jatin K Malik",
-    url: "https://github.com/jatinkrmalik",
-  },
-  parentOrganization: {
-    "@type": "Organization",
-    name: "VocaHQ",
-    url: VOCAHQ_URL,
-  },
+  founder: AUTHOR_PERSON,
+  parentOrganization: VOCAHQ_ORGANIZATION,
 };
 
 const webSiteJsonLd = {
@@ -151,6 +146,8 @@ const webSiteJsonLd = {
   inLanguage: "en-US",
   description:
     "Vocalinux provides offline speech-to-text and voice dictation for Linux desktops.",
+  author: AUTHOR_PERSON_REF,
+  creator: AUTHOR_PERSON_REF,
   publisher: {
     "@id": `${absoluteUrl("/")}#organization`,
   },

@@ -5,7 +5,12 @@ import Link from "next/link";
 import Image from "next/image";
 import { SiteChrome } from "@/components/site-chrome";
 import { TerminalBlock, TerminalPrompt } from "@/components/terminal-block";
-import { GITHUB_REPO_URL } from "@/lib/seo";
+import {
+  AUTHOR_PERSON,
+  GITHUB_REPO_URL,
+  VOCAHQ_ORGANIZATION,
+  VOCALINUX_WIKIDATA_URL,
+} from "@/lib/seo";
 
 const GITHUB_REPO_PATH = GITHUB_REPO_URL.replace("https://github.com/", "");
 const GITHUB_RAW_BASE = `https://raw.githubusercontent.com/${GITHUB_REPO_PATH}`;
@@ -40,12 +45,11 @@ const homeJsonLd = [
     },
     description:
       "Offline voice dictation and speech-to-text for Linux with whisper.cpp, Faster Whisper, Whisper, VOSK, and Parakeet.",
-    softwareVersion: "0.18.5",
-    author: {
-      "@type": "Person",
-      name: "Jatin K Malik",
-      url: "https://github.com/jatinkrmalik",
-    },
+    softwareVersion: "0.18.6",
+    author: AUTHOR_PERSON,
+    creator: AUTHOR_PERSON,
+    publisher: VOCAHQ_ORGANIZATION,
+    sameAs: [VOCALINUX_WIKIDATA_URL],
     url: "https://vocalinux.com/",
     downloadUrl: GITHUB_REPO_URL,
     screenshot: "https://vocalinux.com/og-image.png",
