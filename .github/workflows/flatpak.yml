@@ -88,10 +88,13 @@ jobs:
       - name: Smoke test built Flatpak
         run: |
           # Verify Parakeet (sherpa_onnx) and Silero VAD (onnxruntime) load
-          # together in either import order inside the built GNOME 50 sandbox,
-          # and that Settings engine discovery sees both whisper_cpp and parakeet.
-          flatpak-builder --run flatpak_app packaging/flatpak/com.vocalinux.Vocalinux.yml \
-            python3 -c '
+          # together in either import order inside the built GNOME 50 runtime
+          # sandbox, and that Settings engine discovery sees both whisper_cpp
+          # and parakeet. Use `flatpak build --runtime` rather than
+          # `flatpak-builder --run` so we do not depend on rofiles-fuse in CI.
+          flatpak build --runtime --nofilesystem=host \
+            --env=GI_TYPELIB_PATH=/app/lib/girepository-1.0 \
+            flatpak_app python3 -c '
           from pathlib import Path
           import onnxruntime
           import sherpa_onnx
@@ -107,8 +110,9 @@ jobs:
           onnxruntime.InferenceSession(str(vad_model), providers=["CPUExecutionProvider"])
           print("Flatpak smoke (onnxruntime -> sherpa_onnx) OK:", engines)
           '
-          flatpak-builder --run flatpak_app packaging/flatpak/com.vocalinux.Vocalinux.yml \
-            python3 -c '
+          flatpak build --runtime --nofilesystem=host \
+            --env=GI_TYPELIB_PATH=/app/lib/girepository-1.0 \
+            flatpak_app python3 -c '
           from pathlib import Path
           import sherpa_onnx
           import onnxruntime
