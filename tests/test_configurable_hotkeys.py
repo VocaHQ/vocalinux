@@ -925,24 +925,86 @@ class TestSavedShiftedShortcutCompatibility:
             backend._pending_x11_key_info = None
         assert not fired.wait(0.15)
 
-    def test_detect_x11_layout_parses_setxkbmap_query(
+    def test_detect_x11_layout_uses_active_group_for_multi_layout(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """_detect_x11_layout reads active X11 layout and variant from setxkbmap -query."""
+        """_detect_x11_layout picks the active X11 group via xset -q and never guesses index 0."""
         import subprocess
 
         from vocalinux.ui.keyboard_backends import layout_key_map as lkm
 
         monkeypatch.setenv("DISPLAY", ":0")
+
+        def _run_multi(
+            cmd: list[str], *_a: object, **_k: object
+        ) -> subprocess.CompletedProcess[str]:
+            if cmd[0] == "setxkbmap":
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout="rules:      evdev\nmodel:      pc105\nlayout:     us,fr\nvariant:    ,oss\n",
+                    stderr="",
+                )
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="Keyboard Control:\n  LED mask:  00001000\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr(subprocess, "run", _run_multi)
+        assert lkm._detect_x11_layout() == ("fr", "oss")
+
+        # When multiple layouts are configured and xset fails, refuse to guess index 0.
+        def _run_no_xset(
+            cmd: list[str], *_a: object, **_k: object
+        ) -> subprocess.CompletedProcess[str]:
+            if cmd[0] == "setxkbmap":
+                return subprocess.CompletedProcess(
+                    cmd,
+                    0,
+                    stdout="layout:     us,fr\nvariant:    ,oss\n",
+                    stderr="",
+                )
+            raise FileNotFoundError("xset missing")
+
+        monkeypatch.setattr(subprocess, "run", _run_no_xset)
+        assert lkm._detect_x11_layout() == ("", "")
+
+        # Single-layout config returns directly without needing xset.
         monkeypatch.setattr(
             subprocess,
             "run",
-            lambda *_a, **_k: subprocess.CompletedProcess(
-                ["setxkbmap", "-query"],
+            lambda cmd, *_a, **_k: subprocess.CompletedProcess(
+                cmd,
                 0,
-                stdout="rules:      evdev\nmodel:      pc105\nlayout:     latam,us\nvariant:    deadtilde,\n",
+                stdout="layout:     latam\nvariant:    deadtilde\n",
                 stderr="",
             ),
         )
         assert lkm._detect_x11_layout() == ("latam", "deadtilde")
+
+    def test_layout_switch_refreshes_shifted_to_base_map_without_stale_cache(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Switching from latam to us immediately updates resolve_base_key_token and backend target."""
+        from vocalinux.ui.keyboard_backends import layout_key_map as lkm
+
+        if lkm.build_shifted_to_base_map("latam") is None:
+            pytest.skip("libxkbcommon or XKB data not available")
+
+        active_layout = ["latam"]
+        monkeypatch.setattr(lkm, "_detect_active_layout", lambda: (active_layout[0], ""))
+
+        backend, _ctrl, _shift, _insert = TestPynputX11KeyResolver()._make_headless_backend(
+            monkeypatch, "ctrl+shift+equal"
+        )
+        assert backend._combo_key_token == "0"
+
+        # Switch live layout to US and re-apply / refresh shortcut: equal must stay equal.
+        active_layout[0] = "us"
+        assert lkm.resolve_base_key_token("equal") == "equal"
+        backend.set_shortcut("ctrl+equal")
+        assert backend._combo_key_token == "equal"

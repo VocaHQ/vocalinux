@@ -534,8 +534,31 @@ def _detect_kde_layout() -> tuple[str, str]:
     return "", ""
 
 
+def _detect_x11_active_group() -> Optional[int]:
+    """Read the active XKB group index (0..3) from ``xset -q`` LED mask."""
+    try:
+        result = subprocess.run(
+            ["xset", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+            env=host_env(),
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        logger.debug("xset -q failed: %s", exc)
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    match = re.search(r"LED mask:\s+([0-9a-fA-F]+)", result.stdout)
+    if not match:
+        return None
+    led_mask = int(match.group(1), 16)
+    return (led_mask >> 12) & 0x3
+
+
 def _detect_x11_layout() -> tuple[str, str]:
-    """Current XKB layout/variant from ``setxkbmap -query`` on X11 sessions."""
+    """Current XKB layout/variant from ``setxkbmap -query`` + active X11 group."""
     if not os.environ.get("DISPLAY"):
         return "", ""
     try:
@@ -553,19 +576,27 @@ def _detect_x11_layout() -> tuple[str, str]:
     if result.returncode != 0 or not result.stdout:
         return "", ""
 
-    layout = ""
-    variant = ""
+    layouts: list[str] = []
+    variants: list[str] = []
     for line in result.stdout.splitlines():
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
         key = key.strip().lower()
-        first = value.strip().split(",", 1)[0].strip()
-        if key == "layout" and first:
-            layout = first
-        elif key == "variant" and first:
-            variant = first
-    return layout, variant
+        if key == "layout":
+            layouts = _csv_fields(value)
+        elif key == "variant":
+            variants = _csv_fields(value)
+    if not layouts:
+        return "", ""
+    if len(layouts) == 1:
+        return _layout_pair_at(layouts, variants, 0)
+
+    group = _detect_x11_active_group()
+    if group is None:
+        logger.debug("Multiple X11 layouts %s configured but active group is unknown", layouts)
+        return "", ""
+    return _layout_pair_at(layouts, variants, group)
 
 
 def _is_other_x11_desktop() -> bool:
@@ -622,13 +653,23 @@ def get_active_char_to_evdev_map() -> Optional[dict[str, int]]:
     return char_map
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=16)
+def _cached_shifted_to_base_map(layout: str, variant: str) -> Optional[dict[str, str]]:
+    """Cache compiled shifted-to-base tables by ``(layout, variant)``."""
+    return build_shifted_to_base_map(layout, variant)
+
+
 def get_active_shifted_to_base_map() -> dict[str, str]:
-    """Cached shifted-only char/dead-key → level-0 base key map for active layout."""
+    """Shifted-only char/dead-key → level-0 base key map for the current active layout.
+
+    Reads the live active layout on each call so switching layouts never leaves
+    a stale shifted-to-base mapping; the underlying XKB table compilation is
+    cached per ``(layout, variant)``.
+    """
     layout, variant = _detect_active_layout()
     if not layout:
         return {}
-    shifted_map = build_shifted_to_base_map(layout, variant)
+    shifted_map = _cached_shifted_to_base_map(layout, variant)
     if shifted_map is not None:
         return shifted_map
     if layout == "us" and not variant:

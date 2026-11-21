@@ -322,10 +322,12 @@ class PynputKeyboardBackend(KeyboardBackend):
 
         # Combo (modifier+key) state.
         self._combo_required_modifier_keys: list[Any] = []
+        self._combo_raw_key_token: Optional[str] = None
         self._combo_key_token: Optional[str] = None
         self._combo_held_keys: set[Any] = set()
         self._combo_active = False
         self._pending_x11_key_info: Optional[tuple[int, int]] = None
+        self._last_x11_group: Optional[int] = None
         self._resolve_combo_targets()
 
         if not PYNPUT_AVAILABLE:
@@ -340,12 +342,23 @@ class PynputKeyboardBackend(KeyboardBackend):
         super().set_shortcut(shortcut)
         self._resolve_combo_targets()
 
+    def _refresh_combo_key_token(self) -> None:
+        """Recompute the active-layout base-key target for the configured combo."""
+        if self._combo_raw_key_token is None:
+            self._combo_key_token = None
+            return
+        from .layout_key_map import resolve_base_key_token
+
+        self._combo_key_token = resolve_base_key_token(self._combo_raw_key_token)
+
     def _resolve_combo_targets(self) -> None:
         """Resolve the spec's combo modifiers and main key to pynput matchers."""
         self._combo_required_modifier_keys = []
+        self._combo_raw_key_token = None
         self._combo_key_token = None
         self._combo_held_keys = set()
         self._combo_active = False
+        self._last_x11_group = None
 
         spec = getattr(self, "_spec", None)
         if spec is None or not spec.is_combo or not PYNPUT_AVAILABLE:
@@ -359,11 +372,11 @@ class PynputKeyboardBackend(KeyboardBackend):
                 return
             modifier_key_sets.append(set(variants))
 
-        from .layout_key_map import resolve_base_key_token
-
         self._combo_required_modifier_keys = modifier_key_sets
-        token = normalize_main_key_token(spec.key) if spec.key is not None else None
-        self._combo_key_token = resolve_base_key_token(token) if token is not None else None
+        self._combo_raw_key_token = (
+            normalize_main_key_token(spec.key) if spec.key is not None else None
+        )
+        self._refresh_combo_key_token()
 
     def _install_x11_key_resolver(self, listener: Any) -> None:
         """Capture X11 hardware keycode and level-0 keysym on each event.
@@ -381,6 +394,14 @@ class PynputKeyboardBackend(KeyboardBackend):
         bound_orig = listener._handle_message
 
         def _wrapped_handle_message(display: Any, event: Any, injected: Any) -> Any:
+            try:
+                state = int(getattr(event, "state", 0) or 0)
+            except (TypeError, ValueError):
+                state = 0
+            group = (state >> 13) & 0x3
+            if self._combo_raw_key_token is not None and group != self._last_x11_group:
+                self._last_x11_group = group
+                self._refresh_combo_key_token()
             self._pending_x11_key_info = _extract_x11_key_info(display, event)
             try:
                 return bound_orig(display, event, injected)
@@ -459,6 +480,8 @@ class PynputKeyboardBackend(KeyboardBackend):
             f"Starting pynput keyboard listener for shortcut: {self._shortcut} (mode: {self._mode})"
         )
         self.current_keys = set()
+        self._last_x11_group = None
+        self._refresh_combo_key_token()
 
         try:
             self.listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
