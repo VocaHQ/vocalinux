@@ -1892,7 +1892,11 @@ class TextInjector:
             logger.error(f"Failed to inject text: {e}")
             self.last_typed_count = e.typed
             remaining = text[e.typed :]
-            if not e.preserve_clipboard and remaining:
+            if (
+                not e.preserve_clipboard
+                and remaining
+                and self._session_clipboard_safe_to_overwrite()
+            ):
                 try:
                     if self._copy_to_clipboard(remaining):
                         logger.info(
@@ -2019,7 +2023,8 @@ class TextInjector:
                     _BinaryClipboardContent,
                 )
 
-            if not self._x11_clipboard_tools():
+            x11_tools = self._x11_clipboard_tools()
+            if not x11_tools:
                 if has_non_ascii:
                     raise _XWaylandNonAsciiError(
                         "Cannot inject non-ASCII text into XWayland window: no X11 clipboard "
@@ -2035,7 +2040,8 @@ class TextInjector:
                 saved_non_text: Optional[_BinaryClipboardContent] = None
                 preserve_unsaveable_clipboard = False
                 if self._clipboard_holds_non_text() and not self._should_copy_to_clipboard():
-                    saved_non_text = self._read_binary_clipboard(prefer_x11=True)
+                    if self._binary_clipboard_writers(tools=x11_tools):
+                        saved_non_text = self._read_binary_clipboard(prefer_x11=True)
                     if saved_non_text is None:
                         preserve_unsaveable_clipboard = True
 
@@ -2113,7 +2119,9 @@ class TextInjector:
             if self._clipboard_holds_non_text():
                 saved_x11_non_text = (
                     self._read_binary_clipboard(prefer_x11=True)
-                    if self._has_non_ascii(text) and not self._should_copy_to_clipboard()
+                    if self._has_non_ascii(text)
+                    and not self._should_copy_to_clipboard()
+                    and self._binary_clipboard_writers(tools=self._x11_clipboard_tools())
                     else None
                 )
                 if saved_x11_non_text is not None:
@@ -2572,14 +2580,46 @@ class TextInjector:
             return None
         return _BinaryClipboardContent(mime_type=target, data=data)
 
+    def _binary_clipboard_writers(self, tools: Optional[List[str]] = None) -> List[str]:
+        """Return healthy clipboard tools capable of writing typed binary payloads."""
+        candidates = tools if tools is not None else self._get_clipboard_tools()
+        return [
+            tool
+            for tool in candidates
+            if tool in ("wl-copy", "xclip") and self._clipboard_tool_health.get(tool) is not False
+        ]
+
+    def _session_clipboard_safe_to_overwrite(self) -> bool:
+        """Return True when a fallback clipboard copy will not destroy non-text data.
+
+        Returns True when ``copy_to_clipboard`` is enabled, or when the session
+        clipboard is verifiably empty or already holds text. Returns False when
+        it holds non-text content (such as an image) or cannot be inspected.
+        """
+        if self._should_copy_to_clipboard():
+            return True
+        return self._read_clipboard(prefer_x11=False) is not None
+
     def _write_binary_clipboard(
         self, content: _BinaryClipboardContent, tools: Optional[List[str]] = None
     ) -> bool:
-        """Restore binary clipboard content with its original MIME type."""
+        """Restore binary clipboard content with its original MIME type.
+
+        Tries healthy binary-capable writers first, then falls back to any
+        remaining binary-capable writers so a transient text-copy failure cannot
+        permanently exclude the only tool able to restore a saved image.
+        """
         write_timeout = max(self._clipboard_timeout, _BINARY_CLIPBOARD_WRITE_TIMEOUT)
-        for tool in tools if tools is not None else self._get_clipboard_tools():
-            if self._clipboard_tool_health.get(tool) is False:
-                continue
+        candidates = [
+            tool
+            for tool in (tools if tools is not None else self._get_clipboard_tools())
+            if tool in ("wl-copy", "xclip")
+        ]
+        ordered_tools = [
+            tool for tool in candidates if self._clipboard_tool_health.get(tool) is not False
+        ] + [tool for tool in candidates if self._clipboard_tool_health.get(tool) is False]
+
+        for tool in ordered_tools:
             try:
                 if tool == "wl-copy":
                     subprocess.run(
@@ -2591,6 +2631,7 @@ class TextInjector:
                         timeout=write_timeout,
                         env=host_env(),
                     )
+                    self._clipboard_tool_health[tool] = True
                     return True
                 if tool == "xclip":
                     subprocess.run(
@@ -2602,6 +2643,7 @@ class TextInjector:
                         timeout=write_timeout,
                         env=host_env(),
                     )
+                    self._clipboard_tool_health[tool] = True
                     return True
             except (
                 subprocess.CalledProcessError,
@@ -2777,10 +2819,27 @@ class TextInjector:
             if saved_clipboard is None and not keep_dictated_on_clipboard:
                 saved_clipboard = self._read_binary_clipboard(prefer_x11=prefer_x11)
 
+        copy_tools = tools
+        if isinstance(saved_clipboard, _BinaryClipboardContent) and not keep_dictated_on_clipboard:
+            binary_writers = self._binary_clipboard_writers(tools=tools)
+            if not binary_writers:
+                logger.warning(
+                    "No healthy binary-capable clipboard writer available to restore %s; "
+                    "skipping clipboard paste to preserve it",
+                    saved_clipboard.mime_type,
+                )
+                return False
+            # Restrict the transient text copy to binary-capable writers so a
+            # failed xclip copy cannot fall through to xsel and overwrite an
+            # image that xsel cannot restore.
+            copy_tools = binary_writers
+
         # The copy only exists to feed the paste chord, so keep it out of
         # clipboard-manager history -- unless the user asked for dictated text
         # to stay on the clipboard (copy_to_clipboard), then it is a real copy.
-        if not self._copy_to_clipboard(text, tools=tools, sensitive=not keep_dictated_on_clipboard):
+        if not self._copy_to_clipboard(
+            text, tools=copy_tools, sensitive=not keep_dictated_on_clipboard
+        ):
             logger.warning("Could not copy text to clipboard for paste injection")
             return False
 

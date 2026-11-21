@@ -1216,6 +1216,18 @@ class TestBinaryClipboardSaveRestore(unittest.TestCase):
         )
         self.assertEqual(mock_run.call_args.kwargs.get("input"), b"\x89PNGdata")
 
+        # When the only binary-capable writer was previously marked unhealthy by a
+        # text-copy failure, restore still attempts it rather than dropping the image.
+        obj._clipboard_tool_health["xclip"] = False
+        with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(obj._write_binary_clipboard(content, tools=["xclip", "xsel"]))
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["xclip", "-selection", "clipboard", "-i", "-t", "image/png"],
+        )
+        self.assertTrue(obj._clipboard_tool_health["xclip"])
+
     def test_wayland_ydotool_paste_saves_and_restores_image_clipboard(self) -> None:
         """Wayland ydotool paste saves and restores a binary image when text read returns None."""
         from vocalinux.text_injection.text_injector import _BinaryClipboardContent
@@ -1226,6 +1238,10 @@ class TestBinaryClipboardSaveRestore(unittest.TestCase):
         restored: list[Any] = []
 
         with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wl-copy" if cmd == "wl-copy" else None,
+            ),
             patch.object(obj, "_read_clipboard", side_effect=[None, "привет"]),
             patch.object(obj, "_read_binary_clipboard", return_value=saved),
             patch.object(obj, "_copy_to_clipboard", return_value=True),
@@ -1246,6 +1262,28 @@ class TestBinaryClipboardSaveRestore(unittest.TestCase):
 
         self.assertEqual(restored, [saved])
 
+    def test_wayland_paste_skips_overwrite_when_no_healthy_binary_writer_exists(self) -> None:
+        """Saved binary clipboard is not overwritten when only xsel (non-binary) is usable."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        saved = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGway")
+
+        with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/xsel" if cmd == "xsel" else None,
+            ),
+            patch.object(obj, "_read_clipboard", return_value=None),
+            patch.object(obj, "_read_binary_clipboard", return_value=saved),
+            patch.object(obj, "_copy_to_clipboard") as mock_copy,
+            patch.object(obj, "_should_copy_to_clipboard", return_value=False),
+        ):
+            self.assertFalse(obj._inject_via_clipboard_paste("привет"))
+
+        mock_copy.assert_not_called()
+
     def test_wayland_image_restore_skipped_when_clipboard_changed_during_delay(self) -> None:
         """Binary restore is skipped if the user copied something else during the 300ms window."""
         from vocalinux.text_injection.text_injector import _BinaryClipboardContent
@@ -1256,6 +1294,10 @@ class TestBinaryClipboardSaveRestore(unittest.TestCase):
         restored: list[Any] = []
 
         with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wl-copy" if cmd == "wl-copy" else None,
+            ),
             patch.object(obj, "_read_clipboard", side_effect=[None, "user copied new text"]),
             patch.object(obj, "_read_binary_clipboard", return_value=saved),
             patch.object(obj, "_copy_to_clipboard", return_value=True),
