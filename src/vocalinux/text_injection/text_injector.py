@@ -8,13 +8,16 @@ application, supporting both X11 and Wayland environments.
 import logging
 import math
 import os
+import re
+import selectors
 import shutil
 import socket
 import subprocess
 import threading
 import time
+from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple, cast
+from typing import List, Optional, Tuple, Union, cast
 
 from ..utils.host_process import host_env
 from ..utils.paths import config_dir
@@ -48,6 +51,27 @@ _X11_TEXT_CLIPBOARD_TARGETS = frozenset(
     }
 )
 _X11_CLIPBOARD_META_TARGETS = frozenset({"targets", "timestamp", "multiple", "save_targets"})
+_MAX_BINARY_CLIPBOARD_BYTES = 25 * 1024 * 1024  # 25 MiB cap so huge clipboards cannot OOM
+_BINARY_CLIPBOARD_READ_TIMEOUT = 2.0
+_BINARY_CLIPBOARD_WRITE_TIMEOUT = 2.0
+_CLIPBOARD_MIME_RE = re.compile(
+    r"^[A-Za-z0-9!#$&^_.+-]+/[A-Za-z0-9!#$&^_.+-]+(?:;[A-Za-z0-9_.+=-]+)*$"
+)
+_PREFERRED_BINARY_IMAGE_MIMES = (
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/jpeg",
+    "image/bmp",
+    "image/tiff",
+    "image/svg+xml",
+)
+_PREFERRED_BINARY_OTHER_MIMES = (
+    "x-special/gnome-copied-files",
+    "text/uri-list",
+    "text/html",
+    "application/pdf",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +153,34 @@ class _PartiallyTyped(subprocess.CalledProcessError):
         self.typed = typed
 
 
+@dataclass(frozen=True)
+class _BinaryClipboardContent:
+    """Saved non-text clipboard payload and its MIME type."""
+
+    mime_type: str
+    data: bytes
+
+
+class _XWaylandNonAsciiError(RuntimeError):
+    """Raised when non-ASCII text cannot be pasted into an XWayland window.
+
+    ``xdotool type`` silently mangles non-ASCII characters on XWayland while
+    still exiting 0, so we fail explicitly rather than typing garbled text and
+    reporting success.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        preserve_clipboard: bool = False,
+        typed: int = 0,
+    ) -> None:
+        super().__init__(message)
+        self.preserve_clipboard = preserve_clipboard
+        self.typed = typed
+
+
 class TextInjector:
     """
     Class for injecting text into the active application.
@@ -167,10 +219,10 @@ class TextInjector:
         self.last_typed_count = 0
         self._clipboard_tool_health: dict[str, bool] = {}
         self._clipboard_timeout = 0.35
-        # Overlapping ydotool pastes: bump generation to cancel stale restores;
+        # Overlapping pastes: bump generation to cancel stale restores;
         # target keeps the original pre-injection clipboard across the window.
         self._clipboard_restore_generation = 0
-        self._clipboard_restore_target: Optional[str] = None
+        self._clipboard_restore_target: Optional[Union[str, _BinaryClipboardContent]] = None
 
         # Force Wayland mode if requested
         if wayland_mode and self.environment == DesktopEnvironment.X11:
@@ -1811,6 +1863,12 @@ class TextInjector:
                         except _PartiallyTyped as nested:
                             # Keep the count relative to the original text.
                             raise _PartiallyTyped(typed + nested.typed, nested) from nested
+                        except _XWaylandNonAsciiError as nested:
+                            raise _XWaylandNonAsciiError(
+                                str(nested),
+                                preserve_clipboard=nested.preserve_clipboard,
+                                typed=typed + nested.typed,
+                            ) from nested
                     else:
                         raise
             logger.info("Text injection completed successfully")
@@ -1827,6 +1885,29 @@ class TextInjector:
         except _InjectionAborted:
             self.last_typed_count = -1
             logger.info("Injection aborted by shutdown")
+            return False
+        except _XWaylandNonAsciiError as e:
+            # xdotool type silently mangles non-ASCII characters on XWayland while
+            # still exiting 0. Report failure honestly rather than claiming success.
+            logger.error(f"Failed to inject text: {e}")
+            self.last_typed_count = e.typed
+            remaining = text[e.typed :]
+            if not e.preserve_clipboard and remaining:
+                try:
+                    if self._copy_to_clipboard(remaining):
+                        logger.info(
+                            "Text copied to clipboard as fallback - user can paste manually"
+                        )
+                        self._show_clipboard_fallback_notification()
+                except (OSError, subprocess.SubprocessError, RuntimeError) as clipboard_error:
+                    logger.debug(f"Clipboard fallback also failed: {clipboard_error}")
+
+            try:
+                from ..ui.audio_feedback import play_error_sound
+
+                play_error_sound()
+            except ImportError:
+                logger.warning("Could not import audio feedback module")
             return False
         except _PartiallyTyped as e:
             # A prefix is already on screen; the clipboard fallback must hold
@@ -1902,8 +1983,12 @@ class TextInjector:
         """
         Inject text using xdotool for X11 environments.
 
-        On WAYLAND_XDOTOOL, try an X11 clipboard paste first. ``xdotool type``
-        follows the active layout and garbles non-Latin text (#657).
+        On WAYLAND_XDOTOOL, try an X11 clipboard paste first (saving and
+        restoring non-text clipboard payloads such as images when possible).
+        ``xdotool type`` follows the active layout and silently mangles
+        non-ASCII text on XWayland while exiting 0 (#657, #1056), so non-ASCII
+        XWayland injection fails explicitly instead of falling back to
+        ``xdotool type``.
 
         Args:
             text: The text to inject
@@ -1919,17 +2004,73 @@ class TextInjector:
             os.environ.setdefault("DISPLAY", env["DISPLAY"])
             logger.debug(f"Using XWayland with DISPLAY={env['DISPLAY']}")
             self._wait_for_modifiers_released()
-            if self._clipboard_holds_non_text():
-                logger.info(
-                    "Clipboard holds non-text content; typing instead of pasting to preserve it"
-                )
-            elif self._inject_via_clipboard_paste(text, env=env):
-                return
+
+            has_non_ascii = self._has_non_ascii(text)
+            state_lock = getattr(self, "_state_lock", None)
+            if state_lock is not None:
+                with state_lock:
+                    had_pending_binary = isinstance(
+                        getattr(self, "_clipboard_restore_target", None),
+                        _BinaryClipboardContent,
+                    )
             else:
+                had_pending_binary = isinstance(
+                    getattr(self, "_clipboard_restore_target", None),
+                    _BinaryClipboardContent,
+                )
+
+            if not self._x11_clipboard_tools():
+                if has_non_ascii:
+                    raise _XWaylandNonAsciiError(
+                        "Cannot inject non-ASCII text into XWayland window: no X11 clipboard "
+                        "tool (xclip/xsel) is installed for clipboard paste, and xdotool type "
+                        "cannot reliably type non-ASCII characters on XWayland",
+                        preserve_clipboard=had_pending_binary,
+                    )
                 logger.warning(
-                    "Clipboard paste failed, falling back to xdotool type "
+                    "No X11 clipboard tool (xclip/xsel) available; falling back to xdotool type "
                     "(character-by-character; text may be scrambled on non-US layouts)"
                 )
+            else:
+                saved_non_text: Optional[_BinaryClipboardContent] = None
+                preserve_unsaveable_clipboard = False
+                if self._clipboard_holds_non_text() and not self._should_copy_to_clipboard():
+                    saved_non_text = self._read_binary_clipboard(prefer_x11=True)
+                    if saved_non_text is None:
+                        preserve_unsaveable_clipboard = True
+
+                if preserve_unsaveable_clipboard:
+                    if has_non_ascii:
+                        raise _XWaylandNonAsciiError(
+                            "Cannot inject non-ASCII text into XWayland window: clipboard holds "
+                            "non-text content that could not be saved for restore, and xdotool "
+                            "type cannot reliably type non-ASCII characters on XWayland",
+                            preserve_clipboard=True,
+                        )
+                    logger.info(
+                        "Clipboard holds non-text content that could not be saved; "
+                        "typing instead of pasting to preserve it"
+                    )
+                elif (
+                    self._inject_via_clipboard_paste(
+                        text, env=env, previous_clipboard=saved_non_text
+                    )
+                    if saved_non_text is not None
+                    else self._inject_via_clipboard_paste(text, env=env)
+                ):
+                    return
+                else:
+                    if has_non_ascii:
+                        raise _XWaylandNonAsciiError(
+                            "Cannot inject non-ASCII text into XWayland window: clipboard paste "
+                            "failed and xdotool type cannot reliably type non-ASCII characters "
+                            "on XWayland",
+                            preserve_clipboard=saved_non_text is not None or had_pending_binary,
+                        )
+                    logger.warning(
+                        "Clipboard paste failed, falling back to xdotool type "
+                        "(character-by-character; text may be scrambled on non-US layouts)"
+                    )
 
             # Add a small delay to ensure text is injected properly
             time.sleep(0.3)  # Increased delay for better reliability
@@ -1970,9 +2111,23 @@ class TextInjector:
         ):
             self._wait_for_modifiers_released()
             if self._clipboard_holds_non_text():
-                logger.info(
-                    "Clipboard holds non-text content; typing instead of pasting to preserve it"
+                saved_x11_non_text = (
+                    self._read_binary_clipboard(prefer_x11=True)
+                    if self._has_non_ascii(text) and not self._should_copy_to_clipboard()
+                    else None
                 )
+                if saved_x11_non_text is not None:
+                    if self._inject_via_clipboard_paste(
+                        text, env=env, previous_clipboard=saved_x11_non_text
+                    ):
+                        return
+                    logger.warning(
+                        "Long-text clipboard paste failed; falling back to xdotool typing"
+                    )
+                else:
+                    logger.info(
+                        "Clipboard holds non-text content; typing instead of pasting to preserve it"
+                    )
             elif self._inject_via_clipboard_paste(text, env=env):
                 return
             else:
@@ -2176,11 +2331,310 @@ class TextInjector:
 
         return "" if saw_empty else None
 
+    @staticmethod
+    def _select_binary_clipboard_target(targets: List[str]) -> Optional[str]:
+        """Pick the best non-text MIME target to save and restore.
+
+        Skips X11 meta targets, plain-text targets (handled by
+        ``_read_clipboard``), non-MIME X11 atoms (such as ``PIXMAP``), and
+        option-like or malformed target names. Prefers standard lossless image
+        formats, then other image types, then common file/document MIME types.
+        """
+        valid: List[Tuple[str, str]] = []
+        for raw_target in targets:
+            target = raw_target.strip()
+            if not target or target.startswith("-"):
+                continue
+            folded = target.casefold()
+            if (
+                folded in _X11_CLIPBOARD_META_TARGETS
+                or folded in _X11_TEXT_CLIPBOARD_TARGETS
+                or folded.startswith("text/plain")
+            ):
+                continue
+            if not _CLIPBOARD_MIME_RE.match(target):
+                continue
+            valid.append((folded, target))
+
+        if not valid:
+            return None
+
+        by_folded: dict[str, str] = {}
+        for folded, target in valid:
+            by_folded.setdefault(folded, target)
+
+        for preferred in _PREFERRED_BINARY_IMAGE_MIMES:
+            if preferred in by_folded:
+                return by_folded[preferred]
+
+        for folded, target in valid:
+            if folded.startswith("image/"):
+                return target
+
+        for preferred in _PREFERRED_BINARY_OTHER_MIMES:
+            if preferred in by_folded:
+                return by_folded[preferred]
+
+        return valid[0][1]
+
+    def _list_clipboard_targets(self, prefer_x11: bool) -> Optional[Tuple[str, List[str]]]:
+        """Return ``(reader_tool, targets)`` advertised by the active clipboard."""
+        host_is_wayland = (
+            getattr(self, "_session_environment", None) == DesktopEnvironment.WAYLAND
+            or os.environ.get("XDG_SESSION_TYPE", "").lower() == "wayland"
+            or bool(os.environ.get("WAYLAND_DISPLAY"))
+        )
+
+        candidates: List[Tuple[str, List[str]]] = []
+        if prefer_x11:
+            if shutil.which("xclip"):
+                candidates.append(
+                    ("xclip", ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"])
+                )
+        else:
+            if host_is_wayland and shutil.which("wl-paste"):
+                candidates.append(("wl-paste", ["wl-paste", "--list-types"]))
+            if shutil.which("xclip"):
+                candidates.append(
+                    ("xclip", ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"])
+                )
+            if not host_is_wayland and shutil.which("wl-paste"):
+                candidates.append(("wl-paste", ["wl-paste", "--list-types"]))
+
+        for tool, cmd in candidates:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=1.0,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    env=host_env(),
+                )
+                if result.returncode == 0 and isinstance(result.stdout, str):
+                    targets = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                    if targets:
+                        return tool, targets
+            except (subprocess.SubprocessError, OSError, UnicodeDecodeError):
+                continue
+
+        return None
+
+    def _read_bounded_binary_output(
+        self, cmd: List[str], max_bytes: int, timeout: float
+    ) -> Optional[bytes]:
+        """Run a clipboard-read command and return stdout bytes up to ``max_bytes``.
+
+        Streams from ``subprocess.Popen`` so an oversized binary clipboard
+        (for example, a huge uncompressed image) is aborted before it can
+        exhaust memory. Returns ``None`` on timeout, non-zero exit, empty
+        output, or when the payload exceeds ``max_bytes``.
+        """
+        deadline = time.monotonic() + timeout
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=host_env(),
+            )
+        except OSError as exc:
+            logger.debug("Could not spawn binary clipboard reader %s: %s", cmd[0], exc)
+            return None
+
+        chunks: List[bytes] = []
+        total = 0
+        aborted = False
+        try:
+            stdout = proc.stdout
+            if stdout is None:
+                aborted = True
+                return None
+
+            fd: Optional[int]
+            try:
+                raw_fd = stdout.fileno()
+                fd = raw_fd if isinstance(raw_fd, int) and raw_fd >= 0 else None
+            except (AttributeError, OSError, ValueError):
+                fd = None
+
+            if fd is not None:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(fd, selectors.EVENT_READ)
+                    while True:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            logger.debug("Timed out reading binary clipboard with %s", cmd[0])
+                            aborted = True
+                            return None
+                        if not selector.select(timeout=remaining):
+                            logger.debug("Timed out reading binary clipboard with %s", cmd[0])
+                            aborted = True
+                            return None
+                        chunk = os.read(fd, min(65536, max_bytes + 1 - total))
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > max_bytes:
+                            logger.warning(
+                                "Clipboard binary content exceeds %d bytes; skipping save",
+                                max_bytes,
+                            )
+                            aborted = True
+                            return None
+                        chunks.append(chunk)
+            else:
+                data = stdout.read(max_bytes + 1)
+                if not isinstance(data, bytes):
+                    aborted = True
+                    return None
+                if len(data) > max_bytes:
+                    logger.warning(
+                        "Clipboard binary content exceeds %d bytes; skipping save",
+                        max_bytes,
+                    )
+                    aborted = True
+                    return None
+                if data:
+                    chunks.append(data)
+
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                returncode = proc.wait(timeout=remaining)
+            except subprocess.TimeoutExpired:
+                logger.debug("Timed out waiting for binary clipboard reader %s", cmd[0])
+                aborted = True
+                return None
+
+            if returncode != 0:
+                return None
+            payload = b"".join(chunks)
+            return payload if payload else None
+        except OSError as exc:
+            logger.debug("Error reading binary clipboard with %s: %s", cmd[0], exc)
+            aborted = True
+            return None
+        finally:
+            if aborted or proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                try:
+                    proc.wait(timeout=1.0)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            if proc.stdout is not None:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
+
+    def _read_binary_clipboard(
+        self, prefer_x11: Optional[bool] = None
+    ) -> Optional[_BinaryClipboardContent]:
+        """Read the primary non-text MIME payload from the clipboard.
+
+        Returns a ``_BinaryClipboardContent`` snapshot capped at
+        ``_MAX_BINARY_CLIPBOARD_BYTES``, or ``None`` if no saveable non-text
+        MIME target is available, the payload exceeds the size limit, or the
+        read fails or times out.
+        """
+        if prefer_x11 is None:
+            prefer_x11 = self.environment in (
+                DesktopEnvironment.X11,
+                DesktopEnvironment.WAYLAND_XDOTOOL,
+            )
+
+        listed = self._list_clipboard_targets(prefer_x11=prefer_x11)
+        if listed is None:
+            return None
+        tool, targets = listed
+        target = self._select_binary_clipboard_target(targets)
+        if target is None:
+            return None
+
+        if tool == "wl-paste":
+            cmd = ["wl-paste", "--no-newline", "--type", target]
+        elif tool == "xclip":
+            cmd = ["xclip", "-selection", "clipboard", "-t", target, "-o"]
+        else:
+            return None
+
+        data = self._read_bounded_binary_output(
+            cmd,
+            max_bytes=_MAX_BINARY_CLIPBOARD_BYTES,
+            timeout=_BINARY_CLIPBOARD_READ_TIMEOUT,
+        )
+        if data is None:
+            return None
+        return _BinaryClipboardContent(mime_type=target, data=data)
+
+    def _write_binary_clipboard(
+        self, content: _BinaryClipboardContent, tools: Optional[List[str]] = None
+    ) -> bool:
+        """Restore binary clipboard content with its original MIME type."""
+        write_timeout = max(self._clipboard_timeout, _BINARY_CLIPBOARD_WRITE_TIMEOUT)
+        for tool in tools if tools is not None else self._get_clipboard_tools():
+            if self._clipboard_tool_health.get(tool) is False:
+                continue
+            try:
+                if tool == "wl-copy":
+                    subprocess.run(
+                        ["wl-copy", "--type", content.mime_type],
+                        input=content.data,
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=write_timeout,
+                        env=host_env(),
+                    )
+                    return True
+                if tool == "xclip":
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard", "-i", "-t", content.mime_type],
+                        input=content.data,
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        timeout=write_timeout,
+                        env=host_env(),
+                    )
+                    return True
+            except (
+                subprocess.CalledProcessError,
+                subprocess.TimeoutExpired,
+                OSError,
+            ) as exc:
+                logger.debug(
+                    "Failed to restore binary clipboard (%s) with %s: %s",
+                    content.mime_type,
+                    tool,
+                    exc,
+                )
+                continue
+        return False
+
+    def _restore_clipboard_content(
+        self,
+        content: Union[str, _BinaryClipboardContent],
+        tools: Optional[List[str]] = None,
+    ) -> bool:
+        """Restore a saved text, empty, or binary clipboard snapshot."""
+        if isinstance(content, _BinaryClipboardContent):
+            return self._write_binary_clipboard(content, tools=tools)
+        if content == "":
+            return self._clear_clipboard(tools=tools)
+        return self._copy_to_clipboard(content, tools=tools)
+
     def _clipboard_holds_non_text(self) -> bool:
         """Return whether the X11 clipboard has no readable text target.
 
-        Checked on X11 and WAYLAND_XDOTOOL, the two routes that paste through
-        the X11 clipboard and could not restore an image or file afterwards.
+        Checked on X11 and WAYLAND_XDOTOOL before pasting through the X11
+        clipboard so non-text payloads (such as images) can be saved for
+        restore or preserved when unsaveable.
         """
         if self.environment not in (DesktopEnvironment.X11, DesktopEnvironment.WAYLAND_XDOTOOL):
             return False
@@ -2267,7 +2721,12 @@ class TextInjector:
             logger.debug(f"Terminal paste detection failed: {exc}")
             return False
 
-    def _inject_via_clipboard_paste(self, text: str, env: Optional[dict] = None) -> bool:
+    def _inject_via_clipboard_paste(
+        self,
+        text: str,
+        env: Optional[dict] = None,
+        previous_clipboard: Optional[Union[str, _BinaryClipboardContent]] = None,
+    ) -> bool:
         """
         Inject text by copying to clipboard and simulating a paste chord.
 
@@ -2278,15 +2737,19 @@ class TextInjector:
         that tool is usable, otherwise with a layout-resolved ydotool keycode
         for Latin 'v' (issue #787). On X11 and WAYLAND_XDOTOOL the copy uses
         xclip/xsel and the chord is xdotool's, because the focused X11/XWayland
-        window pastes the X11 CLIPBOARD (#657). Saves the previous clipboard and
-        restores it after a short delay. Overlapping pastes share one restore
-        target (pre-first-injection content) and a generation counter so stale
-        restore threads exit.
+        window pastes the X11 CLIPBOARD (#657). Saves the previous clipboard
+        (including binary/image payloads when available) and restores it after
+        a short delay. Overlapping pastes share one restore target
+        (pre-first-injection content) and a generation counter so stale restore
+        threads exit.
 
         Args:
             text: The text to inject.
             env: Subprocess environment for the paste chord. XWayland passes the
                 DISPLAY=:0 env the type path already builds.
+            previous_clipboard: Optional pre-captured clipboard snapshot (e.g.,
+                a binary payload already read by the caller) to avoid reading
+                the clipboard twice.
 
         Returns:
             True if successful, False otherwise
@@ -2298,21 +2761,26 @@ class TextInjector:
             DesktopEnvironment.WAYLAND_XDOTOOL,
         )
         tools = self._x11_clipboard_tools() if prefer_x11 else None
+        keep_dictated_on_clipboard = self._should_copy_to_clipboard()
 
         # Inherit a pending restore target so a second paste in the delay window
         # still restores the original clipboard, not intermediate dictated text.
         with self._state_lock:
             pending_target = self._clipboard_restore_target
-        previous_clipboard = (
-            pending_target if pending_target is not None else self._read_clipboard()
-        )
+        saved_clipboard: Optional[Union[str, _BinaryClipboardContent]]
+        if pending_target is not None:
+            saved_clipboard = pending_target
+        elif previous_clipboard is not None:
+            saved_clipboard = previous_clipboard
+        else:
+            saved_clipboard = self._read_clipboard()
+            if saved_clipboard is None and not keep_dictated_on_clipboard:
+                saved_clipboard = self._read_binary_clipboard(prefer_x11=prefer_x11)
 
         # The copy only exists to feed the paste chord, so keep it out of
         # clipboard-manager history -- unless the user asked for dictated text
         # to stay on the clipboard (copy_to_clipboard), then it is a real copy.
-        if not self._copy_to_clipboard(
-            text, tools=tools, sensitive=not self._should_copy_to_clipboard()
-        ):
+        if not self._copy_to_clipboard(text, tools=tools, sensitive=not keep_dictated_on_clipboard):
             logger.warning("Could not copy text to clipboard for paste injection")
             return False
 
@@ -2323,11 +2791,11 @@ class TextInjector:
             self._clipboard_restore_generation += 1
             generation = self._clipboard_restore_generation
             if (
-                previous_clipboard is not None
-                and not self._should_copy_to_clipboard()
+                saved_clipboard is not None
+                and not keep_dictated_on_clipboard
                 and self._clipboard_restore_target is None
             ):
-                self._clipboard_restore_target = previous_clipboard
+                self._clipboard_restore_target = saved_clipboard
 
         # Simulate paste. X11/XWayland uses xdotool against the X11 CLIPBOARD;
         # native Wayland prefers wtype keysyms, then layout-resolved ydotool.
@@ -2367,20 +2835,13 @@ class TextInjector:
                 stale = generation != self._clipboard_restore_generation
                 if not stale:
                     self._clipboard_restore_target = None
-            if (
-                not stale
-                and previous_clipboard is not None
-                and not self._should_copy_to_clipboard()
-            ):
-                if previous_clipboard == "":
-                    self._clear_clipboard(tools=tools)
-                else:
-                    self._copy_to_clipboard(previous_clipboard, tools=tools)
+            if not stale and saved_clipboard is not None and not keep_dictated_on_clipboard:
+                self._restore_clipboard_content(saved_clipboard, tools=tools)
             return False
 
         # Delayed restore so Ctrl+V can land first. Skip when the user wants
         # dictated text left on the clipboard (copy_to_clipboard setting).
-        if previous_clipboard is not None and not self._should_copy_to_clipboard():
+        if saved_clipboard is not None and not keep_dictated_on_clipboard:
 
             def _restore() -> None:
                 time.sleep(0.3)
@@ -2395,10 +2856,7 @@ class TextInjector:
                 if self._read_clipboard(prefer_x11=prefer_x11) != text:
                     logger.debug("Clipboard changed during restore delay; skipping restore")
                     return
-                if target == "":
-                    success = self._clear_clipboard(tools=tools)
-                else:
-                    success = self._copy_to_clipboard(target, tools=tools)
+                success = self._restore_clipboard_content(target, tools=tools)
                 if success:
                     logger.debug("Clipboard restored to previous content")
                 else:
@@ -2889,6 +3347,12 @@ class TextInjector:
                 except _PartiallyTyped as nested:
                     # Keep the count relative to the original text.
                     raise _PartiallyTyped(typed_prefix + nested.typed, nested) from nested
+                except _XWaylandNonAsciiError as nested:
+                    raise _XWaylandNonAsciiError(
+                        str(nested),
+                        preserve_clipboard=nested.preserve_clipboard,
+                        typed=typed_prefix + nested.typed,
+                    ) from nested
                 return
             text = remaining_text
 
