@@ -911,3 +911,151 @@ class TestTypedAccessors(unittest.TestCase):
                 self.assertFalse(advanced["whispercpp_no_timestamps"])
                 self.assertEqual(advanced["whispercpp_initial_prompt"], "Meeting notes")
                 self.assertEqual(advanced["whispercpp_language_candidates"], "en,es")
+
+
+class TestConfigurableLimits(unittest.TestCase):
+    """Tests for post-processing timeout, max segment duration, and remote API timeout."""
+
+    def setUp(self) -> None:
+        """Set up isolated temporary config directory."""
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_config_dir = os.path.join(self.temp_dir.name, ".config/vocalinux")
+        _ensure_test_config_dir(self.temp_config_dir)
+        self.temp_config_file = os.path.join(self.temp_config_dir, "config.json")
+
+        self.config_dir_patcher = patch(
+            "vocalinux.ui.config_manager.CONFIG_DIR", self.temp_config_dir
+        )
+        self.config_file_patcher = patch(
+            "vocalinux.ui.config_manager.CONFIG_FILE", self.temp_config_file
+        )
+        self.detect_patcher = patch(
+            "vocalinux.utils.system_language.detect_system_language", return_value=None
+        )
+        self.config_dir_patcher.start()
+        self.config_file_patcher.start()
+        self.detect_patcher.start()
+
+    def tearDown(self) -> None:
+        """Clean up patchers and temporary directory."""
+        self.config_dir_patcher.stop()
+        self.config_file_patcher.stop()
+        self.detect_patcher.stop()
+        self.temp_dir.cleanup()
+
+    def test_defaults_match_legacy_limits(self) -> None:
+        """Default values preserve existing 10 s, 90 s, and 30 s behavior."""
+        self.assertEqual(DEFAULT_CONFIG["post_processing"]["timeout_seconds"], 10)
+        self.assertEqual(DEFAULT_CONFIG["speech_recognition"]["max_segment_seconds"], 90)
+        self.assertEqual(DEFAULT_CONFIG["speech_recognition"]["remote_api_timeout_seconds"], 30)
+
+        manager = ConfigManager()
+        self.assertEqual(manager.get_post_processing_timeout(), 10.0)
+        self.assertEqual(manager.get_max_segment_seconds(), 90.0)
+        self.assertEqual(manager.get_remote_api_timeout(), 30.0)
+
+    def test_clamp_helpers_accept_valid_and_clamp_bounds(self) -> None:
+        """Valid ints/floats pass through; out-of-range positive values clamp to bounds."""
+        from vocalinux.ui.config_manager import (
+            clamp_max_segment_seconds,
+            clamp_post_processing_timeout,
+            clamp_remote_api_timeout,
+        )
+
+        self.assertEqual(clamp_post_processing_timeout(120), 120.0)
+        self.assertEqual(clamp_post_processing_timeout(2.5), 2.5)
+        self.assertEqual(clamp_post_processing_timeout(0.1), 1.0)
+        self.assertEqual(clamp_post_processing_timeout(900), 600.0)
+
+        self.assertEqual(clamp_max_segment_seconds(600), 600.0)
+        self.assertEqual(clamp_max_segment_seconds(45.5), 45.5)
+        self.assertEqual(clamp_max_segment_seconds(2), 10.0)
+        self.assertEqual(clamp_max_segment_seconds(3600), 900.0)
+
+        self.assertEqual(clamp_remote_api_timeout(180), 180.0)
+        self.assertEqual(clamp_remote_api_timeout(15.25), 15.25)
+        self.assertEqual(clamp_remote_api_timeout(0.5), 1.0)
+        self.assertEqual(clamp_remote_api_timeout(1200), 600.0)
+
+    def test_clamp_helpers_reject_bad_types_and_non_positive_values(self) -> None:
+        """Bools, None, strings, non-positive numbers, NaN, and inf fall back to defaults."""
+        from vocalinux.ui.config_manager import (
+            clamp_max_segment_seconds,
+            clamp_post_processing_timeout,
+            clamp_remote_api_timeout,
+        )
+
+        invalid_values: list[Any] = [
+            True,
+            False,
+            None,
+            0,
+            0.0,
+            -1,
+            -90.5,
+            "30",
+            "invalid",
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            [],
+            {},
+        ]
+        for bad in invalid_values:
+            with self.subTest(bad=bad):
+                self.assertEqual(clamp_post_processing_timeout(bad), 10.0)
+                self.assertEqual(clamp_max_segment_seconds(bad), 90.0)
+                self.assertEqual(clamp_remote_api_timeout(bad), 30.0)
+
+    def test_load_and_persist_custom_limits(self) -> None:
+        """Configured limits load from disk, persist across saves, and handle missing keys."""
+        with open(self.temp_config_file, "w") as handle:
+            json.dump(
+                {
+                    "post_processing": {"script_path": "/bin/cat", "timeout_seconds": 300},
+                    "speech_recognition": {
+                        "max_segment_seconds": 600,
+                        "remote_api_timeout_seconds": 180,
+                    },
+                },
+                handle,
+            )
+
+        manager = ConfigManager()
+        self.assertEqual(manager.get_post_processing_timeout(), 300.0)
+        self.assertEqual(manager.get_max_segment_seconds(), 600.0)
+        self.assertEqual(manager.get_remote_api_timeout(), 180.0)
+
+        manager.set_post_processing_timeout(45)
+        manager.set_max_segment_seconds(240)
+        manager.set_remote_api_timeout(75)
+        self.assertTrue(manager.save_config())
+
+        reloaded = ConfigManager()
+        self.assertEqual(reloaded.get_post_processing_timeout(), 45.0)
+        self.assertEqual(reloaded.get_max_segment_seconds(), 240.0)
+        self.assertEqual(reloaded.get_remote_api_timeout(), 75.0)
+
+    def test_malformed_sections_fall_back_to_defaults(self) -> None:
+        """A hand-edited non-object section does not raise on get() or getters."""
+        with open(self.temp_config_file, "w") as handle:
+            json.dump(
+                {
+                    "post_processing": "not-an-object",
+                    "speech_recognition": "not-an-object",
+                },
+                handle,
+            )
+
+        manager = ConfigManager()
+        self.assertEqual(manager.get("post_processing", "timeout_seconds", 10), 10)
+        self.assertEqual(manager.get_post_processing_timeout(), 10.0)
+        self.assertEqual(manager.get_max_segment_seconds(), 90.0)
+        self.assertEqual(manager.get_remote_api_timeout(), 30.0)
+
+        manager.set_post_processing_timeout(120)
+        manager.set_max_segment_seconds(300)
+        manager.config["speech_recognition"] = "broken-again"
+        manager.set_remote_api_timeout(90)
+        self.assertEqual(manager.get_post_processing_timeout(), 120.0)
+        self.assertEqual(manager.get_remote_api_timeout(), 90.0)

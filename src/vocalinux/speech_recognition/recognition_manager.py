@@ -10,6 +10,7 @@ import importlib.util
 import inspect
 import json
 import logging
+import math
 import multiprocessing
 import os
 import queue
@@ -30,6 +31,7 @@ if TYPE_CHECKING:
 
 from ..audio.capture import (  # noqa: F401  (re-exported for compatibility)
     _STICKY_LOCK_MIN_MEAN_SQUARE,
+    CAPTURE_CHUNK,
     CaptureStalledError,
     PortAudioCaptureSource,
     _alsa_handler,
@@ -51,7 +53,13 @@ from ..audio.pipewire import PipeWireCaptureSource, is_pipewire_device
 from ..audio.playback_ducker import default_dictation_duck_session, duck_delay_seconds
 from ..common_types import RecognitionState
 from ..ui.audio_feedback import play_error_sound, play_start_sound, play_stop_sound
-from ..ui.config_manager import _multilingual_sibling
+from ..ui.config_manager import (
+    DEFAULT_MAX_SEGMENT_SECONDS,
+    DEFAULT_REMOTE_API_TIMEOUT_SECONDS,
+    _multilingual_sibling,
+    clamp_max_segment_seconds,
+    clamp_remote_api_timeout,
+)
 from ..utils import faster_whisper_model_info as faster_whisper
 from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
@@ -99,6 +107,18 @@ _RECOGNITION_JOIN_SECONDS = 5.0
 _RECOGNITION_FINAL_JOIN_SECONDS = 1.0
 _FINAL_BUFFER_SECONDS = 1.0
 _STOP_WAIT_SECONDS = 9.0
+
+# Default chunk buffer cap (matches the historical 90 s default segment limit).
+_DEFAULT_MAX_BUFFER_SIZE = 5000
+# Fraction of the chunk buffer where continuous speech flushes so capture
+# never reaches the destructive trim path (#975).
+_BUFFER_FLUSH_FRACTION = 0.75
+# Highest common PortAudio capture rate (48 kHz) resamples a 1024-frame read
+# down to 341 samples at 16 kHz (~21.3 ms per chunk). Sizing the chunk budget
+# from this floor lets configured segments > 90 s reach their full duration on
+# 44.1/48 kHz microphones without hitting the 75% chunk limit early.
+_REFERENCE_HIGH_RATE_HZ = 48000
+_REFERENCE_CHUNK_SECONDS = int(CAPTURE_CHUNK * 16000 / _REFERENCE_HIGH_RATE_HZ) / 16000
 
 # How custom terms reach the Remote API engine: "auto" picks "context_bias" for
 # Mistral hosts and "prompt" elsewhere.
@@ -622,6 +642,9 @@ class SpeechRecognitionManager:
         self.remote_api_bias_mode = self._normalize_remote_api_bias_mode(
             kwargs.get("remote_api_bias_mode", "auto")
         )
+        self.remote_api_timeout_seconds = clamp_remote_api_timeout(
+            kwargs.get("remote_api_timeout_seconds", DEFAULT_REMOTE_API_TIMEOUT_SECONDS)
+        )
         self._http_session = None
 
         self._faster_whisper_engine: Any = None
@@ -649,16 +672,18 @@ class SpeechRecognitionManager:
         self._key_release_gate = _ReleaseGate()
         self._key_release_gate.set()
 
-        # Reliability improvements - Issue #92
-        self._max_buffer_size = 5000  # Maximum number of audio chunks in buffer
+        # Reliability improvements - Issue #92 / #975 / #1073
         # Longest stretch of continuous speech kept in one buffer before it is
         # queued for transcription. A push-to-talk hold (or a toggle session
         # that never goes quiet) otherwise grows the buffer until the safety
-        # cap above discards its oldest audio. The effective flush point is
-        # also capped at 75% of that chunk budget, so a device with short
-        # chunks (high capture rate) can never reach the destructive trim
-        # before the segment is flushed.
-        self._max_segment_seconds = 90.0
+        # cap discards its oldest audio. The effective flush point is also
+        # capped at 75% of that chunk budget, and the chunk cap scales up with
+        # max_segment_seconds so no audio is dropped before flushing.
+        self._max_segment_seconds = clamp_max_segment_seconds(
+            kwargs.get("max_segment_seconds", DEFAULT_MAX_SEGMENT_SECONDS)
+        )
+        self._max_buffer_size = self._buffer_size_for_segment_seconds(self._max_segment_seconds)
+        self._pending_max_buffer_size: Optional[int] = None
         self._reconnection_attempts = 0
         self._max_reconnection_attempts = 5
         self._reconnection_delay = 1.0  # Initial delay in seconds
@@ -799,11 +824,60 @@ class SpeechRecognitionManager:
     _pending_language_override: Optional[str] = None
     _oneshot_language_restore: Optional[str] = None
     _session_language: Optional[str] = None
+    _max_buffer_size: int = _DEFAULT_MAX_BUFFER_SIZE
+    _pending_max_buffer_size: Optional[int] = None
+    _max_segment_seconds: float = DEFAULT_MAX_SEGMENT_SECONDS
+    remote_api_timeout_seconds: float = DEFAULT_REMOTE_API_TIMEOUT_SECONDS
 
     #: Logged once rather than per dictation, so an unsupported pairing does not
     #: spam the log on every hotkey press.
     _warned_follow_layout_unsupported: bool = False
     _warned_language_override_unsupported: bool = False
+
+    @staticmethod
+    def _buffer_size_for_segment_seconds(max_segment_seconds: float) -> int:
+        """Compute the chunk cap so ``max_segment_seconds`` flushes before trimming.
+
+        Keeps the historical 5000-chunk cap at or below the 90 s default so
+        default behaviour is unchanged. For longer configured segments, scales
+        the chunk cap using the shortest common resampled chunk duration (48 kHz
+        -> 341 samples at 16 kHz) and the 75% flush factor so no audio is dropped
+        and common microphones reach the full configured duration.
+        """
+        if max_segment_seconds <= DEFAULT_MAX_SEGMENT_SECONDS:
+            return _DEFAULT_MAX_BUFFER_SIZE
+        required = math.ceil(
+            max_segment_seconds / (_REFERENCE_CHUNK_SECONDS * _BUFFER_FLUSH_FRACTION)
+        )
+        return max(_DEFAULT_MAX_BUFFER_SIZE, required)
+
+    def _apply_max_segment_seconds(self, max_segment_seconds: float) -> None:
+        """Update ``_max_segment_seconds`` and resize ``_max_buffer_size`` safely.
+
+        If ``audio_buffer`` already holds at least ``target_cap`` chunks (for
+        example, lowering ``max_segment_seconds`` from 600 s to 90 s during
+        active capture), shrinking ``_max_buffer_size`` immediately would make
+        the next capture iteration trim the oldest 25% of speech before the
+        flush check runs. Keep ``_max_buffer_size`` above the live buffer until
+        it drains, then apply ``_pending_max_buffer_size``.
+        """
+        target_cap = self._buffer_size_for_segment_seconds(max_segment_seconds)
+        with getattr(self, "_buffer_lock", nullcontext()):
+            self._max_segment_seconds = max_segment_seconds
+            current_len = len(getattr(self, "audio_buffer", []))
+            if target_cap > current_len:
+                self._max_buffer_size = target_cap
+                self._pending_max_buffer_size = None
+            else:
+                self._max_buffer_size = max(self._max_buffer_size, current_len + 1)
+                self._pending_max_buffer_size = target_cap
+
+    def _clear_audio_buffer_locked(self) -> None:
+        """Clear ``audio_buffer`` and apply any deferred buffer-cap shrink (caller holds ``_buffer_lock``)."""
+        self.audio_buffer = []
+        if self._pending_max_buffer_size is not None:
+            self._max_buffer_size = self._pending_max_buffer_size
+            self._pending_max_buffer_size = None
 
     # Every live field ``reconfigure()`` can write. A failed engine switch
     # restores this set so dictation matches the persisted config, not the
@@ -816,6 +890,9 @@ class SpeechRecognitionManager:
         "_oneshot_language_restore",
         "vad_sensitivity",
         "silence_timeout",
+        "_max_segment_seconds",
+        "_max_buffer_size",
+        "_pending_max_buffer_size",
         "audio_device_index",
         "audio_device_name",
         "_voice_commands_preference",
@@ -837,6 +914,7 @@ class SpeechRecognitionManager:
         "remote_api_endpoint",
         "remote_api_model",
         "remote_api_bias_mode",
+        "remote_api_timeout_seconds",
     )
 
     def _snapshot_reconfigure_state(self) -> dict[str, object]:
@@ -2624,7 +2702,11 @@ class SpeechRecognitionManager:
 
         try:
             response = session.post(
-                url, headers=headers, files=files, data={**data, **bias_fields}, timeout=30
+                url,
+                headers=headers,
+                files=files,
+                data={**data, **bias_fields},
+                timeout=self.remote_api_timeout_seconds,
             )
 
             if bias_fields and response.status_code in REMOTE_API_BIAS_REJECTED_STATUSES:
@@ -2634,7 +2716,13 @@ class SpeechRecognitionManager:
                     response.status_code,
                     ", ".join(sorted(bias_fields)),
                 )
-                response = session.post(url, headers=headers, files=files, data=data, timeout=30)
+                response = session.post(
+                    url,
+                    headers=headers,
+                    files=files,
+                    data=data,
+                    timeout=self.remote_api_timeout_seconds,
+                )
 
             if response.status_code == 404:
                 logger.debug("OpenAI API endpoint does not exist, try other formats")
@@ -2715,7 +2803,13 @@ class SpeechRecognitionManager:
             data["language"] = lang
 
         try:
-            response = session.post(url, headers=headers, files=files, data=data, timeout=30)
+            response = session.post(
+                url,
+                headers=headers,
+                files=files,
+                data=data,
+                timeout=self.remote_api_timeout_seconds,
+            )
 
             if response.status_code == 404:
                 logger.debug("whisper.cpp server endpoint does not exist")
@@ -3592,7 +3686,7 @@ class SpeechRecognitionManager:
             self._restore_language_after_oneshot()
             return False
         try:
-            self.audio_buffer = []
+            self._clear_audio_buffer_locked()
             self._segment_started_at = None
             self._recording_segment_has_speech = False
             self._session_cancel = threading.Event()
@@ -3774,7 +3868,7 @@ class SpeechRecognitionManager:
                             else None
                         ),
                     )
-                self.audio_buffer = []
+                self._clear_audio_buffer_locked()
                 self._recording_segment_has_speech = False
                 self._segment_started_at = None
             finally:
@@ -3893,7 +3987,7 @@ class SpeechRecognitionManager:
             self._transcribe_queued_segments()
         if self._buffer_lock.acquire(timeout=_FINAL_BUFFER_SECONDS):
             try:
-                self.audio_buffer = []
+                self._clear_audio_buffer_locked()
                 self._recording_segment_has_speech = False
                 self._segment_started_at = None
             finally:
@@ -4181,7 +4275,7 @@ class SpeechRecognitionManager:
                                         logger.debug(
                                             "Silence detected with no speech, dropping audio buffer"
                                         )
-                                        self.audio_buffer = []
+                                        self._clear_audio_buffer_locked()
                                     elif self._recognition_mode == "push_to_talk" or getattr(
                                         self, "_reload_pending", False
                                     ):
@@ -4191,7 +4285,7 @@ class SpeechRecognitionManager:
                                     else:
                                         logger.debug("Silence detected, queueing audio segment")
                                         self._enqueue_audio_segment(self.audio_buffer)
-                                        self.audio_buffer = []
+                                        self._clear_audio_buffer_locked()
                                         self._recording_segment_has_speech = False
                                 silence_counter = 0
                         else:  # Speech
@@ -4222,13 +4316,13 @@ class SpeechRecognitionManager:
                             buffered_seconds = len(self.audio_buffer) * chunk_seconds
                             flush_seconds = min(
                                 self._max_segment_seconds,
-                                self._max_buffer_size * chunk_seconds * 0.75,
+                                self._max_buffer_size * chunk_seconds * _BUFFER_FLUSH_FRACTION,
                             )
                             if buffered_seconds >= flush_seconds and not getattr(
                                 self, "_reload_pending", False
                             ):
                                 segment = self.audio_buffer.copy()
-                                self.audio_buffer = []
+                                self._clear_audio_buffer_locked()
                                 self._recording_segment_has_speech = False
                                 silence_counter = 0
                                 logger.info(
@@ -4385,7 +4479,7 @@ class SpeechRecognitionManager:
                 return
 
             audio_buffer = self.audio_buffer.copy()
-            self.audio_buffer = []
+            self._clear_audio_buffer_locked()
             self._recording_segment_has_speech = False
             self._segment_started_at = None
 
@@ -4848,7 +4942,13 @@ class SpeechRecognitionManager:
                 value is not None
                 for value in (engine, model_size, language, audio_device_index, audio_device_name)
             )
-            or kwargs.keys() - {"voice_commands_enabled", "stop_sound_guard_ms"}
+            or kwargs.keys()
+            - {
+                "voice_commands_enabled",
+                "stop_sound_guard_ms",
+                "max_segment_seconds",
+                "remote_api_timeout_seconds",
+            }
         ):
             return None
         return SpeechRecognitionManager._validated_hot_settings(
@@ -4865,6 +4965,14 @@ class SpeechRecognitionManager:
             settings["vad_sensitivity"] = max(1, min(5, int(vad_sensitivity)))
         if silence_timeout is not None:
             settings["silence_timeout"] = max(0.5, min(5.0, float(silence_timeout)))
+        if "max_segment_seconds" in settings:
+            settings["max_segment_seconds"] = clamp_max_segment_seconds(
+                settings["max_segment_seconds"]
+            )
+        if "remote_api_timeout_seconds" in settings:
+            settings["remote_api_timeout_seconds"] = clamp_remote_api_timeout(
+                settings["remote_api_timeout_seconds"]
+            )
         return settings
 
     def update_live_settings(
@@ -4890,6 +4998,8 @@ class SpeechRecognitionManager:
         for name, value in settings.items():
             if name == "voice_commands_enabled":
                 self._voice_commands_preference = value
+            elif name == "max_segment_seconds":
+                self._apply_max_segment_seconds(value)
             else:
                 setattr(self, name, value)
         self._voice_commands_enabled = self._resolve_voice_commands_enabled()
@@ -5091,6 +5201,11 @@ class SpeechRecognitionManager:
         if "stop_sound_guard_ms" in kwargs:
             self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", self.stop_sound_guard_ms)
 
+        if "max_segment_seconds" in kwargs:
+            self._apply_max_segment_seconds(
+                clamp_max_segment_seconds(kwargs.get("max_segment_seconds"))
+            )
+
         for param_name in whispercpp_attrs:
             if param_name in kwargs:
                 value = kwargs[param_name]
@@ -5115,6 +5230,10 @@ class SpeechRecognitionManager:
         if "remote_api_bias_mode" in kwargs:
             self.remote_api_bias_mode = self._normalize_remote_api_bias_mode(
                 kwargs.get("remote_api_bias_mode", "auto")
+            )
+        if "remote_api_timeout_seconds" in kwargs:
+            self.remote_api_timeout_seconds = clamp_remote_api_timeout(
+                kwargs.get("remote_api_timeout_seconds")
             )
 
         self._voice_commands_enabled = self._resolve_voice_commands_enabled()
@@ -5755,7 +5874,9 @@ class SpeechRecognitionManager:
             logger.warning("Buffer limit too large, setting to maximum 20000")
             max_chunks = 20000
 
-        self._max_buffer_size = max_chunks
+        with getattr(self, "_buffer_lock", nullcontext()):
+            self._max_buffer_size = max_chunks
+            self._pending_max_buffer_size = None
         logger.info(f"Audio buffer limit set to {max_chunks} chunks")
 
     def get_buffer_stats(self) -> dict:
