@@ -187,7 +187,7 @@ jobs:
             fi
           fi
           cat >>"$notes" <<'EOF'
-          Whisper.cpp engine only. Hotkeys need device access as documented in
+          Ships whisper.cpp (Vulkan) and Parakeet (sherpa-onnx) engines. Hotkeys need device access as documented in
           packaging/flatpak/README.md. Not on Flathub (https://github.com/flathub/flathub/pull/9368).
           EOF
           sed -i \
