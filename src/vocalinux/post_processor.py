@@ -23,6 +23,32 @@ _active_processes_lock = threading.Lock()
 _active_processes: set[subprocess.Popen[str]] = set()
 
 
+def _process_group_alive(proc: subprocess.Popen[str]) -> bool:
+    """Return True if any process in ``proc``'s process group is still alive."""
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int) and pid > 0 and hasattr(os, "killpg"):
+        try:
+            os.killpg(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+    return False
+
+
+def _close_pipes(proc: subprocess.Popen[str]) -> None:
+    """Close stdio pipes on a subprocess defensively so reads never hang."""
+    for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+
+
 def _signal_process_group(proc: subprocess.Popen[str], sig: int) -> bool:
     """Send ``sig`` to ``proc``'s process group when available; return True if handled."""
     pid = getattr(proc, "pid", None)
@@ -58,7 +84,7 @@ def _kill_process(proc: subprocess.Popen[str]) -> None:
 
 
 def abort_active_post_processors(grace_seconds: float = 0.5) -> None:
-    """Stop any running post-processing scripts so app quit does not block on long timeouts."""
+    """Stop any running post-processing scripts and child helpers on quit."""
     with _active_processes_lock:
         procs = list(_active_processes)
     if not procs:
@@ -70,12 +96,29 @@ def abort_active_post_processors(grace_seconds: float = 0.5) -> None:
     deadline = time.monotonic() + max(0.0, grace_seconds)
     for proc in procs:
         remaining = max(0.0, deadline - time.monotonic())
+        still_running = False
         try:
             proc.wait(timeout=remaining)
         except subprocess.TimeoutExpired:
-            _kill_process(proc)
+            still_running = True
         except OSError:
             pass
+
+        # A parent shell may exit on SIGTERM while a child helper stays alive
+        # in the same process group holding stdout/stderr pipes open. Wait up
+        # to the shared deadline for the group to drain, then SIGKILL survivors.
+        while not still_running and _process_group_alive(proc):
+            if time.monotonic() >= deadline:
+                still_running = True
+                break
+            time.sleep(0.02)
+
+        if still_running or _process_group_alive(proc):
+            _kill_process(proc)
+            try:
+                proc.wait(timeout=0.5)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
 
 
 class PostProcessor:
@@ -119,9 +162,17 @@ class PostProcessor:
                     proc.communicate(timeout=0.5)
                 except subprocess.TimeoutExpired:
                     _kill_process(proc)
-                    proc.communicate()
+                    try:
+                        proc.communicate(timeout=0.5)
+                    except (
+                        subprocess.TimeoutExpired,
+                        OSError,
+                        subprocess.SubprocessError,
+                        UnicodeError,
+                    ):
+                        _close_pipes(proc)
                 except (OSError, subprocess.SubprocessError, UnicodeError):
-                    pass
+                    _close_pipes(proc)
                 logger.debug("Post-processor aborted on shutdown: %s", self.script_path)
                 return text
 
@@ -130,9 +181,14 @@ class PostProcessor:
             except subprocess.TimeoutExpired as e:
                 _kill_process(proc)
                 try:
-                    proc.communicate()
-                except (OSError, subprocess.SubprocessError, UnicodeError):
-                    pass
+                    proc.communicate(timeout=0.5)
+                except (
+                    subprocess.TimeoutExpired,
+                    OSError,
+                    subprocess.SubprocessError,
+                    UnicodeError,
+                ):
+                    _close_pipes(proc)
                 logger.warning("Post-processor failed: %s", e)
                 return text
             except (OSError, subprocess.SubprocessError, UnicodeError) as e:

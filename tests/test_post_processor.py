@@ -185,6 +185,46 @@ class TestPostProcessorAbortOnQuit(unittest.TestCase):
             self.assertLess(elapsed, 3.0)
             self.assertEqual(results, ["hello"])
 
+    def test_abort_active_post_processors_kills_surviving_child_helpers(self) -> None:
+        """If the parent shell exits on SIGTERM while a helper ignores SIGTERM, SIGKILL stops it."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            marker = os.path.join(tmpdir, "started")
+            script = os.path.join(tmpdir, "parent_with_stubborn_child.sh")
+            with open(script, "w") as handle:
+                handle.write(
+                    "#!/bin/sh\n"
+                    "trap 'exit 0' TERM\n"
+                    "(trap '' TERM; sleep 60) &\n"
+                    f"touch '{marker}'\n"
+                    "wait\n"
+                )
+            os.chmod(script, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+            cancel = threading.Event()
+            results: list[str] = []
+
+            def _run() -> None:
+                results.append(
+                    PostProcessor(script, timeout=600).process("hello", cancel_event=cancel)
+                )
+
+            worker = threading.Thread(target=_run)
+            worker.start()
+            deadline = time.monotonic() + 5.0
+            while not os.path.exists(marker) and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(os.path.exists(marker), "stubborn helper script did not start")
+
+            t0 = time.monotonic()
+            cancel.set()
+            abort_active_post_processors(grace_seconds=0.1)
+            worker.join(timeout=3.0)
+            elapsed = time.monotonic() - t0
+
+            self.assertFalse(worker.is_alive(), "worker stayed blocked on surviving child helper")
+            self.assertLess(elapsed, 3.0)
+            self.assertEqual(results, ["hello"])
+
 
 class TestApplyPostProcessing(unittest.TestCase):
     def setUp(self) -> None:
