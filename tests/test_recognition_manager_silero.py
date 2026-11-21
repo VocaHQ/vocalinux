@@ -58,7 +58,7 @@ CHUNK_BYTES = 1024 * 2  # 1024 int16 samples
 SILENT_CHUNK = b"\x00" * (1024 * 2)  # 1024 int16 zero samples
 
 
-def _make_manager():
+def _make_manager(**kwargs: object) -> SpeechRecognitionManager:
     """Create a SpeechRecognitionManager with init paths stubbed out."""
     with (
         patch.object(SpeechRecognitionManager, "_init_vosk"),
@@ -70,6 +70,7 @@ def _make_manager():
             model_size="small",
             language="en-us",
             defer_download=True,
+            **kwargs,
         )
     return mgr
 
@@ -533,6 +534,71 @@ class TestAudioLevelCallback(unittest.TestCase):
         for v in levels:
             self.assertGreaterEqual(v, 0.0)
             self.assertLessEqual(v, 100.0)
+
+
+class TestConfigurableMaxSegmentDuration(unittest.TestCase):
+    """Tests for configurable max_segment_seconds and proportional buffer scaling."""
+
+    def test_default_segment_duration_keeps_5000_chunk_buffer(self) -> None:
+        """Default 90 s limit preserves the exact historical 5000-chunk buffer cap."""
+        mgr = _make_manager()
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+    def test_short_segment_duration_keeps_5000_chunk_floor(self) -> None:
+        """Configured segments at or below 90 s keep the 5000-chunk floor."""
+        mgr = _make_manager(max_segment_seconds=30)
+        self.assertEqual(mgr._max_segment_seconds, 30.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+    def test_long_segment_duration_scales_buffer_for_16k_and_48k_chunks(self) -> None:
+        """Buffer cap scales so the 75% flush budget exceeds max_segment_seconds at 16 kHz and 48 kHz."""
+        chunk_16k_seconds = 1024 / 16000
+        chunk_48k_seconds = int(1024 * 16000 / 48000) / 16000
+
+        for seconds in (120.0, 300.0, 600.0, 900.0):
+            with self.subTest(max_segment_seconds=seconds):
+                mgr = _make_manager(max_segment_seconds=seconds)
+                self.assertEqual(mgr._max_segment_seconds, seconds)
+                self.assertGreater(mgr._max_buffer_size, 5000)
+                self.assertGreaterEqual(mgr._max_buffer_size * chunk_16k_seconds * 0.75, seconds)
+                self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, seconds)
+
+    def test_reconfigure_updates_segment_duration_and_buffer_cap(self) -> None:
+        """Hot and full reconfigure update _max_segment_seconds and rescale _max_buffer_size."""
+        mgr = _make_manager()
+        mgr.reconfigure(max_segment_seconds=600)
+        self.assertEqual(mgr._max_segment_seconds, 600.0)
+        chunk_48k_seconds = int(1024 * 16000 / 48000) / 16000
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 600.0)
+
+        # Lowering back to default restores the 5000-chunk cap.
+        mgr.reconfigure(max_segment_seconds=90)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+        # Invalid values fall back to default; out-of-range values clamp.
+        mgr.reconfigure(max_segment_seconds=True)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        mgr.reconfigure(max_segment_seconds=-10)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        mgr.reconfigure(max_segment_seconds=5000)
+        self.assertEqual(mgr._max_segment_seconds, 900.0)
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 900.0)
+
+        # Full reconfigure (non-hot kwarg present) also applies max_segment_seconds.
+        mgr.reconfigure(remote_api_key="k", max_segment_seconds=180)
+        self.assertEqual(mgr._max_segment_seconds, 180.0)
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 180.0)
+
+    def test_reconfigure_state_attrs_include_segment_and_buffer_fields(self) -> None:
+        """Rollback state snapshots cover _max_segment_seconds, _max_buffer_size, and remote timeout."""
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        attrs = SpeechRecognitionManager._RECONFIGURE_STATE_ATTRS
+        self.assertIn("_max_segment_seconds", attrs)
+        self.assertIn("_max_buffer_size", attrs)
+        self.assertIn("remote_api_timeout_seconds", attrs)
 
 
 if __name__ == "__main__":

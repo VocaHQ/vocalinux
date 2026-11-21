@@ -235,6 +235,7 @@ class TestMainModule(unittest.TestCase):
                 language="en-us",
                 vad_sensitivity=3,
                 silence_timeout=1.2,
+                max_segment_seconds=90.0,
                 stop_sound_guard_ms=200,
                 buffer_during_reload=True,
                 voice_commands_enabled=None,
@@ -257,6 +258,7 @@ class TestMainModule(unittest.TestCase):
                 remote_api_endpoint="/inference",
                 remote_api_model="whisper-1",
                 remote_api_bias_mode="auto",
+                remote_api_timeout_seconds=30.0,
             )
             mock_text.assert_called_once_with(wayland_mode=True)
             mock_action_handler.assert_called_once_with(mock_text_instance)
@@ -1494,6 +1496,22 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
                 boot.text_cb("hello").result(timeout=10)
                 boot.text_system.inject_text.assert_not_called()
+        finally:
+            boot.stack.close()
+
+    def test_post_processing_custom_timeout_reaches_subprocess(self) -> None:
+        """Configured post_processing.timeout_seconds is forwarded when main() runs the script."""
+        boot = self._boot_under_patches(post_script="/fake/script.sh")
+        boot.mock_config.get.side_effect = lambda section, key, default=None: (
+            180 if (section, key) == ("post_processing", "timeout_seconds") else default
+        )
+        try:
+            run_result = MagicMock(returncode=0, stderr="", stdout="DONE")
+            with patch(
+                "vocalinux.post_processor.subprocess.run", return_value=run_result
+            ) as mock_run:
+                boot.text_cb("hello").result(timeout=10)
+                self.assertEqual(mock_run.call_args.kwargs["timeout"], 180.0)
         finally:
             boot.stack.close()
 

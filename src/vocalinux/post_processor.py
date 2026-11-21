@@ -4,6 +4,10 @@ import logging
 import subprocess
 from typing import TYPE_CHECKING, Optional
 
+from .ui.config_manager import (
+    DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS,
+    clamp_post_processing_timeout,
+)
 from .utils.host_process import host_env
 
 if TYPE_CHECKING:
@@ -15,8 +19,13 @@ logger = logging.getLogger(__name__)
 class PostProcessor:
     """Pipes transcribed text through a user-defined executable and returns the output."""
 
-    def __init__(self, script_path: str) -> None:
+    def __init__(
+        self,
+        script_path: str,
+        timeout: float = DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS,
+    ) -> None:
         self.script_path = script_path
+        self.timeout = clamp_post_processing_timeout(timeout)
 
     def process(self, text: str) -> str:
         """Run the script with text on stdin; return stdout. Falls back to original on failure."""
@@ -27,7 +36,7 @@ class PostProcessor:
                 input=text,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=self.timeout,
                 env=host_env(),
             )
         except (OSError, subprocess.SubprocessError, UnicodeError) as e:
@@ -66,5 +75,12 @@ def apply_post_processing(text: str, config_manager: "ConfigManager") -> Optiona
     script_path = config_manager.get_str("post_processing", "script_path", "")
     if not script_path:
         return text
-    result = PostProcessor(script_path).process(text)
+    timeout = clamp_post_processing_timeout(
+        config_manager.get(
+            "post_processing",
+            "timeout_seconds",
+            DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS,
+        )
+    )
+    result = PostProcessor(script_path, timeout=timeout).process(text)
     return result if result else None

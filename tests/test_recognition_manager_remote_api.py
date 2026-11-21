@@ -1140,5 +1140,86 @@ class TestReinitializeAfterResumeSessionClose(unittest.TestCase):
         self.assertIsNone(manager._http_session)
 
 
+class TestRemoteApiTimeout(unittest.TestCase):
+    """Tests for configurable speech_recognition.remote_api_timeout_seconds."""
+
+    def _make_manager(self, **kwargs: object) -> object:
+        SpeechRecognitionManager = _import_manager()
+        _setup_requests_get_ok()
+        return SpeechRecognitionManager(
+            engine="remote_api",
+            remote_api_url="http://localhost:9090",
+            **kwargs,
+        )
+
+    def test_default_timeout_is_30_seconds_for_both_endpoints(self) -> None:
+        """Default remote_api_timeout_seconds stays 30.0 s on OpenAI and whisper.cpp calls."""
+        manager = self._make_manager()
+        self.assertEqual(manager.remote_api_timeout_seconds, 30.0)
+
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {"text": "hello"}
+        manager._http_session.post.return_value = mock_resp
+
+        manager._try_openai_api(b"wav", "en", {}, manager._http_session)
+        self.assertEqual(manager._http_session.post.call_args.kwargs["timeout"], 30.0)
+
+        manager._http_session.post.reset_mock()
+        manager._try_whispercpp_server_api(b"wav", "en", {}, manager._http_session)
+        self.assertEqual(manager._http_session.post.call_args.kwargs["timeout"], 30.0)
+
+    def test_custom_timeout_propagates_to_openai_retry_and_whispercpp(self) -> None:
+        """Configured timeout reaches OpenAI initial + retry calls and whisper.cpp /inference."""
+        mock_dict = MagicMock()
+        mock_dict.terms_enabled.return_value = True
+        mock_dict.build_bias_terms.return_value = ["VocaLinux"]
+        mock_dict.build_prompt.return_value = "VocaLinux"
+
+        manager = self._make_manager(
+            remote_api_timeout_seconds=180,
+            dictionary_manager=mock_dict,
+        )
+        self.assertEqual(manager.remote_api_timeout_seconds, 180.0)
+
+        rejected = MagicMock(status_code=422)
+        accepted = MagicMock(status_code=200)
+        accepted.json.return_value = {"text": "retried"}
+        manager._http_session.post.side_effect = [rejected, accepted]
+
+        text = manager._try_openai_api(b"wav", "en", {}, manager._http_session)
+        self.assertEqual(text, "retried")
+        self.assertEqual(manager._http_session.post.call_count, 2)
+        for call in manager._http_session.post.call_args_list:
+            self.assertEqual(call.kwargs["timeout"], 180.0)
+
+        manager._http_session.post.reset_mock()
+        manager._http_session.post.side_effect = None
+        manager._http_session.post.return_value = accepted
+        text = manager._try_whispercpp_server_api(b"wav", "en", {}, manager._http_session)
+        self.assertEqual(text, "retried")
+        self.assertEqual(manager._http_session.post.call_args.kwargs["timeout"], 180.0)
+
+    def test_reconfigure_updates_and_validates_remote_api_timeout(self) -> None:
+        """Hot and full reconfigure validate/clamp remote_api_timeout_seconds."""
+        manager = self._make_manager()
+
+        manager.reconfigure(remote_api_timeout_seconds=120.5)
+        self.assertEqual(manager.remote_api_timeout_seconds, 120.5)
+
+        manager.reconfigure(remote_api_timeout_seconds=True)
+        self.assertEqual(manager.remote_api_timeout_seconds, 30.0)
+
+        manager.reconfigure(remote_api_timeout_seconds=0)
+        self.assertEqual(manager.remote_api_timeout_seconds, 30.0)
+
+        manager.reconfigure(remote_api_timeout_seconds=9999)
+        self.assertEqual(manager.remote_api_timeout_seconds, 600.0)
+
+        manager.reconfigure(
+            remote_api_endpoint="/v1/audio/transcriptions", remote_api_timeout_seconds=95
+        )
+        self.assertEqual(manager.remote_api_timeout_seconds, 95.0)
+
+
 if __name__ == "__main__":
     unittest.main()

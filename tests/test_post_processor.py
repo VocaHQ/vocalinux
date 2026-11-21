@@ -78,6 +78,42 @@ class TestPostProcessor(unittest.TestCase):
             env=host_env(),
         )
 
+    def test_custom_timeout_forwarded_to_subprocess(self) -> None:
+        """A valid custom timeout is passed verbatim to subprocess.run."""
+        self.mock_run.return_value = _make_run_result(stdout="out")
+        PostProcessor("/my/script.sh", timeout=120.5).process("input text")
+        self.mock_run.assert_called_once_with(
+            ["/my/script.sh"],
+            input="input text",
+            capture_output=True,
+            text=True,
+            timeout=120.5,
+            env=host_env(),
+        )
+
+    def test_invalid_timeouts_fall_back_to_default(self) -> None:
+        """Non-positive, boolean, non-numeric, and non-finite timeouts fall back to 10.0 s."""
+        bad_values: list[object] = [
+            True,
+            False,
+            0,
+            -5,
+            None,
+            "60",
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+        ]
+        for bad in bad_values:
+            with self.subTest(timeout=bad):
+                processor = PostProcessor("/my/script.sh", timeout=bad)  # type: ignore[arg-type]
+                self.assertEqual(processor.timeout, 10.0)
+
+    def test_out_of_range_positive_timeouts_clamped(self) -> None:
+        """Positive timeouts outside [1.0, 600.0] are clamped to supported bounds."""
+        self.assertEqual(PostProcessor("/s.sh", timeout=0.25).timeout, 1.0)
+        self.assertEqual(PostProcessor("/s.sh", timeout=9999).timeout, 600.0)
+
 
 class TestApplyPostProcessing(unittest.TestCase):
     def setUp(self) -> None:
@@ -89,9 +125,10 @@ class TestApplyPostProcessing(unittest.TestCase):
     def tearDown(self) -> None:
         self.patch_processor.stop()
 
-    def _config(self, script_path: str) -> MagicMock:
+    def _config(self, script_path: str, timeout_seconds: object = 10) -> MagicMock:
         config_manager = MagicMock()
         config_manager.get_str.return_value = script_path
+        config_manager.get.return_value = timeout_seconds
         return config_manager
 
     def test_no_script_returns_original_text(self) -> None:
@@ -104,8 +141,26 @@ class TestApplyPostProcessing(unittest.TestCase):
         self.mock_processor.process.return_value = "modified"
         result = apply_post_processing("hello", self._config("/s.sh"))
         self.assertEqual(result, "modified")
+        self.mock_processor_cls.assert_called_once_with("/s.sh", timeout=10.0)
 
     def test_script_returns_empty_string_gives_none(self) -> None:
         self.mock_processor.process.return_value = ""
         result = apply_post_processing("hello", self._config("/s.sh"))
         self.assertIsNone(result)
+
+    def test_configured_timeout_propagated_and_reloaded_dynamically(self) -> None:
+        """apply_post_processing reads post_processing.timeout_seconds on each call."""
+        self.mock_processor.process.return_value = "ok"
+        cfg = self._config("/s.sh", timeout_seconds=180)
+        apply_post_processing("first", cfg)
+        self.mock_processor_cls.assert_called_with("/s.sh", timeout=180.0)
+
+        cfg.get.return_value = 45.5
+        apply_post_processing("second", cfg)
+        self.mock_processor_cls.assert_called_with("/s.sh", timeout=45.5)
+
+    def test_invalid_config_timeout_uses_default(self) -> None:
+        """Invalid configured timeout values safely fall back to 10.0 s."""
+        self.mock_processor.process.return_value = "ok"
+        apply_post_processing("hello", self._config("/s.sh", timeout_seconds=True))
+        self.mock_processor_cls.assert_called_with("/s.sh", timeout=10.0)

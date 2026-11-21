@@ -7,6 +7,7 @@ This module handles loading, saving, and accessing user preferences.
 import copy
 import json
 import logging
+import math
 import os
 import threading
 from typing import Any, Optional, cast
@@ -44,6 +45,18 @@ SOUND_EFFECT_TONES: tuple[tuple[str, str], ...] = (
 SOUND_EFFECT_TONE_IDS = frozenset(tone_id for tone_id, _label in SOUND_EFFECT_TONES)
 DEFAULT_SOUND_EFFECT_TONE = "voca"
 DEFAULT_PLAYBACK_DUCK_PERCENT = 20
+
+DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS = 10.0
+MIN_POST_PROCESSING_TIMEOUT_SECONDS = 1.0
+MAX_POST_PROCESSING_TIMEOUT_SECONDS = 600.0
+
+DEFAULT_MAX_SEGMENT_SECONDS = 90.0
+MIN_MAX_SEGMENT_SECONDS = 10.0
+MAX_MAX_SEGMENT_SECONDS = 900.0
+
+DEFAULT_REMOTE_API_TIMEOUT_SECONDS = 30.0
+MIN_REMOTE_API_TIMEOUT_SECONDS = 1.0
+MAX_REMOTE_API_TIMEOUT_SECONDS = 600.0
 
 PASTE_SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("auto", "Auto-detect"),
@@ -103,6 +116,85 @@ def clamp_playback_duck_percent(value: Any) -> int:
     return max(0, min(100, percent))
 
 
+def _clamp_positive_seconds(
+    value: Any,
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+    setting_name: str,
+) -> float:
+    """Validate and clamp a positive duration or timeout in seconds.
+
+    Accepts only finite positive ``int``/``float`` values. ``bool`` (an ``int``
+    subclass), ``None``, strings, ``NaN``, infinities, and non-positive values
+    fall back to ``default``. Positive values outside ``[minimum, maximum]``
+    are clamped to that range.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if value is not None:
+            logger.warning(
+                "Invalid %s %r; using default %.1f s",
+                setting_name,
+                value,
+                default,
+            )
+        return float(default)
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric <= 0:
+        logger.warning(
+            "Invalid %s %r; using default %.1f s",
+            setting_name,
+            value,
+            default,
+        )
+        return float(default)
+    clamped = max(minimum, min(maximum, numeric))
+    if clamped != numeric:
+        logger.warning(
+            "%s %.2f s is outside [%.1f, %.1f]; clamping to %.1f s",
+            setting_name,
+            numeric,
+            minimum,
+            maximum,
+            clamped,
+        )
+    return clamped
+
+
+def clamp_post_processing_timeout(value: Any) -> float:
+    """Return a validated post-processing timeout in seconds (1.0..600.0, default 10.0)."""
+    return _clamp_positive_seconds(
+        value,
+        default=DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS,
+        minimum=MIN_POST_PROCESSING_TIMEOUT_SECONDS,
+        maximum=MAX_POST_PROCESSING_TIMEOUT_SECONDS,
+        setting_name="post_processing.timeout_seconds",
+    )
+
+
+def clamp_max_segment_seconds(value: Any) -> float:
+    """Return a validated max continuous segment duration in seconds (10.0..900.0, default 90.0)."""
+    return _clamp_positive_seconds(
+        value,
+        default=DEFAULT_MAX_SEGMENT_SECONDS,
+        minimum=MIN_MAX_SEGMENT_SECONDS,
+        maximum=MAX_MAX_SEGMENT_SECONDS,
+        setting_name="speech_recognition.max_segment_seconds",
+    )
+
+
+def clamp_remote_api_timeout(value: Any) -> float:
+    """Return a validated remote API HTTP timeout in seconds (1.0..600.0, default 30.0)."""
+    return _clamp_positive_seconds(
+        value,
+        default=DEFAULT_REMOTE_API_TIMEOUT_SECONDS,
+        minimum=MIN_REMOTE_API_TIMEOUT_SECONDS,
+        maximum=MAX_REMOTE_API_TIMEOUT_SECONDS,
+        setting_name="speech_recognition.remote_api_timeout_seconds",
+    )
+
+
 # Default configuration
 DEFAULT_CONFIG = {
     "speech_recognition": {  # Changed section name
@@ -127,6 +219,7 @@ DEFAULT_CONFIG = {
         "faster_whisper_model_size": "tiny",  # Default model for faster-whisper engine
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 1.2,  # Seconds of silence before stopping
+        "max_segment_seconds": 90,  # Max continuous speech segment before flushing (10-900 s)
         "stop_sound_guard_ms": 200,  # Small tail trim to avoid the stop sound without clipping speech
         "voice_commands_enabled": None,  # None = auto (enabled for VOSK, disabled for Whisper)
         "remote_api_url": "",  # Remote speech recognition server URL (e.g. http://192.168.1.100:8080)
@@ -135,6 +228,7 @@ DEFAULT_CONFIG = {
         "remote_api_model": "whisper-1",  # Model name sent to compatible remote APIs
         # How custom terms reach OpenAI-compatible remote APIs: auto | context_bias | prompt | off
         "remote_api_bias_mode": "auto",
+        "remote_api_timeout_seconds": 30,  # HTTP timeout for remote transcription requests (1-600 s)
     },
     "audio": {
         "device_index": None,  # Audio input device index (None for system default)
@@ -219,6 +313,7 @@ DEFAULT_CONFIG = {
     },
     "post_processing": {
         "script_path": "",  # Path to executable; empty = disabled
+        "timeout_seconds": 10,  # Script timeout in seconds (1-600 s)
     },
     "dictionary": {
         # Preserve the custom-dictionary contract used by the accessibility scanner.
@@ -673,7 +768,10 @@ class ConfigManager:
             The configuration value
         """
         try:
-            return self.config[section][key]
+            section_data = self.config[section]
+            if not isinstance(section_data, dict):
+                return default
+            return section_data[key]
         except KeyError:
             return default
 
@@ -961,6 +1059,60 @@ class ConfigManager:
     def set_dictate_to_pad(self, enabled: bool) -> None:
         """Route dictation into the in-app Dictation Pad instead of injecting."""
         self.set("text_injection", "dictate_to_pad", bool(enabled))
+
+    def get_post_processing_timeout(self) -> float:
+        """Return the validated post-processing script timeout in seconds."""
+        return clamp_post_processing_timeout(
+            self.get(
+                "post_processing",
+                "timeout_seconds",
+                DEFAULT_POST_PROCESSING_TIMEOUT_SECONDS,
+            )
+        )
+
+    def set_post_processing_timeout(self, timeout_seconds: float) -> None:
+        """Store a validated post-processing script timeout in seconds."""
+        if not isinstance(self.config.get("post_processing"), dict):
+            self.config["post_processing"] = {}
+        self.config["post_processing"]["timeout_seconds"] = clamp_post_processing_timeout(
+            timeout_seconds
+        )
+
+    def get_max_segment_seconds(self) -> float:
+        """Return the validated maximum continuous speech segment duration in seconds."""
+        return clamp_max_segment_seconds(
+            self.get(
+                "speech_recognition",
+                "max_segment_seconds",
+                DEFAULT_MAX_SEGMENT_SECONDS,
+            )
+        )
+
+    def set_max_segment_seconds(self, max_segment_seconds: float) -> None:
+        """Store a validated maximum continuous speech segment duration in seconds."""
+        if not isinstance(self.config.get("speech_recognition"), dict):
+            self.config["speech_recognition"] = {}
+        self.config["speech_recognition"]["max_segment_seconds"] = clamp_max_segment_seconds(
+            max_segment_seconds
+        )
+
+    def get_remote_api_timeout(self) -> float:
+        """Return the validated remote API HTTP timeout in seconds."""
+        return clamp_remote_api_timeout(
+            self.get(
+                "speech_recognition",
+                "remote_api_timeout_seconds",
+                DEFAULT_REMOTE_API_TIMEOUT_SECONDS,
+            )
+        )
+
+    def set_remote_api_timeout(self, timeout_seconds: float) -> None:
+        """Store a validated remote API HTTP timeout in seconds."""
+        if not isinstance(self.config.get("speech_recognition"), dict):
+            self.config["speech_recognition"] = {}
+        self.config["speech_recognition"]["remote_api_timeout_seconds"] = clamp_remote_api_timeout(
+            timeout_seconds
+        )
 
     def _update_dict_recursive(self, target: dict, source: dict):
         """

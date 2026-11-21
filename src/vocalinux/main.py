@@ -464,7 +464,13 @@ def main():
     from .text_injection import focused_window, text_injector
     from .ui import tray_indicator
     from .ui.action_handler import ActionHandler
-    from .ui.config_manager import get_shared_config_manager
+    from .ui.config_manager import (
+        DEFAULT_MAX_SEGMENT_SECONDS,
+        DEFAULT_REMOTE_API_TIMEOUT_SECONDS,
+        clamp_max_segment_seconds,
+        clamp_remote_api_timeout,
+        get_shared_config_manager,
+    )
     from .ui.logging_manager import initialize_logging
     from .ui.transcription_history import (
         DEFAULT_MAX_ITEMS,
@@ -560,6 +566,9 @@ def main():
 
     vad_sensitivity = saved_settings.get("vad_sensitivity", 3)
     silence_timeout = saved_settings.get("silence_timeout", 1.2)
+    max_segment_seconds = clamp_max_segment_seconds(
+        saved_settings.get("max_segment_seconds", DEFAULT_MAX_SEGMENT_SECONDS)
+    )
     stop_sound_guard_ms = saved_settings.get("stop_sound_guard_ms", 200)
     voice_commands_enabled = saved_settings.get("voice_commands_enabled")  # None = auto
     audio_device_index = audio_settings.get("device_index", None)
@@ -604,6 +613,7 @@ def main():
             language=language,
             vad_sensitivity=vad_sensitivity,
             silence_timeout=silence_timeout,
+            max_segment_seconds=max_segment_seconds,
             stop_sound_guard_ms=stop_sound_guard_ms,
             buffer_during_reload=config_manager.get_bool(
                 "model_keepalive", "buffer_during_reload", False
@@ -630,6 +640,9 @@ def main():
             remote_api_endpoint=saved_settings.get("remote_api_endpoint", "/inference"),
             remote_api_model=saved_settings.get("remote_api_model", "whisper-1"),
             remote_api_bias_mode=saved_settings.get("remote_api_bias_mode", "auto"),
+            remote_api_timeout_seconds=clamp_remote_api_timeout(
+                saved_settings.get("remote_api_timeout_seconds", DEFAULT_REMOTE_API_TIMEOUT_SECONDS)
+            ),
         )
 
         # Initialize text injection system
