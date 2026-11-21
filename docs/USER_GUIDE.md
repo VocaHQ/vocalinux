@@ -253,8 +253,10 @@ Open **Settings → Custom Dictionary** to configure two separate capabilities:
 
 VocaLinux re-reads both files before each completed dictation segment, so an
 external edit applies to the next segment without restarting the app. Vocabulary
-bias works with Whisper, whisper.cpp, and Faster Whisper. Corrections work with
-every engine, including VOSK, Parakeet, and the configured remote API.
+bias works with Whisper, whisper.cpp, Faster Whisper, and remote servers using
+the OpenAI-compatible endpoint (see [HTTP_REMOTE.md](HTTP_REMOTE.md#custom-terms)).
+Corrections work with every engine, including VOSK, Parakeet, and the configured
+remote API.
 
 Corrections run before voice-command interpretation. This can prevent a
 command-like misrecognition from acting, but avoid replacements that create a
