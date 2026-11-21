@@ -925,54 +925,55 @@ class TestSavedShiftedShortcutCompatibility:
             backend._pending_x11_key_info = None
         assert not fired.wait(0.15)
 
-    def test_detect_x11_layout_uses_active_group_for_multi_layout(
+    def test_detect_x11_layout_uses_xkb_get_state_active_group(
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """_detect_x11_layout picks the active X11 group via xset -q and never guesses index 0."""
+        """_detect_x11_layout reads the active XKB group via libX11 XkbGetState."""
         import subprocess
 
         from vocalinux.ui.keyboard_backends import layout_key_map as lkm
 
         monkeypatch.setenv("DISPLAY", ":0")
-
-        def _run_multi(
-            cmd: list[str], *_a: object, **_k: object
-        ) -> subprocess.CompletedProcess[str]:
-            if cmd[0] == "setxkbmap":
-                return subprocess.CompletedProcess(
-                    cmd,
-                    0,
-                    stdout="rules:      evdev\nmodel:      pc105\nlayout:     us,fr\nvariant:    ,oss\n",
-                    stderr="",
-                )
-            return subprocess.CompletedProcess(
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, *_a, **_k: subprocess.CompletedProcess(
                 cmd,
                 0,
-                stdout="Keyboard Control:\n  LED mask:  00001000\n",
+                stdout="rules:      evdev\nmodel:      pc105\nlayout:     us,fr\nvariant:    ,oss\n",
                 stderr="",
-            )
+            ),
+        )
 
-        monkeypatch.setattr(subprocess, "run", _run_multi)
+        closed: list[int] = []
+
+        class _FakeX11:
+            def __init__(self, group: int, status: int = 0) -> None:
+                self._group = group
+                self._status = status
+
+            def XOpenDisplay(self, _name: object) -> int:
+                return 1234
+
+            def XkbGetState(self, _dpy: int, _dev: int, state_ptr: object) -> int:
+                getattr(state_ptr, "_obj").group = self._group
+                return self._status
+
+            def XCloseDisplay(self, dpy: int) -> int:
+                closed.append(dpy)
+                return 0
+
+        monkeypatch.setattr(lkm, "_load_x11", lambda: _FakeX11(group=1))
         assert lkm._detect_x11_layout() == ("fr", "oss")
+        assert closed == [1234]
 
-        # When multiple layouts are configured and xset fails, refuse to guess index 0.
-        def _run_no_xset(
-            cmd: list[str], *_a: object, **_k: object
-        ) -> subprocess.CompletedProcess[str]:
-            if cmd[0] == "setxkbmap":
-                return subprocess.CompletedProcess(
-                    cmd,
-                    0,
-                    stdout="layout:     us,fr\nvariant:    ,oss\n",
-                    stderr="",
-                )
-            raise FileNotFoundError("xset missing")
-
-        monkeypatch.setattr(subprocess, "run", _run_no_xset)
+        # When XkbGetState fails on a multi-layout config, refuse to guess index 0.
+        monkeypatch.setattr(lkm, "_load_x11", lambda: _FakeX11(group=0, status=1))
         assert lkm._detect_x11_layout() == ("", "")
 
-        # Single-layout config returns directly without needing xset.
+        # Single-layout config returns directly without querying XkbGetState.
+        monkeypatch.setattr(lkm, "_load_x11", lambda: False)
         monkeypatch.setattr(
             subprocess,
             "run",
@@ -984,6 +985,84 @@ class TestSavedShiftedShortcutCompatibility:
             ),
         )
         assert lkm._detect_x11_layout() == ("latam", "deadtilde")
+
+    def test_listener_thread_switches_groups_from_preloaded_targets_without_commands(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_wrapped_handle_message switches X11 group targets in O(1) without running commands."""
+        from vocalinux.ui.keyboard_backends import layout_key_map as lkm
+
+        if lkm.build_shifted_to_base_map("latam") is None:
+            pytest.skip("libxkbcommon or XKB data not available")
+
+        monkeypatch.setattr(lkm, "_detect_active_layout", lambda: ("latam", ""))
+        monkeypatch.setattr(lkm, "get_x11_layout_pairs", lambda: [("latam", ""), ("us", "")])
+
+        backend, ctrl_l, shift_l, _insert = TestPynputX11KeyResolver()._make_headless_backend(
+            monkeypatch, "ctrl+shift+equal"
+        )
+        assert backend._combo_group_targets == {0: "0", 1: "equal"}
+
+        # Fail loudly if the listener thread ever invokes desktop layout detection.
+        def _forbid_commands(*_args: object, **_kwargs: object) -> tuple[str, str]:
+            raise AssertionError("listener thread must not invoke desktop layout commands")
+
+        monkeypatch.setattr(lkm, "_detect_active_layout", _forbid_commands)
+        monkeypatch.setattr(lkm, "get_x11_layout_pairs", _forbid_commands)
+
+        fired: list[int] = []
+        backend.register_toggle_callback(lambda: fired.append(1))
+
+        class _FakeListener:
+            def _handle_message(self, _display: object, event: object, _injected: object) -> None:
+                if getattr(event, "is_press", True):
+                    backend._on_press(getattr(event, "pynput_key"))
+                else:
+                    backend._on_release(getattr(event, "pynput_key"))
+
+        class _FakeDisplay:
+            def keycode_to_keysym(self, keycode: int, index: int) -> int:
+                # Group 0 (latam): keycode 19 -> XK_0 (0x0030)
+                # Group 1 (us): keycode 21 -> XK_equal (0x003D)
+                if index == 0 and keycode == 19:
+                    return 0x0030
+                if index == 2 and keycode == 21:
+                    return 0x003D
+                return 0
+
+        listener = _FakeListener()
+        backend._install_x11_key_resolver(listener)
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+
+        # Group 0 (latam): Ctrl+Shift+0 fires saved ctrl+shift+equal.
+        key_latam = TestPynputX11KeyResolver()._fake_key(char="=", vk=0x003D)
+        listener._handle_message(
+            _FakeDisplay(),
+            types.SimpleNamespace(detail=19, state=0x0005, is_press=True, pynput_key=key_latam),
+            False,
+        )
+        listener._handle_message(
+            _FakeDisplay(),
+            types.SimpleNamespace(detail=19, state=0x0005, is_press=False, pynput_key=key_latam),
+            False,
+        )
+        assert len(fired) == 1
+        assert backend._combo_key_token == "0"
+
+        # Group 1 (us): state bits 13..14 = 1 -> target switches to 'equal' in O(1).
+        backend.last_trigger_time = 0.0
+        key_us = TestPynputX11KeyResolver()._fake_key(char="+", vk=0x002B)
+        listener._handle_message(
+            _FakeDisplay(),
+            types.SimpleNamespace(
+                detail=21, state=(1 << 13) | 0x0005, is_press=True, pynput_key=key_us
+            ),
+            False,
+        )
+        assert len(fired) == 2
+        assert backend._combo_key_token == "equal"
 
     def test_layout_switch_refreshes_shifted_to_base_map_without_stale_cache(
         self,
@@ -997,6 +1076,7 @@ class TestSavedShiftedShortcutCompatibility:
 
         active_layout = ["latam"]
         monkeypatch.setattr(lkm, "_detect_active_layout", lambda: (active_layout[0], ""))
+        monkeypatch.setattr(lkm, "get_x11_layout_pairs", lambda: [(active_layout[0], "")])
 
         backend, _ctrl, _shift, _insert = TestPynputX11KeyResolver()._make_headless_backend(
             monkeypatch, "ctrl+shift+equal"

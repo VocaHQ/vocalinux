@@ -12,7 +12,19 @@ import os
 import re
 import subprocess
 import xml.etree.ElementTree as ET
-from ctypes import CDLL, POINTER, Structure, byref, c_char_p, c_int, c_uint32, c_void_p
+from ctypes import (
+    CDLL,
+    POINTER,
+    Structure,
+    byref,
+    c_char_p,
+    c_int,
+    c_ubyte,
+    c_uint,
+    c_uint32,
+    c_ushort,
+    c_void_p,
+)
 from functools import lru_cache
 from typing import Optional
 
@@ -27,12 +39,36 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 _XKB_EVDEV_OFFSET = 8
+_XKB_USE_CORE_KBD = 0x0100
 # X11/XKB numeric keypad keysym range (XK_KP_Space .. XK_KP_Equal). Keypad keys
 # have dedicated kp_* tokens and must not hijack main-block punctuation chars
 # (such as '=' -> KEY_KPEQUAL or '/' -> KEY_KPSLASH on non-US layouts).
 _XKB_KEYPAD_KEYSYM_MIN = 0xFF80
 _XKB_KEYPAD_KEYSYM_MAX = 0xFFBD
 _xkb_lib: object = None  # None = untried, False = missing, else CDLL
+_x11_lib: object = None  # None = untried, False = missing, else CDLL
+
+
+class _XkbStateRec(Structure):
+    """Mirror of X11 ``XkbStateRec`` from ``<X11/extensions/XKBstr.h>``."""
+
+    _fields_ = [
+        ("group", c_ubyte),
+        ("locked_group", c_ubyte),
+        ("base_group", c_ushort),
+        ("latched_group", c_ushort),
+        ("mods", c_ubyte),
+        ("base_mods", c_ubyte),
+        ("latched_mods", c_ubyte),
+        ("locked_mods", c_ubyte),
+        ("compat_state", c_ubyte),
+        ("grab_mods", c_ubyte),
+        ("compat_grab_mods", c_ubyte),
+        ("lookup_mods", c_ubyte),
+        ("compat_lookup_mods", c_ubyte),
+        ("ptr_buttons", c_ushort),
+    ]
+
 
 # Static shifted->base fallback for US QWERTY when libxkbcommon is unavailable.
 _US_SHIFTED_TO_BASE: dict[str, str] = {
@@ -534,33 +570,58 @@ def _detect_kde_layout() -> tuple[str, str]:
     return "", ""
 
 
-def _detect_x11_active_group() -> Optional[int]:
-    """Read the active XKB group index (0..3) from ``xset -q`` LED mask."""
+def _load_x11():
+    """Lazily load ``libX11.so.6`` for ``XkbGetState`` queries."""
+    global _x11_lib
+    if _x11_lib is not None:
+        return _x11_lib
     try:
-        result = subprocess.run(
-            ["xset", "-q"],
-            capture_output=True,
-            text=True,
-            timeout=1,
-            check=False,
-            env=host_env(),
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
-        logger.debug("xset -q failed: %s", exc)
-        return None
-    if result.returncode != 0 or not result.stdout:
-        return None
-    match = re.search(r"LED mask:\s+([0-9a-fA-F]+)", result.stdout)
-    if not match:
-        return None
-    led_mask = int(match.group(1), 16)
-    return (led_mask >> 12) & 0x3
+        lib = CDLL("libX11.so.6")
+        lib.XOpenDisplay.argtypes = [c_char_p]
+        lib.XOpenDisplay.restype = c_void_p
+        lib.XCloseDisplay.argtypes = [c_void_p]
+        lib.XCloseDisplay.restype = c_int
+        lib.XkbGetState.argtypes = [c_void_p, c_uint, POINTER(_XkbStateRec)]
+        lib.XkbGetState.restype = c_int
+        _x11_lib = lib
+    except (OSError, AttributeError) as exc:
+        logger.debug("libX11 XkbGetState unavailable: %s", exc)
+        _x11_lib = False
+    return _x11_lib
 
 
-def _detect_x11_layout() -> tuple[str, str]:
-    """Current XKB layout/variant from ``setxkbmap -query`` + active X11 group."""
+def _detect_x11_active_group() -> Optional[int]:
+    """Read the active XKB group index (0..3) directly from X11 ``XkbGetState``."""
     if not os.environ.get("DISPLAY"):
-        return "", ""
+        return None
+    lib = _load_x11()
+    if not lib:
+        return None
+    dpy = lib.XOpenDisplay(None)
+    if not dpy:
+        return None
+    try:
+        state = _XkbStateRec()
+        status = int(lib.XkbGetState(dpy, _XKB_USE_CORE_KBD, byref(state)))
+        if status != 0:
+            logger.debug("XkbGetState returned status %d", status)
+            return None
+        group = int(state.group)
+        return group if 0 <= group <= 3 else None
+    except (OSError, TypeError, ValueError) as exc:
+        logger.debug("XkbGetState failed: %s", exc)
+        return None
+    finally:
+        try:
+            lib.XCloseDisplay(dpy)
+        except OSError:
+            pass
+
+
+def get_x11_layout_pairs() -> list[tuple[str, str]]:
+    """Return configured X11 ``(layout, variant)`` pairs from ``setxkbmap -query``."""
+    if not os.environ.get("DISPLAY"):
+        return []
     try:
         result = subprocess.run(
             ["setxkbmap", "-query"],
@@ -572,9 +633,9 @@ def _detect_x11_layout() -> tuple[str, str]:
         )
     except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
         logger.debug("setxkbmap -query failed: %s", exc)
-        return "", ""
+        return []
     if result.returncode != 0 or not result.stdout:
-        return "", ""
+        return []
 
     layouts: list[str] = []
     variants: list[str] = []
@@ -587,16 +648,26 @@ def _detect_x11_layout() -> tuple[str, str]:
             layouts = _csv_fields(value)
         elif key == "variant":
             variants = _csv_fields(value)
-    if not layouts:
+    return _listed_layout_pairs(layouts, variants)
+
+
+def _detect_x11_layout() -> tuple[str, str]:
+    """Current XKB layout/variant from ``setxkbmap -query`` + X11 ``XkbGetState``."""
+    pairs = get_x11_layout_pairs()
+    if not pairs:
         return "", ""
-    if len(layouts) == 1:
-        return _layout_pair_at(layouts, variants, 0)
+    if len(pairs) == 1:
+        return pairs[0]
 
     group = _detect_x11_active_group()
-    if group is None:
-        logger.debug("Multiple X11 layouts %s configured but active group is unknown", layouts)
+    if group is None or group >= len(pairs):
+        logger.debug(
+            "Multiple X11 layouts %s configured but active group %r is unavailable",
+            pairs,
+            group,
+        )
         return "", ""
-    return _layout_pair_at(layouts, variants, group)
+    return pairs[group]
 
 
 def _is_other_x11_desktop() -> bool:
@@ -614,8 +685,8 @@ def _detect_active_layout() -> tuple[str, str]:
 
     Plasma sessions prefer KDE sources so leftover GNOME gsettings (often ``us``)
     cannot win. Explicit non-GNOME/non-KDE X11 desktops (such as XFCE) prefer
-    ``setxkbmap -query`` for the same reason. Other desktops try GNOME first,
-    then KDE, then X11 ``setxkbmap``.
+    ``setxkbmap -query`` + ``XkbGetState`` for the same reason. Other desktops
+    try GNOME first, then KDE, then X11.
     """
     if _is_plasma_session():
         detectors = (_detect_kde_layout, _detect_gnome_layout, _detect_x11_layout)
@@ -659,14 +730,8 @@ def _cached_shifted_to_base_map(layout: str, variant: str) -> Optional[dict[str,
     return build_shifted_to_base_map(layout, variant)
 
 
-def get_active_shifted_to_base_map() -> dict[str, str]:
-    """Shifted-only char/dead-key → level-0 base key map for the current active layout.
-
-    Reads the live active layout on each call so switching layouts never leaves
-    a stale shifted-to-base mapping; the underlying XKB table compilation is
-    cached per ``(layout, variant)``.
-    """
-    layout, variant = _detect_active_layout()
+def _shifted_to_base_for_layout(layout: str, variant: str = "") -> dict[str, str]:
+    """Return cached shifted-to-base map for ``(layout, variant)`` with US fallback."""
     if not layout:
         return {}
     shifted_map = _cached_shifted_to_base_map(layout, variant)
@@ -677,6 +742,33 @@ def get_active_shifted_to_base_map() -> dict[str, str]:
     return {}
 
 
+def get_active_shifted_to_base_map() -> dict[str, str]:
+    """Shifted-only char/dead-key → level-0 base key map for the current active layout.
+
+    Reads the live active layout on each call so switching layouts never leaves
+    a stale shifted-to-base mapping; the underlying XKB table compilation is
+    cached per ``(layout, variant)``.
+    """
+    layout, variant = _detect_active_layout()
+    return _shifted_to_base_for_layout(layout, variant)
+
+
+def _apply_shifted_to_base(token: str, shifted_map: dict[str, str]) -> str:
+    """Resolve ``token`` through ``shifted_map``, returning the canonical base token."""
+    if not token or not shifted_map:
+        return token
+    lookup_key = PUNCTUATION_TOKEN_TO_CHAR.get(token, token)
+    base_key = shifted_map.get(lookup_key)
+    if base_key is None:
+        return token
+    return CHAR_TO_PUNCTUATION_TOKEN.get(base_key, base_key)
+
+
+def resolve_base_key_token_for_layout(token: str, layout: str, variant: str = "") -> str:
+    """Convert a shifted-only main-key token to its base key for a specific layout."""
+    return _apply_shifted_to_base(token, _shifted_to_base_for_layout(layout, variant))
+
+
 def resolve_base_key_token(token: str) -> str:
     """Convert a saved shifted-only main-key token to its active-layout base key.
 
@@ -685,10 +777,4 @@ def resolve_base_key_token(token: str) -> str:
     maps to ``"0"``. Both X11 combo matching and gesture collision checks use
     this conversion so saved shifted shortcuts stay compatible without double-firing.
     """
-    if not token:
-        return token
-    lookup_key = PUNCTUATION_TOKEN_TO_CHAR.get(token, token)
-    base_key = get_active_shifted_to_base_map().get(lookup_key)
-    if base_key is None:
-        return token
-    return CHAR_TO_PUNCTUATION_TOKEN.get(base_key, base_key)
+    return _apply_shifted_to_base(token, get_active_shifted_to_base_map())
