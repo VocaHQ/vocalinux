@@ -65,7 +65,11 @@ def parse_arguments():
         version=f"%(prog)s {__version__}",
         help="Show the installed Vocalinux version and exit",
     )
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging (on by default when run from a terminal)",
+    )
     # default model, language and engine are loaded from default config
     # due to priority of args over config
     parser.add_argument(
@@ -345,6 +349,17 @@ def check_appindicator_support():
     return True
 
 
+def _stderr_is_tty() -> bool:
+    """Return True when stderr is an open interactive terminal."""
+    stderr = sys.stderr
+    if stderr is None:
+        return False
+    try:
+        return bool(stderr.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def main():
     """Main entry point for the application."""
     # Parse arguments first so flags like --version work even when
@@ -366,6 +381,13 @@ def main():
     # it works alongside a running tray app and on a displayless shell.
     if isinstance(args.transcribe_file, str):
         sys.exit(_run_file_transcription(args.transcribe_file))
+
+    # Started from a terminal (logs go to stderr): show debug output without
+    # requiring --debug. Launchers and autostart have no terminal, so they
+    # keep INFO logging.
+    if not args.debug and _stderr_is_tty():
+        logging.getLogger().setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled (stderr is a terminal)")
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
