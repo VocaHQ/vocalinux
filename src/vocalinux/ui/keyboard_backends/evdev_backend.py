@@ -49,8 +49,11 @@ except ImportError:
     EVDEV_AVAILABLE = False
 
 from .base import (
+    DEAD_KEY_TOKENS,
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
+    KEYPAD_TOKEN_TO_EVDEV_NAME,
+    PUNCTUATION_TOKEN_TO_CHAR,
     KeyboardBackend,
     ShortcutSpec,
     parse_shortcut,
@@ -292,10 +295,9 @@ MODIFIER_KEY_CODES: dict[str, set[int]] = {
     "right_shift": {KEY_RIGHTSHIFT},
 }
 
-# Named main-key tokens -> evdev ecodes attribute name. Single letters/digits
-# and function keys are resolved by rule (KEY_<UPPER>), so only irregular names
-# are listed here.
-_NAMED_EVDEV_KEYS = {
+# Layout-independent named main-key tokens -> evdev ecodes attribute name
+# (navigation/editing and numeric keypad).
+_FIXED_EVDEV_KEYS: dict[str, str] = {
     "space": "KEY_SPACE",
     "tab": "KEY_TAB",
     "enter": "KEY_ENTER",
@@ -313,6 +315,12 @@ _NAMED_EVDEV_KEYS = {
     "down": "KEY_DOWN",
     "left": "KEY_LEFT",
     "right": "KEY_RIGHT",
+    **KEYPAD_TOKEN_TO_EVDEV_NAME,
+}
+
+# US-layout fallback evdev names for punctuation tokens when no non-US XKB map
+# is active (or when libxkbcommon is unavailable).
+_US_PUNCT_EVDEV_KEYS: dict[str, str] = {
     "comma": "KEY_COMMA",
     "period": "KEY_DOT",
     "slash": "KEY_SLASH",
@@ -324,29 +332,70 @@ _NAMED_EVDEV_KEYS = {
     "leftbracket": "KEY_LEFTBRACE",
     "rightbracket": "KEY_RIGHTBRACE",
     "backslash": "KEY_BACKSLASH",
+    "less": "KEY_COMMA",
+    "greater": "KEY_DOT",
+    "plus": "KEY_EQUAL",
+    "asterisk": "KEY_8",
+    "bar": "KEY_BACKSLASH",
+    "question": "KEY_SLASH",
+    "exclam": "KEY_1",
+    "numbersign": "KEY_3",
+    "dollar": "KEY_4",
+    "ampersand": "KEY_7",
+    "quotedbl": "KEY_APOSTROPHE",
+    "parenleft": "KEY_9",
+    "parenright": "KEY_0",
+    "colon": "KEY_SEMICOLON",
+    "underscore": "KEY_MINUS",
+    "at": "KEY_2",
+    "braceleft": "KEY_LEFTBRACE",
+    "braceright": "KEY_RIGHTBRACE",
+    "asciicircum": "KEY_6",
+    "asciitilde": "KEY_GRAVE",
+    "percent": "KEY_5",
 }
+
+# Combined table preserved for backward compatibility with callers inspecting it.
+_NAMED_EVDEV_KEYS: dict[str, str] = {**_FIXED_EVDEV_KEYS, **_US_PUNCT_EVDEV_KEYS}
 
 
 def evdev_code_for_key(token: str) -> Optional[int]:
-    """Resolve a canonical main-key token (e.g. "r", "f5", "space") to an evdev code.
+    """Resolve a canonical main-key token (e.g. "r", "f5", "kp_0", "bar") to an evdev code.
 
-    Letters are character-semantic (GDK keyval). Non-US layouts remap via the
-    active XKB map so AZERTY "a" hits KEY_Q, not US KEY_A.
+    Navigation, keypad, and function keys are layout-independent. Letters,
+    digits, punctuation, and dead keys remap through the active XKB layout map
+    so non-US layouts hit the right physical key (e.g. AZERTY "a" -> KEY_Q,
+    latam "bar" -> KEY_GRAVE, latam "questiondown" -> KEY_EQUAL, latam
+    "apostrophe" -> KEY_MINUS).
     """
     if not EVDEV_AVAILABLE or not token:
         return None
-    name = _NAMED_EVDEV_KEYS.get(token)
-    if name is not None:
-        return getattr(ecodes, name, None)
+    fixed_name = _FIXED_EVDEV_KEYS.get(token)
+    if fixed_name is not None:
+        return getattr(ecodes, fixed_name, None)
+    if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", token):
+        return getattr(ecodes, f"KEY_{token.upper()}", None)
+    if token in DEAD_KEY_TOKENS:
+        layout_map = get_active_char_to_evdev_map()
+        if layout_map and token in layout_map:
+            return layout_map[token]
+        return None
+    punct_char = PUNCTUATION_TOKEN_TO_CHAR.get(token)
+    if punct_char is not None:
+        layout_map = get_active_char_to_evdev_map()
+        if layout_map and punct_char in layout_map:
+            return layout_map[punct_char]
+        fallback_name = _US_PUNCT_EVDEV_KEYS.get(token)
+        if fallback_name is not None:
+            return getattr(ecodes, fallback_name, None)
+        return None
     if len(token) == 1:
         layout_map = get_active_char_to_evdev_map()
         if layout_map and token in layout_map:
             return layout_map[token]
-        if token.isalnum():
+        if token.isascii() and token.isalnum():
             return getattr(ecodes, f"KEY_{token.upper()}", None)
         return None
-    if re.fullmatch(r"f\d+", token):
-        return getattr(ecodes, f"KEY_{token.upper()}", None)
     return None
 
 

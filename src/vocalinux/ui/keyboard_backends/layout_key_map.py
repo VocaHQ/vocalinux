@@ -18,11 +18,46 @@ from typing import Optional
 
 from ...utils.host_process import host_env
 from ...utils.paths import xdg_config_home, xdg_data_home
+from .base import (
+    CHAR_TO_PUNCTUATION_TOKEN,
+    DEAD_KEYSYM_TO_TOKEN,
+    PUNCTUATION_TOKEN_TO_CHAR,
+)
 
 logger = logging.getLogger(__name__)
 
 _XKB_EVDEV_OFFSET = 8
+# X11/XKB numeric keypad keysym range (XK_KP_Space .. XK_KP_Equal). Keypad keys
+# have dedicated kp_* tokens and must not hijack main-block punctuation chars
+# (such as '=' -> KEY_KPEQUAL or '/' -> KEY_KPSLASH on non-US layouts).
+_XKB_KEYPAD_KEYSYM_MIN = 0xFF80
+_XKB_KEYPAD_KEYSYM_MAX = 0xFFBD
 _xkb_lib: object = None  # None = untried, False = missing, else CDLL
+
+# Static shifted->base fallback for US QWERTY when libxkbcommon is unavailable.
+_US_SHIFTED_TO_BASE: dict[str, str] = {
+    "!": "1",
+    "@": "2",
+    "#": "3",
+    "$": "4",
+    "%": "5",
+    "^": "6",
+    "&": "7",
+    "*": "8",
+    "(": "9",
+    ")": "0",
+    "_": "-",
+    "+": "=",
+    "{": "[",
+    "}": "]",
+    "|": "\\",
+    ":": ";",
+    '"': "'",
+    "<": ",",
+    ">": ".",
+    "?": "/",
+    "~": "`",
+}
 
 
 class _XkbRuleNames(Structure):
@@ -63,6 +98,8 @@ def _load_xkbcommon():
         lib.xkb_keymap_key_get_syms_by_level.restype = c_int
         lib.xkb_keysym_to_utf32.argtypes = [c_uint32]
         lib.xkb_keysym_to_utf32.restype = c_uint32
+        lib.xkb_keysym_from_name.argtypes = [c_char_p, c_int]
+        lib.xkb_keysym_from_name.restype = c_uint32
         lib.xkb_keymap_unref.argtypes = [c_void_p]
         lib.xkb_context_unref.argtypes = [c_void_p]
         _xkb_lib = lib
@@ -72,17 +109,48 @@ def _load_xkbcommon():
     return _xkb_lib
 
 
-def build_char_to_evdev_map(layout: str, variant: str = "") -> Optional[dict[str, int]]:
-    """Unshifted (level 0) char → evdev keycode for an XKB layout, or None."""
-    if not layout:
+def keysym_name_to_char(name: str) -> Optional[str]:
+    """Translate an XKB/GDK keysym name (e.g. ``ntilde``) to its Unicode char."""
+    if not name:
         return None
     lib = _load_xkbcommon()
     if not lib:
         return None
+    from_name = getattr(lib, "xkb_keysym_from_name", None)
+    to_utf32 = getattr(lib, "xkb_keysym_to_utf32", None)
+    if from_name is None or to_utf32 is None:
+        return None
+    try:
+        sym = int(from_name(name.encode("utf-8"), 0))
+    except (UnicodeEncodeError, TypeError, ValueError):
+        return None
+    if sym <= 0 or (_XKB_KEYPAD_KEYSYM_MIN <= sym <= _XKB_KEYPAD_KEYSYM_MAX):
+        return None
+    utf32 = int(to_utf32(sym))
+    if 32 <= utf32 <= 0x10FFFF:
+        return chr(utf32)
+    return None
+
+
+def _build_layout_tables(
+    layout: str, variant: str = ""
+) -> tuple[Optional[dict[str, int]], Optional[dict[str, str]]]:
+    """Build ``(char_to_evdev, shifted_to_base)`` tables for an XKB layout.
+
+    Level 0 (unshifted) entries always win. Level 1 (shifted) fills only keys
+    that have no level-0 binding on the layout (such as ``=`` / ``?`` / ``¡``
+    on ``latam``, or ``)`` on ``us``). Numeric keypad keysyms are excluded so
+    ``KEY_KP*`` nodes cannot hijack main-block punctuation.
+    """
+    if not layout:
+        return None, None
+    lib = _load_xkbcommon()
+    if not lib:
+        return None, None
 
     ctx = lib.xkb_context_new(0)
     if not ctx:
-        return None
+        return None, None
 
     names = _XkbRuleNames(
         None,
@@ -94,34 +162,66 @@ def build_char_to_evdev_map(layout: str, variant: str = "") -> Optional[dict[str
     keymap = lib.xkb_keymap_new_from_names(ctx, byref(names), 0)
     if not keymap:
         lib.xkb_context_unref(ctx)
-        return None
+        return None, None
 
     char_map: dict[str, int] = {}
+    level0_by_xkb: dict[int, str] = {}
+    level0_keys: set[str] = set()
+    shifted_to_base: dict[str, str] = {}
     try:
-        for xkb_code in range(
-            lib.xkb_keymap_min_keycode(keymap),
-            lib.xkb_keymap_max_keycode(keymap) + 1,
-        ):
-            if lib.xkb_keymap_num_layouts_for_key(keymap, xkb_code) == 0:
-                continue
-            if lib.xkb_keymap_num_levels_for_key(keymap, xkb_code, 0) == 0:
-                continue
-            syms_ptr = POINTER(c_uint32)()
-            n_syms = lib.xkb_keymap_key_get_syms_by_level(keymap, xkb_code, 0, 0, byref(syms_ptr))
-            if n_syms <= 0:
-                continue
-            utf32 = lib.xkb_keysym_to_utf32(syms_ptr[0])
-            if utf32 < 32 or utf32 > 0x10FFFF:
-                continue
-            ch = chr(utf32)
-            key = ch.lower() if ch.isalpha() else ch
-            if key not in char_map:
-                char_map[key] = int(xkb_code) - _XKB_EVDEV_OFFSET
+        min_kc = int(lib.xkb_keymap_min_keycode(keymap))
+        max_kc = int(lib.xkb_keymap_max_keycode(keymap))
+        for level in (0, 1):
+            for xkb_code in range(min_kc, max_kc + 1):
+                if lib.xkb_keymap_num_layouts_for_key(keymap, xkb_code) == 0:
+                    continue
+                if lib.xkb_keymap_num_levels_for_key(keymap, xkb_code, 0) <= level:
+                    continue
+                syms_ptr = POINTER(c_uint32)()
+                n_syms = lib.xkb_keymap_key_get_syms_by_level(
+                    keymap, xkb_code, 0, level, byref(syms_ptr)
+                )
+                if n_syms <= 0:
+                    continue
+                sym = int(syms_ptr[0])
+                if _XKB_KEYPAD_KEYSYM_MIN <= sym <= _XKB_KEYPAD_KEYSYM_MAX:
+                    continue
+                evdev_code = int(xkb_code) - _XKB_EVDEV_OFFSET
+                dead_token = DEAD_KEYSYM_TO_TOKEN.get(sym)
+                if dead_token is not None:
+                    key = dead_token
+                else:
+                    utf32 = int(lib.xkb_keysym_to_utf32(sym))
+                    if utf32 < 32 or utf32 > 0x10FFFF:
+                        continue
+                    ch = chr(utf32)
+                    key = ch.lower() if ch.isalpha() else ch
+
+                char_map.setdefault(key, evdev_code)
+                if level == 0:
+                    level0_by_xkb.setdefault(xkb_code, key)
+                    level0_keys.add(key)
+                elif key not in level0_keys:
+                    base_key = level0_by_xkb.get(xkb_code)
+                    if base_key is not None and base_key != key:
+                        shifted_to_base.setdefault(key, base_key)
     finally:
         lib.xkb_keymap_unref(keymap)
         lib.xkb_context_unref(ctx)
 
-    return char_map or None
+    return (char_map or None), (shifted_to_base or None)
+
+
+def build_char_to_evdev_map(layout: str, variant: str = "") -> Optional[dict[str, int]]:
+    """Char / dead-key token → evdev keycode for an XKB layout, or None."""
+    char_map, _ = _build_layout_tables(layout, variant)
+    return char_map
+
+
+def build_shifted_to_base_map(layout: str, variant: str = "") -> Optional[dict[str, str]]:
+    """Shifted-only char / dead-key → level-0 base key for an XKB layout, or None."""
+    _, shifted_to_base = _build_layout_tables(layout, variant)
+    return shifted_to_base
 
 
 def _detect_gnome_layout() -> tuple[str, str]:
@@ -434,15 +534,95 @@ def _detect_kde_layout() -> tuple[str, str]:
     return "", ""
 
 
+def _detect_x11_active_group() -> Optional[int]:
+    """Read the active XKB group index (0..3) from ``xset -q`` LED mask."""
+    try:
+        result = subprocess.run(
+            ["xset", "-q"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+            env=host_env(),
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        logger.debug("xset -q failed: %s", exc)
+        return None
+    if result.returncode != 0 or not result.stdout:
+        return None
+    match = re.search(r"LED mask:\s+([0-9a-fA-F]+)", result.stdout)
+    if not match:
+        return None
+    led_mask = int(match.group(1), 16)
+    return (led_mask >> 12) & 0x3
+
+
+def _detect_x11_layout() -> tuple[str, str]:
+    """Current XKB layout/variant from ``setxkbmap -query`` + active X11 group."""
+    if not os.environ.get("DISPLAY"):
+        return "", ""
+    try:
+        result = subprocess.run(
+            ["setxkbmap", "-query"],
+            capture_output=True,
+            text=True,
+            timeout=1,
+            check=False,
+            env=host_env(),
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError) as exc:
+        logger.debug("setxkbmap -query failed: %s", exc)
+        return "", ""
+    if result.returncode != 0 or not result.stdout:
+        return "", ""
+
+    layouts: list[str] = []
+    variants: list[str] = []
+    for line in result.stdout.splitlines():
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip().lower()
+        if key == "layout":
+            layouts = _csv_fields(value)
+        elif key == "variant":
+            variants = _csv_fields(value)
+    if not layouts:
+        return "", ""
+    if len(layouts) == 1:
+        return _layout_pair_at(layouts, variants, 0)
+
+    group = _detect_x11_active_group()
+    if group is None:
+        logger.debug("Multiple X11 layouts %s configured but active group is unknown", layouts)
+        return "", ""
+    return _layout_pair_at(layouts, variants, group)
+
+
+def _is_other_x11_desktop() -> bool:
+    """True when running an explicit non-GNOME/non-KDE X11 desktop (e.g. XFCE, i3)."""
+    if not os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        return False
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if not desktop:
+        return False
+    return not any(token in desktop for token in ("gnome", "ubuntu", "kde", "plasma"))
+
+
 def _detect_active_layout() -> tuple[str, str]:
     """Best-effort active XKB layout from the session (Wayland-safe).
 
     Plasma sessions prefer KDE sources so leftover GNOME gsettings (often ``us``)
-    cannot win. Other desktops try GNOME first, then KDE.
+    cannot win. Explicit non-GNOME/non-KDE X11 desktops (such as XFCE) prefer
+    ``setxkbmap -query`` for the same reason. Other desktops try GNOME first,
+    then KDE, then X11 ``setxkbmap``.
     """
-    detectors = (_detect_kde_layout, _detect_gnome_layout)
-    if not _is_plasma_session():
-        detectors = (_detect_gnome_layout, _detect_kde_layout)
+    if _is_plasma_session():
+        detectors = (_detect_kde_layout, _detect_gnome_layout, _detect_x11_layout)
+    elif _is_other_x11_desktop():
+        detectors = (_detect_x11_layout, _detect_gnome_layout, _detect_kde_layout)
+    else:
+        detectors = (_detect_gnome_layout, _detect_kde_layout, _detect_x11_layout)
     for detect in detectors:
         layout, variant = detect()
         if layout:
@@ -471,3 +651,44 @@ def get_active_char_to_evdev_map() -> Optional[dict[str, int]]:
             len(char_map),
         )
     return char_map
+
+
+@lru_cache(maxsize=16)
+def _cached_shifted_to_base_map(layout: str, variant: str) -> Optional[dict[str, str]]:
+    """Cache compiled shifted-to-base tables by ``(layout, variant)``."""
+    return build_shifted_to_base_map(layout, variant)
+
+
+def get_active_shifted_to_base_map() -> dict[str, str]:
+    """Shifted-only char/dead-key → level-0 base key map for the current active layout.
+
+    Reads the live active layout on each call so switching layouts never leaves
+    a stale shifted-to-base mapping; the underlying XKB table compilation is
+    cached per ``(layout, variant)``.
+    """
+    layout, variant = _detect_active_layout()
+    if not layout:
+        return {}
+    shifted_map = _cached_shifted_to_base_map(layout, variant)
+    if shifted_map is not None:
+        return shifted_map
+    if layout == "us" and not variant:
+        return dict(_US_SHIFTED_TO_BASE)
+    return {}
+
+
+def resolve_base_key_token(token: str) -> str:
+    """Convert a saved shifted-only main-key token to its active-layout base key.
+
+    For example, on ``latam`` ``"equal"`` (``=``, produced by Shift+0) maps to
+    ``"0"``, while on ``us`` ``"equal"`` stays ``"equal"`` and ``"parenright"``
+    maps to ``"0"``. Both X11 combo matching and gesture collision checks use
+    this conversion so saved shifted shortcuts stay compatible without double-firing.
+    """
+    if not token:
+        return token
+    lookup_key = PUNCTUATION_TOKEN_TO_CHAR.get(token, token)
+    base_key = get_active_shifted_to_base_map().get(lookup_key)
+    if base_key is None:
+        return token
+    return CHAR_TO_PUNCTUATION_TOKEN.get(base_key, base_key)

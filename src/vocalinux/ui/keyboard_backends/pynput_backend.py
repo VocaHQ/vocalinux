@@ -19,9 +19,28 @@ except ImportError:
     keyboard = None  # type: ignore
     PYNPUT_AVAILABLE = False
 
-from .base import DEFAULT_SHORTCUT, DEFAULT_SHORTCUT_MODE, KeyboardBackend
+from .base import (
+    CHAR_TO_PUNCTUATION_TOKEN,
+    DEAD_KEYSYM_TO_TOKEN,
+    DEFAULT_SHORTCUT,
+    DEFAULT_SHORTCUT_MODE,
+    XKB_HARDWARE_KEYPAD_TOKENS,
+    KeyboardBackend,
+    normalize_main_key_token,
+)
 
 logger = logging.getLogger(__name__)
+
+_XORG_KEYSYMS: dict[int, str] = {}
+_XORG_SYMBOLS: dict[str, tuple[int, str]] = {}
+if PYNPUT_AVAILABLE:
+    try:
+        from pynput._util import xorg_keysyms as _xorg_keysyms_mod
+
+        _XORG_KEYSYMS = dict(_xorg_keysyms_mod.KEYSYMS)
+        _XORG_SYMBOLS = dict(_xorg_keysyms_mod.SYMBOLS)
+    except ImportError:
+        pass
 
 
 def _optional_key(key_name: str) -> Any:
@@ -96,21 +115,70 @@ if PYNPUT_AVAILABLE:
         ALL_MODIFIER_KEYS |= _variant_set
 
 # pynput Key -> canonical named-key token (for combo main keys).
-_PYNPUT_NAMED_TOKENS = {}
+_PYNPUT_NAMED_TOKENS: dict[Any, str] = {}
 # Canonical punctuation char -> token.
-_PUNCT_TOKENS = {
-    ",": "comma",
-    ".": "period",
-    "/": "slash",
-    ";": "semicolon",
-    "'": "apostrophe",
-    "`": "grave",
-    "-": "minus",
-    "=": "equal",
-    "[": "leftbracket",
-    "]": "rightbracket",
-    "\\": "backslash",
+_PUNCT_TOKENS: dict[str, str] = dict(CHAR_TO_PUNCTUATION_TOKEN)
+
+# X11 keypad keysyms -> canonical kp_* token (both NumLock-on and NumLock-off forms).
+_X11_KEYPAD_KEYSYM_TOKENS: dict[int, str] = {
+    0xFFB0: "kp_0",  # XK_KP_0
+    0xFF9E: "kp_0",  # XK_KP_Insert
+    0xFFB1: "kp_1",  # XK_KP_1
+    0xFF9C: "kp_1",  # XK_KP_End
+    0xFFB2: "kp_2",  # XK_KP_2
+    0xFF99: "kp_2",  # XK_KP_Down
+    0xFFB3: "kp_3",  # XK_KP_3
+    0xFF9B: "kp_3",  # XK_KP_Next / KP_Page_Down
+    0xFFB4: "kp_4",  # XK_KP_4
+    0xFF96: "kp_4",  # XK_KP_Left
+    0xFFB5: "kp_5",  # XK_KP_5
+    0xFF9D: "kp_5",  # XK_KP_Begin
+    0xFFB6: "kp_6",  # XK_KP_6
+    0xFF98: "kp_6",  # XK_KP_Right
+    0xFFB7: "kp_7",  # XK_KP_7
+    0xFF95: "kp_7",  # XK_KP_Home
+    0xFFB8: "kp_8",  # XK_KP_8
+    0xFF97: "kp_8",  # XK_KP_Up
+    0xFFB9: "kp_9",  # XK_KP_9
+    0xFF9A: "kp_9",  # XK_KP_Prior / KP_Page_Up
+    0xFFAE: "kp_decimal",  # XK_KP_Decimal
+    0xFF9F: "kp_decimal",  # XK_KP_Delete
+    0xFFAC: "kp_decimal",  # XK_KP_Separator
+    0xFFAB: "kp_add",  # XK_KP_Add
+    0xFFAD: "kp_subtract",  # XK_KP_Subtract
+    0xFFAA: "kp_multiply",  # XK_KP_Multiply
+    0xFFAF: "kp_divide",  # XK_KP_Divide
+    0xFF8D: "kp_enter",  # XK_KP_Enter
 }
+
+# X11 keysyms that must take precedence over KeyCode.char (e.g. dead_grave
+# carries char='`' with vk=0xFE50, and ISO_Left_Tab is Shift+Tab).
+_X11_KEYSYM_PRIORITY_TOKENS: dict[int, str] = {
+    **DEAD_KEYSYM_TO_TOKEN,
+    **_X11_KEYPAD_KEYSYM_TOKENS,
+    0xFE20: "tab",  # XK_ISO_Left_Tab
+}
+
+# Complete X11 special/dead/keypad keysym -> canonical main-key token table.
+_X11_KEYSYM_TOKENS: dict[int, str] = {
+    **_X11_KEYSYM_PRIORITY_TOKENS,
+    0x0020: "space",  # XK_space
+    0xFF08: "backspace",  # XK_BackSpace
+    0xFF09: "tab",  # XK_Tab
+    0xFF0D: "enter",  # XK_Return
+    0xFF1B: "esc",  # XK_Escape
+    0xFFFF: "delete",  # XK_Delete
+    0xFF63: "insert",  # XK_Insert
+    0xFF50: "home",  # XK_Home
+    0xFF57: "end",  # XK_End
+    0xFF55: "pageup",  # XK_Page_Up
+    0xFF56: "pagedown",  # XK_Page_Down
+    0xFF52: "up",  # XK_Up
+    0xFF54: "down",  # XK_Down
+    0xFF51: "left",  # XK_Left
+    0xFF53: "right",  # XK_Right
+}
+
 if PYNPUT_AVAILABLE:
     _named_pairs = {
         "space": "space",
@@ -139,26 +207,93 @@ if PYNPUT_AVAILABLE:
             _PYNPUT_NAMED_TOKENS[_fkey] = f"f{_n}"
 
 
+def _char_to_token(char: str) -> Optional[str]:
+    """Map a single Unicode character to a canonical main-key token, or None."""
+    if not char or len(char) != 1:
+        return None
+    lowered = char.lower()
+    if len(lowered) == 1 and lowered.isalnum():
+        return lowered
+    return _PUNCT_TOKENS.get(char)
+
+
+def _x11_hardware_token(hardware_keycode: int) -> Optional[str]:
+    """Map layout-independent X11 hardware keycodes (F13–F24, keypad) to tokens."""
+    if 191 <= hardware_keycode <= 202:
+        return f"f{hardware_keycode - 178}"
+    return XKB_HARDWARE_KEYPAD_TOKENS.get(hardware_keycode)
+
+
+def x11_keysym_to_token(keysym: int) -> Optional[str]:
+    """Map an X11 keysym integer to a canonical main-key token, or None."""
+    if not isinstance(keysym, int) or keysym <= 0:
+        return None
+    token = _X11_KEYSYM_TOKENS.get(keysym)
+    if token is not None:
+        return token
+    if 0xFFBE <= keysym <= 0xFFD5:  # XK_F1 .. XK_F24
+        return f"f{keysym - 0xFFBE + 1}"
+    if 0x0020 <= keysym <= 0x00FF:
+        return _char_to_token(chr(keysym))
+    if 0x01000000 <= keysym <= 0x0110FFFF:
+        return _char_to_token(chr(keysym - 0x01000000))
+    name = _XORG_KEYSYMS.get(keysym)
+    if name is not None:
+        entry = _XORG_SYMBOLS.get(name)
+        if entry is not None and len(entry) >= 2:
+            return _char_to_token(entry[1])
+    return None
+
+
+def _extract_x11_key_info(display: Any, event: Any) -> Optional[tuple[int, int]]:
+    """Return ``(hardware_keycode, unshifted_keysym)`` from an X11 key event."""
+    try:
+        keycode = int(event.detail)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if keycode <= 0:
+        return None
+    unshifted_keysym = 0
+    try:
+        state = int(getattr(event, "state", 0) or 0)
+        group = (state >> 13) & 0x3
+        if group == 1:
+            unshifted_keysym = int(display.keycode_to_keysym(keycode, 2) or 0)
+        if not unshifted_keysym:
+            unshifted_keysym = int(display.keycode_to_keysym(keycode, 0) or 0)
+    except (AttributeError, IndexError, TypeError, ValueError, OSError) as exc:
+        logger.debug("Failed to look up unshifted X11 keysym for keycode %d: %s", keycode, exc)
+        unshifted_keysym = 0
+    return (keycode, unshifted_keysym)
+
+
 def pynput_key_token(key) -> Optional[str]:
     """Resolve a pynput key event to a canonical main-key token, or None.
 
     Handles letters/digits (incl. Ctrl+letter control-char remapping),
-    punctuation, named keys, and function keys.
+    punctuation, dead keys, keypad keys, named keys, and function keys.
     """
     if not PYNPUT_AVAILABLE:
         return None
     token = _PYNPUT_NAMED_TOKENS.get(key)
     if token is not None:
         return cast(str, token)
+    vk = getattr(key, "vk", None)
+    if isinstance(vk, int) and (vk in _X11_KEYSYM_PRIORITY_TOKENS or 0xFFBE <= vk <= 0xFFD5):
+        return x11_keysym_to_token(vk)
     char = getattr(key, "char", None)
-    if char:
-        lowered = cast(str, char.lower())
+    if isinstance(char, str) and char:
+        lowered = char.lower()
         if len(lowered) == 1 and lowered.isalnum():
             return lowered
         code = ord(char)
         if 1 <= code <= 26:  # Ctrl+letter arrives as a control character
             return chr(code + 96)
-        return _PUNCT_TOKENS.get(char)
+        punct = _PUNCT_TOKENS.get(char)
+        if punct is not None:
+            return punct
+    if isinstance(vk, int) and vk > 0:
+        return x11_keysym_to_token(vk)
     return None
 
 
@@ -187,9 +322,12 @@ class PynputKeyboardBackend(KeyboardBackend):
 
         # Combo (modifier+key) state.
         self._combo_required_modifier_keys: list[Any] = []
+        self._combo_raw_key_token: Optional[str] = None
         self._combo_key_token: Optional[str] = None
         self._combo_held_keys: set[Any] = set()
         self._combo_active = False
+        self._pending_x11_key_info: Optional[tuple[int, int]] = None
+        self._last_x11_group: Optional[int] = None
         self._resolve_combo_targets()
 
         if not PYNPUT_AVAILABLE:
@@ -204,12 +342,23 @@ class PynputKeyboardBackend(KeyboardBackend):
         super().set_shortcut(shortcut)
         self._resolve_combo_targets()
 
+    def _refresh_combo_key_token(self) -> None:
+        """Recompute the active-layout base-key target for the configured combo."""
+        if self._combo_raw_key_token is None:
+            self._combo_key_token = None
+            return
+        from .layout_key_map import resolve_base_key_token
+
+        self._combo_key_token = resolve_base_key_token(self._combo_raw_key_token)
+
     def _resolve_combo_targets(self) -> None:
         """Resolve the spec's combo modifiers and main key to pynput matchers."""
         self._combo_required_modifier_keys = []
+        self._combo_raw_key_token = None
         self._combo_key_token = None
         self._combo_held_keys = set()
         self._combo_active = False
+        self._last_x11_group = None
 
         spec = getattr(self, "_spec", None)
         if spec is None or not spec.is_combo or not PYNPUT_AVAILABLE:
@@ -224,7 +373,63 @@ class PynputKeyboardBackend(KeyboardBackend):
             modifier_key_sets.append(set(variants))
 
         self._combo_required_modifier_keys = modifier_key_sets
-        self._combo_key_token = spec.key
+        self._combo_raw_key_token = (
+            normalize_main_key_token(spec.key) if spec.key is not None else None
+        )
+        self._refresh_combo_key_token()
+
+    def _install_x11_key_resolver(self, listener: Any) -> None:
+        """Capture X11 hardware keycode and level-0 keysym on each event.
+
+        pynput's X11 listener translates keys through the shifted level when
+        Shift is held (e.g. ``Shift+0`` -> ``=`` on ``latam`` or ``)`` on
+        ``us``) and collapses keypad keys onto ``KeyCode('0')`` /
+        ``Key.insert``. Recording ``(hardware_keycode, unshifted_keysym)``
+        before dispatch lets combo matching resolve the underlying key while
+        preserving pynput's callback interface (#1074).
+        """
+        orig_handle_message = getattr(type(listener), "_handle_message", None)
+        if not callable(orig_handle_message):
+            return
+        bound_orig = listener._handle_message
+
+        def _wrapped_handle_message(display: Any, event: Any, injected: Any) -> Any:
+            try:
+                state = int(getattr(event, "state", 0) or 0)
+            except (TypeError, ValueError):
+                state = 0
+            group = (state >> 13) & 0x3
+            if self._combo_raw_key_token is not None and group != self._last_x11_group:
+                self._last_x11_group = group
+                self._refresh_combo_key_token()
+            self._pending_x11_key_info = _extract_x11_key_info(display, event)
+            try:
+                return bound_orig(display, event, injected)
+            finally:
+                self._pending_x11_key_info = None
+
+        listener._handle_message = _wrapped_handle_message
+
+    def _combo_key_matches(self, key: Any, x11_info: Optional[tuple[int, int]] = None) -> bool:
+        """Return True if *key* (with optional X11 event info) matches the combo target."""
+        target = self._combo_key_token
+        if target is None:
+            return False
+        if x11_info is not None:
+            hardware_keycode, unshifted_keysym = x11_info
+            # Layout-independent hardware keys (F13–F24 and numpad): match
+            # strictly so Numpad 0 never triggers '0' or 'insert'.
+            hw_token = _x11_hardware_token(hardware_keycode)
+            if hw_token is not None:
+                return hw_token == target
+            if unshifted_keysym:
+                unshifted_token = x11_keysym_to_token(unshifted_keysym)
+                if unshifted_token is not None:
+                    # Resolve strictly to the base (level-0) key so a single
+                    # keypress (e.g. latam Ctrl+Shift+0) never fires both
+                    # ctrl+shift+0 and ctrl+shift+equal simultaneously.
+                    return unshifted_token == target
+        return pynput_key_token(key) == target
 
     def _combo_modifiers_held(self) -> bool:
         """True if at least one variant of every required modifier is held."""
@@ -275,9 +480,12 @@ class PynputKeyboardBackend(KeyboardBackend):
             f"Starting pynput keyboard listener for shortcut: {self._shortcut} (mode: {self._mode})"
         )
         self.current_keys = set()
+        self._last_x11_group = None
+        self._refresh_combo_key_token()
 
         try:
             self.listener = keyboard.Listener(on_press=self._on_press, on_release=self._on_release)
+            self._install_x11_key_resolver(self.listener)
             self.listener.daemon = True
             self.listener.start()
 
@@ -300,6 +508,7 @@ class PynputKeyboardBackend(KeyboardBackend):
 
         logger.info("Stopping pynput keyboard listener")
         self.active = False
+        self._pending_x11_key_info = None
 
         if self.listener:
             try:
@@ -324,7 +533,10 @@ class PynputKeyboardBackend(KeyboardBackend):
                 self._combo_held_keys.add(key)
                 return
 
-            if pynput_key_token(key) == self._combo_key_token and self._combo_modifiers_held():
+            if (
+                self._combo_key_matches(key, self._pending_x11_key_info)
+                and self._combo_modifiers_held()
+            ):
                 if self._mode == "toggle":
                     current_time = time.time()
                     if (
@@ -349,7 +561,7 @@ class PynputKeyboardBackend(KeyboardBackend):
             if is_modifier:
                 self._combo_held_keys.discard(key)
 
-            is_main_key = pynput_key_token(key) == self._combo_key_token
+            is_main_key = self._combo_key_matches(key, self._pending_x11_key_info)
 
             if self._mode == "push_to_talk" and self._combo_active:
                 # End the hold when the main key or a required modifier is released.
