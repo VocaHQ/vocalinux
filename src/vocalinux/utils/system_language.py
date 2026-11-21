@@ -22,26 +22,125 @@ from .host_process import host_env
 
 logger = logging.getLogger(__name__)
 
-# xkb layout names that do not match the language id we use. Layouts not listed
-# here are looked up as-is, which covers pl, de, fr, it, es, ru and the rest.
-_LAYOUT_TO_LANGUAGE = {
+# xkb layout names are country/region codes, not ISO 639-1 language codes.
+# Layouts whose code collides with a different language (like "ca" for Canada
+# vs Catalan) or does not match the catalogue id must be mapped explicitly;
+# a value of None explicitly opts a multilingual country layout out of any
+# direct fallback (e.g. Belgian "be" must never fall through to Belarusian).
+_LAYOUT_TO_LANGUAGE: dict[str, Optional[str]] = {
     "us": "en-us",
     "gb": "en-us",
+    "au": "en-us",
+    "ie": "en-us",
+    "za": "en-us",
+    "ara": "ar",
+    "at": "de",
+    "bd": "bn",
+    "be": None,
+    "br": "pt",
+    "ca": "fr",
+    "cd": "fr",
+    "ch": "de",
+    "cn": "zh",
     "cz": "cs",
-    "se": "sv",
-    "si": "sl",
     "dk": "da",
     "gr": "el",
-    "ua": "uk",
+    "il": "he",
+    "ir": "fa",
     "jp": "ja",
     "kr": "ko",
-    "cn": "zh",
-    "ir": "fa",
-    "il": "he",
-    "br": "pt",
+    "latam": "es",
+    "md": "ro",
     "nb": "no",
     "nn": "no",
+    "se": "sv",
+    "si": "sl",
+    "ua": "uk",
     "vn": "vi",
+}
+
+# Variant-specific overrides keyed by normalised ``(layout, variant)`` (where
+# hyphens become underscores). Checked before ``_LAYOUT_TO_LANGUAGE``.
+# - A string maps that specific layout+variant to a catalogue language id.
+# - None opts a minority/other-language variant out of its base layout's
+#   language so it degrades cleanly to auto-detect.
+# - An empty variant key ``(layout, "")`` maps only the bare default layout on
+#   multilingual country layouts (like ``in``, ``ma``, ``iq``, ``sy``) so
+#   unlisted regional variants fall back to auto-detect instead of misidentifying.
+_LAYOUT_VARIANT_TO_LANGUAGE: dict[tuple[str, str], Optional[str]] = {
+    # Canada: default "ca" and French variants (fr, fr-legacy, fr-dvorak,
+    # multix, multi, multi-2gr) inherit "fr" from _LAYOUT_TO_LANGUAGE.
+    ("ca", "eng"): "en-us",
+    ("ca", "ike"): None,
+    ("ca", "kut"): None,
+    ("ca", "shs"): None,
+    # Switzerland: default "ch" and German variants inherit "de".
+    ("ch", "fr"): "fr",
+    ("ch", "fr_nodeadkeys"): "fr",
+    ("ch", "fr_mac"): "fr",
+    ("ch", "sun_type6_fr"): "fr",
+    ("ch", "it"): "it",
+    # Spain: Catalan is an explicit variant of "es", not layout "ca".
+    ("es", "cat"): "ca",
+    ("es", "ast"): None,
+    # India: multilingual layout; map bare default (Hindi) and catalogue
+    # variants explicitly so unsupported regional scripts return None.
+    ("in", ""): "hi",
+    ("in", "bolnagri"): "hi",
+    ("in", "hin_wx"): "hi",
+    ("in", "hin_kagapa"): "hi",
+    ("in", "eng"): "en-in",
+    ("in", "iipa"): "en-in",
+    ("in", "ben"): "bn",
+    ("in", "ben_probhat"): "bn",
+    ("in", "ben_baishakhi"): "bn",
+    ("in", "ben_bornona"): "bn",
+    ("in", "ben_gitanjali"): "bn",
+    ("in", "ben_inscript"): "bn",
+    ("in", "tam"): "ta",
+    ("in", "tam_tamilnet"): "ta",
+    ("in", "tam_tamilnet_with_tam_nums"): "ta",
+    ("in", "tam_tamilnet_tab"): "ta",
+    ("in", "tam_tamilnet_tscii"): "ta",
+    # Multilingual layouts with supported Arabic / French / Tamil / English variants.
+    ("ma", ""): "ar",
+    ("ma", "french"): "fr",
+    ("dz", "ar"): "ar",
+    ("iq", ""): "ar",
+    ("sy", ""): "ar",
+    ("pk", "ara"): "ar",
+    ("lk", "tam_unicode"): "ta",
+    ("lk", "tam_tab"): "ta",
+    ("cm", ""): "en-us",
+    ("cm", "french"): "fr",
+    ("cm", "azerty"): "fr",
+    ("ml", "fr_oss"): "fr",
+    ("ml", "us_mac"): "en-us",
+    ("ml", "us_intl"): "en-us",
+    # Cross-language variants on single-language base layouts.
+    ("us", "rus"): "ru",
+    ("us", "chr"): None,
+    ("us", "haw"): None,
+    ("gb", "pl"): "pl",
+    ("de", "ro"): "ro",
+    ("de", "ro_nodeadkeys"): "ro",
+    ("de", "tr"): "tr",
+    ("de", "ru"): "ru",
+    ("de", "ru_recom"): "ru",
+    ("de", "ru_translit"): "ru",
+    ("de", "dsb"): None,
+    ("de", "dsb_qwertz"): None,
+    ("fr", "oci"): None,
+    ("fr", "geo"): None,
+    ("cz", "rus"): "ru",
+    ("se", "rus"): "ru",
+    ("se", "rus_nodeadkeys"): "ru",
+    ("pl", "ru_phonetic_dvorak"): "ru",
+    ("ge", "ru"): "ru",
+    ("ie", "clogaelach"): None,
+    ("ie", "ogam"): None,
+    ("ie", "ogam_is434"): None,
+    ("md", "gag"): None,
 }
 
 # Common GNOME IBus engine ids. Looked up case-insensitively.
@@ -86,15 +185,53 @@ def _normalise(value: str) -> str:
     return value.strip().lower().replace("-", "_")
 
 
-def _language_for_layout(layout: str, supported: set[str] | dict) -> Optional[str]:
-    layout = _normalise(layout)
-    if not layout:
+def _parse_layout_spec(layout: str, variant: str = "") -> tuple[str, str]:
+    """Split an XKB layout specification into ``(layout, variant)`` parts.
+
+    Supports bare names (``"ca"``), GNOME ``layout+variant`` strings
+    (``"ca+multix"``), KDE/XKB ``layout(variant)`` strings (``"ch(fr)"``), and
+    an explicit ``variant`` argument (which takes precedence when non-empty).
+    """
+    raw_layout = layout.strip()
+    raw_variant = variant.strip()
+    if not raw_layout:
+        return "", ""
+
+    parsed_variant = ""
+    if "+" in raw_layout:
+        base, _, parsed_variant = raw_layout.partition("+")
+    elif raw_layout.endswith(")") and "(" in raw_layout:
+        base, _, rest = raw_layout.partition("(")
+        parsed_variant = rest[:-1]
+    else:
+        base = raw_layout
+
+    base = base.strip()
+    if not base:
+        return "", ""
+    return base, raw_variant or parsed_variant.strip()
+
+
+def _language_for_layout(
+    layout: str, supported: set[str] | dict[str, Any], variant: str = ""
+) -> Optional[str]:
+    """Map an XKB layout (and optional variant) onto a catalogue language id."""
+    raw_base, raw_variant = _parse_layout_spec(layout, variant)
+    base = _normalise(raw_base)
+    if not base:
         return None
-    mapped = _LAYOUT_TO_LANGUAGE.get(layout, layout)
-    return mapped if mapped in supported else None
+    norm_variant = _normalise(raw_variant)
+
+    key = (base, norm_variant)
+    if key in _LAYOUT_VARIANT_TO_LANGUAGE:
+        mapped = _LAYOUT_VARIANT_TO_LANGUAGE[key]
+        return mapped if mapped and mapped in supported else None
+
+    mapped = _LAYOUT_TO_LANGUAGE.get(base, base)
+    return mapped if mapped and mapped in supported else None
 
 
-def _language_for_locale(value: str, supported: set[str] | dict) -> Optional[str]:
+def _language_for_locale(value: str, supported: set[str] | dict[str, Any]) -> Optional[str]:
     """Map a locale string such as ``pl_PL.UTF-8`` onto a catalogue entry."""
     value = _normalise(value)
     if not value:
@@ -123,7 +260,12 @@ def _language_for_locale(value: str, supported: set[str] | dict) -> Optional[str
 
 
 def detect_keyboard_layout() -> Optional[str]:
-    """Return the primary xkb layout, or None when it cannot be read.
+    """Return the primary xkb layout (with variant if set), or None.
+
+    When ``localectl`` reports a non-empty primary ``X11 Variant`` alongside
+    ``X11 Layout``, the returned string carries it as ``layout+variant`` (for
+    example ``ca+eng`` or ``ch+fr``) so variant-aware language mapping works
+    outside GNOME as well.
 
     ``localectl`` is used rather than ``setxkbmap`` because the latter reports
     nothing useful on Wayland, where the compositor owns the keyboard.
@@ -144,22 +286,36 @@ def detect_keyboard_layout() -> Optional[str]:
         logger.debug(f"localectl exited with {result.returncode}")
         return None
 
-    layout = None
-    keymap = None
+    layout: Optional[str] = None
+    variant: Optional[str] = None
+    keymap: Optional[str] = None
     for line in result.stdout.splitlines():
         key, _, value = line.partition(":")
         key = key.strip().lower()
         value = value.strip()
-        if key == "x11 layout" and value:
+        if not value or value.lower() == "(unset)":
+            continue
+        if key == "x11 layout":
             layout = value
-        elif key == "vc keymap" and value:
+        elif key == "x11 variant":
+            variant = value
+        elif key == "vc keymap":
             keymap = value
 
-    # A multi-layout setup lists the primary one first: "pl,us".
-    chosen = layout or keymap
-    if not chosen:
-        return None
-    return chosen.split(",")[0].strip() or None
+    # A multi-layout setup lists the primary one first: "pl,us" with matching
+    # comma-separated variants such as "eng," or ",fr-legacy".
+    if layout:
+        primary_layout = layout.split(",")[0].strip()
+        if primary_layout:
+            primary_variant = variant.split(",")[0].strip() if variant else ""
+            if primary_variant and "+" not in primary_layout and "(" not in primary_layout:
+                return f"{primary_layout}+{primary_variant}"
+            return primary_layout
+
+    if keymap:
+        return keymap.split(",")[0].strip() or None
+
+    return None
 
 
 def detect_locale_language(environ: Optional[dict[str, str]] = None) -> Optional[str]:
@@ -273,8 +429,8 @@ def _parse_sources(value: Optional[str]) -> list[tuple[str, str]]:
     return cast(list[tuple[str, str]], list(parsed))
 
 
-def _xkb_layout_from_source(source: object) -> Optional[str]:
-    """Return the xkb layout id from one ``(type, id)`` input-source pair."""
+def _xkb_layout_and_variant_from_source(source: object) -> Optional[tuple[str, str]]:
+    """Return ``(layout, variant)`` from one ``(type, id)`` input-source pair."""
     if not isinstance(source, (list, tuple)) or len(source) != 2:
         return None
     source_type, source_id = source
@@ -285,7 +441,16 @@ def _xkb_layout_from_source(source: object) -> Optional[str]:
         # not something _LAYOUT_TO_LANGUAGE can map.
         logger.debug(f"Active input source {source_id!r} is {source_type}, not xkb")
         return None
-    return source_id.split("+", 1)[0].strip() or None
+    layout, variant = _parse_layout_spec(source_id)
+    if not layout:
+        return None
+    return layout, variant
+
+
+def _xkb_layout_from_source(source: object) -> Optional[str]:
+    """Return the xkb layout id from one ``(type, id)`` input-source pair."""
+    pair = _xkb_layout_and_variant_from_source(source)
+    return pair[0] if pair is not None else None
 
 
 def _source_at_index(parsed: list[tuple[str, str]], current: str) -> Optional[tuple[str, str]]:
@@ -354,7 +519,9 @@ def detect_active_keyboard_layout() -> Optional[str]:
     return _xkb_layout_from_source(_active_input_source())
 
 
-def _language_for_ibus_source(source: object, supported: set[str] | dict) -> Optional[str]:
+def _language_for_ibus_source(
+    source: object, supported: set[str] | dict[str, Any]
+) -> Optional[str]:
     """Map a GNOME IBus ``(type, id)`` pair onto a catalogue language."""
     if not isinstance(source, (list, tuple)) or len(source) != 2:
         return None
@@ -384,7 +551,7 @@ def _language_for_ibus_source(source: object, supported: set[str] | dict) -> Opt
     return None
 
 
-def language_for_active_layout(supported: set[str] | dict) -> Optional[str]:
+def language_for_active_layout(supported: set[str] | dict[str, Any]) -> Optional[str]:
     """Return the catalogue language for the active layout, or None (#821).
 
     Falls back to the configured primary layout where the active one cannot be
@@ -394,9 +561,12 @@ def language_for_active_layout(supported: set[str] | dict) -> Optional[str]:
     """
     active = _active_input_source()
     if active is not None:
-        layout = _xkb_layout_from_source(active)
-        if layout is not None:
-            return _language_for_layout_logged(layout, supported, "active keyboard layout")
+        xkb = _xkb_layout_and_variant_from_source(active)
+        if xkb is not None:
+            layout, variant = xkb
+            return _language_for_layout_logged(
+                layout, supported, "active keyboard layout", variant=variant
+            )
         language = _language_for_ibus_source(active, supported)
         if language:
             logger.debug(f"Language {language} taken from IBus engine {active!r}")
@@ -409,19 +579,20 @@ def language_for_active_layout(supported: set[str] | dict) -> Optional[str]:
 
     # Nothing readable -- not GNOME. The configured primary layout is the only
     # signal left, and is what a single-layout install reports anyway.
-    layout = detect_keyboard_layout()
-    if not layout:
+    configured_layout = detect_keyboard_layout()
+    if not configured_layout:
         return None
-    return _language_for_layout_logged(layout, supported, "configured keyboard layout")
+    return _language_for_layout_logged(configured_layout, supported, "configured keyboard layout")
 
 
 def _language_for_layout_logged(
-    layout: str, supported: set[str] | dict, source: str
+    layout: str, supported: set[str] | dict[str, Any], source: str, variant: str = ""
 ) -> Optional[str]:
     """Map a layout onto the catalogue, saying where it came from."""
-    language = _language_for_layout(layout, supported)
+    language = _language_for_layout(layout, supported, variant=variant)
+    label = f"{layout}+{variant}" if variant and "+" not in layout and "(" not in layout else layout
     if not language:
-        logger.debug(f"No catalogue language for {source} {layout!r}")
+        logger.debug(f"No catalogue language for {source} {label!r}")
         return None
-    logger.debug(f"Language {language} taken from {source} {layout!r}")
+    logger.debug(f"Language {language} taken from {source} {label!r}")
     return language

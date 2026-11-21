@@ -1,6 +1,7 @@
 """First run should start from the language the system points at (#777)."""
 
-from unittest.mock import patch
+from typing import Optional
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -357,3 +358,285 @@ def test_active_layout_reports_nothing_for_an_ibus_mru_entry():
 )
 def test_source_list_parsing(value, expected):
     assert sl._parse_sources(value) == expected
+
+
+# --- Variant-aware layout mapping and country-code collisions (#1070) -------
+
+
+@pytest.mark.parametrize(
+    "layout,expected",
+    [
+        # Canadian French layouts must map to French, never Catalan ("ca").
+        ("ca", "fr"),
+        ("ca+fr", "fr"),
+        ("ca+fr-legacy", "fr"),
+        ("ca+fr_legacy", "fr"),
+        ("ca+fr-dvorak", "fr"),
+        ("ca+multix", "fr"),
+        ("ca+multi", "fr"),
+        ("ca+multi-2gr", "fr"),
+        ("ca(multix)", "fr"),
+        ("ca(fr-legacy)", "fr"),
+        # Canadian English and Indigenous variants.
+        ("ca+eng", "en-us"),
+        ("ca(eng)", "en-us"),
+        ("ca+ike", None),
+        ("ca+kut", None),
+        ("ca+shs", None),
+        # Catalan is an explicit variant of Spanish, not the Canada layout.
+        ("es", "es"),
+        ("es+winkeys", "es"),
+        ("es+cat", "ca"),
+        ("es(cat)", "ca"),
+        ("es+ast", None),
+        ("latam", "es"),
+        ("latam+dvorak", "es"),
+        # Switzerland: German default, French and Italian variants.
+        ("ch", "de"),
+        ("ch+legacy", "de"),
+        ("ch+de", "de"),
+        ("ch+de_nodeadkeys", "de"),
+        ("ch+de_mac", "de"),
+        ("ch+fr", "fr"),
+        ("ch+fr_nodeadkeys", "fr"),
+        ("ch+fr-nodeadkeys", "fr"),
+        ("ch+fr_mac", "fr"),
+        ("ch(fr)", "fr"),
+        ("ch+it", "it"),
+        # Single-language country layouts.
+        ("ara", "ar"),
+        ("ara+qwerty", "ar"),
+        ("at", "de"),
+        ("at+nodeadkeys", "de"),
+        ("au", "en-us"),
+        ("bd", "bn"),
+        ("cd", "fr"),
+        ("ie", "en-us"),
+        ("ie+ogam", None),
+        ("ie+CloGaelach", None),
+        ("md", "ro"),
+        ("md+gag", None),
+        ("za", "en-us"),
+        # Multilingual India layout: supported scripts vs unsupported variants.
+        ("in", "hi"),
+        ("in+bolnagri", "hi"),
+        ("in+hin-wx", "hi"),
+        ("in+hin-kagapa", "hi"),
+        ("in+eng", "en-in"),
+        ("in+iipa", "en-in"),
+        ("in+ben", "bn"),
+        ("in+ben_inscript", "bn"),
+        ("in+tam", "ta"),
+        ("in+tam_tamilnet", "ta"),
+        ("in+guj", None),
+        ("in+tel", None),
+        ("in+kan", None),
+        ("in+mal", None),
+        ("in+marathi", None),
+        # Multilingual Arabic / other country layouts.
+        ("ma", "ar"),
+        ("ma+french", "fr"),
+        ("ma+tifinagh", None),
+        ("dz", None),
+        ("dz+ar", "ar"),
+        ("iq", "ar"),
+        ("iq+ku", None),
+        ("sy", "ar"),
+        ("sy+syc", None),
+        ("pk", None),
+        ("pk+ara", "ar"),
+        ("lk", None),
+        ("lk+tam_unicode", "ta"),
+        ("cm", "en-us"),
+        ("cm+french", "fr"),
+        ("cm+azerty", "fr"),
+        ("ml+fr-oss", "fr"),
+        ("ml+us-intl", "en-us"),
+        # Cross-language variants on single-language layouts.
+        ("us+rus", "ru"),
+        ("us+chr", None),
+        ("us+haw", None),
+        ("gb+pl", "pl"),
+        ("de+ro", "ro"),
+        ("de+ro_nodeadkeys", "ro"),
+        ("de+tr", "tr"),
+        ("de+ru", "ru"),
+        ("de+ru-translit", "ru"),
+        ("de+dsb", None),
+        ("fr+oci", None),
+        ("fr+geo", None),
+        ("cz+rus", "ru"),
+        ("se+rus", "ru"),
+        ("pl+ru_phonetic_dvorak", "ru"),
+        ("ge+ru", "ru"),
+        # Case, whitespace, and malformed specs.
+        (" CA + Multix ", "fr"),
+        ("ES(CAT)", "ca"),
+        ("ca+", "fr"),
+        ("ca()", "fr"),
+        ("+", None),
+        ("()", None),
+        ("+eng", None),
+        ("(eng)", None),
+        ("", None),
+    ],
+)
+def test_layout_and_variant_mapping(layout: str, expected: Optional[str]) -> None:
+    """Layout+variant specs resolve cleanly without country/language collisions."""
+    assert sl._language_for_layout(layout, SUPPORTED_LANGUAGES) == expected
+
+
+@pytest.mark.parametrize(
+    "layout,variant,expected",
+    [
+        ("ca", "multix", "fr"),
+        ("ca", "fr-legacy", "fr"),
+        ("ca", "eng", "en-us"),
+        ("ca", "ike", None),
+        ("ch", "fr", "fr"),
+        ("ch", "de_nodeadkeys", "de"),
+        ("es", "cat", "ca"),
+        ("in", "eng", "en-in"),
+        ("in", "guj", None),
+        # Explicit variant argument takes precedence over an inline variant.
+        ("ca+fr", "eng", "en-us"),
+    ],
+)
+def test_language_for_layout_accepts_explicit_variant_parameter(
+    layout: str, variant: str, expected: Optional[str]
+) -> None:
+    """Callers can pass layout and variant separately while preserving 2-arg compatibility."""
+    assert sl._language_for_layout(layout, SUPPORTED_LANGUAGES, variant=variant) == expected
+
+
+def test_belgian_layout_never_collides_with_belarusian() -> None:
+    """Belgian ('be') is multilingual and must never map to Belarusian ('be')."""
+    supported_with_belarusian = {"be", "fr", "nl", "de"}
+    assert sl._language_for_layout("be", supported_with_belarusian) is None
+    assert sl._language_for_layout("be+oss", supported_with_belarusian) is None
+
+
+def test_catalan_ibus_m17n_engine_still_maps_to_catalan() -> None:
+    """Mapping XKB 'ca' to French must not break Catalan m17n IBus engines."""
+    with patch.object(sl, "_active_input_source", return_value=("ibus", "m17n:ca:post")):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "ca"
+
+
+@pytest.mark.parametrize(
+    "source_id,expected",
+    [
+        ("ca", "fr"),
+        ("ca+fr", "fr"),
+        ("ca+fr-legacy", "fr"),
+        ("ca+fr-dvorak", "fr"),
+        ("ca+multix", "fr"),
+        ("ca+eng", "en-us"),
+        ("ca+ike", None),
+        ("ch", "de"),
+        ("ch+fr", "fr"),
+        ("es+cat", "ca"),
+        ("in+eng", "en-in"),
+        ("in+guj", None),
+    ],
+)
+def test_gnome_active_source_preserves_variant_for_language_resolution(
+    source_id: str, expected: Optional[str]
+) -> None:
+    """Follow-keyboard-layout must read the GNOME xkb variant instead of dropping it."""
+    with patch.object(sl, "_active_input_source", return_value=("xkb", source_id)):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == expected
+
+
+def test_gnome_mru_switching_between_english_and_canadian_french() -> None:
+    """Swiping between US English and French Canada in GNOME switches en-us <-> fr (#1070)."""
+    for ca_source in ("ca", "ca+fr-legacy", "ca+fr-dvorak", "ca+multix"):
+        values = {
+            "mru-sources": f"[('xkb', '{ca_source}'), ('xkb', 'us')]",
+            "sources": f"[('xkb', 'us'), ('xkb', '{ca_source}')]",
+            "current": "uint32 0",
+        }
+        with patch.object(sl, "_gsettings_get", side_effect=lambda key, v=values: v[key]):
+            assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "fr"
+
+    values_en = {
+        "mru-sources": "[('xkb', 'us'), ('xkb', 'ca+multix')]",
+        "sources": "[('xkb', 'us'), ('xkb', 'ca+multix')]",
+        "current": "uint32 0",
+    }
+    with patch.object(sl, "_gsettings_get", side_effect=lambda key: values_en[key]):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "en-us"
+
+
+@pytest.mark.parametrize(
+    "stdout,expected_layout,expected_language",
+    [
+        (
+            "   System Locale: LANG=fr_CA.UTF-8\n"
+            "       VC Keymap: cf\n"
+            "      X11 Layout: ca\n"
+            "     X11 Variant: multix\n",
+            "ca+multix",
+            "fr",
+        ),
+        (
+            "      X11 Layout: ca,us\n" "     X11 Variant: eng,\n",
+            "ca+eng",
+            "en-us",
+        ),
+        (
+            "      X11 Layout: us,ca\n" "     X11 Variant: ,fr-legacy\n",
+            "us",
+            "en-us",
+        ),
+        (
+            "      X11 Layout: ch,us\n" "     X11 Variant: fr,\n",
+            "ch+fr",
+            "fr",
+        ),
+        (
+            "      X11 Layout: es\n" "     X11 Variant: cat\n",
+            "es+cat",
+            "ca",
+        ),
+        (
+            "      X11 Layout: ca\n" "     X11 Variant: (unset)\n",
+            "ca",
+            "fr",
+        ),
+        (
+            "       VC Keymap: pl\n" "      X11 Layout: (unset)\n" "     X11 Variant: eng\n",
+            "pl",
+            "pl",
+        ),
+    ],
+)
+def test_localectl_parses_layout_and_variant(
+    stdout: str, expected_layout: str, expected_language: Optional[str]
+) -> None:
+    """detect_keyboard_layout preserves the primary X11 Variant from localectl."""
+    completed = MagicMock(returncode=0, stdout=stdout)
+    with patch.object(sl.subprocess, "run", return_value=completed):
+        detected = sl.detect_keyboard_layout()
+    assert detected == expected_layout
+    assert sl._language_for_layout(detected or "", SUPPORTED_LANGUAGES) == expected_language
+
+
+def test_first_run_detection_with_canadian_french_and_english_variants() -> None:
+    """First-run detection picks French for ca+multix and defers to locale for ca+eng."""
+    with patch.object(sl, "detect_keyboard_layout", return_value="ca+multix"):
+        assert sl.detect_system_language(SUPPORTED_LANGUAGES, {"LANG": "en_US.UTF-8"}) == "fr"
+
+    with patch.object(sl, "detect_keyboard_layout", return_value="ca+eng"):
+        assert sl.detect_system_language(SUPPORTED_LANGUAGES, {"LANG": "fr_CA.UTF-8"}) == "fr"
+        assert sl.detect_system_language(SUPPORTED_LANGUAGES, {"LANG": "C"}) == "en-us"
+
+
+def test_configured_fallback_uses_localectl_variant() -> None:
+    """Outside GNOME, language_for_active_layout resolves variants from localectl."""
+    stdout = "      X11 Layout: ch,us\n     X11 Variant: fr,\n"
+    completed = MagicMock(returncode=0, stdout=stdout)
+    with (
+        patch.object(sl, "_active_input_source", return_value=None),
+        patch.object(sl.subprocess, "run", return_value=completed),
+    ):
+        assert sl.language_for_active_layout(SUPPORTED_LANGUAGES) == "fr"
