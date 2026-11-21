@@ -591,6 +591,60 @@ class TestConfigurableMaxSegmentDuration(unittest.TestCase):
         self.assertEqual(mgr._max_segment_seconds, 180.0)
         self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 180.0)
 
+    def test_lowering_max_segment_seconds_during_capture_flushes_without_trimming(self) -> None:
+        """Lowering max_segment_seconds while buffer exceeds new cap flushes speech instead of trimming."""
+        mgr = _make_manager(max_segment_seconds=600)
+        mgr.state = RecognitionState.LISTENING
+        mgr.should_record = True
+        mgr.silence_timeout = 5.0
+        mgr.vad_sensitivity = 3
+        mgr._silero_vad = MagicMock()
+        mgr._silero_vad.process.return_value = 0.95
+
+        enqueued: list[list[bytes]] = []
+        mgr._enqueue_audio_segment = lambda buf, **kw: enqueued.append(list(buf))
+
+        # Simulate 5,200 buffered chunks (~332.8 s at 16 kHz) already captured under the 600 s cap.
+        existing_chunks = [b"\x01\x00" * 1024 for _ in range(5200)]
+
+        stream = MagicMock()
+        read_count = {"n": 0}
+
+        def _read(*_args: object, **_kwargs: object) -> bytes:
+            read_count["n"] += 1
+            if read_count["n"] == 1:
+                # Seed existing speech inside the live session after start_recognition clears it.
+                with mgr._buffer_lock:
+                    mgr.audio_buffer = list(existing_chunks)
+                    mgr._recording_segment_has_speech = True
+                # Lower limit from 600 s to 90 s (target cap 5,000 < 5,200 live chunks).
+                mgr.reconfigure(max_segment_seconds=90)
+                self.assertGreater(mgr._max_buffer_size, 5200)
+                self.assertEqual(mgr._pending_max_buffer_size, 5000)
+                return b"\x02\x00" * 1024
+            mgr.should_record = False
+            return b"\x00\x00" * 1024
+
+        stream.get_read_available.return_value = 1024
+        stream.read.side_effect = _read
+        pyaudio_mod, _ = _make_pyaudio_module(stream)
+
+        with (
+            patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                return_value=(1, 16000, stream),
+            ),
+        ):
+            mgr._record_audio()
+
+        # All 5,200 existing chunks plus the new chunk were flushed intact — zero chunks trimmed.
+        self.assertEqual(len(enqueued), 1)
+        self.assertEqual(len(enqueued[0]), 5201)
+        # Once the buffer drained, the deferred 5,000-chunk cap took effect.
+        self.assertEqual(mgr._max_buffer_size, 5000)
+        self.assertIsNone(mgr._pending_max_buffer_size)
+
     def test_reconfigure_state_attrs_include_segment_and_buffer_fields(self) -> None:
         """Rollback state snapshots cover _max_segment_seconds, _max_buffer_size, and remote timeout."""
         from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
@@ -598,6 +652,7 @@ class TestConfigurableMaxSegmentDuration(unittest.TestCase):
         attrs = SpeechRecognitionManager._RECONFIGURE_STATE_ATTRS
         self.assertIn("_max_segment_seconds", attrs)
         self.assertIn("_max_buffer_size", attrs)
+        self.assertIn("_pending_max_buffer_size", attrs)
         self.assertIn("remote_api_timeout_seconds", attrs)
 
 

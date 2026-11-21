@@ -1052,3 +1052,10 @@ class TestConfigurableLimits(unittest.TestCase):
         self.assertEqual(manager.get_post_processing_timeout(), 10.0)
         self.assertEqual(manager.get_max_segment_seconds(), 90.0)
         self.assertEqual(manager.get_remote_api_timeout(), 30.0)
+
+        manager.set_post_processing_timeout(120)
+        manager.set_max_segment_seconds(300)
+        manager.config["speech_recognition"] = "broken-again"
+        manager.set_remote_api_timeout(90)
+        self.assertEqual(manager.get_post_processing_timeout(), 120.0)
+        self.assertEqual(manager.get_remote_api_timeout(), 90.0)

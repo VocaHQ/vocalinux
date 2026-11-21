@@ -1464,22 +1464,36 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         finally:
             boot.stack.close()
 
+    @staticmethod
+    def _make_popen_mock(
+        returncode: int = 0,
+        stdout: str = "",
+        stderr: str = "",
+        communicate_side_effect: Optional[object] = None,
+    ) -> MagicMock:
+        """Build a mock Popen object for post-processing worker tests."""
+        proc = MagicMock()
+        proc.pid = -1
+        proc.returncode = returncode
+        if communicate_side_effect is not None:
+            proc.communicate.side_effect = communicate_side_effect
+        else:
+            proc.communicate.return_value = (stdout, stderr)
+        return proc
+
     def test_post_processing_transform_reaches_injector(self) -> None:
         """Configured script output is what gets injected, spacing rules included."""
         boot = self._boot_under_patches(post_script="/fake/script.sh")
         try:
-            run_result = MagicMock()
-            run_result.returncode = 0
-            run_result.stderr = ""
-            run_result.stdout = "TRANSFORMED"
-            with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
+            proc = self._make_popen_mock(stdout="TRANSFORMED")
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 boot.text_cb("hello").result(timeout=10)
                 boot.text_system.inject_text.assert_called_once_with("TRANSFORMED ")
 
                 # A transformed paragraph break keeps its newlines (and so
                 # skips the appended trailing space like any "\n" ending).
                 boot.text_system.inject_text.reset_mock()
-                run_result.stdout = "PARA ONE.\n\n"
+                proc.communicate.return_value = ("PARA ONE.\n\n", "")
                 boot.text_cb("para one.\n\n").result(timeout=10)
                 boot.text_system.inject_text.assert_called_once_with("PARA ONE.\n\n")
         finally:
@@ -1489,11 +1503,8 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         """A script that emits nothing swallows the segment — nothing injected."""
         boot = self._boot_under_patches(post_script="/fake/script.sh")
         try:
-            run_result = MagicMock()
-            run_result.returncode = 0
-            run_result.stderr = ""
-            run_result.stdout = ""
-            with patch("vocalinux.post_processor.subprocess.run", return_value=run_result):
+            proc = self._make_popen_mock(stdout="")
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 boot.text_cb("hello").result(timeout=10)
                 boot.text_system.inject_text.assert_not_called()
         finally:
@@ -1506,12 +1517,10 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             180 if (section, key) == ("post_processing", "timeout_seconds") else default
         )
         try:
-            run_result = MagicMock(returncode=0, stderr="", stdout="DONE")
-            with patch(
-                "vocalinux.post_processor.subprocess.run", return_value=run_result
-            ) as mock_run:
+            proc = self._make_popen_mock(stdout="DONE")
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 boot.text_cb("hello").result(timeout=10)
-                self.assertEqual(mock_run.call_args.kwargs["timeout"], 180.0)
+                self.assertEqual(proc.communicate.call_args.kwargs["timeout"], 180.0)
         finally:
             boot.stack.close()
 
@@ -1521,13 +1530,14 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+        def blocked_communicate(**_kwargs: object) -> tuple[str, str]:
             started.set()
             gate.wait(timeout=10)
-            return MagicMock(returncode=0, stdout="PROCESSED FIRST", stderr="")
+            return ("PROCESSED FIRST", "")
 
         try:
-            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+            proc = self._make_popen_mock(communicate_side_effect=blocked_communicate)
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 first = boot.text_cb("first")
                 self.assertTrue(started.wait(timeout=5))
                 # User disables the script while the first segment still runs;
@@ -1553,7 +1563,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         try:
             window_a = FocusedWindow(app_id="editor", wm_class="Editor", process_name="editor")
             window_b = FocusedWindow(app_id="browser", wm_class="Browser", process_name="browser")
-            run_result = MagicMock(returncode=0, stdout="OUT", stderr="")
+            proc = self._make_popen_mock(stdout="OUT")
             # First probe (submit time) sees the editor; the worker's re-probe
             # after the script finds the browser — different application.
             with (
@@ -1561,7 +1571,7 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                     "vocalinux.text_injection.focused_window.get_focused_window",
                     side_effect=[window_a, window_b, window_b, window_b],
                 ),
-                patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
+                patch("vocalinux.post_processor.subprocess.Popen", return_value=proc),
             ):
                 boot.text_cb("hello").result(timeout=10)
             boot.text_system.inject_text.assert_not_called()
@@ -1577,13 +1587,13 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             window = FocusedWindow(app_id="editor", process_name="editor")
             # Two editor windows differ only by title — same application.
             other_doc = FocusedWindow(app_id="editor", title="other.py", process_name="editor")
-            run_result = MagicMock(returncode=0, stdout="hello", stderr="")
+            proc = self._make_popen_mock(stdout="hello")
             with (
                 patch(
                     "vocalinux.text_injection.focused_window.get_focused_window",
                     side_effect=[window, other_doc, other_doc],
                 ),
-                patch("vocalinux.post_processor.subprocess.run", return_value=run_result),
+                patch("vocalinux.post_processor.subprocess.Popen", return_value=proc),
             ):
                 boot.text_cb("hello").result(timeout=10)
             boot.text_system.inject_text.assert_called_once_with("hello ")
@@ -1596,13 +1606,14 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+        def blocked_communicate(**_kwargs: object) -> tuple[str, str]:
             started.set()
             gate.wait(timeout=10)
-            return MagicMock(returncode=0, stdout="PROCESSED", stderr="")
+            return ("PROCESSED", "")
 
         try:
-            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+            proc = self._make_popen_mock(communicate_side_effect=blocked_communicate)
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 text_future = boot.text_cb("hello")
                 self.assertTrue(started.wait(timeout=5))
                 # The action is issued while the script still holds the worker;
@@ -1634,13 +1645,14 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+        def blocked_communicate(**_kwargs: object) -> tuple[str, str]:
             started.set()
             gate.wait(timeout=10)
-            return MagicMock(returncode=0, stdout="HELLO", stderr="")
+            return ("HELLO", "")
 
         try:
-            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+            proc = self._make_popen_mock(communicate_side_effect=blocked_communicate)
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 text_future = boot.text_cb("hello")
                 self.assertTrue(started.wait(timeout=5))
                 delete_future = boot.action_cb("delete_last")
@@ -1691,10 +1703,10 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
         probes_done = threading.Event()
         probe_calls: list = []
 
-        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+        def blocked_communicate(**_kwargs: object) -> tuple[str, str]:
             started.set()
             gate.wait(timeout=10)
-            return MagicMock(returncode=0, stdout="OUT", stderr="")
+            return ("OUT", "")
 
         try:
             window_a = FocusedWindow(app_id="editor", wm_class="Editor", process_name="editor")
@@ -1709,12 +1721,13 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
                     probes_done.set()
                 return next(window_iter)
 
+            proc = self._make_popen_mock(communicate_side_effect=blocked_communicate)
             with (
                 patch(
                     "vocalinux.text_injection.focused_window.get_focused_window",
                     side_effect=fake_probe,
                 ),
-                patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run),
+                patch("vocalinux.post_processor.subprocess.Popen", return_value=proc),
             ):
                 text_future = boot.text_cb("hello")
                 self.assertTrue(started.wait(timeout=5))
@@ -1742,28 +1755,31 @@ class TestMainCallbackTrailingSpaceEdges(unittest.TestCase):
             boot.stack.close()
 
     def test_running_job_drops_result_during_quit(self) -> None:
-        """A script mid-flight when quit begins cannot inject afterwards."""
+        """A script mid-flight when quit begins is terminated and cannot inject afterwards."""
         boot = self._boot_under_patches(post_script="/fake/script.sh")
         started = threading.Event()
         gate = threading.Event()
 
-        def blocked_run(cmd: list, **kwargs: object) -> MagicMock:
+        def blocked_communicate(**_kwargs: object) -> tuple[str, str]:
             started.set()
             gate.wait(timeout=10)
-            return MagicMock(returncode=0, stdout="TOO LATE", stderr="")
+            return ("TOO LATE", "")
+
+        proc = self._make_popen_mock(communicate_side_effect=blocked_communicate)
+        proc.terminate.side_effect = lambda: gate.set()
 
         try:
-            with patch("vocalinux.post_processor.subprocess.run", side_effect=blocked_run):
+            with patch("vocalinux.post_processor.subprocess.Popen", return_value=proc):
                 future = boot.text_cb("hello")
                 self.assertTrue(started.wait(timeout=5))
                 quit_thread = threading.Thread(
                     target=boot.mock_tray_cls.call_args.kwargs["on_quit"]
                 )
                 quit_thread.start()
-                gate.set()
                 quit_thread.join(timeout=10)
                 self.assertFalse(quit_thread.is_alive())
                 future.result(timeout=10)
+            proc.terminate.assert_called_once()
             boot.text_system.inject_text.assert_not_called()
         finally:
             gate.set()

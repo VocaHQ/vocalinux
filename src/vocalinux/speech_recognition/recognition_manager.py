@@ -683,6 +683,7 @@ class SpeechRecognitionManager:
             kwargs.get("max_segment_seconds", DEFAULT_MAX_SEGMENT_SECONDS)
         )
         self._max_buffer_size = self._buffer_size_for_segment_seconds(self._max_segment_seconds)
+        self._pending_max_buffer_size: Optional[int] = None
         self._reconnection_attempts = 0
         self._max_reconnection_attempts = 5
         self._reconnection_delay = 1.0  # Initial delay in seconds
@@ -824,6 +825,7 @@ class SpeechRecognitionManager:
     _oneshot_language_restore: Optional[str] = None
     _session_language: Optional[str] = None
     _max_buffer_size: int = _DEFAULT_MAX_BUFFER_SIZE
+    _pending_max_buffer_size: Optional[int] = None
     _max_segment_seconds: float = DEFAULT_MAX_SEGMENT_SECONDS
     remote_api_timeout_seconds: float = DEFAULT_REMOTE_API_TIMEOUT_SECONDS
 
@@ -849,6 +851,34 @@ class SpeechRecognitionManager:
         )
         return max(_DEFAULT_MAX_BUFFER_SIZE, required)
 
+    def _apply_max_segment_seconds(self, max_segment_seconds: float) -> None:
+        """Update ``_max_segment_seconds`` and resize ``_max_buffer_size`` safely.
+
+        If ``audio_buffer`` already holds at least ``target_cap`` chunks (for
+        example, lowering ``max_segment_seconds`` from 600 s to 90 s during
+        active capture), shrinking ``_max_buffer_size`` immediately would make
+        the next capture iteration trim the oldest 25% of speech before the
+        flush check runs. Keep ``_max_buffer_size`` above the live buffer until
+        it drains, then apply ``_pending_max_buffer_size``.
+        """
+        target_cap = self._buffer_size_for_segment_seconds(max_segment_seconds)
+        with getattr(self, "_buffer_lock", nullcontext()):
+            self._max_segment_seconds = max_segment_seconds
+            current_len = len(getattr(self, "audio_buffer", []))
+            if target_cap > current_len:
+                self._max_buffer_size = target_cap
+                self._pending_max_buffer_size = None
+            else:
+                self._max_buffer_size = max(self._max_buffer_size, current_len + 1)
+                self._pending_max_buffer_size = target_cap
+
+    def _clear_audio_buffer_locked(self) -> None:
+        """Clear ``audio_buffer`` and apply any deferred buffer-cap shrink (caller holds ``_buffer_lock``)."""
+        self.audio_buffer = []
+        if self._pending_max_buffer_size is not None:
+            self._max_buffer_size = self._pending_max_buffer_size
+            self._pending_max_buffer_size = None
+
     # Every live field ``reconfigure()`` can write. A failed engine switch
     # restores this set so dictation matches the persisted config, not the
     # attempted-but-unsaved Settings values.
@@ -862,6 +892,7 @@ class SpeechRecognitionManager:
         "silence_timeout",
         "_max_segment_seconds",
         "_max_buffer_size",
+        "_pending_max_buffer_size",
         "audio_device_index",
         "audio_device_name",
         "_voice_commands_preference",
@@ -3655,7 +3686,7 @@ class SpeechRecognitionManager:
             self._restore_language_after_oneshot()
             return False
         try:
-            self.audio_buffer = []
+            self._clear_audio_buffer_locked()
             self._segment_started_at = None
             self._recording_segment_has_speech = False
             self._session_cancel = threading.Event()
@@ -3837,7 +3868,7 @@ class SpeechRecognitionManager:
                             else None
                         ),
                     )
-                self.audio_buffer = []
+                self._clear_audio_buffer_locked()
                 self._recording_segment_has_speech = False
                 self._segment_started_at = None
             finally:
@@ -3956,7 +3987,7 @@ class SpeechRecognitionManager:
             self._transcribe_queued_segments()
         if self._buffer_lock.acquire(timeout=_FINAL_BUFFER_SECONDS):
             try:
-                self.audio_buffer = []
+                self._clear_audio_buffer_locked()
                 self._recording_segment_has_speech = False
                 self._segment_started_at = None
             finally:
@@ -4244,7 +4275,7 @@ class SpeechRecognitionManager:
                                         logger.debug(
                                             "Silence detected with no speech, dropping audio buffer"
                                         )
-                                        self.audio_buffer = []
+                                        self._clear_audio_buffer_locked()
                                     elif self._recognition_mode == "push_to_talk" or getattr(
                                         self, "_reload_pending", False
                                     ):
@@ -4254,7 +4285,7 @@ class SpeechRecognitionManager:
                                     else:
                                         logger.debug("Silence detected, queueing audio segment")
                                         self._enqueue_audio_segment(self.audio_buffer)
-                                        self.audio_buffer = []
+                                        self._clear_audio_buffer_locked()
                                         self._recording_segment_has_speech = False
                                 silence_counter = 0
                         else:  # Speech
@@ -4291,7 +4322,7 @@ class SpeechRecognitionManager:
                                 self, "_reload_pending", False
                             ):
                                 segment = self.audio_buffer.copy()
-                                self.audio_buffer = []
+                                self._clear_audio_buffer_locked()
                                 self._recording_segment_has_speech = False
                                 silence_counter = 0
                                 logger.info(
@@ -4448,7 +4479,7 @@ class SpeechRecognitionManager:
                 return
 
             audio_buffer = self.audio_buffer.copy()
-            self.audio_buffer = []
+            self._clear_audio_buffer_locked()
             self._recording_segment_has_speech = False
             self._segment_started_at = None
 
@@ -4968,9 +4999,7 @@ class SpeechRecognitionManager:
             if name == "voice_commands_enabled":
                 self._voice_commands_preference = value
             elif name == "max_segment_seconds":
-                with getattr(self, "_buffer_lock", nullcontext()):
-                    self._max_segment_seconds = value
-                    self._max_buffer_size = self._buffer_size_for_segment_seconds(value)
+                self._apply_max_segment_seconds(value)
             else:
                 setattr(self, name, value)
         self._voice_commands_enabled = self._resolve_voice_commands_enabled()
@@ -5173,10 +5202,9 @@ class SpeechRecognitionManager:
             self.stop_sound_guard_ms = kwargs.get("stop_sound_guard_ms", self.stop_sound_guard_ms)
 
         if "max_segment_seconds" in kwargs:
-            new_max_segment = clamp_max_segment_seconds(kwargs.get("max_segment_seconds"))
-            with getattr(self, "_buffer_lock", nullcontext()):
-                self._max_segment_seconds = new_max_segment
-                self._max_buffer_size = self._buffer_size_for_segment_seconds(new_max_segment)
+            self._apply_max_segment_seconds(
+                clamp_max_segment_seconds(kwargs.get("max_segment_seconds"))
+            )
 
         for param_name in whispercpp_attrs:
             if param_name in kwargs:
@@ -5846,7 +5874,9 @@ class SpeechRecognitionManager:
             logger.warning("Buffer limit too large, setting to maximum 20000")
             max_chunks = 20000
 
-        self._max_buffer_size = max_chunks
+        with getattr(self, "_buffer_lock", nullcontext()):
+            self._max_buffer_size = max_chunks
+            self._pending_max_buffer_size = None
         logger.info(f"Audio buffer limit set to {max_chunks} chunks")
 
     def get_buffer_stats(self) -> dict:

@@ -391,7 +391,7 @@ def main():
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
-    from .post_processor import apply_post_processing
+    from .post_processor import abort_active_post_processors, apply_post_processing
 
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
@@ -980,6 +980,9 @@ def main():
         # segment instead of injecting while the injector is being stopped.
         accepting_injections = threading.Event()
         accepting_injections.set()
+        # Set by the quit hook so any running post-processing script is aborted
+        # promptly instead of keeping Python alive until timeout_seconds elapses.
+        post_processing_cancel = threading.Event()
         # Serialises the flag check and the inject call itself: quitting can
         # wait out an injection already in progress while never blocking on a
         # queued or running script.
@@ -1066,7 +1069,9 @@ def main():
                 if not accepting_injections.is_set():
                     return
                 try:
-                    processed_text = apply_post_processing(text_to_inject, config_manager)
+                    processed_text = apply_post_processing(
+                        text_to_inject, config_manager, cancel_event=post_processing_cancel
+                    )
                 except Exception:
                     logger.exception("Post-processing raised unexpectedly; injecting original text")
                     processed_text = text_to_inject
@@ -1217,14 +1222,16 @@ def main():
             """Stop the post-processing worker for application quit.
 
             Clearing the flag makes queued or in-flight jobs drop their
-            results, and pending submissions are cancelled without waiting on
-            a running script — quit must not freeze the tray on the script's
-            own timeout.  An injection already in progress is asked to abort
-            so the lock wait stays bounded by a single chunk's subprocess
-            timeout instead of a long transcription's whole budget, and the
-            injector is never stopped mid-inject.
+            results, any running post-processing script is terminated so Python
+            does not wait out a long configured timeout on exit, and pending
+            submissions are cancelled.  An injection already in progress is
+            asked to abort so the lock wait stays bounded by a single chunk's
+            subprocess timeout instead of a long transcription's whole budget,
+            and the injector is never stopped mid-inject.
             """
             accepting_injections.clear()
+            post_processing_cancel.set()
+            abort_active_post_processors()
             text_system.abort_injections()
             with injection_lock:
                 pass
