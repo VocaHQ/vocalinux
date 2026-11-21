@@ -146,7 +146,13 @@ from .keyboard_backends import (  # noqa: E402
     is_valid_shortcut,
     parse_shortcut_spec,
 )
+from .keyboard_backends.base import (  # noqa: E402
+    CHAR_TO_PUNCTUATION_TOKEN,
+    DEAD_KEY_TOKENS,
+    XKB_HARDWARE_KEYPAD_TOKENS,
+)
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
+from .keyboard_backends.layout_key_map import keysym_name_to_char  # noqa: E402
 from .settings_about import (  # noqa: F401
     _ABOUT_ICON_TEXT_PX,
     _ABOUT_INK,
@@ -1580,7 +1586,7 @@ def recommended_model_for_engine(
     )
 
 
-# GDK key-symbol names that are themselves modifiers (skipped while recording).
+# GDK key-symbol names that are themselves modifiers/locks (skipped while recording).
 _GDK_MODIFIER_KEYNAMES = {
     "Control_L",
     "Control_R",
@@ -1595,15 +1601,21 @@ _GDK_MODIFIER_KEYNAMES = {
     "Hyper_L",
     "Hyper_R",
     "ISO_Level3_Shift",
+    "ISO_Level5_Shift",
+    "Mode_switch",
+    "Num_Lock",
+    "Caps_Lock",
+    "Scroll_Lock",
 }
 
-# GDK key-symbol names -> canonical main-key tokens (irregular names only;
-# single letters/digits and function keys are handled by rule).
-_GDK_KEYNAME_TOKENS = {
+# GDK key-symbol names -> canonical main-key tokens (irregular names, keypad
+# names, punctuation, and dead keys; single letters/digits, Unicode letter
+# names, and function keys are handled by rule).
+_GDK_KEYNAME_TOKENS: dict[str, str] = {
     "space": "space",
     "Return": "enter",
-    "KP_Enter": "enter",
     "Tab": "tab",
+    "ISO_Left_Tab": "tab",
     "Escape": "esc",
     "BackSpace": "backspace",
     "Delete": "delete",
@@ -1616,6 +1628,38 @@ _GDK_KEYNAME_TOKENS = {
     "Down": "down",
     "Left": "left",
     "Right": "right",
+    # Numeric keypad (both NumLock-on digits and NumLock-off / Shift-inverted names).
+    "KP_0": "kp_0",
+    "KP_Insert": "kp_0",
+    "KP_1": "kp_1",
+    "KP_End": "kp_1",
+    "KP_2": "kp_2",
+    "KP_Down": "kp_2",
+    "KP_3": "kp_3",
+    "KP_Next": "kp_3",
+    "KP_Page_Down": "kp_3",
+    "KP_4": "kp_4",
+    "KP_Left": "kp_4",
+    "KP_5": "kp_5",
+    "KP_Begin": "kp_5",
+    "KP_6": "kp_6",
+    "KP_Right": "kp_6",
+    "KP_7": "kp_7",
+    "KP_Home": "kp_7",
+    "KP_8": "kp_8",
+    "KP_Up": "kp_8",
+    "KP_9": "kp_9",
+    "KP_Prior": "kp_9",
+    "KP_Page_Up": "kp_9",
+    "KP_Decimal": "kp_decimal",
+    "KP_Delete": "kp_decimal",
+    "KP_Separator": "kp_decimal",
+    "KP_Add": "kp_add",
+    "KP_Subtract": "kp_subtract",
+    "KP_Multiply": "kp_multiply",
+    "KP_Divide": "kp_divide",
+    "KP_Enter": "kp_enter",
+    # Punctuation & symbols (US + international ISO layouts).
     "comma": "comma",
     "period": "period",
     "slash": "slash",
@@ -1627,7 +1671,49 @@ _GDK_KEYNAME_TOKENS = {
     "bracketleft": "leftbracket",
     "bracketright": "rightbracket",
     "backslash": "backslash",
+    "less": "less",
+    "greater": "greater",
+    "plus": "plus",
+    "asterisk": "asterisk",
+    "bar": "bar",
+    "questiondown": "questiondown",
+    "exclamdown": "exclamdown",
+    "question": "question",
+    "exclam": "exclam",
+    "numbersign": "numbersign",
+    "dollar": "dollar",
+    "ampersand": "ampersand",
+    "quotedbl": "quotedbl",
+    "parenleft": "parenleft",
+    "parenright": "parenright",
+    "colon": "colon",
+    "underscore": "underscore",
+    "at": "at",
+    "braceleft": "braceleft",
+    "braceright": "braceright",
+    "asciicircum": "asciicircum",
+    "asciitilde": "asciitilde",
+    "percent": "percent",
+    "section": "section",
+    "degree": "degree",
+    "guillemotleft": "guillemotleft",
+    "guillemotright": "guillemotright",
+    # Dead keys present at level 0 on international layouts.
+    **{token: token for token in DEAD_KEY_TOKENS},
 }
+
+
+def _gdk_keyname_to_unicode_char(name: str) -> Optional[str]:
+    """Resolve a multi-char GDK/XKB keysym name (e.g. ``ntilde``) to a Unicode char."""
+    try:
+        kv = Gdk.keyval_from_name(name)
+        if isinstance(kv, int) and kv > 0:
+            cp = Gdk.keyval_to_unicode(kv)
+            if isinstance(cp, int) and cp >= 32:
+                return chr(cp)
+    except Exception:
+        pass
+    return keysym_name_to_char(name)
 
 
 def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
@@ -1640,6 +1726,12 @@ def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
         return name.lower()
     if re.fullmatch(r"[Ff]([1-9]|1[0-9]|2[0-4])", name):
         return name.lower()
+    ch = _gdk_keyname_to_unicode_char(name)
+    if ch is not None and len(ch) == 1:
+        lowered = ch.lower()
+        if len(lowered) == 1 and lowered.isalnum():
+            return lowered
+        return CHAR_TO_PUNCTUATION_TOKEN.get(ch)
     return None
 
 
@@ -1656,6 +1748,52 @@ def function_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[
         return None
     if 191 <= code <= 202:
         return f"f{code - 178}"
+    return None
+
+
+def keypad_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[str]:
+    """Map XKB/GDK numeric keypad hardware keycodes to canonical ``kp_*`` tokens.
+
+    On Linux X11 and Wayland, keypad hardware keycodes are layout-independent
+    and stay constant regardless of NumLock or Shift state (e.g. ``KEY_KP0``
+    is always hardware keycode 90 whether GDK reports ``KP_0`` or ``KP_Insert``).
+    """
+    try:
+        code = int(hardware_keycode)
+    except (TypeError, ValueError):
+        return None
+    return XKB_HARDWARE_KEYPAD_TOKENS.get(code)
+
+
+def _unshifted_gdk_keyval_from_event(event: Any) -> Optional[int]:
+    """Resolve the level-0 (unshifted) GDK keyval for a key-press event.
+
+    When Shift is held, ``event.keyval`` carries the shifted keysym (e.g.
+    ``equal`` for ``Shift+0`` on ``latam``, ``parenright`` for ``Shift+0`` on
+    ``us``, ``degree`` for ``Shift+|`` on ``latam``). Querying the active
+    keymap at modifier state 0 recovers the base keycap symbol so shortcuts
+    bind to the underlying key rather than its shifted glyph (#1074).
+    """
+    hardware = getattr(event, "hardware_keycode", 0) or 0
+    if not isinstance(hardware, int) or hardware <= 0:
+        return None
+    group = getattr(event, "group", 0)
+    if not isinstance(group, int) or group < 0:
+        group = 0
+    try:
+        display = Gdk.Display.get_default()
+        keymap = (
+            Gdk.Keymap.get_for_display(display) if display is not None else Gdk.Keymap.get_default()
+        )
+        if keymap is None:
+            return None
+        result = keymap.translate_keyboard_state(hardware, Gdk.ModifierType(0), group)
+    except Exception:
+        return None
+    if isinstance(result, tuple) and len(result) >= 2 and result[0] is True:
+        keyval = result[1]
+        if isinstance(keyval, int) and keyval > 0:
+            return keyval
     return None
 
 
@@ -1691,9 +1829,22 @@ def _gdk_capture_to_shortcut(
     modifiers: list[str],
     keyval_name: Optional[str],
     hardware_keycode: int = 0,
+    unshifted_keyval_name: Optional[str] = None,
 ) -> Optional[str]:
-    """Build a shortcut from recorder inputs, preferring FK13–FK24 keycodes."""
+    """Build a shortcut from recorder inputs.
+
+    Precedence:
+    1. Layout-independent hardware keycodes: FK13–FK24 and numeric keypad keys.
+    2. Unshifted (level-0) keyval name from the active keymap so ``Shift+key``
+       binds to the base key (e.g. ``Ctrl+Shift+0`` -> ``ctrl+shift+0``, not
+       ``ctrl+shift+equal`` on ``latam``).
+    3. Reported ``keyval_name`` fallback when no unshifted keyval is available.
+    """
     token = function_token_from_gdk_hardware_keycode(hardware_keycode)
+    if token is None:
+        token = keypad_token_from_gdk_hardware_keycode(hardware_keycode)
+    if token is None and unshifted_keyval_name:
+        token = _gdk_keyname_to_token(unshifted_keyval_name)
     if token is None:
         token = _gdk_keyname_to_token(keyval_name)
     return _shortcut_from_capture(modifiers, token)
@@ -5826,7 +5977,16 @@ class SettingsDialog(AboutSectionMixin):
         if state & Gdk.ModifierType.SUPER_MASK:
             modifiers.append("super")
         hardware = getattr(event, "hardware_keycode", 0) or 0
-        return _gdk_capture_to_shortcut(modifiers, Gdk.keyval_name(event.keyval), hardware)
+        unshifted_kv = _unshifted_gdk_keyval_from_event(event)
+        unshifted_name = Gdk.keyval_name(unshifted_kv) if unshifted_kv else None
+        if not isinstance(unshifted_name, str):
+            unshifted_name = None
+        return _gdk_capture_to_shortcut(
+            modifiers,
+            Gdk.keyval_name(event.keyval),
+            hardware,
+            unshifted_keyval_name=unshifted_name,
+        )
 
     def _on_shortcut_key_press(self, widget, event):
         """Capture a pressed combo while recording; otherwise pass through."""

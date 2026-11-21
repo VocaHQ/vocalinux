@@ -601,3 +601,79 @@ def test_evdev_code_named_and_function_keys(monkeypatch):
     # single non-alnum char with no layout entry → None (not KEY_*)
     monkeypatch.setattr(evdev_backend, "get_active_char_to_evdev_map", lambda: None)
     assert evdev_backend.evdev_code_for_key("@") is None
+
+
+def test_xkb_latam_maps_punctuation_dead_keys_and_skips_keypad() -> None:
+    """Latin-American layout maps unshifted/shifted keys without keypad hijacking (#1074)."""
+    char_map = build_char_to_evdev_map("latam")
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    evdev = pytest.importorskip("evdev")
+    ecodes = evdev.ecodes
+
+    # Level-0 (unshifted) keys on latam:
+    assert char_map["0"] == ecodes.KEY_0
+    assert char_map["|"] == ecodes.KEY_GRAVE
+    assert char_map["¿"] == ecodes.KEY_EQUAL
+    assert char_map["'"] == ecodes.KEY_MINUS
+    assert char_map["-"] == ecodes.KEY_SLASH
+    assert char_map["+"] == ecodes.KEY_RIGHTBRACE
+    assert char_map["ñ"] == ecodes.KEY_SEMICOLON
+    assert char_map["<"] == ecodes.KEY_102ND
+    assert char_map["dead_acute"] == ecodes.KEY_LEFTBRACE
+
+    # Level-1 fallbacks must hit main-block keys, NEVER KEY_KP*:
+    assert char_map["="] == ecodes.KEY_0
+    assert char_map["?"] == ecodes.KEY_MINUS
+    assert char_map["¡"] == ecodes.KEY_EQUAL
+    assert char_map["/"] == ecodes.KEY_7
+
+
+def test_xkb_fr_skips_keypad_for_punctuation() -> None:
+    """AZERTY fr maps '/' and '.' to main-block keys, not KEY_KPSLASH/KEY_KPCOMMA."""
+    char_map = build_char_to_evdev_map("fr")
+    if char_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+    evdev = pytest.importorskip("evdev")
+    ecodes = evdev.ecodes
+
+    assert char_map["/"] == ecodes.KEY_DOT
+    assert char_map["."] == ecodes.KEY_COMMA
+    assert char_map[";"] == ecodes.KEY_COMMA
+    assert char_map["0"] == ecodes.KEY_0
+
+
+def test_keysym_name_to_char() -> None:
+    """keysym_name_to_char resolves named letters while rejecting keypad/modifier names."""
+    if lkm._load_xkbcommon() is False:
+        pytest.skip("libxkbcommon not available")
+    assert lkm.keysym_name_to_char("ntilde") == "ñ"
+    assert lkm.keysym_name_to_char("ssharp") == "ß"
+    assert lkm.keysym_name_to_char("KP_0") is None
+    assert lkm.keysym_name_to_char("Control_L") is None
+    assert lkm.keysym_name_to_char("") is None
+
+
+@pytest.mark.skipif(not evdev_backend.EVDEV_AVAILABLE, reason="evdev not available")
+def test_evdev_code_for_key_latam_punctuation_dead_and_keypad(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """evdev_code_for_key resolves latam punctuation, dead keys, and keypad tokens (#1074)."""
+    from evdev import ecodes
+
+    latam_map = build_char_to_evdev_map("latam")
+    if latam_map is None:
+        pytest.skip("libxkbcommon or XKB data not available")
+
+    monkeypatch.setattr(evdev_backend, "get_active_char_to_evdev_map", lambda: latam_map)
+    assert evdev_backend.evdev_code_for_key("0") == ecodes.KEY_0
+    assert evdev_backend.evdev_code_for_key("bar") == ecodes.KEY_GRAVE
+    assert evdev_backend.evdev_code_for_key("questiondown") == ecodes.KEY_EQUAL
+    assert evdev_backend.evdev_code_for_key("exclamdown") == ecodes.KEY_EQUAL
+    assert evdev_backend.evdev_code_for_key("apostrophe") == ecodes.KEY_MINUS
+    assert evdev_backend.evdev_code_for_key("question") == ecodes.KEY_MINUS
+    assert evdev_backend.evdev_code_for_key("equal") == ecodes.KEY_0
+    assert evdev_backend.evdev_code_for_key("dead_acute") == ecodes.KEY_LEFTBRACE
+    assert evdev_backend.evdev_code_for_key("ñ") == ecodes.KEY_SEMICOLON
+    assert evdev_backend.evdev_code_for_key("kp_0") == ecodes.KEY_KP0
+    assert evdev_backend.evdev_code_for_key("kp_enter") == ecodes.KEY_KPENTER

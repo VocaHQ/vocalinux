@@ -18,10 +18,16 @@ from typing import Optional
 
 from ...utils.host_process import host_env
 from ...utils.paths import xdg_config_home, xdg_data_home
+from .base import DEAD_KEYSYM_TO_TOKEN
 
 logger = logging.getLogger(__name__)
 
 _XKB_EVDEV_OFFSET = 8
+# X11/XKB numeric keypad keysym range (XK_KP_Space .. XK_KP_Equal). Keypad keys
+# have dedicated kp_* tokens and must not hijack main-block punctuation chars
+# (such as '=' -> KEY_KPEQUAL or '/' -> KEY_KPSLASH on non-US layouts).
+_XKB_KEYPAD_KEYSYM_MIN = 0xFF80
+_XKB_KEYPAD_KEYSYM_MAX = 0xFFBD
 _xkb_lib: object = None  # None = untried, False = missing, else CDLL
 
 
@@ -63,6 +69,8 @@ def _load_xkbcommon():
         lib.xkb_keymap_key_get_syms_by_level.restype = c_int
         lib.xkb_keysym_to_utf32.argtypes = [c_uint32]
         lib.xkb_keysym_to_utf32.restype = c_uint32
+        lib.xkb_keysym_from_name.argtypes = [c_char_p, c_int]
+        lib.xkb_keysym_from_name.restype = c_uint32
         lib.xkb_keymap_unref.argtypes = [c_void_p]
         lib.xkb_context_unref.argtypes = [c_void_p]
         _xkb_lib = lib
@@ -72,8 +80,37 @@ def _load_xkbcommon():
     return _xkb_lib
 
 
+def keysym_name_to_char(name: str) -> Optional[str]:
+    """Translate an XKB/GDK keysym name (e.g. ``ntilde``) to its Unicode char."""
+    if not name:
+        return None
+    lib = _load_xkbcommon()
+    if not lib:
+        return None
+    from_name = getattr(lib, "xkb_keysym_from_name", None)
+    to_utf32 = getattr(lib, "xkb_keysym_to_utf32", None)
+    if from_name is None or to_utf32 is None:
+        return None
+    try:
+        sym = int(from_name(name.encode("utf-8"), 0))
+    except (UnicodeEncodeError, TypeError, ValueError):
+        return None
+    if sym <= 0 or (_XKB_KEYPAD_KEYSYM_MIN <= sym <= _XKB_KEYPAD_KEYSYM_MAX):
+        return None
+    utf32 = int(to_utf32(sym))
+    if 32 <= utf32 <= 0x10FFFF:
+        return chr(utf32)
+    return None
+
+
 def build_char_to_evdev_map(layout: str, variant: str = "") -> Optional[dict[str, int]]:
-    """Unshifted (level 0) char → evdev keycode for an XKB layout, or None."""
+    """Char / dead-key token → evdev keycode for an XKB layout, or None.
+
+    Level 0 (unshifted) entries always win. Level 1 (shifted) fills only keys
+    that have no level-0 binding on the layout (such as ``=`` / ``?`` / ``¡``
+    on ``latam``, or top-row digits on ``fr`` AZERTY). Numeric keypad keysyms
+    are excluded so ``KEY_KP*`` nodes cannot hijack main-block punctuation.
+    """
     if not layout:
         return None
     lib = _load_xkbcommon()
@@ -98,25 +135,34 @@ def build_char_to_evdev_map(layout: str, variant: str = "") -> Optional[dict[str
 
     char_map: dict[str, int] = {}
     try:
-        for xkb_code in range(
-            lib.xkb_keymap_min_keycode(keymap),
-            lib.xkb_keymap_max_keycode(keymap) + 1,
-        ):
-            if lib.xkb_keymap_num_layouts_for_key(keymap, xkb_code) == 0:
-                continue
-            if lib.xkb_keymap_num_levels_for_key(keymap, xkb_code, 0) == 0:
-                continue
-            syms_ptr = POINTER(c_uint32)()
-            n_syms = lib.xkb_keymap_key_get_syms_by_level(keymap, xkb_code, 0, 0, byref(syms_ptr))
-            if n_syms <= 0:
-                continue
-            utf32 = lib.xkb_keysym_to_utf32(syms_ptr[0])
-            if utf32 < 32 or utf32 > 0x10FFFF:
-                continue
-            ch = chr(utf32)
-            key = ch.lower() if ch.isalpha() else ch
-            if key not in char_map:
-                char_map[key] = int(xkb_code) - _XKB_EVDEV_OFFSET
+        min_kc = int(lib.xkb_keymap_min_keycode(keymap))
+        max_kc = int(lib.xkb_keymap_max_keycode(keymap))
+        for level in (0, 1):
+            for xkb_code in range(min_kc, max_kc + 1):
+                if lib.xkb_keymap_num_layouts_for_key(keymap, xkb_code) == 0:
+                    continue
+                if lib.xkb_keymap_num_levels_for_key(keymap, xkb_code, 0) <= level:
+                    continue
+                syms_ptr = POINTER(c_uint32)()
+                n_syms = lib.xkb_keymap_key_get_syms_by_level(
+                    keymap, xkb_code, 0, level, byref(syms_ptr)
+                )
+                if n_syms <= 0:
+                    continue
+                sym = int(syms_ptr[0])
+                if _XKB_KEYPAD_KEYSYM_MIN <= sym <= _XKB_KEYPAD_KEYSYM_MAX:
+                    continue
+                evdev_code = int(xkb_code) - _XKB_EVDEV_OFFSET
+                dead_token = DEAD_KEYSYM_TO_TOKEN.get(sym)
+                if dead_token is not None:
+                    char_map.setdefault(dead_token, evdev_code)
+                    continue
+                utf32 = int(lib.xkb_keysym_to_utf32(sym))
+                if utf32 < 32 or utf32 > 0x10FFFF:
+                    continue
+                ch = chr(utf32)
+                key = ch.lower() if ch.isalpha() else ch
+                char_map.setdefault(key, evdev_code)
     finally:
         lib.xkb_keymap_unref(keymap)
         lib.xkb_context_unref(ctx)

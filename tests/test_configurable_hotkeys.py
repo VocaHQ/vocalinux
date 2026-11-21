@@ -435,3 +435,319 @@ class TestEvdevComboRecovery:
         fake_device = types.SimpleNamespace(close=lambda: None, name="fake")
         b._remove_keyboard_device(1234, fake_device)
         assert b._combo_pressed == set()
+
+
+class TestNonUsAndKeypadShortcuts:
+    """Validation, formatting, and parity for non-US punctuation, dead keys, and numpad (#1074)."""
+
+    @pytest.mark.parametrize(
+        "shortcut,label",
+        [
+            ("ctrl+shift+0", "Ctrl+Shift+0"),
+            ("ctrl+shift+bar", "Ctrl+Shift+|"),
+            ("ctrl+shift+questiondown", "Ctrl+Shift+¿"),
+            ("ctrl+shift+exclamdown", "Ctrl+Shift+¡"),
+            ("ctrl+shift+apostrophe", "Ctrl+Shift+'"),
+            ("ctrl+shift+question", "Ctrl+Shift+?"),
+            ("ctrl+shift+kp_0", "Ctrl+Shift+Numpad 0"),
+            ("ctrl+kp_enter", "Ctrl+Numpad Enter"),
+            ("alt+kp_decimal", "Alt+Numpad ."),
+            ("ctrl+shift+dead_acute", "Ctrl+Shift+´"),
+            ("ctrl+shift+ñ", "Ctrl+Shift+Ñ"),
+        ],
+    )
+    def test_valid_and_formatted(self, shortcut: str, label: str) -> None:
+        """All issue #1074 combos validate, round-trip, and format cleanly."""
+        assert is_valid_shortcut(shortcut) is True
+        spec = parse_shortcut_spec(shortcut)
+        assert spec.canonical() == shortcut
+        assert format_shortcut_label(spec) == label
+        assert get_shortcut_display_name(shortcut, "toggle") == f"Press {label}"
+        assert get_shortcut_display_name(shortcut, "push_to_talk") == f"Hold {label}"
+
+    def test_every_named_main_key_has_label_and_parses(self) -> None:
+        """Every named main key has a display label and validates inside a combo."""
+        from vocalinux.ui.keyboard_backends.base import _NAMED_KEY_LABELS, _NAMED_MAIN_KEYS
+
+        for token in sorted(_NAMED_MAIN_KEYS):
+            assert token in _NAMED_KEY_LABELS, f"Missing display label for {token!r}"
+            assert _NAMED_KEY_LABELS[token]
+            assert is_valid_shortcut(f"ctrl+{token}") is True
+
+
+@pytest.mark.skipif(not evdev_backend.EVDEV_AVAILABLE, reason="evdev not available")
+class TestEvdevNonUsAndKeypadRuntime:
+    """End-to-end evdev combo matching for latam and numpad shortcuts (#1074)."""
+
+    def _event(self, code: int, value: int) -> types.SimpleNamespace:
+        return types.SimpleNamespace(code=code, value=value, type=1)
+
+    def test_kp_0_triggers_only_on_key_kp0(self) -> None:
+        """ctrl+shift+kp_0 fires on KEY_KP0 and ignores top-row KEY_0 and KEY_INSERT."""
+        from evdev import ecodes
+
+        from vocalinux.ui.keyboard_backends.evdev_backend import KEY_LEFTCTRL, KEY_LEFTSHIFT
+
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut="ctrl+shift+kp_0", mode="toggle")
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+
+        backend._handle_key_event(self._event(KEY_LEFTCTRL, 1), None)
+        backend._handle_key_event(self._event(KEY_LEFTSHIFT, 1), None)
+        backend._handle_key_event(self._event(ecodes.KEY_0, 1), None)
+        backend._handle_key_event(self._event(ecodes.KEY_INSERT, 1), None)
+        assert not fired.wait(0.15)
+
+        backend._handle_key_event(self._event(ecodes.KEY_KP0, 1), None)
+        assert fired.wait(1.0)
+
+    @pytest.mark.parametrize(
+        "shortcut,expected_key_attr",
+        [
+            ("ctrl+shift+0", "KEY_0"),
+            ("ctrl+shift+bar", "KEY_GRAVE"),
+            ("ctrl+shift+questiondown", "KEY_EQUAL"),
+            ("ctrl+shift+apostrophe", "KEY_MINUS"),
+            ("ctrl+shift+dead_acute", "KEY_LEFTBRACE"),
+            ("ctrl+shift+ñ", "KEY_SEMICOLON"),
+            ("ctrl+shift+equal", "KEY_0"),
+        ],
+    )
+    def test_latam_shortcuts_fire_on_expected_evdev_key(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        shortcut: str,
+        expected_key_attr: str,
+    ) -> None:
+        """Recorded latam shortcuts fire on the physical evdev keys under latam XKB."""
+        from evdev import ecodes
+
+        from vocalinux.ui.keyboard_backends.evdev_backend import KEY_LEFTCTRL, KEY_LEFTSHIFT
+        from vocalinux.ui.keyboard_backends.layout_key_map import build_char_to_evdev_map
+
+        latam_map = build_char_to_evdev_map("latam")
+        if latam_map is None:
+            pytest.skip("libxkbcommon or XKB data not available")
+        monkeypatch.setattr(evdev_backend, "get_active_char_to_evdev_map", lambda: latam_map)
+
+        expected_code = getattr(ecodes, expected_key_attr)
+        backend = evdev_backend.EvdevKeyboardBackend(shortcut=shortcut, mode="toggle")
+        assert backend._combo_main_code == expected_code
+
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+        backend._handle_key_event(self._event(KEY_LEFTCTRL, 1), None)
+        backend._handle_key_event(self._event(KEY_LEFTSHIFT, 1), None)
+        backend._handle_key_event(self._event(expected_code, 1), None)
+        assert fired.wait(1.0)
+
+
+class TestPynputX11KeyResolver:
+    """Headless tests for X11 hardware-keycode and level-0 keysym resolution (#1074)."""
+
+    @pytest.mark.parametrize(
+        "keysym,expected",
+        [
+            (0x0030, "0"),
+            (0x007C, "bar"),
+            (0x00BF, "questiondown"),
+            (0x00A1, "exclamdown"),
+            (0x0027, "apostrophe"),
+            (0x003F, "question"),
+            (0x00F1, "ñ"),
+            (0xFE20, "tab"),  # ISO_Left_Tab
+            (0xFE50, "dead_grave"),
+            (0xFE51, "dead_acute"),
+            (0xFE52, "dead_circumflex"),
+            (0xFE53, "dead_tilde"),
+            (0xFE57, "dead_diaeresis"),
+            (0xFFB0, "kp_0"),
+            (0xFF9E, "kp_0"),
+            (0xFF8D, "kp_enter"),
+            (0xFFBE, "f1"),
+            (0xFFD5, "f24"),
+            (0, None),
+        ],
+    )
+    def test_x11_keysym_to_token(self, keysym: int, expected: str | None) -> None:
+        """X11 keysyms translate to canonical tokens across punctuation, dead, and keypad keys."""
+        assert pynput_backend.x11_keysym_to_token(keysym) == expected
+
+    def test_extract_x11_key_info_handles_group_0_and_group_1(self) -> None:
+        """_extract_x11_key_info reads column 0 for group 0 and column 2 for group 1."""
+        table = {(19, 0): 0x0030, (49, 0): 0x0060, (49, 2): 0x007C}
+
+        class _FakeDisplay:
+            def keycode_to_keysym(self, keycode: int, index: int) -> int:
+                return table.get((keycode, index), 0)
+
+        ev_g0 = types.SimpleNamespace(detail=49, state=0x0001)  # Shift, group 0
+        ev_g1 = types.SimpleNamespace(detail=49, state=0x2001)  # Shift, group 1
+        assert pynput_backend._extract_x11_key_info(_FakeDisplay(), ev_g0) == (49, 0x0060)
+        assert pynput_backend._extract_x11_key_info(_FakeDisplay(), ev_g1) == (49, 0x007C)
+
+    def _make_headless_backend(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        shortcut: str,
+        mode: str = "toggle",
+    ) -> tuple[object, object, object, object]:
+        """Build a PynputKeyboardBackend wired with fake modifier symbols (no X display)."""
+        ctrl_l = object()
+        shift_l = object()
+        insert_key = object()
+
+        monkeypatch.setattr(pynput_backend, "PYNPUT_AVAILABLE", True)
+        monkeypatch.setattr(
+            pynput_backend,
+            "MODIFIER_KEY_VARIANTS",
+            {"ctrl": {ctrl_l}, "shift": {shift_l}},
+        )
+        monkeypatch.setattr(pynput_backend, "ALL_MODIFIER_KEYS", {ctrl_l, shift_l})
+        monkeypatch.setattr(pynput_backend, "_PYNPUT_NAMED_TOKENS", {insert_key: "insert"})
+
+        backend = pynput_backend.PynputKeyboardBackend(shortcut=shortcut, mode=mode)
+        return backend, ctrl_l, shift_l, insert_key
+
+    def _fake_key(self, char: str | None = None, vk: int | None = None) -> object:
+        """Return a hashable KeyCode-like stub matching pynput.keyboard.KeyCode."""
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class _FakeKeyCode:
+            char: str | None = None
+            vk: int | None = None
+
+        return _FakeKeyCode(char=char, vk=vk)
+
+    @pytest.mark.parametrize(
+        "shortcut,detail,unshifted_ks,shifted_char,shifted_vk",
+        [
+            # latam Ctrl+Shift+0 (shifted '=' -> unshifted '0'):
+            ("ctrl+shift+0", 19, 0x0030, "=", 0x003D),
+            # US Ctrl+Shift+0 (shifted ')' -> unshifted '0'):
+            ("ctrl+shift+0", 19, 0x0030, ")", 0x0029),
+            # latam Ctrl+Shift+| (shifted '°' -> unshifted '|'):
+            ("ctrl+shift+bar", 49, 0x007C, "°", 0x00B0),
+            # latam Ctrl+Shift+¡ (shifted '¡' -> unshifted '¿'):
+            ("ctrl+shift+questiondown", 21, 0x00BF, "¡", 0x00A1),
+            # latam Ctrl+Shift+? (shifted '?' -> unshifted "'"):
+            ("ctrl+shift+apostrophe", 20, 0x0027, "?", 0x003F),
+            # latam Ctrl+Shift+´ (dead_acute):
+            ("ctrl+shift+dead_acute", 34, 0xFE51, "¨", 0xFE57),
+            # Legacy v0.18.6 latam binding ctrl+shift+equal still matches Shift+0:
+            ("ctrl+shift+equal", 19, 0x0030, "=", 0x003D),
+        ],
+    )
+    def test_x11_listener_hook_fires_non_us_shifted_combos(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        shortcut: str,
+        detail: int,
+        unshifted_ks: int,
+        shifted_char: str,
+        shifted_vk: int,
+    ) -> None:
+        """Wrapped _handle_message delivers unshifted keysym so Shift+key combos trigger."""
+        backend, ctrl_l, shift_l, _insert = self._make_headless_backend(monkeypatch, shortcut)
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+
+        fake_key = self._fake_key(char=shifted_char, vk=shifted_vk)
+
+        class _FakeXorgListener:
+            def _handle_message(self, _display: object, event: object, _injected: bool) -> None:
+                if getattr(event, "is_press", True):
+                    backend._on_press(fake_key)
+                else:
+                    backend._on_release(fake_key)
+
+        listener = _FakeXorgListener()
+        backend._install_x11_key_resolver(listener)
+
+        class _FakeDisplay:
+            def keycode_to_keysym(self, keycode: int, index: int) -> int:
+                return unshifted_ks if (keycode == detail and index == 0) else 0
+
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+        listener._handle_message(
+            _FakeDisplay(), types.SimpleNamespace(detail=detail, state=0x0005, is_press=True), False
+        )
+        assert fired.wait(1.0)
+        assert backend._pending_x11_key_info is None
+
+    def test_x11_keypad_matches_kp_0_and_never_triggers_top_row_zero_or_insert(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Hardware keycode 90 (KEY_KP0) fires kp_0 regardless of NumLock and never triggers 0/insert."""
+        # 1. kp_0 fires for both NumLock-ON (KeyCode('0')) and NumLock-OFF (Key.insert).
+        for numlock_key_kind in ("char_0", "key_insert"):
+            backend, ctrl_l, shift_l, insert_key = self._make_headless_backend(
+                monkeypatch, "ctrl+shift+kp_0"
+            )
+            fired = threading.Event()
+            backend.register_toggle_callback(fired.set)
+
+            pynput_key = (
+                self._fake_key(char="0", vk=None) if numlock_key_kind == "char_0" else insert_key
+            )
+            backend._on_press(ctrl_l)
+            backend._on_press(shift_l)
+            backend._pending_x11_key_info = (90, 0xFF9E)
+            try:
+                backend._on_press(pynput_key)
+            finally:
+                backend._pending_x11_key_info = None
+            assert fired.wait(1.0)
+
+        # 2. Top-row '0' and 'insert' shortcuts must NOT trigger on hardware keycode 90.
+        for non_kp_shortcut, key_kind in [
+            ("ctrl+shift+0", "char_0"),
+            ("ctrl+shift+insert", "key_insert"),
+        ]:
+            backend, ctrl_l, shift_l, insert_key = self._make_headless_backend(
+                monkeypatch, non_kp_shortcut
+            )
+            fired = threading.Event()
+            backend.register_toggle_callback(fired.set)
+
+            pynput_key = self._fake_key(char="0", vk=None) if key_kind == "char_0" else insert_key
+            backend._on_press(ctrl_l)
+            backend._on_press(shift_l)
+            backend._pending_x11_key_info = (90, 0xFF9E)
+            try:
+                backend._on_press(pynput_key)
+            finally:
+                backend._pending_x11_key_info = None
+            assert not fired.wait(0.15)
+
+    def test_x11_push_to_talk_release_works_when_main_key_released_after_shift(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Push-to-talk ctrl+shift+0 starts on shifted '=' and ends cleanly on release."""
+        backend, ctrl_l, shift_l, _insert = self._make_headless_backend(
+            monkeypatch, "ctrl+shift+0", mode="push_to_talk"
+        )
+        pressed = threading.Event()
+        released = threading.Event()
+        backend.register_press_callback(pressed.set)
+        backend.register_release_callback(released.set)
+
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+        backend._pending_x11_key_info = (19, 0x0030)
+        try:
+            backend._on_press(self._fake_key(char="=", vk=0x003D))
+        finally:
+            backend._pending_x11_key_info = None
+        assert pressed.wait(1.0)
+
+        backend._pending_x11_key_info = (19, 0x0030)
+        try:
+            backend._on_release(self._fake_key(char="=", vk=0x003D))
+        finally:
+            backend._pending_x11_key_info = None
+        assert released.wait(1.0)
