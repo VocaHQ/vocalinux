@@ -1024,5 +1024,300 @@ class TestSensitivePasteCopy(unittest.TestCase):
             self.assertFalse(obj._wl_copy_supports_sensitive())
 
 
+class TestBinaryClipboardSaveRestore(unittest.TestCase):
+    """Tests for saving and restoring non-text (binary/image) clipboard payloads."""
+
+    def test_select_binary_target_prefers_lossless_image_and_skips_meta_text_and_invalid(
+        self,
+    ) -> None:
+        """Selects image/png ahead of other formats and rejects meta/text/non-MIME atoms."""
+        from vocalinux.text_injection.text_injector import TextInjector
+
+        self.assertEqual(
+            TextInjector._select_binary_clipboard_target(
+                [
+                    "TARGETS",
+                    "TIMESTAMP",
+                    "MULTIPLE",
+                    "SAVE_TARGETS",
+                    "PIXMAP",
+                    "UTF8_STRING",
+                    "text/plain",
+                    "text/plain;charset=utf-8",
+                    "--malicious-flag",
+                    "bad target",
+                    "image/bmp",
+                    "IMAGE/PNG",
+                    "text/html",
+                ]
+            ),
+            "IMAGE/PNG",
+        )
+        self.assertEqual(
+            TextInjector._select_binary_clipboard_target(["text/uri-list", "image/x-custom"]),
+            "image/x-custom",
+        )
+        self.assertEqual(
+            TextInjector._select_binary_clipboard_target(["application/octet-stream", "text/html"]),
+            "text/html",
+        )
+        self.assertIsNone(
+            TextInjector._select_binary_clipboard_target(
+                ["TARGETS", "TIMESTAMP", "PIXMAP", "UTF8_STRING", "text/plain"]
+            )
+        )
+
+    def test_read_bounded_binary_output_reads_real_pipe_within_cap(self) -> None:
+        """Reads multi-chunk binary payload from a real pipe up to the configured cap."""
+        obj = _make_injector()
+        read_fd, write_fd = os.pipe()
+        payload = b"\x89PNG\r\n\x1a\n" + b"A" * 4096
+        os.write(write_fd, payload)
+        os.close(write_fd)
+
+        fake_proc = MagicMock()
+        fake_proc.stdout = os.fdopen(read_fd, "rb", buffering=0)
+        fake_proc.wait.return_value = 0
+        fake_proc.poll.return_value = 0
+
+        with patch(
+            "vocalinux.text_injection.text_injector.subprocess.Popen",
+            return_value=fake_proc,
+        ):
+            result = obj._read_bounded_binary_output(
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                max_bytes=8192,
+                timeout=1.0,
+            )
+
+        self.assertEqual(result, payload)
+        fake_proc.kill.assert_not_called()
+
+    def test_read_bounded_binary_output_aborts_and_kills_on_oversized_payload(self) -> None:
+        """Payload larger than max_bytes returns None and kills the child process."""
+        obj = _make_injector()
+        read_fd, write_fd = os.pipe()
+        os.write(write_fd, b"X" * 2048)
+        os.close(write_fd)
+
+        fake_proc = MagicMock()
+        fake_proc.stdout = os.fdopen(read_fd, "rb", buffering=0)
+        fake_proc.poll.return_value = None
+
+        with patch(
+            "vocalinux.text_injection.text_injector.subprocess.Popen",
+            return_value=fake_proc,
+        ):
+            result = obj._read_bounded_binary_output(
+                ["wl-paste", "--no-newline", "--type", "image/png"],
+                max_bytes=1024,
+                timeout=1.0,
+            )
+
+        self.assertIsNone(result)
+        fake_proc.kill.assert_called_once_with()
+
+    def test_read_bounded_binary_output_aborts_and_kills_on_timeout(self) -> None:
+        """A stalled clipboard owner times out cleanly and kills the child process."""
+        obj = _make_injector()
+        read_fd, write_fd = os.pipe()
+        fake_proc = MagicMock()
+        fake_proc.stdout = os.fdopen(read_fd, "rb", buffering=0)
+        fake_proc.poll.return_value = None
+
+        try:
+            with patch(
+                "vocalinux.text_injection.text_injector.subprocess.Popen",
+                return_value=fake_proc,
+            ):
+                result = obj._read_bounded_binary_output(
+                    ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                    max_bytes=1024,
+                    timeout=0.05,
+                )
+        finally:
+            os.close(write_fd)
+
+        self.assertIsNone(result)
+        fake_proc.kill.assert_called_once_with()
+
+    def test_read_bounded_binary_output_returns_none_on_nonzero_exit_or_empty(self) -> None:
+        """Returns None when the reader exits non-zero or produces zero bytes."""
+        import io
+
+        obj = _make_injector()
+        for data, returncode in ((b"partial", 1), (b"", 0)):
+            fake_proc = MagicMock()
+            fake_proc.stdout = io.BytesIO(data)
+            fake_proc.wait.return_value = returncode
+            fake_proc.poll.return_value = returncode
+            with patch(
+                "vocalinux.text_injection.text_injector.subprocess.Popen",
+                return_value=fake_proc,
+            ):
+                result = obj._read_bounded_binary_output(
+                    ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+                    max_bytes=1024,
+                    timeout=1.0,
+                )
+            self.assertIsNone(result)
+
+    def test_read_binary_clipboard_uses_wl_paste_on_wayland(self) -> None:
+        """Wayland binary clipboard read lists types via wl-paste and reads image/png."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        obj = _make_injector()
+        png_bytes = b"\x89PNGwayland"
+        with (
+            patch.dict(os.environ, {"WAYLAND_DISPLAY": "wayland-0"}),
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wl-paste" if cmd == "wl-paste" else None,
+            ),
+            patch(
+                "vocalinux.text_injection.text_injector.subprocess.run",
+                return_value=MagicMock(returncode=0, stdout="image/jpeg\nimage/png\n"),
+            ) as mock_run,
+            patch.object(
+                obj, "_read_bounded_binary_output", return_value=png_bytes
+            ) as mock_read_bin,
+        ):
+            result = obj._read_binary_clipboard(prefer_x11=False)
+
+        self.assertEqual(result, _BinaryClipboardContent(mime_type="image/png", data=png_bytes))
+        self.assertEqual(mock_run.call_args.args[0], ["wl-paste", "--list-types"])
+        self.assertEqual(
+            mock_read_bin.call_args.args[0],
+            ["wl-paste", "--no-newline", "--type", "image/png"],
+        )
+
+    def test_write_binary_clipboard_supports_wl_copy_and_xclip_and_skips_xsel(self) -> None:
+        """Binary restore supports wl-copy and xclip, skipping xsel and unhealthy tools."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        content = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGdata")
+
+        obj = _make_injector()
+        with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(obj._write_binary_clipboard(content, tools=["xsel", "wl-copy"]))
+        self.assertEqual(mock_run.call_args.args[0], ["wl-copy", "--type", "image/png"])
+        self.assertEqual(mock_run.call_args.kwargs.get("input"), b"\x89PNGdata")
+        self.assertEqual(mock_run.call_args.kwargs.get("stdout"), subprocess.DEVNULL)
+        self.assertEqual(mock_run.call_args.kwargs.get("stderr"), subprocess.DEVNULL)
+
+        obj._clipboard_tool_health["wl-copy"] = False
+        with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(obj._write_binary_clipboard(content, tools=["wl-copy", "xclip"]))
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["xclip", "-selection", "clipboard", "-i", "-t", "image/png"],
+        )
+        self.assertEqual(mock_run.call_args.kwargs.get("input"), b"\x89PNGdata")
+
+        # When the only binary-capable writer was previously marked unhealthy by a
+        # text-copy failure, restore still attempts it rather than dropping the image.
+        obj._clipboard_tool_health["xclip"] = False
+        with patch("vocalinux.text_injection.text_injector.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(obj._write_binary_clipboard(content, tools=["xclip", "xsel"]))
+        self.assertEqual(
+            mock_run.call_args.args[0],
+            ["xclip", "-selection", "clipboard", "-i", "-t", "image/png"],
+        )
+        self.assertTrue(obj._clipboard_tool_health["xclip"])
+
+    def test_wayland_ydotool_paste_saves_and_restores_image_clipboard(self) -> None:
+        """Wayland ydotool paste saves and restores a binary image when text read returns None."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        saved = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGway")
+        restored: list[Any] = []
+
+        with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wl-copy" if cmd == "wl-copy" else None,
+            ),
+            patch.object(obj, "_read_clipboard", side_effect=[None, "привет"]),
+            patch.object(obj, "_read_binary_clipboard", return_value=saved),
+            patch.object(obj, "_copy_to_clipboard", return_value=True),
+            patch.object(
+                obj,
+                "_write_binary_clipboard",
+                side_effect=lambda content, tools=None: restored.append(content) or True,
+            ),
+            patch.object(obj, "_ydotool_ctrl_v_command", return_value=["ydotool", "key", "ctrl+v"]),
+            patch.object(obj, "_should_copy_to_clipboard", return_value=False),
+            patch(
+                "vocalinux.text_injection.text_injector.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ),
+            _joined_restore_workers(),
+        ):
+            self.assertTrue(obj._inject_via_clipboard_paste("привет"))
+
+        self.assertEqual(restored, [saved])
+
+    def test_wayland_paste_skips_overwrite_when_no_healthy_binary_writer_exists(self) -> None:
+        """Saved binary clipboard is not overwritten when only xsel (non-binary) is usable."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        saved = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGway")
+
+        with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/xsel" if cmd == "xsel" else None,
+            ),
+            patch.object(obj, "_read_clipboard", return_value=None),
+            patch.object(obj, "_read_binary_clipboard", return_value=saved),
+            patch.object(obj, "_copy_to_clipboard") as mock_copy,
+            patch.object(obj, "_should_copy_to_clipboard", return_value=False),
+        ):
+            self.assertFalse(obj._inject_via_clipboard_paste("привет"))
+
+        mock_copy.assert_not_called()
+
+    def test_wayland_image_restore_skipped_when_clipboard_changed_during_delay(self) -> None:
+        """Binary restore is skipped if the user copied something else during the 300ms window."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        obj = _make_injector()
+        obj.wayland_tool = "ydotool"
+        saved = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGway")
+        restored: list[Any] = []
+
+        with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/wl-copy" if cmd == "wl-copy" else None,
+            ),
+            patch.object(obj, "_read_clipboard", side_effect=[None, "user copied new text"]),
+            patch.object(obj, "_read_binary_clipboard", return_value=saved),
+            patch.object(obj, "_copy_to_clipboard", return_value=True),
+            patch.object(
+                obj,
+                "_write_binary_clipboard",
+                side_effect=lambda content, tools=None: restored.append(content) or True,
+            ),
+            patch.object(obj, "_ydotool_ctrl_v_command", return_value=["ydotool", "key", "ctrl+v"]),
+            patch.object(obj, "_should_copy_to_clipboard", return_value=False),
+            patch(
+                "vocalinux.text_injection.text_injector.subprocess.run",
+                return_value=MagicMock(returncode=0),
+            ),
+            _joined_restore_workers(),
+        ):
+            self.assertTrue(obj._inject_via_clipboard_paste("привет"))
+
+        self.assertEqual(restored, [])
+
+
 if __name__ == "__main__":
     unittest.main()
