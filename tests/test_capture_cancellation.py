@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import threading
+import time
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -359,4 +360,198 @@ def test_audio_test_reports_termination_failure(
     assert ("device lost" if capture_fails else "termination failed") in result["error"]
     stream.stop_stream.assert_called_once()
     stream.close.assert_called_once()
+    audio.terminate.assert_called_once()
+
+
+def test_portaudio_close_normal_termination() -> None:
+    """Normal close stops/closes the stream, terminates PyAudio, and clears state."""
+    source = capture.PortAudioCaptureSource()
+    stream = MagicMock()
+    audio = MagicMock()
+    source.stream = stream
+    source.audio = audio
+    source.downmix_channel = 2
+
+    source.close()
+
+    stream.stop_stream.assert_called_once()
+    stream.close.assert_called_once()
+    audio.terminate.assert_called_once()
+    assert source.stream is None
+    assert source.audio is None
+    assert source.downmix_channel is None
+
+
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError])
+def test_portaudio_close_logs_terminate_exception_without_raising(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    error_type: type[Exception],
+) -> None:
+    """Exceptions inside PyAudio.terminate() are logged cleanly without unhandled thread errors."""
+    unhandled: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    source = capture.PortAudioCaptureSource()
+    stream = MagicMock()
+    audio = MagicMock()
+    audio.terminate.side_effect = error_type("backend terminate error")
+    source.stream = stream
+    source.audio = audio
+    source.downmix_channel = 1
+
+    source.close()
+
+    assert unhandled == []
+    assert "backend terminate error" in caplog.text
+    stream.stop_stream.assert_called_once()
+    stream.close.assert_called_once()
+    audio.terminate.assert_called_once()
+    assert source.stream is None
+    assert source.audio is None
+    assert source.downmix_channel is None
+
+
+def test_portaudio_close_bounds_hanging_terminate(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A wedged PyAudio.terminate() is abandoned after the deadline and clears source state."""
+    monkeypatch.setattr(capture, "_PYAUDIO_TERMINATE_SECONDS", 0.05)
+    unhandled: list[threading.ExceptHookArgs] = []
+    monkeypatch.setattr(threading, "excepthook", unhandled.append)
+
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    def wedged_terminate() -> None:
+        started.set()
+        release.wait(2.0)
+        finished.set()
+        raise RuntimeError("late terminate error after abandonment")
+
+    source = capture.PortAudioCaptureSource()
+    stream = MagicMock()
+    audio = MagicMock()
+    audio.terminate.side_effect = wedged_terminate
+    source.stream = stream
+    source.audio = audio
+    source.downmix_channel = 3
+
+    try:
+        t0 = time.monotonic()
+        source.close()
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.5
+        assert started.wait(0.5)
+        assert source.stream is None
+        assert source.audio is None
+        assert source.downmix_channel is None
+        stream.stop_stream.assert_called_once()
+        stream.close.assert_called_once()
+        assert "did not finish" in caplog.text
+        assert "abandoning" in caplog.text
+    finally:
+        release.set()
+        assert finished.wait(1.0)
+
+    # Give the daemon thread a moment to unwind the late exception and confirm
+    # it was swallowed inside the helper rather than hitting threading.excepthook.
+    time.sleep(0.02)
+    assert unhandled == []
+
+
+@pytest.mark.parametrize("audio", [None, object(), SimpleNamespace(terminate="not-callable")])
+def test_terminate_pyaudio_bounded_noop_without_callable_terminate(audio: Any) -> None:
+    """Objects without a callable terminate() method return True immediately."""
+    assert capture._terminate_pyaudio_bounded(audio, timeout=0.05) is True
+
+
+@pytest.mark.parametrize("capture_fails", [False, True])
+def test_audio_test_bounds_hanging_terminate(
+    audio_test: tuple[MagicMock, MagicMock],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capture_fails: bool,
+) -> None:
+    """A hanging PyAudio.terminate() during audio testing returns bounded without masking errors."""
+    monkeypatch.setattr(capture, "_PYAUDIO_TERMINATE_SECONDS", 0.05)
+    audio, stream = audio_test
+    release = threading.Event()
+    finished = threading.Event()
+
+    def wedged_terminate() -> None:
+        release.wait(2.0)
+        finished.set()
+
+    audio.terminate.side_effect = wedged_terminate
+    if capture_fails:
+        stream.get_read_available.side_effect = OSError("device lost")
+
+    try:
+        t0 = time.monotonic()
+        result = capture.test_audio_input(duration=0.1)
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.5
+        assert result["success"] is False
+        assert ("device lost" if capture_fails else "Timed out") in result["error"]
+        assert "abandoning" in caplog.text
+    finally:
+        release.set()
+        assert finished.wait(1.0)
+
+
+def test_get_audio_input_devices_bounds_hanging_terminate(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Device enumeration returns discovered devices even if PyAudio.terminate() hangs."""
+    monkeypatch.setattr(capture, "_PYAUDIO_TERMINATE_SECONDS", 0.05)
+    monkeypatch.setattr(capture, "get_system_audio_sources", lambda: [])
+    monkeypatch.setattr(capture, "get_pulse_sources", lambda: [])
+    release = threading.Event()
+    finished = threading.Event()
+
+    def wedged_terminate() -> None:
+        release.wait(2.0)
+        finished.set()
+
+    audio = MagicMock()
+    audio.get_default_input_device_info.return_value = {"index": 0}
+    audio.get_device_count.return_value = 1
+    audio.get_device_info_by_index.return_value = {
+        "name": "USB Microphone",
+        "maxInputChannels": 1,
+    }
+    audio.terminate.side_effect = wedged_terminate
+    monkeypatch.setitem(sys.modules, "pyaudio", MagicMock(PyAudio=lambda: audio))
+
+    try:
+        t0 = time.monotonic()
+        devices = capture.get_audio_input_devices()
+        elapsed = time.monotonic() - t0
+
+        assert elapsed < 0.5
+        assert devices == [(0, "USB Microphone", True)]
+        assert "abandoning" in caplog.text
+    finally:
+        release.set()
+        assert finished.wait(1.0)
+
+
+def test_get_audio_input_devices_terminates_on_enumeration_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Device enumeration still terminates its PyAudio instance when get_device_count fails."""
+    monkeypatch.setattr(capture, "get_system_audio_sources", lambda: [])
+    monkeypatch.setattr(capture, "get_pulse_sources", lambda: [])
+    audio = MagicMock()
+    audio.get_default_input_device_info.side_effect = OSError("no default")
+    audio.get_device_count.side_effect = OSError("portaudio failed")
+    monkeypatch.setitem(sys.modules, "pyaudio", MagicMock(PyAudio=lambda: audio))
+
+    assert capture.get_audio_input_devices() == []
     audio.terminate.assert_called_once()
