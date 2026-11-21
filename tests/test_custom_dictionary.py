@@ -13,6 +13,7 @@ from vocalinux.custom_dictionary import (
     DEFAULT_TERMS_PATH,
     LEGACY_DEFAULT_TERMS_PATH,
     MAX_CORRECTION_CHARACTERS,
+    MAX_TERM_CHARACTERS,
     MAX_TERMS_FILE_BYTES,
     MAX_TERMS_YIELDED,
     TERMS_FILENAME,
@@ -150,6 +151,76 @@ def test_prompt_read_stops_at_the_terms_limit(tmp_path: Path, monkeypatch) -> No
     (tmp_path / TERMS_FILENAME).write_text("one\ntwo\nthree\n", encoding="utf-8")
 
     assert manager.build_initial_prompt() == "one two"
+
+
+def test_bias_terms_follow_enablement_and_terms_limit(tmp_path: Path, monkeypatch) -> None:
+    """List-form terms (Remote API context_bias) share the prompt's enablement and cap."""
+    config = FakeConfig({"dictionary": {"enabled": True, "max_words": 2}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+    (tmp_path / TERMS_FILENAME).write_text(
+        "Alder Creek Design\nNorthwind\nthree\n", encoding="utf-8"
+    )
+
+    assert manager.build_bias_terms() == ["Alder Creek Design", "Northwind"]
+
+    config.values["dictionary"]["enabled"] = False
+    assert manager.build_bias_terms() == []
+
+
+def test_bias_terms_are_empty_without_a_terms_file(tmp_path: Path, monkeypatch) -> None:
+    """A missing terms file yields no list-form terms."""
+    manager = manager_at(tmp_path, monkeypatch, FakeConfig({"dictionary": {"enabled": True}}))
+
+    assert manager.build_bias_terms() == []
+
+
+def test_bias_terms_are_empty_when_terms_path_is_invalid(tmp_path: Path, monkeypatch) -> None:
+    """An unexpandable terms path yields no list-form terms."""
+    config = FakeConfig(
+        {"dictionary": {"enabled": True, "file_path": "~missing-user-vocalinux/dictionary.txt"}}
+    )
+    manager = manager_at(tmp_path, monkeypatch, config)
+
+    assert manager.build_bias_terms() == []
+
+
+def test_bias_terms_fall_back_to_default_limit_on_invalid_max_words(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Non-numeric, None, and boolean max_words values fall back to DEFAULT_MAX_TERMS."""
+    for bad_limit in ("not-a-number", None, True, False):
+        config = FakeConfig({"dictionary": {"enabled": True, "max_words": bad_limit}})
+        manager = manager_at(tmp_path, monkeypatch, config)
+        (tmp_path / TERMS_FILENAME).write_text("Northwind\nAlder Creek Design\n", encoding="utf-8")
+
+        assert manager.build_bias_terms() == ["Northwind", "Alder Creek Design"]
+
+
+def test_bias_terms_skip_terms_exceeding_max_term_characters(
+    tmp_path: Path, monkeypatch, caplog
+) -> None:
+    """Overlong terms are skipped without consuming max_words on normal and oversized files."""
+    overlong = "x" * (MAX_TERM_CHARACTERS + 1)
+    config = FakeConfig({"dictionary": {"enabled": True, "max_words": 2}})
+    manager = manager_at(tmp_path, monkeypatch, config)
+    (tmp_path / TERMS_FILENAME).write_text(
+        f"{overlong}\nNorthwind\nAlder Creek Design\nthree\n", encoding="utf-8"
+    )
+
+    with caplog.at_level("WARNING", logger="vocalinux.custom_dictionary"):
+        assert manager.build_bias_terms() == ["Northwind", "Alder Creek Design"]
+    assert f"longer than {MAX_TERM_CHARACTERS} characters" in caplog.text
+
+    # Oversized file path enforces the same per-term character cap.
+    caplog.clear()
+    line_count = MAX_TERMS_FILE_BYTES // 8 + 2
+    (tmp_path / TERMS_FILENAME).write_bytes(
+        f"{overlong}\nNorthwind\nAlder Creek Design\n".encode("utf-8")
+        + b"".join(f"t{i:06d}\n".encode() for i in range(line_count))
+    )
+    with caplog.at_level("WARNING", logger="vocalinux.custom_dictionary"):
+        assert manager.build_bias_terms() == ["Northwind", "Alder Creek Design"]
+    assert f"longer than {MAX_TERM_CHARACTERS} characters" in caplog.text
 
 
 def test_partially_invalid_terms_file_fails_closed(tmp_path: Path, monkeypatch) -> None:

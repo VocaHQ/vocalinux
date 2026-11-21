@@ -263,7 +263,8 @@ distro-packages-check: _tooling
 flatpak-deps: _tooling
     uv run --no-sync python scripts/sync_flatpak_deps.py
 
-# Fail if the Flatpak manifest is behind requirements/vad.txt (runtime + [vad]).
+# Fail if the Flatpak manifest is behind requirements/vad.txt and parakeet.txt
+# (runtime + [vad] + [parakeet]).
 flatpak-deps-check: _tooling
     uv run --no-sync python scripts/sync_flatpak_deps.py --check
 

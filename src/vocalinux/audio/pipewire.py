@@ -20,12 +20,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import select
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from ..utils.host_process import host_env
 from .errors import CaptureStalledError
@@ -48,6 +49,17 @@ PIPEWIRE_INDEX_FLOOR = -999
 
 #: pw-dump media classes whose monitor a user can meaningfully record.
 _MONITOR_CLASSES = frozenset({"Audio/Sink", "Audio/Sink/Virtual"})
+
+#: pw-dump media classes of capture nodes a PortAudio ALSA device can map to.
+_CAPTURE_CLASSES = frozenset({"Audio/Source", "Audio/Duplex"})
+
+#: ALSA hardware device prefix in a PipeWire ``api.alsa.path`` (``hw:0,6``,
+#: ``plughw:0,6``, ``_ucm0001.hw:sofhdadsp,6``).
+_ALSA_HW_PATH_PREFIX = re.compile(r"^(?:_ucm[0-9a-fA-F]+\.)?(?:plug)?hw:(.+)$")
+
+#: Trailing ALSA hardware address PortAudio appends to its device names, as
+#: in ``sof-hda-dsp: - (hw:0,6)``.
+_PORTAUDIO_HW_SUFFIX = re.compile(r"\(hw:([0-9]+),([0-9]+)\)\s*$")
 
 #: Metadata keys carrying the effective and configured default sink.
 _DEFAULT_SINK_KEYS = ("default.audio.sink", "default.configured.audio.sink")
@@ -91,6 +103,8 @@ def _run_host_command(args: List[str]) -> CommandResult:
         args,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=_COMMAND_TIMEOUT_SECONDS,
         check=False,
         env=host_env(),
@@ -165,6 +179,168 @@ def _parse_pw_dump(objects: object) -> List[PipeWireSource]:
     return labelled
 
 
+def _parse_non_negative_int(value: object) -> Optional[int]:
+    """Parse a non-negative integer from an int or ASCII-digit string."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isascii() and stripped.isdigit():
+            return int(stripped)
+    return None
+
+
+def _clean_description(value: object) -> str:
+    """Return a single-line trimmed description string, or empty if invalid."""
+    if not isinstance(value, str):
+        return ""
+    return re.sub(r"[\r\n\t]+", " ", value).strip()
+
+
+def _extract_node_description(props: Mapping[str, object]) -> str:
+    """Return the first non-empty readable description on a PipeWire node."""
+    for key in ("node.description", "node.nick"):
+        cleaned = _clean_description(props.get(key))
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _parse_alsa_hw_path(path: object, known_card: Optional[int] = None) -> Optional[str]:
+    """Parse an ALSA ``api.alsa.path`` into ``hw:C,D`` when it names a hardware PCM.
+
+    Handles ``hw:C,D``, ``hw:C,D,S``, ``plughw:C,D``, ``hw:CARD=...,DEV=...``,
+    and UCM paths such as ``_ucm0001.hw:sofhdadsp,6`` when ``known_card``
+    supplies the numeric card index. Non-hw paths like ``front:0`` and
+    card-only paths like ``hw:0`` return ``None``.
+    """
+    if not isinstance(path, str):
+        return None
+    match = _ALSA_HW_PATH_PREFIX.match(path.strip())
+    if not match:
+        return None
+    rest = match.group(1).strip()
+    if "=" in rest:
+        pairs: Dict[str, str] = {}
+        for part in rest.split(","):
+            key, sep, value = part.partition("=")
+            if not sep:
+                return None
+            pairs[key.strip().upper()] = value.strip()
+        dev_val = _parse_non_negative_int(pairs.get("DEV"))
+        if dev_val is None:
+            return None
+        card_raw = pairs.get("CARD")
+        card_val = _parse_non_negative_int(card_raw)
+        if card_val is None and card_raw:
+            card_val = known_card
+        if card_val is None:
+            return None
+        return f"hw:{card_val},{dev_val}"
+
+    parts = [part.strip() for part in rest.split(",")]
+    if len(parts) not in (2, 3):
+        return None
+    if len(parts) == 3 and _parse_non_negative_int(parts[2]) is None:
+        return None
+    dev_val = _parse_non_negative_int(parts[1])
+    if dev_val is None:
+        return None
+    card_val = _parse_non_negative_int(parts[0])
+    if card_val is None and parts[0]:
+        card_val = known_card
+    if card_val is None:
+        return None
+    return f"hw:{card_val},{dev_val}"
+
+
+def _parse_alsa_capture_descriptions(objects: object) -> Dict[str, str]:
+    """Map ALSA hardware addresses (``hw:C,D``) to PipeWire capture descriptions.
+
+    PortAudio names ALSA devices after the driver's card and PCM names, which
+    are often cryptic (``sof-hda-dsp: - (hw:0,6)``). PipeWire describes the
+    same PCM through ``node.description`` ("Digital Microphone"), and its ALSA
+    nodes carry the card and device numbers that make up the ``hw:`` address.
+    """
+    if not isinstance(objects, list):
+        return {}
+
+    # Map PipeWire Device object ids to their ALSA card index so UCM nodes
+    # whose api.alsa.path uses a card name (e.g. ``hw:sofhdadsp,6``) can still
+    # resolve their numeric card if it is omitted on the node itself.
+    device_cards: Dict[int, int] = {}
+    for obj in objects:
+        if not isinstance(obj, dict) or obj.get("type") != "PipeWire:Interface:Device":
+            continue
+        obj_id = _parse_non_negative_int(obj.get("id"))
+        info = obj.get("info") or {}
+        props = info.get("props") if isinstance(info, dict) else None
+        if obj_id is None or not isinstance(props, dict):
+            continue
+        for key in ("alsa.card", "api.alsa.pcm.card"):
+            card_num = _parse_non_negative_int(props.get(key))
+            if card_num is not None:
+                device_cards[obj_id] = card_num
+                break
+
+    descriptions: Dict[str, str] = {}
+    for obj in objects:
+        if not isinstance(obj, dict) or obj.get("type") != "PipeWire:Interface:Node":
+            continue
+        info = obj.get("info") or {}
+        props = info.get("props") if isinstance(info, dict) else None
+        if not isinstance(props, dict) or props.get("media.class") not in _CAPTURE_CLASSES:
+            continue
+        description = _extract_node_description(props)
+        if not description:
+            continue
+
+        card: Optional[int] = None
+        for key in ("alsa.card", "api.alsa.pcm.card"):
+            card = _parse_non_negative_int(props.get(key))
+            if card is not None:
+                break
+        if card is None:
+            dev_id = _parse_non_negative_int(props.get("device.id"))
+            if dev_id is not None:
+                card = device_cards.get(dev_id)
+
+        device: Optional[int] = None
+        for key in ("alsa.device", "api.alsa.pcm.device"):
+            device = _parse_non_negative_int(props.get(key))
+            if device is not None:
+                break
+
+        address: Optional[str] = None
+        if card is not None and device is not None:
+            address = f"hw:{card},{device}"
+        else:
+            address = _parse_alsa_hw_path(props.get("api.alsa.path"), known_card=card)
+        if address:
+            descriptions.setdefault(address, description)
+    return descriptions
+
+
+def _load_pw_dump(runner: Optional[CommandRunner] = None) -> Optional[object]:
+    """Run ``pw-dump`` and parse its JSON, or None when that is not possible."""
+    runner = runner or _run_host_command
+    try:
+        code, stdout, _stderr = runner(["pw-dump"])
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        logger.debug("pw-dump failed: %s", exc)
+        return None
+    if code != 0 or not stdout.strip():
+        return None
+    try:
+        objects: object = json.loads(stdout)
+    except ValueError:
+        logger.debug("Could not parse pw-dump output as JSON")
+        return None
+    return objects
+
+
 def get_system_audio_sources(
     runner: Optional[CommandRunner] = None,
     which: Optional[Which] = None,
@@ -181,20 +357,55 @@ def get_system_audio_sources(
     # be opened.
     if which("pw-dump") is None or which("pw-record") is None:
         return []
-    runner = runner or _run_host_command
-    try:
-        code, stdout, _stderr = runner(["pw-dump"])
-    except (OSError, subprocess.SubprocessError) as exc:
-        logger.debug("pw-dump failed: %s", exc)
-        return []
-    if code != 0 or not stdout.strip():
-        return []
-    try:
-        objects = json.loads(stdout)
-    except ValueError:
-        logger.debug("Could not parse pw-dump output as JSON")
+    objects = _load_pw_dump(runner)
+    if objects is None:
         return []
     return _parse_pw_dump(objects)
+
+
+def get_alsa_capture_descriptions(
+    runner: Optional[CommandRunner] = None,
+    which: Optional[Which] = None,
+) -> Dict[str, str]:
+    """Readable names for ALSA capture devices, keyed by ``hw:C,D`` address.
+
+    Empty when ``pw-dump`` is missing or the daemon does not answer; callers
+    then keep PortAudio's own names.
+    """
+    which = which or shutil.which
+    if which("pw-dump") is None:
+        return {}
+    objects = _load_pw_dump(runner)
+    if objects is None:
+        return {}
+    return _parse_alsa_capture_descriptions(objects)
+
+
+def has_alsa_hw_address(device_name: str) -> bool:
+    """Whether a PortAudio device name ends with an ALSA ``(hw:C,D)`` address."""
+    return bool(_PORTAUDIO_HW_SUFFIX.search(device_name or ""))
+
+
+def friendly_device_label(device_name: str, descriptions: Mapping[str, str]) -> str:
+    """Label a PortAudio ALSA device with PipeWire's description when one is known.
+
+    ``sof-hda-dsp: - (hw:0,6)`` becomes ``Digital Microphone (hw:0,6)``. The
+    ``hw:`` address stays in the label so two inputs that share a description
+    remain distinguishable. Names without an address, or with no matching
+    description, are returned unchanged. The label is for display only: the
+    PortAudio name is still what Settings saves and resolves.
+    """
+    match = _PORTAUDIO_HW_SUFFIX.search(device_name or "")
+    if not match:
+        return device_name
+    address = f"hw:{int(match.group(1))},{int(match.group(2))}"
+    description = _clean_description(descriptions.get(address))
+    if not description:
+        return device_name
+    suffix = f"({address})"
+    if description.endswith(suffix):
+        return description
+    return f"{description} {suffix}"
 
 
 def pipewire_available(which: Optional[Which] = None) -> bool:

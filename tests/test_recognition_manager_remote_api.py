@@ -523,6 +523,300 @@ class TestOpenAIAPIFormat(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class TestRemoteAPIDictionaryBias(unittest.TestCase):
+    """Custom dictionary terms sent to OpenAI-compatible remote APIs (#1046)."""
+
+    def setUp(self):
+        """Set up a manager with a stub dictionary manager."""
+        SpeechRecognitionManager = _import_manager()
+        _setup_requests_get_ok()
+        self.dictionary = Mock()
+        self.dictionary.build_bias_terms.return_value = ["Northwind", "Alder Creek Design"]
+        self.dictionary.build_initial_prompt.return_value = "Northwind Alder Creek Design"
+        self.manager = SpeechRecognitionManager(
+            engine="remote_api",
+            remote_api_url="http://localhost:8080",
+            remote_api_endpoint="/v1/audio/transcriptions",
+            dictionary_manager=self.dictionary,
+        )
+
+    def _post_data(self, mock_post, call_index=0):
+        """Return the multipart data of one recorded POST."""
+        return mock_post.call_args_list[call_index][1]["data"]
+
+    def test_auto_mode_sends_prompt_for_generic_servers(self):
+        """auto resolves to prompt for non-Mistral hosts."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        data = self._post_data(mock_post)
+        self.assertEqual(data["prompt"], "Northwind Alder Creek Design")
+        self.assertNotIn("context_bias", data)
+        self.assertEqual(data["model"], "whisper-1")
+        self.assertEqual(data["language"], "en")
+
+    def test_auto_mode_sends_context_bias_for_mistral(self):
+        """auto resolves to one context_bias field per term on api.mistral.ai."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.manager.remote_api_url = "https://api.mistral.ai"
+
+        self.manager._try_openai_api(b"wav", "de", {}, self.manager._http_session)
+
+        data = self._post_data(mock_post)
+        self.assertEqual(data["context_bias"], ["Northwind", "Alder Creek Design"])
+        self.assertNotIn("prompt", data)
+
+    def test_auto_mode_does_not_match_lookalike_hosts(self):
+        """Only mistral.ai and its subdomains select context_bias."""
+        for url in ("https://notmistral.ai", "https://mistral.ai.example.com"):
+            self.manager.remote_api_url = url
+            self.assertEqual(self.manager._resolve_remote_api_bias_mode(), "prompt")
+        for url in (
+            "https://mistral.ai",
+            "https://mistral.ai.",
+            "https://api.mistral.ai.",
+            "  https://API.MISTRAL.AI:443  ",
+        ):
+            self.manager.remote_api_url = url
+            self.assertEqual(self.manager._resolve_remote_api_bias_mode(), "context_bias")
+
+    def test_auto_mode_falls_back_to_prompt_on_malformed_url(self):
+        """Unparseable server URLs safely fall back to prompt mode."""
+        self.manager.remote_api_url = "http://[::1"
+        self.assertEqual(self.manager._resolve_remote_api_bias_mode(), "prompt")
+
+    def test_explicit_context_bias_mode(self):
+        """context_bias mode is honoured for any host."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.manager.reconfigure(remote_api_bias_mode="context_bias")
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertEqual(
+            self._post_data(mock_post)["context_bias"], ["Northwind", "Alder Creek Design"]
+        )
+
+    def test_context_bias_multipart_wire_format_repeats_field_per_term(self):
+        """requests serializes context_bias as repeated plain form-data fields."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.manager.remote_api_url = "https://api.mistral.ai"
+
+        self.manager._try_openai_api(b"RIFFDATA", "de", {}, self.manager._http_session)
+
+        call_kwargs = mock_post.call_args[1]
+        saved = {
+            name: mod
+            for name, mod in list(sys.modules.items())
+            if name == "requests" or name.startswith("requests.")
+        }
+        try:
+            for name in saved:
+                sys.modules.pop(name, None)
+            import requests as real_requests
+
+            prepared = real_requests.Request(
+                "POST",
+                "https://api.mistral.ai/v1/audio/transcriptions",
+                files=call_kwargs["files"],
+                data=call_kwargs["data"],
+            ).prepare()
+        finally:
+            for name in list(sys.modules):
+                if name == "requests" or name.startswith("requests."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(saved)
+
+        body = prepared.body.decode("utf-8") if isinstance(prepared.body, bytes) else prepared.body
+        self.assertIn('name="context_bias"\r\n\r\nNorthwind\r\n', body)
+        self.assertIn('name="context_bias"\r\n\r\nAlder Creek Design\r\n', body)
+        self.assertNotIn("context_bias[]", body)
+
+    def test_explicit_prompt_mode_on_mistral(self):
+        """prompt mode overrides the Mistral auto-detection."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.manager.remote_api_url = "https://api.mistral.ai"
+        self.manager.remote_api_bias_mode = "prompt"
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        data = self._post_data(mock_post)
+        self.assertEqual(data["prompt"], "Northwind Alder Creek Design")
+        self.assertNotIn("context_bias", data)
+
+    def test_off_mode_sends_no_terms(self):
+        """off leaves the request unchanged."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.manager.remote_api_bias_mode = "off"
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertEqual(self._post_data(mock_post), {"model": "whisper-1", "language": "en"})
+        self.dictionary.build_bias_terms.assert_not_called()
+        self.dictionary.build_initial_prompt.assert_not_called()
+
+    def test_disabled_or_empty_dictionary_leaves_request_unchanged(self):
+        """With no terms, the payload matches the request sent before #1046."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.dictionary.build_initial_prompt.return_value = None
+        self.dictionary.build_bias_terms.return_value = []
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+        self.manager.remote_api_url = "https://api.mistral.ai"
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        for index in (0, 1):
+            self.assertEqual(
+                self._post_data(mock_post, index), {"model": "whisper-1", "language": "en"}
+            )
+
+    def test_terms_are_read_for_every_request(self):
+        """Edits to the terms file apply to the next request."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+        self.dictionary.build_initial_prompt.return_value = "Kubernetes"
+        self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertEqual(self._post_data(mock_post, 1)["prompt"], "Kubernetes")
+
+    def test_rejected_bias_is_retried_once_without_terms(self):
+        """HTTP 400, 413, and 422 on a request carrying terms retry once without them."""
+        for status_code, url, expected_field in (
+            (400, "https://api.mistral.ai", "context_bias"),
+            (413, "http://localhost:8080", "prompt"),
+            (422, "http://localhost:8080", "prompt"),
+        ):
+            with self.subTest(status_code=status_code, field=expected_field):
+                self.manager.remote_api_url = url
+                mock_session = _get_mock_session()
+                mock_session.post.reset_mock()
+                rejected = Mock(status_code=status_code)
+                accepted = Mock(status_code=200)
+                accepted.json.return_value = {"text": "still works"}
+                mock_session.post.side_effect = [rejected, accepted]
+
+                with self.assertLogs(
+                    "vocalinux.speech_recognition.recognition_manager", level="WARNING"
+                ) as logs:
+                    result = self.manager._try_openai_api(
+                        b"wav", "en", {}, self.manager._http_session
+                    )
+
+                self.assertEqual(result, "still works")
+                self.assertEqual(mock_session.post.call_count, 2)
+                self.assertIn(expected_field, self._post_data(mock_session.post, 0))
+                self.assertEqual(
+                    self._post_data(mock_session.post, 1),
+                    {"model": "whisper-1", "language": "en"},
+                )
+                self.assertTrue(
+                    any(
+                        expected_field in line and "retrying without them" in line
+                        for line in logs.output
+                    )
+                )
+
+    def test_failed_retry_after_rejected_bias_stops_after_one_retry(self):
+        """If the retry without terms also fails, no further retries occur."""
+        mock_session = _get_mock_session()
+        first = Mock(status_code=400)
+        second = Mock(status_code=400)
+        second.raise_for_status.side_effect = Exception("400 Bad Request")
+        mock_session.post.side_effect = [first, second]
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertIsNone(result)
+        self.assertEqual(mock_session.post.call_count, 2)
+
+    def test_not_found_with_terms_is_not_retried(self):
+        """HTTP 404 is not treated as a rejected-bias error."""
+        mock_session = _get_mock_session()
+        mock_session.post.return_value = Mock(status_code=404)
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertIsNone(result)
+        mock_session.post.assert_called_once()
+
+    def test_rejection_without_terms_is_not_retried(self):
+        """Requests without terms keep the previous single-attempt behaviour."""
+        self.dictionary.build_initial_prompt.return_value = None
+        mock_post = _setup_requests_post_status(400, Exception("400 Bad Request"))
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertIsNone(result)
+        mock_post.assert_called_once()
+
+    def test_server_error_with_terms_is_not_retried(self):
+        """Only client errors that can stem from the terms trigger a retry."""
+        mock_post = _setup_requests_post_status(500, Exception("500 Server Error"))
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertIsNone(result)
+        mock_post.assert_called_once()
+
+    def test_dictionary_errors_do_not_break_dictation(self):
+        """A failing terms read sends the request without terms in either mode."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+        self.dictionary.build_initial_prompt.side_effect = OSError("unreadable")
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertEqual(result, "ok")
+        self.assertNotIn("prompt", self._post_data(mock_post))
+
+        mock_post = _setup_requests_post_ok({"text": "ok-mistral"})
+        self.manager.remote_api_url = "https://api.mistral.ai"
+        self.dictionary.build_bias_terms.side_effect = OSError("unreadable")
+
+        result = self.manager._try_openai_api(b"wav", "en", {}, self.manager._http_session)
+
+        self.assertEqual(result, "ok-mistral")
+        self.assertNotIn("context_bias", self._post_data(mock_post))
+
+    def test_api_key_is_never_logged_with_terms(self):
+        """Debug logging of the bias fields never includes the API key."""
+        _setup_requests_post_ok({"text": "ok"})
+        self.manager.remote_api_key = "sk-secret-value"
+        headers = {"Authorization": "Bearer sk-secret-value"}
+
+        with self.assertLogs(
+            "vocalinux.speech_recognition.recognition_manager", level="DEBUG"
+        ) as logs:
+            self.manager._try_openai_api(b"wav", "en", headers, self.manager._http_session)
+
+        joined = "\n".join(logs.output)
+        self.assertIn("Northwind", joined)
+        self.assertNotIn("sk-secret-value", joined)
+
+    def test_unknown_bias_mode_falls_back_to_auto(self):
+        """Invalid configured modes are normalised to auto; empty/None normalize silently."""
+        self.manager.reconfigure(remote_api_bias_mode="sometimes")
+        self.assertEqual(self.manager.remote_api_bias_mode, "auto")
+        self.manager.reconfigure(remote_api_bias_mode=123)
+        self.assertEqual(self.manager.remote_api_bias_mode, "auto")
+        self.manager.reconfigure(remote_api_bias_mode=None)
+        self.assertEqual(self.manager.remote_api_bias_mode, "auto")
+        self.manager.reconfigure(remote_api_bias_mode="")
+        self.assertEqual(self.manager.remote_api_bias_mode, "auto")
+        self.manager.reconfigure(remote_api_bias_mode=" Context_Bias ")
+        self.assertEqual(self.manager.remote_api_bias_mode, "context_bias")
+
+    def test_whispercpp_inference_endpoint_sends_no_terms(self):
+        """The whisper.cpp /inference format is unchanged."""
+        mock_post = _setup_requests_post_ok({"text": "ok"})
+
+        self.manager._try_whispercpp_server_api(b"wav", "en", {}, self.manager._http_session)
+
+        data = self._post_data(mock_post)
+        self.assertNotIn("prompt", data)
+        self.assertNotIn("context_bias", data)
+
+
 class TestWhisperCppServerAPIFormat(unittest.TestCase):
     """Test cases for whisper.cpp server API format."""
 

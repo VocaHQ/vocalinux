@@ -4,6 +4,7 @@ This file makes sure that the 'src' module can be imported in tests.
 """
 
 import atexit
+import contextlib
 import os
 import shutil
 import subprocess
@@ -165,7 +166,18 @@ def _no_real_pipewire_enumeration() -> Generator[None, None, None]:
     except ImportError:
         yield
         return
-    with patch.object(_capture, "get_system_audio_sources", return_value=[]):
+    # Settings also asks pw-dump for friendly ALSA input names (#1029).
+    settings_dialog = sys.modules.get("vocalinux.ui.settings_dialog")
+    with (
+        patch.object(_capture, "get_system_audio_sources", return_value=[]),
+        patch("vocalinux.audio.pipewire.get_alsa_capture_descriptions", return_value={}),
+        (
+            patch.object(settings_dialog, "get_alsa_capture_descriptions", return_value={})
+            if settings_dialog is not None
+            and hasattr(settings_dialog, "get_alsa_capture_descriptions")
+            else contextlib.nullcontext()
+        ),
+    ):
         yield
 
 

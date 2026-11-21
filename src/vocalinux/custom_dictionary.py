@@ -149,7 +149,7 @@ class CustomDictionaryManager:
         return self._transient_terms_path is not None
 
     def terms_enabled(self) -> bool:
-        """Return whether custom terms should be offered to Whisper-family engines."""
+        """Return whether custom terms should be offered to engines that support vocabulary bias."""
         return self.is_transient_terms or bool(self.config.get("dictionary", "enabled", False))
 
     def set_terms_enabled(self, enabled: bool) -> bool:
@@ -342,7 +342,13 @@ class CustomDictionaryManager:
                 )
                 return
 
-    def _iter_terms_for_prompt(self, path: Path, limit: int) -> Iterator[str]:
+    def _iter_terms_for_prompt(
+        self,
+        path: Path,
+        limit: int,
+        *,
+        max_term_characters: Optional[int] = None,
+    ) -> Iterator[str]:
         """Yield up to *limit* terms, streaming oversized files line by line.
 
         Files inside the read bound keep the same whole-file-validated
@@ -352,6 +358,8 @@ class CustomDictionaryManager:
         bounded window is still decoded so an invalid file supplies no
         terms at all. Each read is capped by the remaining window, so an
         overlong line can never pull more than the byte bound into memory.
+        When *max_term_characters* is set, terms longer than that bound are
+        skipped without counting toward *limit*.
         """
         if limit <= 0:
             return
@@ -360,11 +368,30 @@ class CustomDictionaryManager:
         except OSError:
             oversized = False
         if not oversized:
-            yield from itertools.islice(self._iter_terms(path), limit)
+            if max_term_characters is None:
+                yield from itertools.islice(self._iter_terms(path), limit)
+                return
+            yielded = 0
+            skipped = 0
+            for term in self._iter_terms(path):
+                if len(term) > max_term_characters:
+                    skipped += 1
+                    continue
+                yield term
+                yielded += 1
+                if yielded >= limit:
+                    break
+            if skipped:
+                logger.warning(
+                    "Ignoring %d custom term(s) longer than %d characters",
+                    skipped,
+                    max_term_characters,
+                )
             return
         terms: list[str] = []
         seen: set[str] = set()
         consumed = 0
+        skipped = 0
         try:
             with path.open("rb") as terms_file:
                 index = 0
@@ -395,6 +422,9 @@ class CustomDictionaryManager:
                     normalized_term = term.casefold()
                     if not term or term.startswith("#") or normalized_term in seen:
                         continue
+                    if max_term_characters is not None and len(term) > max_term_characters:
+                        skipped += 1
+                        continue
                     seen.add(normalized_term)
                     terms.append(term)
         except FileNotFoundError:
@@ -402,6 +432,12 @@ class CustomDictionaryManager:
         except OSError as error:
             logger.warning("Could not read custom terms file: %s", error)
             return
+        if skipped and max_term_characters is not None:
+            logger.warning(
+                "Ignoring %d custom term(s) longer than %d characters",
+                skipped,
+                max_term_characters,
+            )
         yield from terms
 
     def save_terms(self, terms: list[str]) -> bool:
@@ -479,16 +515,43 @@ class CustomDictionaryManager:
             return False
         return self._atomic_write(path, "".join(remaining_lines))
 
+    def _max_bias_terms(self) -> int:
+        """Return the configured ``dictionary.max_words`` limit, defaulting on bad values."""
+        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
+        if isinstance(max_terms, bool):
+            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
+            return DEFAULT_MAX_TERMS
+        try:
+            return max(0, int(max_terms))
+        except (TypeError, ValueError):
+            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
+            return DEFAULT_MAX_TERMS
+
+    def build_bias_terms(self) -> list[str]:
+        """Return the enabled terms as a list, bounded by ``dictionary.max_words``.
+
+        Used by engines that accept vocabulary as discrete entries (for
+        example Mistral's ``context_bias``) rather than one prompt string.
+        Terms longer than ``MAX_TERM_CHARACTERS`` are skipped.
+        """
+        if not self.terms_enabled():
+            return []
+        path = self.terms_path()
+        if path is None:
+            return []
+        return list(
+            self._iter_terms_for_prompt(
+                path,
+                self._max_bias_terms(),
+                max_term_characters=MAX_TERM_CHARACTERS,
+            )
+        )
+
     def build_initial_prompt(self) -> Optional[str]:
         """Build the current Whisper prompt from enabled terms, if any."""
         if not self.terms_enabled():
             return None
-        max_terms = self.config.get("dictionary", "max_words", DEFAULT_MAX_TERMS)
-        try:
-            max_terms = max(0, int(max_terms))
-        except (TypeError, ValueError):
-            logger.warning("Invalid custom terms limit %r; using %d", max_terms, DEFAULT_MAX_TERMS)
-            max_terms = DEFAULT_MAX_TERMS
+        max_terms = self._max_bias_terms()
         path = self.terms_path()
         if path is None:
             return None
