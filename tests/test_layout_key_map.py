@@ -503,6 +503,7 @@ def test_get_active_map_empty_layout(monkeypatch):
     _clear_plasma_env(monkeypatch)
     monkeypatch.setattr(lkm, "_detect_gnome_layout", lambda: ("", ""))
     monkeypatch.setattr(lkm, "_detect_kde_layout", lambda: ("", ""))
+    monkeypatch.setattr(lkm, "_detect_x11_layout", lambda: ("", ""))
     assert lkm.get_active_char_to_evdev_map() is None
 
 

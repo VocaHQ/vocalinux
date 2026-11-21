@@ -847,3 +847,102 @@ class TestLayoutAwareGestureCollisions:
         assert shortcut_gestures_collide("ctrl+shift+slash", "ctrl+shift+question") is True
         assert shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+equal") is False
         assert evdev_backend.evdev_code_for_key("dead_acute") is None
+
+
+class TestSavedShiftedShortcutCompatibility:
+    """Saved shifted shortcuts convert to active-layout base keys for matching and collisions."""
+
+    def test_saved_latam_ctrl_shift_equal_still_fires_on_x11_and_collides_without_evdev(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On latam, saved ctrl+shift+equal resolves to '0', fires on Shift+0, and collides."""
+        from vocalinux.ui.keyboard_backends import base as kb_base
+        from vocalinux.ui.keyboard_backends import layout_key_map as lkm
+
+        latam_shifted = lkm.build_shifted_to_base_map("latam")
+        if latam_shifted is None:
+            pytest.skip("libxkbcommon or XKB data not available")
+        assert latam_shifted.get("=") == "0"
+        assert latam_shifted.get("?") == "'"
+        assert latam_shifted.get("¡") == "¿"
+
+        monkeypatch.setattr(lkm, "get_active_shifted_to_base_map", lambda: latam_shifted)
+        monkeypatch.setattr(kb_base, "_combo_physical_evdev_code", lambda _token: None)
+
+        # Collision detection catches the pair even when evdev is unavailable (X11-only).
+        assert kb_base.shortcut_gestures_collide("ctrl+shift+equal", "ctrl+shift+0") is True
+        assert kb_base.shortcut_gestures_collide("ctrl+shift+question", "ctrl+shift+apostrophe")
+        assert kb_base.shortcut_gestures_collide("ctrl+shift+bar", "ctrl+shift+0") is False
+
+        # Saved ctrl+shift+equal continues to trigger when user presses Ctrl+Shift+0 on X11.
+        backend, ctrl_l, shift_l, _insert = TestPynputX11KeyResolver()._make_headless_backend(
+            monkeypatch, "ctrl+shift+equal"
+        )
+        assert backend._combo_key_token == "0"
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+        backend._pending_x11_key_info = (19, 0x0030)  # KEY_0 level-0 XK_0
+        try:
+            backend._on_press(TestPynputX11KeyResolver()._fake_key(char="=", vk=0x003D))
+        finally:
+            backend._pending_x11_key_info = None
+        assert fired.wait(1.0)
+
+    def test_us_ctrl_shift_equal_stays_distinct_from_zero_while_parenright_maps_to_zero(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On US layout, equal stays equal (no collision with 0) while parenright maps to 0."""
+        from vocalinux.ui.keyboard_backends import base as kb_base
+        from vocalinux.ui.keyboard_backends import layout_key_map as lkm
+
+        monkeypatch.setattr(
+            lkm, "get_active_shifted_to_base_map", lambda: dict(lkm._US_SHIFTED_TO_BASE)
+        )
+        monkeypatch.setattr(kb_base, "_combo_physical_evdev_code", lambda _token: None)
+
+        assert lkm.resolve_base_key_token("equal") == "equal"
+        assert lkm.resolve_base_key_token("parenright") == "0"
+        assert kb_base.shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+equal") is False
+        assert kb_base.shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+parenright") is True
+
+        backend, ctrl_l, shift_l, _insert = TestPynputX11KeyResolver()._make_headless_backend(
+            monkeypatch, "ctrl+shift+equal"
+        )
+        assert backend._combo_key_token == "equal"
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+        backend._pending_x11_key_info = (19, 0x0030)  # KEY_0 must NOT trigger US ctrl+shift+equal
+        try:
+            backend._on_press(TestPynputX11KeyResolver()._fake_key(char=")", vk=0x0029))
+        finally:
+            backend._pending_x11_key_info = None
+        assert not fired.wait(0.15)
+
+    def test_detect_x11_layout_parses_setxkbmap_query(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """_detect_x11_layout reads active X11 layout and variant from setxkbmap -query."""
+        import subprocess
+
+        from vocalinux.ui.keyboard_backends import layout_key_map as lkm
+
+        monkeypatch.setenv("DISPLAY", ":0")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda *_a, **_k: subprocess.CompletedProcess(
+                ["setxkbmap", "-query"],
+                0,
+                stdout="rules:      evdev\nmodel:      pc105\nlayout:     latam,us\nvariant:    deadtilde,\n",
+                stderr="",
+            ),
+        )
+        assert lkm._detect_x11_layout() == ("latam", "deadtilde")

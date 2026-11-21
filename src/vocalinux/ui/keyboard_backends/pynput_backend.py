@@ -359,8 +359,11 @@ class PynputKeyboardBackend(KeyboardBackend):
                 return
             modifier_key_sets.append(set(variants))
 
+        from .layout_key_map import resolve_base_key_token
+
         self._combo_required_modifier_keys = modifier_key_sets
-        self._combo_key_token = normalize_main_key_token(spec.key) if spec.key is not None else None
+        token = normalize_main_key_token(spec.key) if spec.key is not None else None
+        self._combo_key_token = resolve_base_key_token(token) if token is not None else None
 
     def _install_x11_key_resolver(self, listener: Any) -> None:
         """Capture X11 hardware keycode and level-0 keysym on each event.

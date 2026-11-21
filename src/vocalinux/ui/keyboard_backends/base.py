@@ -505,6 +505,13 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
     if first_gesture[0] == "combo":
         first_token = next(iter(first_gesture[1]))
         second_token = next(iter(second_gesture[1]))
+        try:
+            from .layout_key_map import resolve_base_key_token
+
+            if resolve_base_key_token(first_token) == resolve_base_key_token(second_token):
+                return True
+        except ImportError:
+            pass
         first_code = _combo_physical_evdev_code(first_token)
         second_code = _combo_physical_evdev_code(second_token)
         if first_code is not None and first_code == second_code:
