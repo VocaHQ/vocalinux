@@ -37,6 +37,11 @@ gi.require_version("Gdk", "3.0")
 # Need GLib for idle_add
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from ..audio.pipewire import (  # noqa: E402
+    friendly_device_label,
+    get_alsa_capture_descriptions,
+    has_alsa_hw_address,
+)
 from ..audio.pulse_sources import (  # noqa: E402
     PULSE_INDEX_BASE,
     PulseSource,
@@ -2152,11 +2157,26 @@ def _combo_chrome(combo: Gtk.Widget, tooltip: Optional[str] = None) -> None:
 _AUDIO_DEVICE_TOOLTIP = "Select the microphone to use for voice recognition"
 
 
-def _sync_audio_device_tooltip(combo: Gtk.ComboBoxText) -> None:
-    """Show the selected microphone's full name, which the fixed-width combo truncates."""
+def _sync_audio_device_tooltip(
+    combo: Gtk.ComboBoxText, device_names: Optional[dict[int, str]] = None
+) -> None:
+    """Show the selected microphone's full name, which the fixed-width combo truncates.
+
+    When the entry shows a friendlier label than the device's own name
+    (``device_names`` maps entry ids to those names), the tooltip shows both.
+    """
     label = combo.get_active_text()
-    if not label or combo.get_active_id() in (None, "-1"):
+    device_id = combo.get_active_id()
+    if not label or device_id in (None, "-1"):
         combo.set_tooltip_text(_AUDIO_DEVICE_TOOLTIP)
+        return
+    try:
+        parsed_id: Optional[int] = int(device_id)
+    except (TypeError, ValueError):
+        parsed_id = None
+    raw_name = (device_names or {}).get(parsed_id) if parsed_id is not None else None
+    if raw_name and _raw_audio_device_name(label) != raw_name:
+        combo.set_tooltip_text(f"{label}\n{raw_name}")
     else:
         combo.set_tooltip_text(label)
 
@@ -2591,6 +2611,8 @@ class SettingsDialog(AboutSectionMixin):
         self._initializing = True  # Flag to prevent auto-apply during initialization
         # Server name of each snap PulseAudio entry in the device dropdown.
         self._pulse_source_names: dict[int, str] = {}
+        # Device's own name for each dropdown entry; the label may be friendlier.
+        self._audio_device_names: dict[int, str] = {}
         self._populating_models = False  # Flag to prevent model change handler during population
         # Guards the simple-mode widgets while they are being pointed at the
         # live configuration, so syncing them does not look like a user edit.
@@ -9997,9 +10019,24 @@ For now, the engine has been reverted to VOSK."""
             for position, source in enumerate(pulse_sources)
         }
         devices = get_audio_input_devices(pulse_sources=pulse_sources)
+        # PortAudio names ALSA inputs after the driver ("sof-hda-dsp: - (hw:0,6)");
+        # show PipeWire's description instead, and keep the PortAudio name, which
+        # is what gets saved and resolved (#1029). Negative indices belong to
+        # PipeWire system-audio monitors and snap PulseAudio sources, never ALSA.
+        has_portaudio_hw = any(
+            device_index >= 0 and has_alsa_hw_address(device_name)
+            for device_index, device_name, _is_default in devices
+        )
+        descriptions = get_alsa_capture_descriptions() if has_portaudio_hw else {}
+        self._audio_device_names = {}
 
         for device_index, device_name, is_default in devices:
-            label = device_name
+            label = (
+                friendly_device_label(device_name, descriptions)
+                if device_index >= 0
+                else device_name
+            )
+            self._audio_device_names[device_index] = device_name
             if is_default:
                 label += " (default)"
             self.audio_device_combo.append(str(device_index), label)
@@ -10034,7 +10071,7 @@ For now, the engine has been reverted to VOSK."""
                 if self.speech_engine is not None:
                     self.speech_engine.set_audio_device(None, None)
 
-        _sync_audio_device_tooltip(self.audio_device_combo)
+        _sync_audio_device_tooltip(self.audio_device_combo, self._audio_device_names)
         logger.info(f"Found {len(devices)} audio input devices")
 
     def _on_refresh_audio_devices(self, widget):
@@ -10044,7 +10081,7 @@ For now, the engine has been reverted to VOSK."""
 
     def _on_audio_device_changed(self, widget):
         """Handle changes in the selected audio device."""
-        _sync_audio_device_tooltip(self.audio_device_combo)
+        _sync_audio_device_tooltip(self.audio_device_combo, self._audio_device_names)
         if self._initializing:
             return
 
@@ -10054,7 +10091,10 @@ For now, the engine has been reverted to VOSK."""
 
         device_index = int(device_id)
         device_label = self.audio_device_combo.get_active_text()
-        device_name = _raw_audio_device_name(device_label)
+        # Entries may show a friendlier label; save the device's own name.
+        device_name = self._audio_device_names.get(
+            device_index, _raw_audio_device_name(device_label)
+        )
         if is_pulse_device_index(device_index):
             # Save the stable server name; the label changes as devices come and go.
             device_name = self._pulse_source_names.get(device_index, device_name)
