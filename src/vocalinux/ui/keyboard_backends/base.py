@@ -453,6 +453,15 @@ def is_valid_shortcut(shortcut_string: str) -> bool:
         return False
 
 
+def _combo_physical_evdev_code(token: str) -> Optional[int]:
+    """Return the active-layout physical evdev code for a combo main key, if resolvable."""
+    try:
+        from .evdev_backend import evdev_code_for_key
+    except ImportError:
+        return None
+    return evdev_code_for_key(token)
+
+
 def shortcut_gesture(shortcut_string: str) -> Optional[Tuple[str, frozenset]]:
     """The physical gesture a shortcut string describes, as backends match it.
 
@@ -479,8 +488,10 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
     """Whether two shortcut strings can be triggered by the same gesture (#805).
 
     String comparison alone misses gestures the backends treat as identical,
-    like "ctrl+alt+r" vs "alt+ctrl+r" or "ctrl+ctrl" vs
-    "left_ctrl+left_ctrl".
+    like "ctrl+alt+r" vs "alt+ctrl+r", "ctrl+ctrl" vs "left_ctrl+left_ctrl",
+    or shifted/unshifted pairs that resolve to the same physical key under the
+    active keyboard layout (e.g. "ctrl+shift+0" vs "ctrl+shift+equal" on
+    ``latam``, or "ctrl+shift+0" vs "ctrl+shift+parenright" on ``us``).
     """
     first_gesture = shortcut_gesture(first)
     second_gesture = shortcut_gesture(second)
@@ -489,7 +500,16 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
     if first_gesture[0] != second_gesture[0]:
         # A modifier press and a main-key press are different trigger events.
         return False
-    return bool(first_gesture[1] & second_gesture[1])
+    if first_gesture[1] & second_gesture[1]:
+        return True
+    if first_gesture[0] == "combo":
+        first_token = next(iter(first_gesture[1]))
+        second_token = next(iter(second_gesture[1]))
+        first_code = _combo_physical_evdev_code(first_token)
+        second_code = _combo_physical_evdev_code(second_token)
+        if first_code is not None and first_code == second_code:
+            return True
+    return False
 
 
 def _main_key_label(token: str) -> str:

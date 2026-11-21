@@ -261,7 +261,8 @@ def _extract_x11_key_info(display: Any, event: Any) -> Optional[tuple[int, int]]
             unshifted_keysym = int(display.keycode_to_keysym(keycode, 2) or 0)
         if not unshifted_keysym:
             unshifted_keysym = int(display.keycode_to_keysym(keycode, 0) or 0)
-    except Exception:
+    except (AttributeError, IndexError, TypeError, ValueError, OSError) as exc:
+        logger.debug("Failed to look up unshifted X11 keysym for keycode %d: %s", keycode, exc)
         unshifted_keysym = 0
     return (keycode, unshifted_keysym)
 
@@ -398,8 +399,12 @@ class PynputKeyboardBackend(KeyboardBackend):
             if hw_token is not None:
                 return hw_token == target
             if unshifted_keysym:
-                if x11_keysym_to_token(unshifted_keysym) == target:
-                    return True
+                unshifted_token = x11_keysym_to_token(unshifted_keysym)
+                if unshifted_token is not None:
+                    # Resolve strictly to the base (level-0) key so a single
+                    # keypress (e.g. latam Ctrl+Shift+0) never fires both
+                    # ctrl+shift+0 and ctrl+shift+equal simultaneously.
+                    return unshifted_token == target
         return pynput_key_token(key) == target
 
     def _combo_modifiers_held(self) -> bool:

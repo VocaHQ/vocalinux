@@ -742,3 +742,54 @@ def test_gdk_event_to_shortcut_resolves_latam_ctrl_shift_zero(
         group=0,
     )
     assert method(object(), event) == "ctrl+shift+0"
+
+
+def test_report_shortcut_apply_result_escapes_markup_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shortcut labels with '<' or '&' (e.g. ctrl+less, ctrl+ampersand) escape Pango markup."""
+    import html
+
+    method = _settings_dialog_unbound("_report_shortcut_apply_result")
+    fake_glib = types.SimpleNamespace(
+        markup_escape_text=lambda text: html.escape(text, quote=False)
+    )
+    monkeypatch.setitem(method.__globals__, "GLib", fake_glib)
+
+    for display_name, expected_escaped in [
+        ("Press Ctrl+<", "Press Ctrl+&lt;"),
+        ("Hold Ctrl+&", "Hold Ctrl+&amp;"),
+    ]:
+        for applied in (True, False):
+            rendered: list[str] = []
+            stub = types.SimpleNamespace(
+                shortcut_info_label=types.SimpleNamespace(set_markup=rendered.append)
+            )
+            method(stub, display_name, applied)
+            assert len(rendered) == 1
+            assert f"<b>{expected_escaped}</b>" in rendered[0]
+
+
+def test_unshifted_gdk_keyval_from_event_logs_lookup_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_unshifted_gdk_keyval_from_event catches specific errors and logs context."""
+
+    class _BrokenKeymap:
+        def translate_keyboard_state(self, _hw: int, _state: Any, _group: int) -> Any:
+            raise TypeError("bad state")
+
+    fake_gdk = types.SimpleNamespace(
+        Display=types.SimpleNamespace(get_default=lambda: object()),
+        Keymap=types.SimpleNamespace(get_for_display=lambda _d: _BrokenKeymap()),
+        ModifierType=lambda val: val,
+    )
+    monkeypatch.setitem(_unshifted_gdk_keyval_from_event.__globals__, "Gdk", fake_gdk)
+
+    with caplog.at_level("DEBUG", logger="vocalinux.ui.settings_dialog"):
+        assert (
+            _unshifted_gdk_keyval_from_event(types.SimpleNamespace(hardware_keycode=19, group=0))
+            is None
+        )
+    assert "hardware_keycode=19" in caplog.text

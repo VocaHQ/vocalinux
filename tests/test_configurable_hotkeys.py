@@ -635,8 +635,6 @@ class TestPynputX11KeyResolver:
             ("ctrl+shift+apostrophe", 20, 0x0027, "?", 0x003F),
             # latam Ctrl+Shift+´ (dead_acute):
             ("ctrl+shift+dead_acute", 34, 0xFE51, "¨", 0xFE57),
-            # Legacy v0.18.6 latam binding ctrl+shift+equal still matches Shift+0:
-            ("ctrl+shift+equal", 19, 0x0030, "=", 0x003D),
         ],
     )
     def test_x11_listener_hook_fires_non_us_shifted_combos(
@@ -676,6 +674,66 @@ class TestPynputX11KeyResolver:
         )
         assert fired.wait(1.0)
         assert backend._pending_x11_key_info is None
+
+    def test_x11_latam_ctrl_shift_zero_does_not_also_fire_ctrl_shift_equal(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A single latam Ctrl+Shift+0 press matches only ctrl+shift+0, not ctrl+shift+equal."""
+        backend, ctrl_l, shift_l, _insert = self._make_headless_backend(
+            monkeypatch, "ctrl+shift+equal"
+        )
+        fired = threading.Event()
+        backend.register_toggle_callback(fired.set)
+
+        backend._on_press(ctrl_l)
+        backend._on_press(shift_l)
+        backend._pending_x11_key_info = (19, 0x0030)
+        try:
+            backend._on_press(self._fake_key(char="=", vk=0x003D))
+        finally:
+            backend._pending_x11_key_info = None
+        assert not fired.wait(0.15)
+
+    def test_pynput_key_token_handles_dead_keys_special_vks_and_unicode(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """pynput_key_token resolves dead keys, ISO_Left_Tab, F24, punctuation, and Unicode."""
+        monkeypatch.setattr(pynput_backend, "PYNPUT_AVAILABLE", True)
+        # Dead grave carries char='`' with vk=0xFE50; vk must win over char.
+        assert pynput_backend.pynput_key_token(self._fake_key(char="`", vk=0xFE50)) == "dead_grave"
+        assert pynput_backend.pynput_key_token(self._fake_key(char="´", vk=0xFE51)) == "dead_acute"
+        assert pynput_backend.pynput_key_token(self._fake_key(char=None, vk=0xFE20)) == "tab"
+        assert pynput_backend.pynput_key_token(self._fake_key(char=None, vk=0xFFD5)) == "f24"
+        assert pynput_backend.pynput_key_token(self._fake_key(char="|", vk=0x007C)) == "bar"
+        assert (
+            pynput_backend.pynput_key_token(self._fake_key(char="¿", vk=0x00BF)) == "questiondown"
+        )
+        assert pynput_backend.pynput_key_token(self._fake_key(char="ñ", vk=0x00F1)) == "ñ"
+        assert pynput_backend.pynput_key_token(self._fake_key(char="\x12", vk=None)) == "r"
+        assert (
+            pynput_backend.pynput_key_token(self._fake_key(char=None, vk=0x01000000 | ord("ž")))
+            == "ž"
+        )
+
+    def test_extract_x11_key_info_logs_lookup_errors(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """_extract_x11_key_info catches specific lookup errors and logs debug context."""
+
+        class _BrokenDisplay:
+            def keycode_to_keysym(self, _keycode: int, _index: int) -> int:
+                raise OSError("X11 connection dropped")
+
+        with caplog.at_level("DEBUG", logger="vocalinux.ui.keyboard_backends.pynput_backend"):
+            info = pynput_backend._extract_x11_key_info(
+                _BrokenDisplay(), types.SimpleNamespace(detail=19, state=0)
+            )
+        assert info == (19, 0)
+        assert "keycode 19" in caplog.text
+        assert pynput_backend._extract_x11_key_info(_BrokenDisplay(), object()) is None
 
     def test_x11_keypad_matches_kp_0_and_never_triggers_top_row_zero_or_insert(
         self,
@@ -751,3 +809,41 @@ class TestPynputX11KeyResolver:
         finally:
             backend._pending_x11_key_info = None
         assert released.wait(1.0)
+
+
+@pytest.mark.skipif(not evdev_backend.EVDEV_AVAILABLE, reason="evdev not available")
+class TestLayoutAwareGestureCollisions:
+    """shortcut_gestures_collide catches shifted/unshifted pairs on the same physical key."""
+
+    def test_latam_shifted_and_unshifted_pairs_collide(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On latam, ctrl+shift+0 and ctrl+shift+equal resolve to KEY_0 and collide."""
+        from vocalinux.ui.keyboard_backends.base import shortcut_gestures_collide
+        from vocalinux.ui.keyboard_backends.layout_key_map import build_char_to_evdev_map
+
+        latam_map = build_char_to_evdev_map("latam")
+        if latam_map is None:
+            pytest.skip("libxkbcommon or XKB data not available")
+        monkeypatch.setattr(evdev_backend, "get_active_char_to_evdev_map", lambda: latam_map)
+
+        assert shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+equal") is True
+        assert shortcut_gestures_collide("ctrl+shift+apostrophe", "ctrl+shift+question") is True
+        assert shortcut_gestures_collide("ctrl+shift+questiondown", "ctrl+shift+exclamdown") is True
+        assert shortcut_gestures_collide("ctrl+shift+kp_0", "ctrl+shift+0") is False
+        assert shortcut_gestures_collide("ctrl+shift+bar", "ctrl+shift+0") is False
+
+    def test_us_shifted_and_unshifted_pairs_collide(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """On US layout, ctrl+shift+0 collides with ctrl+shift+parenright but not equal."""
+        from vocalinux.ui.keyboard_backends.base import shortcut_gestures_collide
+
+        monkeypatch.setattr(evdev_backend, "get_active_char_to_evdev_map", lambda: None)
+
+        assert shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+parenright") is True
+        assert shortcut_gestures_collide("ctrl+shift+slash", "ctrl+shift+question") is True
+        assert shortcut_gestures_collide("ctrl+shift+0", "ctrl+shift+equal") is False
+        assert evdev_backend.evdev_code_for_key("dead_acute") is None

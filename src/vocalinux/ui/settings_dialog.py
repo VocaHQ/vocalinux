@@ -1711,8 +1711,8 @@ def _gdk_keyname_to_unicode_char(name: str) -> Optional[str]:
             cp = Gdk.keyval_to_unicode(kv)
             if isinstance(cp, int) and cp >= 32:
                 return chr(cp)
-    except Exception:
-        pass
+    except (AttributeError, TypeError, ValueError) as exc:
+        logger.debug("GDK unicode lookup failed for keyname %r: %s", name, exc)
     return keysym_name_to_char(name)
 
 
@@ -1788,7 +1788,13 @@ def _unshifted_gdk_keyval_from_event(event: Any) -> Optional[int]:
         if keymap is None:
             return None
         result = keymap.translate_keyboard_state(hardware, Gdk.ModifierType(0), group)
-    except Exception:
+    except (AttributeError, TypeError, ValueError) as exc:
+        logger.debug(
+            "GDK keymap lookup failed for hardware_keycode=%d group=%d: %s",
+            hardware,
+            group,
+            exc,
+        )
         return None
     if isinstance(result, tuple) and len(result) >= 2 and result[0] is True:
         keyval = result[1]
@@ -5826,14 +5832,15 @@ class SettingsDialog(AboutSectionMixin):
 
     def _report_shortcut_apply_result(self, display_name: str, applied: bool) -> None:
         """Show success/restart feedback after a shortcut change."""
+        escaped_name = GLib.markup_escape_text(display_name)
         if applied:
             self.shortcut_info_label.set_markup(
-                f"<span foreground='#26a269'>Shortcut updated to <b>{display_name}</b>. "
+                f"<span foreground='#26a269'>Shortcut updated to <b>{escaped_name}</b>. "
                 "Active now!</span>"
             )
         else:
             self.shortcut_info_label.set_markup(
-                f"<i>Shortcut updated to <b>{display_name}</b>. "
+                f"<i>Shortcut updated to <b>{escaped_name}</b>. "
                 "Restart the app for the change to take full effect.</i>"
             )
 
