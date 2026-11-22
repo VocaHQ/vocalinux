@@ -14,6 +14,7 @@ without inheriting dictation behavior.
 import ctypes
 import logging
 import subprocess
+import threading
 import time
 from typing import TYPE_CHECKING, Any, Callable, Optional, cast
 
@@ -44,6 +45,7 @@ CAPTURE_CHUNK = 1024
 # Match PipeWire's stall deadline; polling also bounds cancellation latency.
 STALL_TIMEOUT_SECONDS = 5.0
 _READ_POLL_SECONDS = 0.01
+_PYAUDIO_TERMINATE_SECONDS = 3.0
 _PA_INPUT_OVERFLOWED = -9981
 _PA_ALSA = 8
 
@@ -212,6 +214,66 @@ def _safe_close_stream(stream: Any) -> None:
         pass
 
 
+def _terminate_pyaudio_bounded(
+    audio: Any,
+    timeout: Optional[float] = None,
+    *,
+    raise_on_error: bool = False,
+) -> bool:
+    """Terminate a PyAudio instance with a deadline, abandoning a wedged instance.
+
+    ``Pa_Terminate`` can block forever when an underlying backend client is
+    wedged (for example ``jack_deactivate`` waiting on ``pthread_cond_wait`` in
+    ``pipewire-jack``). Running ``terminate()`` on a daemon helper thread keeps
+    teardown bounded so capture threads and callers can always exit.
+
+    Args:
+        audio: PyAudio instance to terminate (no-op when ``None`` or lacking a
+            callable ``terminate`` method).
+        timeout: Maximum seconds to wait before abandoning the instance.
+            Defaults to :data:`_PYAUDIO_TERMINATE_SECONDS`.
+        raise_on_error: When ``True``, re-raise any exception raised by
+            ``audio.terminate()`` on the calling thread instead of logging it.
+            Timeouts still log a warning and return ``False`` without raising.
+
+    Returns:
+        ``True`` if ``terminate()`` finished within the deadline (or was a
+        no-op), ``False`` if it timed out and was abandoned.
+    """
+    terminate = getattr(audio, "terminate", None)
+    if not callable(terminate):
+        return True
+
+    deadline = _PYAUDIO_TERMINATE_SECONDS if timeout is None else timeout
+    error: list[Exception] = []
+
+    def _run_terminate() -> None:
+        try:
+            terminate()
+        except Exception as exc:
+            error.append(exc)
+
+    waiter = threading.Thread(
+        target=_run_terminate,
+        name="pyaudio-terminate",
+        daemon=True,
+    )
+    waiter.start()
+    waiter.join(deadline)
+    if waiter.is_alive():
+        logger.warning(
+            "PyAudio.terminate did not finish within %gs; abandoning the wedged instance",
+            deadline,
+        )
+        return False
+
+    if error:
+        if raise_on_error:
+            raise error[0]
+        logger.warning("Error terminating PyAudio: %s", error[0])
+    return True
+
+
 def _get_device_info_safe(audio: Any, device_index: Optional[int] = None) -> dict:
     """Fetch PortAudio device info, returning {} on failure."""
     try:
@@ -237,6 +299,7 @@ def get_audio_input_devices(pulse_sources: Optional[list[PulseSource]] = None) -
         List of tuples: (device_index, device_name, is_default)
     """
     devices = []
+    audio: Any = None
     try:
         import pyaudio
 
@@ -263,12 +326,13 @@ def get_audio_input_devices(pulse_sources: Optional[list[PulseSource]] = None) -
                     devices.append((i, name, is_default))
             except (IOError, OSError):
                 continue
-
-        audio.terminate()
     except ImportError:
         logger.error("PyAudio not installed, cannot enumerate audio devices")
     except OSError as e:
         logger.error(f"Error enumerating audio devices: {e}")
+    finally:
+        if audio is not None:
+            _terminate_pyaudio_bounded(audio)
 
     # PipeWire sinks exposed as system-audio sources. Indices count down from
     # PIPEWIRE_INDEX_BASE so they can never collide with a PortAudio index.
@@ -900,7 +964,10 @@ def test_audio_input(
         _safe_close_stream(stream)
         if audio is not None:
             try:
-                audio.terminate()
+                if not _terminate_pyaudio_bounded(audio, raise_on_error=True):
+                    result["success"] = False
+                    if result["error"] is None:
+                        result["error"] = "Timed out closing audio test"
             except (OSError, ValueError, RuntimeError) as exc:
                 logger.warning("Error terminating PyAudio after audio test: %s", exc)
                 result["success"] = False
@@ -1195,13 +1262,13 @@ class PortAudioCaptureSource:
 
     def close(self) -> None:
         """Stop and close the stream and terminate the PyAudio instance."""
-        _safe_close_stream(self.stream)
-        self.stream = None
+        try:
+            _safe_close_stream(self.stream)
+        finally:
+            self.stream = None
 
-        if self.audio and hasattr(self.audio, "terminate"):
-            try:
-                self.audio.terminate()
-            except Exception as e:
-                logger.warning(f"Error terminating PyAudio: {e}")
+        audio = self.audio
         self.audio = None
         self.downmix_channel = None
+        if audio is not None:
+            _terminate_pyaudio_bounded(audio)

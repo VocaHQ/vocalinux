@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from vocalinux.audio import capture
 from vocalinux.auto_pause_monitor import AutoPauseMonitor
 from vocalinux.common_types import RecognitionState
 from vocalinux.speech_recognition import recognition_manager as rm
@@ -2019,3 +2020,85 @@ def test_fast_settings_defers_even_uncontended_slow_resume(
     assert manager.model is resumed_model
     assert manager.model_ready
     assert not manager.is_auto_paused
+
+
+def test_wedged_pyaudio_terminate_does_not_permanently_block_next_dictation(
+    manager: rm.SpeechRecognitionManager,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A hung Pa_Terminate abandons the wedged instance so the next session can start."""
+    monkeypatch.setattr(capture, "_PYAUDIO_TERMINATE_SECONDS", 0.05)
+
+    reading = threading.Event()
+    terminate_started = threading.Event()
+    release_terminate = threading.Event()
+    terminate_finished = threading.Event()
+
+    wedged_audio = MagicMock()
+    wedged_audio.get_device_count.return_value = 0
+    wedged_audio.get_default_input_device_info.return_value = {"name": "JACK Mic"}
+
+    def wedged_terminate() -> None:
+        terminate_started.set()
+        release_terminate.wait(2.0)
+        terminate_finished.set()
+
+    wedged_audio.terminate.side_effect = wedged_terminate
+
+    healthy_audio = MagicMock()
+    healthy_audio.get_device_count.return_value = 0
+    healthy_audio.get_default_input_device_info.return_value = {"name": "JACK Mic"}
+
+    audio_instances = iter([wedged_audio, healthy_audio])
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        MagicMock(PyAudio=lambda: next(audio_instances), paInt16=8),
+    )
+
+    first_stream = MagicMock()
+    second_stream = MagicMock()
+    streams = iter([first_stream, second_stream])
+    monkeypatch.setattr(capture, "_open_capture_stream", lambda *_args: (1, 16000, next(streams)))
+
+    def fake_read(
+        _stream: object,
+        _frames: int,
+        timeout: float = capture.STALL_TIMEOUT_SECONDS,
+        should_continue: Callable[[], bool] | None = None,
+    ) -> bytes | None:
+        reading.set()
+        while should_continue is None or should_continue():
+            time.sleep(0.005)
+        return None
+
+    monkeypatch.setattr(capture, "_read_frames_bounded", fake_read)
+    monkeypatch.setattr(manager, "_perform_recognition", lambda: None)
+
+    try:
+        assert manager.start_recognition()
+        assert reading.wait(1.0)
+        first_thread = manager.audio_thread
+        assert first_thread is not None
+
+        manager.stop_recognition()
+        assert terminate_started.wait(1.0)
+        first_thread.join(1.0)
+        assert not first_thread.is_alive()
+        assert manager.state == RecognitionState.IDLE
+        assert "abandoning" in caplog.text
+
+        reading.clear()
+        assert manager.start_recognition()
+        assert reading.wait(1.0)
+        manager.stop_recognition()
+        assert manager.audio_thread is not None
+        manager.audio_thread.join(1.0)
+        assert not manager.audio_thread.is_alive()
+        assert manager.state == RecognitionState.IDLE
+        healthy_audio.terminate.assert_called_once()
+    finally:
+        release_terminate.set()
+        if terminate_started.is_set():
+            assert terminate_finished.wait(1.0)
