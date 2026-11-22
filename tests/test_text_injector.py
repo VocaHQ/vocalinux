@@ -1575,14 +1575,14 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
     def test_inject_with_xdotool_xwayland_types_when_x11_clipboard_missing(
         self,
     ) -> None:
-        """No xclip/xsel: type, even if ydotool/wl-copy exist.
+        """No xclip/xsel: ASCII text types via xdotool, even if ydotool/wl-copy exist.
 
         ydotool+wl-copy writes the Wayland clipboard; an XWayland window
         pastes the X11 CLIPBOARD. Treating ydotool rc=0 as success skips
         type and leaves the wrong (or empty) selection in the field.
         """
 
-        def which_side_effect(cmd):
+        def which_side_effect(cmd: str) -> Optional[str]:
             if cmd in ("xdotool", "ydotool", "wl-copy"):
                 return f"/usr/bin/{cmd}"
             return None
@@ -1593,12 +1593,12 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
         with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}):
             injector = TextInjector()
             injector.environment = DesktopEnvironment.WAYLAND_XDOTOOL
-            injector._inject_with_xdotool("привет")
+            injector._inject_with_xdotool("hello")
 
             calls = [c.args[0] for c in self.mock_subprocess.call_args_list if c.args]
             self.assertTrue(
                 any(c[:2] == ["xdotool", "type"] for c in calls),
-                "should fall back to xdotool type when xclip/xsel are missing",
+                "should fall back to xdotool type for ASCII when xclip/xsel are missing",
             )
             self.assertFalse(
                 any(c[0] == "wl-copy" for c in calls),
@@ -1610,14 +1610,16 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
             )
 
     def test_inject_with_xdotool_xwayland_types_when_paste_fails(self) -> None:
-        """xclip copy works but xdotool key fails: fall through to type."""
+        """xclip copy works but xdotool key fails: ASCII falls through to type."""
 
-        def which_side_effect(cmd):
+        def which_side_effect(cmd: str) -> Optional[str]:
             if cmd in ("xdotool", "xclip"):
                 return f"/usr/bin/{cmd}"
             return None
 
-        def run_side_effect(cmd, **kwargs):
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nUTF8_STRING\n", stderr="")
             if cmd[:2] == ["xdotool", "key"]:
                 raise subprocess.CalledProcessError(1, cmd, stderr="paste failed")
             return MagicMock(returncode=0, stdout="12345", stderr="")
@@ -1629,12 +1631,12 @@ class TestTextInjectorEdgeCases(unittest.TestCase):
             injector = TextInjector()
             injector.environment = DesktopEnvironment.WAYLAND_XDOTOOL
             with patch.object(injector, "_should_use_terminal_paste", return_value=False):
-                injector._inject_with_xdotool("привет")
+                injector._inject_with_xdotool("hello")
 
             calls = [c.args[0] for c in self.mock_subprocess.call_args_list if c.args]
             self.assertTrue(
                 any(c[:2] == ["xdotool", "type"] for c in calls),
-                "should fall back to xdotool type when the paste chord fails",
+                "should fall back to xdotool type for ASCII when the paste chord fails",
             )
 
     def test_inject_with_xdotool_xwayland_paste_sets_display(self) -> None:
@@ -3857,3 +3859,513 @@ class TestXWaylandIBusBypass(unittest.TestCase):
 
         self.assertEqual(reads[-1], True)
         copy.assert_called_with("original", tools=["xclip"])
+
+
+class TestXWaylandNonAsciiAndBinaryClipboard(unittest.TestCase):
+    """Regression tests for issue #1056: non-ASCII XWayland fallback & image preservation."""
+
+    def _make_injector(self, environment: DesktopEnvironment) -> Any:
+        """Create a minimal TextInjector instance for isolated unit testing."""
+        injector: Any = TextInjector.__new__(TextInjector)
+        injector.environment = environment
+        injector._session_environment = DesktopEnvironment.WAYLAND
+        injector._ibus_injector = MagicMock()
+        injector._ibus_injector.inject_text.return_value = True
+        injector._portal = None
+        injector._backend_pin = ("auto", None)
+        injector._ibus_ready = environment == DesktopEnvironment.WAYLAND_IBUS
+        injector._ibus_init_failed = False
+        injector._ibus_init_thread = None
+        injector._state_lock = threading.Lock()
+        injector._abort_injections = threading.Event()
+        injector.last_typed_count = 0
+        injector._clipboard_tool_health = {}
+        injector._clipboard_timeout = 0.35
+        injector._clipboard_restore_generation = 0
+        injector._clipboard_restore_target = None
+        injector.wayland_tool = None
+        return injector
+
+    def test_xwayland_non_ascii_with_image_clipboard_pastes_and_restores_image(self) -> None:
+        """Issue #1056: Cyrillic on XWayland with image on clipboard pastes & restores image."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_IBUS)
+        phrase = "Никаких проблем с этим. "
+        png_bytes = b"\x89PNG\r\n\x1a\nfake-image-payload"
+        restore_workers: list[Any] = []
+        run_calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            run_calls.append((cmd, kwargs))
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nTIMESTAMP\nimage/png\n", stderr="")
+            if cmd == ["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"]:
+                return MagicMock(returncode=0, stdout=phrase, stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        def capture_thread(target: Any, daemon: bool = False) -> MagicMock:
+            restore_workers.append(target)
+            return MagicMock()
+
+        module = "vocalinux.text_injection.text_injector"
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect),
+            patch(f"{module}.threading.Thread", side_effect=capture_thread),
+            patch.object(injector, "_should_bypass_ibus", return_value=True),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_should_use_terminal_paste", return_value=False),
+            patch.object(
+                injector,
+                "_read_bounded_binary_output",
+                return_value=png_bytes,
+            ) as mock_read_bin,
+        ):
+            ok = injector.inject_text(phrase)
+
+            self.assertTrue(ok)
+            self.assertEqual(injector.last_typed_count, len(phrase))
+            self.assertEqual(injector.environment, DesktopEnvironment.WAYLAND_IBUS)
+            mock_read_bin.assert_called_once()
+            self.assertEqual(
+                mock_read_bin.call_args.args[0],
+                ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"],
+            )
+            self.assertEqual(
+                injector._clipboard_restore_target,
+                _BinaryClipboardContent(mime_type="image/png", data=png_bytes),
+            )
+
+            commands = [cmd for cmd, _ in run_calls]
+            self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+v"], commands)
+            self.assertFalse(
+                any(cmd[:2] == ["xdotool", "type"] for cmd in commands),
+                "must not fall back to xdotool type for Cyrillic on XWayland",
+            )
+
+            # Run the delayed restore worker after the XWayland detour reverted env to WAYLAND_IBUS.
+            self.assertEqual(len(restore_workers), 1)
+            with patch(f"{module}.time.sleep"):
+                restore_workers[0]()
+
+        restore_calls = [
+            (cmd, kw)
+            for cmd, kw in run_calls
+            if cmd == ["xclip", "-selection", "clipboard", "-i", "-t", "image/png"]
+        ]
+        self.assertEqual(len(restore_calls), 1)
+        self.assertEqual(restore_calls[0][1].get("input"), png_bytes)
+        self.assertEqual(restore_calls[0][1].get("stdout"), subprocess.DEVNULL)
+        self.assertEqual(restore_calls[0][1].get("stderr"), subprocess.DEVNULL)
+
+    def test_xwayland_non_ascii_with_unsaveable_image_fails_without_false_success(self) -> None:
+        """Oversized/unsaveable image + non-ASCII on XWayland fails honestly without typing."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        phrase = "Никаких проблем с этим. "
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run") as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound") as mock_play_error,
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_clipboard_holds_non_text", return_value=True),
+            patch.object(injector, "_read_binary_clipboard", return_value=None),
+            patch.object(injector, "_copy_to_clipboard") as mock_copy,
+            self.assertLogs(module, level="INFO") as logs,
+        ):
+            ok = injector.inject_text(phrase)
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 0)
+        mock_copy.assert_not_called()
+        mock_play_error.assert_called_once_with()
+        typed = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["xdotool", "type"]
+        ]
+        self.assertEqual(typed, [], "must never run xdotool type for non-ASCII on XWayland")
+        self.assertFalse(
+            any("Text injection completed successfully" in msg for msg in logs.output),
+            "must never log false success when non-ASCII XWayland injection fails",
+        )
+        self.assertTrue(any("ERROR" in msg for msg in logs.output))
+
+    def test_xwayland_non_ascii_without_x11_clipboard_tools_preserves_wayland_image(self) -> None:
+        """Missing xclip/xsel + unchecked or image Wayland clipboard does not overwrite it."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "wl-copy", "wl-paste") else None
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{module}.subprocess.run",
+                return_value=MagicMock(
+                    returncode=1, stdout="", stderr="No suitable type of content copied"
+                ),
+            ) as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound") as mock_play_error,
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_copy_to_clipboard") as mock_copy,
+            patch.object(injector, "_show_clipboard_fallback_notification") as mock_notify,
+            self.assertLogs(module, level="INFO") as logs,
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 0)
+        mock_copy.assert_not_called()
+        mock_notify.assert_not_called()
+        mock_play_error.assert_called_once_with()
+        typed = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["xdotool", "type"]
+        ]
+        self.assertEqual(typed, [])
+        self.assertFalse(any("Text injection completed successfully" in msg for msg in logs.output))
+
+    def test_xwayland_non_ascii_without_x11_clipboard_tools_fails_honestly(self) -> None:
+        """Missing xclip/xsel + empty/text Wayland clipboard offers manual paste and returns False."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "wl-copy", "wl-paste") else None
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{module}.subprocess.run",
+                return_value=MagicMock(returncode=1, stdout="", stderr="Nothing is copied"),
+            ) as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound") as mock_play_error,
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_copy_to_clipboard", return_value=True) as mock_copy,
+            patch.object(injector, "_show_clipboard_fallback_notification") as mock_notify,
+            self.assertLogs(module, level="INFO") as logs,
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 0)
+        mock_copy.assert_called_once_with("привет")
+        mock_notify.assert_called_once_with()
+        mock_play_error.assert_called_once_with()
+        typed = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["xdotool", "type"]
+        ]
+        self.assertEqual(typed, [])
+        self.assertFalse(any("Text injection completed successfully" in msg for msg in logs.output))
+
+    def test_xwayland_non_ascii_paste_failure_restores_image_and_returns_false(self) -> None:
+        """Failed ctrl+v with a saved image restores the image and fails without clobbering it."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        png_bytes = b"\x89PNG\r\n\x1a\nrestored"
+        module = "vocalinux.text_injection.text_injector"
+        run_calls: list[tuple[list[str], dict[str, Any]]] = []
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            run_calls.append((cmd, kwargs))
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nimage/png\n", stderr="")
+            if cmd[:2] == ["xdotool", "key"]:
+                raise subprocess.CalledProcessError(1, cmd, stderr="paste failed")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect),
+            patch("vocalinux.ui.audio_feedback.play_error_sound") as mock_play_error,
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_should_use_terminal_paste", return_value=False),
+            patch.object(injector, "_read_bounded_binary_output", return_value=png_bytes),
+            patch.object(injector, "_show_clipboard_fallback_notification") as mock_notify,
+            self.assertLogs(module, level="INFO") as logs,
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 0)
+        mock_notify.assert_not_called()
+        mock_play_error.assert_called_once_with()
+        # Immediate restore wrote the PNG back and no subsequent fallback copy overwrote it.
+        xclip_writes = [
+            (cmd, kw) for cmd, kw in run_calls if cmd and cmd[0] == "xclip" and "-o" not in cmd
+        ]
+        self.assertEqual(
+            xclip_writes[-1][0],
+            ["xclip", "-selection", "clipboard", "-i", "-t", "image/png"],
+        )
+        self.assertEqual(xclip_writes[-1][1].get("input"), png_bytes)
+        self.assertFalse(any(cmd[:2] == ["xdotool", "type"] for cmd, _ in run_calls))
+        self.assertFalse(any("Text injection completed successfully" in msg for msg in logs.output))
+
+    def test_xwayland_unhealthy_xclip_does_not_overwrite_image_via_xsel(self) -> None:
+        """If xclip is unhealthy, XWayland must not replace an image clipboard through xsel."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        injector._clipboard_tool_health["xclip"] = False
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip", "xsel") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nimage/png\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect) as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound"),
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_read_binary_clipboard") as mock_read_bin,
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        mock_read_bin.assert_not_called()
+        commands = [call.args[0] for call in mock_run.call_args_list if call.args]
+        self.assertFalse(any(cmd[0] == "xsel" for cmd in commands))
+        self.assertFalse(any(cmd[:2] == ["xdotool", "type"] for cmd in commands))
+
+    def test_xwayland_xclip_copy_failure_with_saved_image_does_not_fall_through_to_xsel(
+        self,
+    ) -> None:
+        """If xclip fails while copying text over a saved image, xsel must not overwrite it."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        png_bytes = b"\x89PNG\r\n\x1a\nintact"
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip", "xsel") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nimage/png\n", stderr="")
+            if cmd == ["xclip", "-selection", "clipboard"]:
+                raise subprocess.TimeoutExpired(cmd, 0.35)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect) as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound"),
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_read_bounded_binary_output", return_value=png_bytes),
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        commands = [call.args[0] for call in mock_run.call_args_list if call.args]
+        self.assertFalse(
+            any(cmd[0] == "xsel" for cmd in commands),
+            "xsel must not overwrite a saved image when xclip fails",
+        )
+        self.assertFalse(any(cmd[:2] == ["xdotool", "key"] for cmd in commands))
+
+    def test_xwayland_non_ascii_paste_failure_with_text_clipboard_returns_false(self) -> None:
+        """Failed ctrl+v on XWayland with text clipboard returns False without xdotool type."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nUTF8_STRING\n", stderr="")
+            if cmd == ["xclip", "-selection", "clipboard", "-o", "-t", "UTF8_STRING"]:
+                return MagicMock(returncode=0, stdout="old text", stderr="")
+            if cmd[:2] == ["xdotool", "key"]:
+                raise subprocess.CalledProcessError(1, cmd, stderr="paste failed")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect) as mock_run,
+            patch("vocalinux.ui.audio_feedback.play_error_sound"),
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_should_use_terminal_paste", return_value=False),
+            patch.object(injector, "_show_clipboard_fallback_notification"),
+            self.assertLogs(module, level="INFO") as logs,
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 0)
+        typed = [
+            call.args[0]
+            for call in mock_run.call_args_list
+            if call.args and call.args[0][:2] == ["xdotool", "type"]
+        ]
+        self.assertEqual(typed, [])
+        self.assertFalse(any("Text injection completed successfully" in msg for msg in logs.output))
+
+    def test_xwayland_non_ascii_pastes_when_copy_to_clipboard_enabled(self) -> None:
+        """With copy_to_clipboard=True, non-text clipboard does not block XWayland paste."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        module = "vocalinux.text_injection.text_injector"
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(
+                f"{module}.subprocess.run",
+                return_value=MagicMock(returncode=0, stdout="", stderr=""),
+            ) as mock_run,
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=True),
+            patch.object(injector, "_clipboard_holds_non_text", return_value=True),
+            patch.object(injector, "_should_use_terminal_paste", return_value=False),
+        ):
+            ok = injector.inject_text("привет")
+
+        self.assertTrue(ok)
+        commands = [call.args[0] for call in mock_run.call_args_list if call.args]
+        self.assertIn(["xdotool", "key", "--clearmodifiers", "ctrl+v"], commands)
+
+    def test_overlapping_xwayland_second_paste_failure_preserves_pending_image(self) -> None:
+        """If an overlapping 2nd non-ASCII paste fails, pending image is restored, not clobbered."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        injector = self._make_injector(DesktopEnvironment.WAYLAND_XDOTOOL)
+        png_bytes = b"\x89PNG\r\n\x1a\npending"
+        injector._clipboard_restore_target = _BinaryClipboardContent(
+            mime_type="image/png", data=png_bytes
+        )
+        injector._clipboard_restore_generation = 1
+        module = "vocalinux.text_injection.text_injector"
+        restored: list[Any] = []
+
+        def which_side_effect(cmd: str) -> Optional[str]:
+            return f"/usr/bin/{cmd}" if cmd in ("xdotool", "xclip") else None
+
+        def run_side_effect(cmd: list[str], **kwargs: Any) -> MagicMock:
+            if cmd == ["xclip", "-selection", "clipboard", "-t", "TARGETS", "-o"]:
+                return MagicMock(returncode=0, stdout="TARGETS\nUTF8_STRING\n", stderr="")
+            if cmd[:2] == ["xdotool", "key"]:
+                raise subprocess.CalledProcessError(1, cmd, stderr="paste failed")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(f"{module}.shutil.which", side_effect=which_side_effect),
+            patch(f"{module}.subprocess.run", side_effect=run_side_effect),
+            patch("vocalinux.ui.audio_feedback.play_error_sound"),
+            patch.object(injector, "_try_recover_from_fallback", return_value=False),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_should_use_terminal_paste", return_value=False),
+            patch.object(
+                injector,
+                "_write_binary_clipboard",
+                side_effect=lambda content, tools=None: restored.append(content) or True,
+            ),
+            patch.object(injector, "_show_clipboard_fallback_notification") as mock_notify,
+        ):
+            ok = injector.inject_text("мир")
+
+        self.assertFalse(ok)
+        self.assertEqual(restored, [_BinaryClipboardContent(mime_type="image/png", data=png_bytes)])
+        mock_notify.assert_not_called()
+
+    def test_portal_partial_demote_to_xwayland_non_ascii_preserves_typed_count(self) -> None:
+        """Portal partial prefix is preserved in last_typed_count if XWayland non-ASCII fails."""
+        injector = self._make_injector(DesktopEnvironment.WAYLAND)
+        injector.wayland_tool = "portal"
+        module = "vocalinux.text_injection.text_injector"
+
+        def demote_to_xwayland() -> bool:
+            injector.environment = DesktopEnvironment.WAYLAND_XDOTOOL
+            injector.wayland_tool = None
+            return True
+
+        with (
+            patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland", "WAYLAND_DISPLAY": "w-1"}),
+            patch(
+                f"{module}.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/xdotool" if cmd == "xdotool" else None,
+            ),
+            patch("vocalinux.ui.audio_feedback.play_error_sound"),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_try_inject_with_portal", return_value=(False, "мир")),
+            patch.object(injector, "_demote_portal_backend", side_effect=demote_to_xwayland),
+            patch.object(injector, "_session_clipboard_safe_to_overwrite", return_value=True),
+            patch.object(injector, "_copy_to_clipboard", return_value=True) as mock_copy,
+            patch.object(injector, "_show_clipboard_fallback_notification"),
+        ):
+            ok = injector.inject_text("helloмир")
+
+        self.assertFalse(ok)
+        self.assertEqual(injector.last_typed_count, 5)
+        mock_copy.assert_called_once_with("мир")
+
+    def test_x11_long_non_ascii_with_image_clipboard_pastes_and_restores(self) -> None:
+        """Plain X11 long non-ASCII dictation with saveable image pastes & preserves image."""
+        from vocalinux.text_injection.text_injector import _BinaryClipboardContent
+
+        injector = self._make_injector(DesktopEnvironment.X11)
+        injector._session_environment = DesktopEnvironment.X11
+        saved = _BinaryClipboardContent(mime_type="image/png", data=b"\x89PNGdata")
+        long_cyrillic = "Привет мир, это достаточно длинная фраза для вставки."
+
+        with (
+            patch(
+                "vocalinux.text_injection.text_injector.shutil.which",
+                side_effect=lambda cmd: "/usr/bin/xclip" if cmd == "xclip" else None,
+            ),
+            patch.object(injector, "_paste_long_text_enabled", return_value=True),
+            patch.object(injector, "_wait_for_modifiers_released"),
+            patch.object(injector, "_clipboard_holds_non_text", return_value=True),
+            patch.object(injector, "_should_copy_to_clipboard", return_value=False),
+            patch.object(injector, "_read_binary_clipboard", return_value=saved),
+            patch.object(injector, "_inject_via_clipboard_paste", return_value=True) as paste,
+        ):
+            injector._inject_with_xdotool(long_cyrillic)
+
+        paste.assert_called_once_with(long_cyrillic, env=mock.ANY, previous_clipboard=saved)
