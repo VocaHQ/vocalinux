@@ -43,6 +43,7 @@ def fourier_available() -> bool:
 
 
 def require_fourier_runtime() -> None:
+    """Raise an actionable error if the optional CPU engine is unavailable."""
     if not fourier_available():
         raise RuntimeError(
             "Fourier requires the source installer's Linux x86-64 runtime. "

@@ -17,4 +17,5 @@ MODEL_INFO = {
 
 
 def model_path() -> Path:
+    """Return the installed GGUF path in the user’s Vocalinux data directory."""
     return Path(models_dir()) / "fourier" / FILENAME

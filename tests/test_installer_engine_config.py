@@ -11,6 +11,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 INSTALL_SH = Path(__file__).resolve().parents[1] / "install.sh"
 
 PRELUDE = """
@@ -236,3 +238,42 @@ def test_unreadable_config_is_not_treated_as_an_engine(tmp_path: Path) -> None:
     result = _check(config_dir, venv)
 
     assert "EXIT=0" in result.stdout
+
+
+def test_fourier_installer_seeds_fresh_shortcuts_and_preserves_existing_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run the installer's Fourier branch and check what the first app launch loads."""
+    from vocalinux.ui import config_manager
+
+    config_dir = tmp_path / "config"
+    config_path = config_dir / "config.json"
+    venv = tmp_path / "venv"
+    _venv_python(venv)
+    monkeypatch.setattr(config_manager, "CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(config_manager, "CONFIG_FILE", str(config_path))
+    # Isolate the real installer branch from hardware probes and pip operations.
+    _, arm = INSTALL_SH.read_text().split("\n            fourier)\n", 1)
+    branch = arm.split("\n                ;;", 1)[0]
+    script = f"""
+VENV_DIR="{venv}"
+CONFIG_DIR="{config_dir}"
+PIP_LOG_FILE=/dev/null
+INSTALL_DIR=.
+uname() {{ echo x86_64; }}
+pip_install_reqs_file() {{ return 0; }}
+engine_import_error() {{ return 0; }}
+for fn in set_configured_engine write_configured_engine; do
+    source <(sed -n "/^$fn() {{$/,/^}}$/p" "{INSTALL_SH}")
+done
+{branch}
+"""
+    for existing in (None, {"toggle_recognition": "ctrl+ctrl", "mode": "toggle"}):
+        if existing is not None:
+            config_path.write_text(json.dumps({"shortcuts": existing}))
+        result = _run(script)
+        assert result.returncode == 0, result.stderr
+        assert _engine_of(config_path) == "fourier"
+        shortcuts = config_manager.ConfigManager().config["shortcuts"]
+        expected = existing or {"toggle_recognition": "right_alt+right_alt", "mode": "push_to_talk"}
+        assert all(shortcuts[key] == value for key, value in expected.items())

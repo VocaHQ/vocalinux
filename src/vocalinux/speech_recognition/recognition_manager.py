@@ -1498,6 +1498,7 @@ class SpeechRecognitionManager:
         return verified
 
     def _download_fourier_model(self) -> None:
+        """Publish the optional model only after validating its pinned checksum."""
         from tempfile import NamedTemporaryFile
 
         require_fourier_runtime()
@@ -1518,16 +1519,31 @@ class SpeechRecognitionManager:
                 os.unlink(staged)
 
     def _init_fourier(self) -> None:
+        """Load the pinned CPU model or leave it available to download in Settings."""
         self.model_size = fourier.MODEL_ID
         try:
             require_fourier_runtime()
-            if not fourier.model_path().is_file():
-                if self._defer_download:
-                    self._model_initialized = False
-                    return
-                self._download_fourier_model()
+            path = fourier.model_path()
             engine = FourierEngine()
-            engine.init()
+            if path.is_file():
+                cached = path.stat()
+                try:
+                    engine.init()
+                except ChecksumError as error:
+                    # An absent pin is a packaging error, not a damaged download.
+                    if expected_for(fourier.FILENAME) is None:
+                        raise
+                    # Preserve a replacement published while the checksum was running.
+                    if path.is_file() and os.path.samestat(cached, path.stat()):
+                        logger.warning("Removing corrupt Fourier model at %s: %s", path, error)
+                        path.unlink(missing_ok=True)
+            if not engine.is_ready():
+                if not path.is_file():
+                    if self._defer_download:
+                        self._model_initialized = False
+                        return
+                    self._download_fourier_model()
+                engine.init()
             self.model = engine
             self._model_initialized = True
         except (ImportError, RuntimeError, OSError, ValueError, ChecksumError):
@@ -1535,6 +1551,7 @@ class SpeechRecognitionManager:
             raise
 
     def _transcribe_with_fourier(self, audio_buffer: list[bytes]) -> str:
+        """Transcribe a final utterance while the selected model is loaded."""
         with self._model_lock:
             model = self.model
             if not isinstance(model, FourierEngine):

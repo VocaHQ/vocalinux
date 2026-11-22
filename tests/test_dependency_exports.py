@@ -534,7 +534,7 @@ def test_ci_runs_the_drift_check() -> None:
     assert not missing, f"the python changes filter does not watch {missing}"
 
 
-def test_fourier_runtime_is_pinned_for_the_source_installer():
+def test_fourier_runtime_is_pinned_for_the_source_installer() -> None:
     """A source-only engine needs its own wheel pins without promising AUR bindings."""
     metadata = _pyproject()
     assert "fourier" not in metadata["project"]["optional-dependencies"]

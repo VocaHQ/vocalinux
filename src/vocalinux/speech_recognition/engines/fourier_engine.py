@@ -14,11 +14,13 @@ class FourierEngine:
     """Hold one CPU model and inference session until Vocalinux unloads the engine."""
 
     def __init__(self) -> None:
+        """Create an unloaded engine without opening any native resources."""
         self._resources = ExitStack()
         self._session: Any = None
         self._lock = Lock()
 
     def init(self) -> None:
+        """Verify the pinned local file and open one reusable CPU session."""
         from transcribe_cpp import Model
 
         with self._lock:
@@ -33,10 +35,12 @@ class FourierEngine:
                 self._session = session
 
     def is_ready(self) -> bool:
+        """Return whether the native session is open."""
         with self._lock:
             return self._session is not None
 
     def transcribe(self, audio_buffer: list[bytes]) -> str:
+        """Decode a completed, mono 16 kHz utterance of little-endian PCM16 chunks."""
         raw = b"".join(audio_buffer)
         if not raw:
             return ""
@@ -47,6 +51,7 @@ class FourierEngine:
             return str(self._session.run(samples, language="en", timestamps="none").text).strip()
 
     def cleanup(self) -> None:
+        """Close the session and model, in that order."""
         with self._lock:
             self._session = None
             self._resources.close()

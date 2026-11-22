@@ -2682,7 +2682,14 @@ REMOTE_CONFIG
                 fi
                 mkdir -p "$CONFIG_DIR"
                 if [ ! -f "$CONFIG_DIR/config.json" ]; then
-                    echo '{}' > "$CONFIG_DIR/config.json"
+                    cat > "$CONFIG_DIR/config.json" << 'FOURIER_CONFIG'
+{
+    "shortcuts": {
+        "toggle_recognition": "right_alt+right_alt",
+        "mode": "push_to_talk"
+    }
+}
+FOURIER_CONFIG
                 fi
                 write_configured_engine "$CONFIG_DIR/config.json" fourier ||
                     print_warning "Select Fourier in Settings to enable it."
