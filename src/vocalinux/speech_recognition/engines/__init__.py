@@ -32,6 +32,24 @@ def _module_available(name: str) -> bool:
         return False
 
 
+def fourier_available() -> bool:
+    """Whether this installation has both parts of the Linux CPU runtime."""
+    return (
+        platform.system() == "Linux"
+        and platform.machine() == "x86_64"
+        and _module_available("transcribe_cpp")
+        and _module_available("transcribe_cpp_native")
+    )
+
+
+def require_fourier_runtime() -> None:
+    if not fourier_available():
+        raise RuntimeError(
+            "Fourier requires the source installer's Linux x86-64 runtime. "
+            "Install it with ./install.sh --auto --engine=fourier."
+        )
+
+
 def available_engines() -> list[str]:
     """Return installed speech engines in the Settings display order."""
     engines = {
@@ -39,12 +57,7 @@ def available_engines() -> list[str]:
         "whisper": _module_available("whisper"),
         "whisper_cpp": False,
         "parakeet": False,
-        "fourier": (
-            platform.system() == "Linux"
-            and platform.machine() == "x86_64"
-            and _module_available("transcribe_cpp")
-            and _module_available("transcribe_cpp_native")
-        ),
+        "fourier": fourier_available(),
         "faster_whisper": _module_available("faster_whisper"),
         "remote_api": False,
     }

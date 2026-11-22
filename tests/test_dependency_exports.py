@@ -532,3 +532,16 @@ def test_ci_runs_the_drift_check() -> None:
         if pattern not in watched
     ]
     assert not missing, f"the python changes filter does not watch {missing}"
+
+
+def test_fourier_runtime_is_pinned_for_the_source_installer():
+    """A source-only engine needs its own wheel pins without promising AUR bindings."""
+    metadata = _pyproject()
+    assert "fourier" not in metadata["project"]["optional-dependencies"]
+    names = set(_requirement_names(metadata["dependency-groups"]["fourier-runtime"]))
+    assert names == {"transcribe-cpp", "transcribe-cpp-native"}
+    export = REQUIREMENTS / "fourier.txt"
+    assert _exported_names(export) == names
+    assert all(count for _, count in _pinned_hash_counts(export))
+    assert "--only-group fourier-runtime" in JUSTFILE.read_text()
+    assert '"$INSTALL_DIR/requirements/fourier.txt"' in INSTALLER.read_text()

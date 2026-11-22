@@ -2296,7 +2296,7 @@ pip_install_extras_skip_pygobject() {
     for extra in "$@"; do
         # uv normalizes underscores to dashes in export filenames.
         case "$extra" in
-            vad|vosk|parakeet|fourier|faster_whisper|whisper|dev) ;;
+            vad|vosk|parakeet|faster_whisper|whisper|dev) ;;
             *) print_error "Unknown dependency extra: $extra"; return 1 ;;
         esac
         pip_install_reqs_file "$pip_log" "$INSTALL_DIR/requirements/${extra//_/-}.txt" || return 1
@@ -2675,7 +2675,7 @@ REMOTE_CONFIG
                     exit 1
                 fi
                 print_info "Installing the optional Fourier English CPU engine (model: CC BY-NC 4.0)."
-                if ! pip_install_extras_skip_pygobject "$PIP_LOG_FILE" fourier ||
+                if ! pip_install_reqs_file "$PIP_LOG_FILE" "$INSTALL_DIR/requirements/fourier.txt" ||
                     ! engine_import_error fourier; then
                     print_error "Fourier installation failed. See $PIP_LOG_FILE."
                     exit 1

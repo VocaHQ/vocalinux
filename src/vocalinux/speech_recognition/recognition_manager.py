@@ -96,6 +96,7 @@ from ..utils.whispercpp_model_info import (
 )
 from ..version import __version__
 from .command_processor import CommandProcessor
+from .engines import require_fourier_runtime
 from .engines.fourier_engine import FourierEngine
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
@@ -1499,6 +1500,7 @@ class SpeechRecognitionManager:
     def _download_fourier_model(self) -> None:
         from tempfile import NamedTemporaryFile
 
+        require_fourier_runtime()
         path = fourier.model_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         # Unique staging files also keep separate Vocalinux processes from publishing
@@ -1518,6 +1520,7 @@ class SpeechRecognitionManager:
     def _init_fourier(self) -> None:
         self.model_size = fourier.MODEL_ID
         try:
+            require_fourier_runtime()
             if not fourier.model_path().is_file():
                 if self._defer_download:
                     self._model_initialized = False

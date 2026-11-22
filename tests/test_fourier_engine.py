@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from vocalinux.speech_recognition import recognition_manager
 from vocalinux.speech_recognition.engines import fourier_engine
 from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
 from vocalinux.ui.settings_dialog import _model_download_source_url, _undownloaded_model_info
@@ -63,6 +64,7 @@ def test_no_download_until_requested_and_truncated_download_is_never_published(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(recognition_manager, "require_fourier_runtime", lambda: None)
     manager = SpeechRecognitionManager(engine="fourier", language="de", defer_download=True)
     assert manager.language == "en-us"
     assert not manager._model_initialized
@@ -97,6 +99,7 @@ def test_fourier_optional_discovery(monkeypatch):
 
 def test_manager_delivers_a_completed_fourier_utterance(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(recognition_manager, "require_fourier_runtime", lambda: None)
     manager = SpeechRecognitionManager(engine="fourier")
     manager.model = fourier_engine.FourierEngine()
     monkeypatch.setattr(manager.model, "transcribe", lambda chunks: "A completed utterance.")
@@ -128,3 +131,17 @@ def test_failed_session_releases_native_model(monkeypatch):
         engine.init()
     assert released == [True]
     assert not engine.is_ready()
+
+
+def test_missing_runtime_fails_before_downloading(monkeypatch, tmp_path):
+    from vocalinux.speech_recognition import engines
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    monkeypatch.setattr(engines, "fourier_available", lambda: False)
+    monkeypatch.setattr(
+        SpeechRecognitionManager,
+        "_stream_model_download",
+        lambda *args: pytest.fail("missing optional runtime must not trigger a download"),
+    )
+    with pytest.raises(RuntimeError, match="source installer"):
+        SpeechRecognitionManager(engine="fourier", defer_download=False)

@@ -7697,8 +7697,11 @@ class SettingsDialog(AboutSectionMixin):
 
         if available_count == 0:
             logger.error("No speech recognition engines available!")
-            # Still add them so the UI works, but log the error
+            # Keep the normal recovery choices when no engines are installed.
+            # Fourier requires the opt-in wheels from the source installer.
             for engine in ENGINE_MODELS.keys():
+                if engine == "fourier":
+                    continue
                 display_name = _engine_display_name(engine)
                 self.engine_combo.append(display_name, display_name)
         else:

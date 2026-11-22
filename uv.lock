@@ -3335,10 +3335,6 @@ docs = [
 faster-whisper = [
     { name = "faster-whisper" },
 ]
-fourier = [
-    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-]
 parakeet = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core", marker = "platform_machine != 'armv7l'" },
@@ -3355,6 +3351,10 @@ whisper = [
 ]
 
 [package.dev-dependencies]
+fourier-runtime = [
+    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
 installer-build = [
     { name = "cmake" },
     { name = "meson-python" },
@@ -3404,13 +3404,15 @@ requires-dist = [
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=6.0.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.2.0" },
     { name = "torch", marker = "extra == 'whisper'", specifier = ">=2.13.0" },
-    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fourier'", specifier = "==0.4.2" },
-    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fourier'", specifier = "==0.4.2" },
     { name = "vosk", marker = "extra == 'vosk'", specifier = ">=0.3.45,<0.4" },
 ]
-provides-extras = ["vosk", "whisper", "parakeet", "fourier", "faster-whisper", "vad", "dev", "docs"]
+provides-extras = ["vosk", "whisper", "parakeet", "faster-whisper", "vad", "dev", "docs"]
 
 [package.metadata.requires-dev]
+fourier-runtime = [
+    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==0.4.2" },
+    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==0.4.2" },
+]
 installer-build = [
     { name = "cmake", specifier = "==3.31.10" },
     { name = "meson-python", specifier = ">=0.16" },
