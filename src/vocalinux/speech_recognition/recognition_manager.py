@@ -61,6 +61,7 @@ from ..ui.config_manager import (
     clamp_remote_api_timeout,
 )
 from ..utils import faster_whisper_model_info as faster_whisper
+from ..utils import fourier_model_info as fourier
 from ..utils import parakeet_model_info as parakeet
 from ..utils.host_process import host_env
 from ..utils.model_checksums import (
@@ -95,6 +96,7 @@ from ..utils.whispercpp_model_info import (
 )
 from ..version import __version__
 from .command_processor import CommandProcessor
+from .engines.fourier_engine import FourierEngine
 from .silero_vad import SILERO_CHUNK_SIZE, load_silero_vad
 
 if TYPE_CHECKING:
@@ -271,6 +273,8 @@ def normalize_language_for_engine(engine: str, language: str) -> str:
     language. Any leftover CLI or saved code is dropped so callers cannot store
     an unconsumed value.
     """
+    if engine == "fourier":
+        return "en-us"
     if engine == "parakeet":
         return "auto"
     return language
@@ -713,21 +717,7 @@ class SpeechRecognitionManager:
             f"Initializing speech recognition with {engine} engine, {self.language} language and {model_size} model"
         )
 
-        # Initialize the selected speech recognition engine
-        if engine == "vosk":
-            self._init_vosk()
-        elif engine == "whisper":
-            self._init_whisper()
-        elif engine == "whisper_cpp":
-            self._init_whispercpp()
-        elif engine == "parakeet":
-            self._init_parakeet()
-        elif engine == "faster_whisper":
-            self._init_faster_whisper()
-        elif engine == "remote_api":
-            self._init_remote_api()
-        else:
-            raise ValueError(f"Unsupported speech recognition engine: {engine}")
+        self._init_selected_engine()
 
     @staticmethod
     def _normalize_language_candidates(value: str | list[str] | None) -> list[str]:
@@ -762,6 +752,8 @@ class SpeechRecognitionManager:
             self._init_whispercpp()
         elif self.engine == "parakeet":
             self._init_parakeet()
+        elif self.engine == "fourier":
+            self._init_fourier()
         elif self.engine == "faster_whisper":
             self._init_faster_whisper()
         elif self.engine == "remote_api":
@@ -784,6 +776,9 @@ class SpeechRecognitionManager:
                 cache_dir, model_file = self._whisper_model_cache_paths()
                 if not os.path.exists(model_file):
                     self._download_whisper_model(cache_dir)
+        elif self.engine == "fourier":
+            if not fourier.model_path().is_file():
+                self._download_fourier_model()
         elif self.engine == "faster_whisper":
             if not faster_whisper.is_model_downloaded(self.model_size):
                 self._download_faster_whisper_model()
@@ -1500,6 +1495,52 @@ class SpeechRecognitionManager:
                     return False
                 logger.info("Removed the unverified model file; it will be downloaded again")
         return verified
+
+    def _download_fourier_model(self) -> None:
+        from tempfile import NamedTemporaryFile
+
+        path = fourier.model_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Unique staging files also keep separate Vocalinux processes from publishing
+        # another process's incomplete or failed download.
+        with NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
+            staged = tmp.name
+        try:
+            self._stream_model_download(fourier.URL, staged)
+            if self._download_progress_callback:
+                self._download_progress_callback(1.0, 0, "Verifying model...")
+            verify_model_file(staged, fourier.FILENAME)
+            os.replace(staged, path)
+        finally:
+            if os.path.exists(staged):
+                os.unlink(staged)
+
+    def _init_fourier(self) -> None:
+        self.model_size = fourier.MODEL_ID
+        try:
+            if not fourier.model_path().is_file():
+                if self._defer_download:
+                    self._model_initialized = False
+                    return
+                self._download_fourier_model()
+            engine = FourierEngine()
+            engine.init()
+            self.model = engine
+            self._model_initialized = True
+        except (ImportError, RuntimeError, OSError, ValueError, ChecksumError):
+            self._set_engine_error()
+            raise
+
+    def _transcribe_with_fourier(self, audio_buffer: list[bytes]) -> str:
+        with self._model_lock:
+            model = self.model
+            if not isinstance(model, FourierEngine):
+                return ""
+            try:
+                return model.transcribe(audio_buffer)
+            except (RuntimeError, OSError, ValueError) as error:
+                logger.error("Fourier transcription failed: %s", error)
+                return ""
 
     def _init_faster_whisper(self) -> None:
         """Initialize the faster-whisper speech recognition engine."""
@@ -4602,6 +4643,7 @@ class SpeechRecognitionManager:
                 audio_buffer, dictation_language
             ),
             "parakeet": lambda: self._transcribe_with_parakeet(audio_buffer),
+            "fourier": lambda: self._transcribe_with_fourier(audio_buffer),
             "faster_whisper": lambda: self._transcribe_with_faster_whisper(
                 audio_buffer, dictation_language
             ),
@@ -5283,6 +5325,8 @@ class SpeechRecognitionManager:
                         if self._model_request is not request:
                             return False
                     # Release old resources explicitly if necessary (Python's GC might handle it)
+                    if isinstance(self.model, FourierEngine):
+                        self.model.cleanup()
                     self.model = None
                     self.recognizer = None
                     if self._faster_whisper_engine is not None:
@@ -5593,6 +5637,8 @@ class SpeechRecognitionManager:
                     self._idle_unloaded = True
             # Last-reference drops can run native destructors. Keep them out of
             # the request lock so a newer pause can publish its guard promptly.
+            if isinstance(old_model, FourierEngine):
+                old_model.cleanup()
             del old_model, old_recognizer
             logger.info("Unloading speech model (reason=%s)", reason)
             if self._faster_whisper_engine is not None:
@@ -5805,6 +5851,8 @@ class SpeechRecognitionManager:
                 self.model = None
                 self.recognizer = None
                 self._model_initialized = False
+            if isinstance(old_model, FourierEngine):
+                old_model.cleanup()
             del old_model, old_recognizer
             if self._faster_whisper_engine is not None:
                 self._faster_whisper_engine.cleanup()
@@ -5827,6 +5875,8 @@ class SpeechRecognitionManager:
                         self._init_whispercpp()
                     elif self.engine == "parakeet":
                         self._init_parakeet()
+                    elif self.engine == "fourier":
+                        self._init_fourier()
                     elif self.engine == "faster_whisper":
                         self._init_faster_whisper()
                     elif self.engine == "remote_api":

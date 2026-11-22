@@ -318,6 +318,13 @@ vocalinux --wayland
 vocalinux --start-minimized
 ```
 
+**Fourier 2B (optional, Linux x86-64 CPU).** For personal or other noncommercial
+English dictation, run `./install.sh --auto --engine=fourier` from the source tree.
+In Settings → Speech Model choose **Fourier (English, noncommercial)** and confirm
+the 2.19 GB download. The app verifies the publisher's SHA-256 and uses the same
+local model for subsequent utterances. The [Fourier model and weights](https://huggingface.co/oruk/oruk-fourier-2b)
+are licensed under CC BY-NC 4.0. The model supplies final English text per utterance.
+
 ### Autostart
 
 **Start on Login** creates an XDG autostart desktop entry (`~/.config/autostart/`). It does not install a systemd unit. Enable from the first-run dialog, tray menu, or Settings.

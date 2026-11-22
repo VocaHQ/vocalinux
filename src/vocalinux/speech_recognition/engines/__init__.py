@@ -6,13 +6,15 @@ discover them without hard-coding every backend.
 
 import importlib.util
 import logging
+import platform
 from typing import Type
 
 from ...common_types import Engine, EngineType
+from .fourier_engine import FourierEngine
 
 logger = logging.getLogger(__name__)
 
-ENGINES: dict[EngineType, Type[Engine]] = {}
+ENGINES: dict[EngineType, Type[Engine]] = {EngineType.FOURIER: FourierEngine}
 
 # Register faster-whisper when available.
 try:
@@ -37,6 +39,12 @@ def available_engines() -> list[str]:
         "whisper": _module_available("whisper"),
         "whisper_cpp": False,
         "parakeet": False,
+        "fourier": (
+            platform.system() == "Linux"
+            and platform.machine() == "x86_64"
+            and _module_available("transcribe_cpp")
+            and _module_available("transcribe_cpp_native")
+        ),
         "faster_whisper": _module_available("faster_whisper"),
         "remote_api": False,
     }

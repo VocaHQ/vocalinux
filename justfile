@@ -215,6 +215,7 @@ lock:
     # has no export, rather than trusting this list to stay complete.
     uv export --no-dev --extra vosk --no-emit-project --no-emit-package pygobject -o requirements/vosk.txt
     uv export --no-dev --extra parakeet --no-emit-project --no-emit-package pygobject -o requirements/parakeet.txt
+    uv export --no-dev --extra fourier --no-emit-project --no-emit-package pygobject -o requirements/fourier.txt
     uv export --no-dev --extra faster-whisper --no-emit-project --no-emit-package pygobject -o requirements/faster-whisper.txt
     # --group lint too: the linters live in a dependency group, not in the dev
     # extra, so exporting the extra alone produced a file that reproduced

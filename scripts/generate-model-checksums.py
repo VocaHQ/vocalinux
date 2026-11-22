@@ -362,9 +362,17 @@ def main() -> int:
     faster_whisper_entries = _faster_whisper_entries()
     print(f"  faster-whisper: {len(faster_whisper_entries)} sha256 digests")
 
+    from vocalinux.utils import fourier_model_info as fourier
+
+    digest, size = _hf_lfs_digests(fourier.REPO, fourier.REVISION)[fourier.FILENAME]
+    fourier_entry = Entry(fourier.FILENAME, "sha256", digest, size)
     MANIFEST.write_text(
         _render(
-            whispercpp_entries + vosk_entries + parakeet_entries + faster_whisper_entries,
+            whispercpp_entries
+            + vosk_entries
+            + parakeet_entries
+            + faster_whisper_entries
+            + [fourier_entry],
             revision,
         ),
         encoding="utf-8",

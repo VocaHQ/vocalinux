@@ -3198,6 +3198,27 @@ wheels = [
 ]
 
 [[package]]
+name = "transcribe-cpp"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "transcribe-cpp-native" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/54/ff/745157c886700c7559e9479fe4e27b3dcc267a5d88c8956a01341567c642/transcribe_cpp-0.4.2.tar.gz", hash = "sha256:946e7fe8cf228adbaf7c2fb6f541c1c9ed9abe19a2abe546862755a23a49500b", size = 116439, upload-time = "2026-11-12T11:33:44.242Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/fa/7bbe86d8d8ce396943615dfb649dbcc524442141241854ab7e904358cb15/transcribe_cpp-0.4.2-py3-none-any.whl", hash = "sha256:dbbdef5febf1f786730ef1bb038f732cd2264b544aa1177ff335ef061741bb2e", size = 47640, upload-time = "2026-11-12T11:33:29.823Z" },
+]
+
+[[package]]
+name = "transcribe-cpp-native"
+version = "0.4.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/28/74/7ba0b477bb4ae0bcb5ee9a44d98f4af33f3e32d6041b24e71204aa3059ae/transcribe_cpp_native-0.4.2.tar.gz", hash = "sha256:3f0b2d6d9958322c5efd8b3b005187a4e725334d4fb1e5c8ea7067fd931b6a08", size = 4548172, upload-time = "2026-11-12T11:33:45.581Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/66/0d/498b2594f28f6320c2397884e1a4376da7b5b297f97ea8895dc6659a6c2c/transcribe_cpp_native-0.4.2-py3-none-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4010dba73291b92b9cb70ca2673ed7e9ea1d4f8a9029efb942d5de0cb0900785", size = 22806649, upload-time = "2026-11-12T11:33:38.469Z" },
+]
+
+[[package]]
 name = "triton"
 version = "3.7.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3314,6 +3335,10 @@ docs = [
 faster-whisper = [
     { name = "faster-whisper" },
 ]
+fourier = [
+    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
 parakeet = [
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core", marker = "platform_machine != 'armv7l'" },
@@ -3379,9 +3404,11 @@ requires-dist = [
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=6.0.0" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'", specifier = ">=1.2.0" },
     { name = "torch", marker = "extra == 'whisper'", specifier = ">=2.13.0" },
+    { name = "transcribe-cpp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fourier'", specifier = "==0.4.2" },
+    { name = "transcribe-cpp-native", marker = "platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'fourier'", specifier = "==0.4.2" },
     { name = "vosk", marker = "extra == 'vosk'", specifier = ">=0.3.45,<0.4" },
 ]
-provides-extras = ["vosk", "whisper", "parakeet", "faster-whisper", "vad", "dev", "docs"]
+provides-extras = ["vosk", "whisper", "parakeet", "fourier", "faster-whisper", "vad", "dev", "docs"]
 
 [package.metadata.requires-dev]
 installer-build = [

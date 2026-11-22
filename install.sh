@@ -389,7 +389,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --upgrade        Non-interactive upgrade of an existing install: reuse the"
             echo "                  venv, update the configured engine's dependencies, never"
             echo "                  modify config.json"
-            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, faster_whisper, remote_api"
+            echo "  --engine=NAME    Speech engine: whisper_cpp (default), whisper, vosk, parakeet, fourier, faster_whisper, remote_api"
             echo "  --dev            Install in development mode with all dev dependencies"
             echo "  --test           Run tests after installation"
             echo "  --venv-dir=PATH  Specify custom virtual environment directory"
@@ -1445,7 +1445,7 @@ apply_upgrade_engine
 if [[ "$NON_INTERACTIVE" == "yes" ]] && [[ -z "$SELECTED_ENGINE" ]]; then
     SELECTED_ENGINE="whisper_cpp"
     print_info "Automatic mode: Installing with whisper.cpp (default engine)"
-    print_info "For other engines, use: --engine=whisper, --engine=vosk, --engine=parakeet, --engine=faster_whisper, or --engine=remote_api"
+    print_info "For other engines, use: --engine=whisper, --engine=vosk, --engine=parakeet, --engine=faster_whisper, --engine=fourier, or --engine=remote_api"
 fi
 
 
@@ -1980,6 +1980,7 @@ engine_import_module() {
         whisper) echo "whisper" ;;
         whisper_cpp) echo "pywhispercpp.model" ;;
         parakeet) echo "sherpa_onnx" ;;
+        fourier) echo "transcribe_cpp" ;;
         faster_whisper) echo "faster_whisper" ;;
         *) echo "" ;;
     esac
@@ -1991,6 +1992,7 @@ engine_pip_name() {
         whisper) echo "openai-whisper" ;;
         whisper_cpp) echo "pywhispercpp" ;;
         parakeet) echo "sherpa-onnx" ;;
+        fourier) echo "transcribe-cpp" ;;
         faster_whisper) echo "faster-whisper" ;;
         *) echo "" ;;
     esac
@@ -2294,7 +2296,7 @@ pip_install_extras_skip_pygobject() {
     for extra in "$@"; do
         # uv normalizes underscores to dashes in export filenames.
         case "$extra" in
-            vad|vosk|parakeet|faster_whisper|whisper|dev) ;;
+            vad|vosk|parakeet|fourier|faster_whisper|whisper|dev) ;;
             *) print_error "Unknown dependency extra: $extra"; return 1 ;;
         esac
         pip_install_reqs_file "$pip_log" "$INSTALL_DIR/requirements/${extra//_/-}.txt" || return 1
@@ -2667,6 +2669,24 @@ REMOTE_CONFIG
                 fi
                 ;;
 
+            fourier)
+                if [ "$(uname -m)" != "x86_64" ]; then
+                    print_error "The optional Fourier CPU engine requires Linux x86_64."
+                    exit 1
+                fi
+                print_info "Installing the optional Fourier English CPU engine (model: CC BY-NC 4.0)."
+                if ! pip_install_extras_skip_pygobject "$PIP_LOG_FILE" fourier ||
+                    ! engine_import_error fourier; then
+                    print_error "Fourier installation failed. See $PIP_LOG_FILE."
+                    exit 1
+                fi
+                mkdir -p "$CONFIG_DIR"
+                if [ ! -f "$CONFIG_DIR/config.json" ]; then
+                    echo '{}' > "$CONFIG_DIR/config.json"
+                fi
+                write_configured_engine "$CONFIG_DIR/config.json" fourier ||
+                    print_warning "Select Fourier in Settings to enable it."
+                ;;
             faster_whisper)
                 print_info "Installing Faster-Whisper engine..."
                 print_info "This engine uses CTranslate2 for fast CPU inference."
@@ -3125,6 +3145,10 @@ EOF
         parakeet)
             ENGINE_DISPLAY_NAME="Parakeet"
             BACKEND_INFO="CPU"
+            ;;
+        fourier)
+            ENGINE_DISPLAY_NAME="Fourier 2B Q8 (English, noncommercial)"
+            BACKEND_INFO="CPU (transcribe.cpp)"
             ;;
         faster_whisper)
             ENGINE_DISPLAY_NAME="Faster-Whisper"

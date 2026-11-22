@@ -68,6 +68,7 @@ class TestAvailableEngines(unittest.TestCase):
                     "whisper": False,
                     "whisper_cpp": True,
                     "parakeet": False,
+                    "fourier": False,
                     "faster_whisper": False,
                     "remote_api": False,
                 },

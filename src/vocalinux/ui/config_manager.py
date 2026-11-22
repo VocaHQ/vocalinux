@@ -216,6 +216,7 @@ DEFAULT_CONFIG = {
         # Whether the Advanced island under the simple questions is left open.
         "show_advanced": False,
         "parakeet_model_size": "v3-european",  # Parakeet TDT 0.6B v3 (25 European languages)
+        "fourier_model_size": "fourier-2b-q8",
         "faster_whisper_model_size": "tiny",  # Default model for faster-whisper engine
         "vad_sensitivity": 3,  # Voice Activity Detection sensitivity (1-5)
         "silence_timeout": 1.2,  # Seconds of silence before stopping

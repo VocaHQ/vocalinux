@@ -63,6 +63,10 @@ parakeet = [
     # dependency metadata, and the export test enforces the matching core pin.
     "sherpa-onnx-core==1.13.7; platform_machine != 'armv7l'",
 ]
+fourier = [
+    "transcribe-cpp==0.4.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "transcribe-cpp-native==0.4.2; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 faster_whisper = [
     "faster-whisper>=1.0.0,<2",
 ]
