@@ -391,7 +391,7 @@ def main():
 
     # Check for single instance BEFORE any initialization
     from . import single_instance
-    from .post_processor import apply_post_processing
+    from .post_processor import abort_active_post_processors, apply_post_processing
 
     if not single_instance.acquire_lock():
         # Another instance is already running - show notification and exit
@@ -464,7 +464,13 @@ def main():
     from .text_injection import focused_window, text_injector
     from .ui import tray_indicator
     from .ui.action_handler import ActionHandler
-    from .ui.config_manager import get_shared_config_manager
+    from .ui.config_manager import (
+        DEFAULT_MAX_SEGMENT_SECONDS,
+        DEFAULT_REMOTE_API_TIMEOUT_SECONDS,
+        clamp_max_segment_seconds,
+        clamp_remote_api_timeout,
+        get_shared_config_manager,
+    )
     from .ui.logging_manager import initialize_logging
     from .ui.transcription_history import (
         DEFAULT_MAX_ITEMS,
@@ -560,6 +566,9 @@ def main():
 
     vad_sensitivity = saved_settings.get("vad_sensitivity", 3)
     silence_timeout = saved_settings.get("silence_timeout", 1.2)
+    max_segment_seconds = clamp_max_segment_seconds(
+        saved_settings.get("max_segment_seconds", DEFAULT_MAX_SEGMENT_SECONDS)
+    )
     stop_sound_guard_ms = saved_settings.get("stop_sound_guard_ms", 200)
     voice_commands_enabled = saved_settings.get("voice_commands_enabled")  # None = auto
     audio_device_index = audio_settings.get("device_index", None)
@@ -604,6 +613,7 @@ def main():
             language=language,
             vad_sensitivity=vad_sensitivity,
             silence_timeout=silence_timeout,
+            max_segment_seconds=max_segment_seconds,
             stop_sound_guard_ms=stop_sound_guard_ms,
             buffer_during_reload=config_manager.get_bool(
                 "model_keepalive", "buffer_during_reload", False
@@ -630,6 +640,9 @@ def main():
             remote_api_endpoint=saved_settings.get("remote_api_endpoint", "/inference"),
             remote_api_model=saved_settings.get("remote_api_model", "whisper-1"),
             remote_api_bias_mode=saved_settings.get("remote_api_bias_mode", "auto"),
+            remote_api_timeout_seconds=clamp_remote_api_timeout(
+                saved_settings.get("remote_api_timeout_seconds", DEFAULT_REMOTE_API_TIMEOUT_SECONDS)
+            ),
         )
 
         # Initialize text injection system
@@ -967,6 +980,9 @@ def main():
         # segment instead of injecting while the injector is being stopped.
         accepting_injections = threading.Event()
         accepting_injections.set()
+        # Set by the quit hook so any running post-processing script is aborted
+        # promptly instead of keeping Python alive until timeout_seconds elapses.
+        post_processing_cancel = threading.Event()
         # Serialises the flag check and the inject call itself: quitting can
         # wait out an injection already in progress while never blocking on a
         # queued or running script.
@@ -1053,7 +1069,9 @@ def main():
                 if not accepting_injections.is_set():
                     return
                 try:
-                    processed_text = apply_post_processing(text_to_inject, config_manager)
+                    processed_text = apply_post_processing(
+                        text_to_inject, config_manager, cancel_event=post_processing_cancel
+                    )
                 except Exception:
                     logger.exception("Post-processing raised unexpectedly; injecting original text")
                     processed_text = text_to_inject
@@ -1204,14 +1222,16 @@ def main():
             """Stop the post-processing worker for application quit.
 
             Clearing the flag makes queued or in-flight jobs drop their
-            results, and pending submissions are cancelled without waiting on
-            a running script — quit must not freeze the tray on the script's
-            own timeout.  An injection already in progress is asked to abort
-            so the lock wait stays bounded by a single chunk's subprocess
-            timeout instead of a long transcription's whole budget, and the
-            injector is never stopped mid-inject.
+            results, any running post-processing script is terminated so Python
+            does not wait out a long configured timeout on exit, and pending
+            submissions are cancelled.  An injection already in progress is
+            asked to abort so the lock wait stays bounded by a single chunk's
+            subprocess timeout instead of a long transcription's whole budget,
+            and the injector is never stopped mid-inject.
             """
             accepting_injections.clear()
+            post_processing_cancel.set()
+            abort_active_post_processors()
             text_system.abort_injections()
             with injection_lock:
                 pass

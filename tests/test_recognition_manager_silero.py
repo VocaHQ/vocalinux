@@ -58,7 +58,7 @@ CHUNK_BYTES = 1024 * 2  # 1024 int16 samples
 SILENT_CHUNK = b"\x00" * (1024 * 2)  # 1024 int16 zero samples
 
 
-def _make_manager():
+def _make_manager(**kwargs: object) -> SpeechRecognitionManager:
     """Create a SpeechRecognitionManager with init paths stubbed out."""
     with (
         patch.object(SpeechRecognitionManager, "_init_vosk"),
@@ -70,6 +70,7 @@ def _make_manager():
             model_size="small",
             language="en-us",
             defer_download=True,
+            **kwargs,
         )
     return mgr
 
@@ -533,6 +534,126 @@ class TestAudioLevelCallback(unittest.TestCase):
         for v in levels:
             self.assertGreaterEqual(v, 0.0)
             self.assertLessEqual(v, 100.0)
+
+
+class TestConfigurableMaxSegmentDuration(unittest.TestCase):
+    """Tests for configurable max_segment_seconds and proportional buffer scaling."""
+
+    def test_default_segment_duration_keeps_5000_chunk_buffer(self) -> None:
+        """Default 90 s limit preserves the exact historical 5000-chunk buffer cap."""
+        mgr = _make_manager()
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+    def test_short_segment_duration_keeps_5000_chunk_floor(self) -> None:
+        """Configured segments at or below 90 s keep the 5000-chunk floor."""
+        mgr = _make_manager(max_segment_seconds=30)
+        self.assertEqual(mgr._max_segment_seconds, 30.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+    def test_long_segment_duration_scales_buffer_for_16k_and_48k_chunks(self) -> None:
+        """Buffer cap scales so the 75% flush budget exceeds max_segment_seconds at 16 kHz and 48 kHz."""
+        chunk_16k_seconds = 1024 / 16000
+        chunk_48k_seconds = int(1024 * 16000 / 48000) / 16000
+
+        for seconds in (120.0, 300.0, 600.0, 900.0):
+            with self.subTest(max_segment_seconds=seconds):
+                mgr = _make_manager(max_segment_seconds=seconds)
+                self.assertEqual(mgr._max_segment_seconds, seconds)
+                self.assertGreater(mgr._max_buffer_size, 5000)
+                self.assertGreaterEqual(mgr._max_buffer_size * chunk_16k_seconds * 0.75, seconds)
+                self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, seconds)
+
+    def test_reconfigure_updates_segment_duration_and_buffer_cap(self) -> None:
+        """Hot and full reconfigure update _max_segment_seconds and rescale _max_buffer_size."""
+        mgr = _make_manager()
+        mgr.reconfigure(max_segment_seconds=600)
+        self.assertEqual(mgr._max_segment_seconds, 600.0)
+        chunk_48k_seconds = int(1024 * 16000 / 48000) / 16000
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 600.0)
+
+        # Lowering back to default restores the 5000-chunk cap.
+        mgr.reconfigure(max_segment_seconds=90)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        self.assertEqual(mgr._max_buffer_size, 5000)
+
+        # Invalid values fall back to default; out-of-range values clamp.
+        mgr.reconfigure(max_segment_seconds=True)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        mgr.reconfigure(max_segment_seconds=-10)
+        self.assertEqual(mgr._max_segment_seconds, 90.0)
+        mgr.reconfigure(max_segment_seconds=5000)
+        self.assertEqual(mgr._max_segment_seconds, 900.0)
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 900.0)
+
+        # Full reconfigure (non-hot kwarg present) also applies max_segment_seconds.
+        mgr.reconfigure(remote_api_key="k", max_segment_seconds=180)
+        self.assertEqual(mgr._max_segment_seconds, 180.0)
+        self.assertGreaterEqual(mgr._max_buffer_size * chunk_48k_seconds * 0.75, 180.0)
+
+    def test_lowering_max_segment_seconds_during_capture_flushes_without_trimming(self) -> None:
+        """Lowering max_segment_seconds while buffer exceeds new cap flushes speech instead of trimming."""
+        mgr = _make_manager(max_segment_seconds=600)
+        mgr.state = RecognitionState.LISTENING
+        mgr.should_record = True
+        mgr.silence_timeout = 5.0
+        mgr.vad_sensitivity = 3
+        mgr._silero_vad = MagicMock()
+        mgr._silero_vad.process.return_value = 0.95
+
+        enqueued: list[list[bytes]] = []
+        mgr._enqueue_audio_segment = lambda buf, **kw: enqueued.append(list(buf))
+
+        # Simulate 5,200 buffered chunks (~332.8 s at 16 kHz) already captured under the 600 s cap.
+        existing_chunks = [b"\x01\x00" * 1024 for _ in range(5200)]
+
+        stream = MagicMock()
+        read_count = {"n": 0}
+
+        def _read(*_args: object, **_kwargs: object) -> bytes:
+            read_count["n"] += 1
+            if read_count["n"] == 1:
+                # Seed existing speech inside the live session after start_recognition clears it.
+                with mgr._buffer_lock:
+                    mgr.audio_buffer = list(existing_chunks)
+                    mgr._recording_segment_has_speech = True
+                # Lower limit from 600 s to 90 s (target cap 5,000 < 5,200 live chunks).
+                mgr.reconfigure(max_segment_seconds=90)
+                self.assertGreater(mgr._max_buffer_size, 5200)
+                self.assertEqual(mgr._pending_max_buffer_size, 5000)
+                return b"\x02\x00" * 1024
+            mgr.should_record = False
+            return b"\x00\x00" * 1024
+
+        stream.get_read_available.return_value = 1024
+        stream.read.side_effect = _read
+        pyaudio_mod, _ = _make_pyaudio_module(stream)
+
+        with (
+            patch.dict(sys.modules, {"pyaudio": pyaudio_mod, "numpy": np}),
+            patch(
+                "vocalinux.speech_recognition.recognition_manager._open_capture_stream",
+                return_value=(1, 16000, stream),
+            ),
+        ):
+            mgr._record_audio()
+
+        # All 5,200 existing chunks plus the new chunk were flushed intact — zero chunks trimmed.
+        self.assertEqual(len(enqueued), 1)
+        self.assertEqual(len(enqueued[0]), 5201)
+        # Once the buffer drained, the deferred 5,000-chunk cap took effect.
+        self.assertEqual(mgr._max_buffer_size, 5000)
+        self.assertIsNone(mgr._pending_max_buffer_size)
+
+    def test_reconfigure_state_attrs_include_segment_and_buffer_fields(self) -> None:
+        """Rollback state snapshots cover _max_segment_seconds, _max_buffer_size, and remote timeout."""
+        from vocalinux.speech_recognition.recognition_manager import SpeechRecognitionManager
+
+        attrs = SpeechRecognitionManager._RECONFIGURE_STATE_ATTRS
+        self.assertIn("_max_segment_seconds", attrs)
+        self.assertIn("_max_buffer_size", attrs)
+        self.assertIn("_pending_max_buffer_size", attrs)
+        self.assertIn("remote_api_timeout_seconds", attrs)
 
 
 if __name__ == "__main__":

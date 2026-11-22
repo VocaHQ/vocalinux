@@ -276,9 +276,9 @@ Empty utterances should return `{"text": ""}`. HTTP 4xx/5xx responses are surfac
 ### Timeouts
 
 - Connection test: **5 s**
-- Transcription request: **30 s**
+- Transcription request: **30 s** by default; configurable via `speech_recognition.remote_api_timeout_seconds` in `~/.config/vocalinux/config.json` (`1`–`600` s)
 
-A request that exceeds the transcription timeout is logged and dropped; the next utterance is sent fresh.
+A request that exceeds the transcription timeout is logged and dropped; the next utterance is sent fresh. If you dictate long push-to-talk passages (for example by raising `speech_recognition.max_segment_seconds` above its 90 s default), raise `remote_api_timeout_seconds` to match your server's transcription time. Note that OpenAI's hosted `/v1/audio/transcriptions` endpoint caps uploads at 25 MB (~13 minutes of 16 kHz mono 16-bit WAV).
 
 ## Verifying with `curl`
 
@@ -316,7 +316,7 @@ compatible response shapes above.
 | FunASR/SenseVoice server returns model errors | Model field does not match the served model | Try `sensevoice`, `paraformer`, or the exact model configured on the server |
 | SenseVoice labels appear in injected text | Wrapper returned labels somewhere other than the leading transcript prefix | Return plain text in `text` and put language/emotion/speech labels in JSON metadata |
 | Transcription always empty | Server rejected the WAV (sample rate, channels) | Confirm server accepts 16 kHz mono 16-bit WAV; check server logs |
-| First transcription is slow | Cold model load on the server | Warm the server before dictating, or increase the client timeout server-side |
+| First transcription is slow | Cold model load on the server | Warm the server before dictating, or raise `speech_recognition.remote_api_timeout_seconds` in `~/.config/vocalinux/config.json` |
 | Garbled text in foreign language | Wrong `language` setting | Set the language explicitly in Settings instead of `auto` |
 
 Logs live at `~/.local/share/vocalinux/vocalinux.log` (or wherever your `XDG_DATA_HOME` points). Look for lines tagged `Remote API` for client-side detail.

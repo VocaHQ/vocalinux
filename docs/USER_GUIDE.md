@@ -289,7 +289,7 @@ Vocalinux can pipe each transcription result through a user-defined script befor
 - The script receives the transcription on **stdin**
 - It must write the replacement text to **stdout**
 - stdout is injected verbatim — trailing newlines are preserved (e.g. paragraph breaks), except a single trailing newline that line-oriented tools like `echo` add when the transcription had none
-- A non-zero exit code or a script that times out (10 s) causes the original text to be used unchanged
+- A non-zero exit code or a script that times out (10 s by default, configurable via `post_processing.timeout_seconds`) causes the original text to be used unchanged
 - Scripts run on a dedicated worker so a slow script cannot interrupt dictation
 
 **Example** — a shell script that uppercases everything:
@@ -298,6 +298,30 @@ Vocalinux can pipe each transcription result through a user-defined script befor
 tr '[:lower:]' '[:upper:]'
 ```
 Make the script executable (`chmod +x`) before setting the path in Vocalinux.
+
+**Long dictations and slow post-processors (config file):**
+If you dictate long passages in push-to-talk mode or send transcripts to an LLM or slow remote server, you can adjust the default limits in `~/.config/vocalinux/config.json`:
+
+```json
+{
+  "post_processing": {
+    "script_path": "/path/to/script.sh",
+    "timeout_seconds": 120
+  },
+  "speech_recognition": {
+    "max_segment_seconds": 600,
+    "remote_api_timeout_seconds": 180
+  }
+}
+```
+
+| Key | Default | Valid range | Purpose |
+|-----|---------|-------------|---------|
+| `post_processing.timeout_seconds` | `10` | `1`–`600` s | Time allowed for the post-processing script before falling back to the unprocessed transcript |
+| `speech_recognition.max_segment_seconds` | `90` | `10`–`900` s | Maximum continuous speech kept in one segment before flushing; the audio buffer cap scales automatically so audio is not dropped before flushing |
+| `speech_recognition.remote_api_timeout_seconds` | `30` | `1`–`600` s | HTTP request timeout for Remote API transcription requests (both `/v1/audio/transcriptions` and `/inference`) |
+
+Quit Vocalinux before editing `config.json` so a running instance does not overwrite your edits when saving settings. Invalid values (non-numeric, `<= 0`, booleans) fall back to the defaults, and out-of-range positive values are clamped to the supported bounds.
 
 ## Troubleshooting
 
