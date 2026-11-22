@@ -260,6 +260,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
 
         with (
             patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=False),
             patch.object(overlay, "_layout_bottom_strip"),
         ):
             self.assertFalse(overlay.prewarm())
@@ -280,6 +281,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
 
         with (
             patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=False),
             patch.object(overlay, "_layout_bottom_strip"),
         ):
             overlay.prewarm()
@@ -299,26 +301,60 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
 
     def test_prewarm_is_noop_when_any_gate_blocks_it(self) -> None:
         cases = (
-            ("X11", False, False, True, True, False),
-            ("layer shell", True, True, True, True, False),
-            ("disabled", True, False, False, True, False),
-            ("already visible", True, False, True, True, True),
-            ("GTK unavailable", True, False, True, False, False),
+            ("X11", False, False, True, True, False, False),
+            ("layer shell", True, True, True, True, False, False),
+            ("disabled", True, False, False, True, False, False),
+            ("already visible", True, False, True, True, True, False),
+            ("GTK unavailable", True, False, True, False, False, False),
+            ("KDE Wayland without layer shell", True, False, True, True, False, True),
         )
-        for name, wayland, layer_shell, enabled, gtk_ready, visible in cases:
+        for name, wayland, layer_shell, enabled, gtk_ready, visible, kde in cases:
             with self.subTest(name=name):
                 overlay, mock_window = self._mock_window_overlay(enabled=enabled)
                 overlay._use_layer_shell = layer_shell
                 overlay._gtk_ready = gtk_ready
                 mock_window.get_visible.return_value = visible
 
-                with patch.object(overlay, "_display_is_wayland", return_value=wayland):
+                with (
+                    patch.object(overlay, "_display_is_wayland", return_value=wayland),
+                    patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=kde),
+                ):
                     self.assertFalse(overlay.prewarm())
 
                 mock_window.show_all.assert_not_called()
                 mock_window.set_opacity.assert_not_called()
                 overlay._window = None
                 overlay.destroy()
+
+    def test_sync_never_maps_and_hides_visible_window_on_kde_wayland_without_layer_shell(
+        self,
+    ) -> None:
+        """KDE Wayland without layer shell never maps a plain toplevel (#1030, #1060)."""
+        overlay, mock_window = self._mock_window_overlay(enabled=True)
+        overlay._use_layer_shell = False
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=True),
+        ):
+            overlay.on_recognition_state(RecognitionState.LISTENING)
+            mock_window.show_all.assert_not_called()
+            self.assertIsNone(overlay._anim_id)
+
+            mock_window.get_visible.return_value = True
+            overlay._anim_id = 42
+            overlay.on_recognition_state(RecognitionState.PROCESSING)
+            mock_window.hide.assert_called_once()
+            self.assertIsNone(overlay._anim_id)
+
+        overlay._window = None
+        overlay.destroy()
+
+    def test_display_is_wayland_without_gdk_attribute(self) -> None:
+        """_display_is_wayland returns False safely before GTK initializes _Gdk."""
+        overlay = _overlay_without_gtk()
+        self.assertFalse(overlay._display_is_wayland())
+        overlay.destroy()
 
     def test_display_is_wayland_for_wayland_gtype(self) -> None:
         overlay = _overlay_without_gtk()
@@ -443,6 +479,35 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
         overlay._window = None
         overlay.destroy()
 
+    def test_close_request_on_kde_wayland_without_layer_shell_hides_without_quitting(self) -> None:
+        """Closing an unexpected KDE Wayland fallback window must not quit the app (#1060)."""
+        on_close = MagicMock()
+        with patch.object(
+            DictationOverlay,
+            "_init_gtk_window",
+            side_effect=RuntimeError("gtk disabled in unit tests"),
+        ):
+            overlay = DictationOverlay(enabled=True, on_close_request=on_close)
+        mock_window = MagicMock()
+        mock_window.get_visible.return_value = True
+        overlay._window = mock_window
+        overlay._gtk_ready = True
+        overlay._use_layer_shell = False
+        overlay._GLib = MagicMock()
+
+        with (
+            patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=True),
+        ):
+            self.assertTrue(overlay._on_delete_event(mock_window, MagicMock()))
+
+        mock_window.hide.assert_called_once()
+        mock_window.destroy.assert_not_called()
+        overlay._GLib.idle_add.assert_not_called()
+        on_close.assert_not_called()
+        overlay._window = None
+        overlay.destroy()
+
     def test_disabling_unmaps_prewarmed_window(self) -> None:
         """Turning the overlay off removes the transparent window from the dock (#1010)."""
         overlay, mock_window = self._mock_window_overlay()
@@ -451,6 +516,7 @@ class TestOverlayWithMockedGtkWindow(unittest.TestCase):
 
         with (
             patch.object(overlay, "_display_is_wayland", return_value=True),
+            patch("vocalinux.ui.dictation_overlay._is_kde_session", return_value=False),
             patch.object(overlay, "_layout_bottom_strip"),
         ):
             overlay.prewarm()
@@ -1102,6 +1168,182 @@ class TestInitGtkWindowWithMocks(unittest.TestCase):
             overlay = DictationOverlay(enabled=True)
         self.assertFalse(overlay._use_layer_shell)
         shell.init_for_window.assert_not_called()
+        overlay.destroy()
+
+    def _set_display_gtype(self, mocks: dict[str, MagicMock], gtype_name: str) -> None:
+        """Configure the mocked Gdk display's GType name (Wayland vs X11)."""
+        display = SimpleNamespace(__gtype__=SimpleNamespace(name=gtype_name))
+        mocks["gdk"].Display.get_default.return_value = display
+
+    def test_kde_wayland_without_layer_shell_skips_window_and_prewarm(self) -> None:
+        """KDE Plasma Wayland without GtkLayerShell must not create a fallback window (#1030, #1060)."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        env = {"XDG_CURRENT_DESKTOP": "KDE", "DESKTOP_SESSION": "plasma", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=None),
+            self.assertLogs("vocalinux.ui.dictation_overlay", level=logging.INFO) as logs,
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True, on_close_request=MagicMock())
+
+        self.assertFalse(overlay._gtk_ready)
+        self.assertFalse(overlay._use_layer_shell)
+        self.assertIsNone(overlay._window)
+        mocks["gtk"].Window.assert_not_called()
+        mocks["glib"].idle_add.assert_not_called()
+        self.assertTrue(any("gtk-layer-shell" in msg for msg in logs.output))
+
+        # Recognition state transitions and Settings toggles remain safe no-ops.
+        overlay.on_recognition_state(RecognitionState.LISTENING)
+        self.assertTrue(overlay.controller.visible)
+        overlay.set_enabled(False)
+        overlay.set_enabled(True)
+        mocks["gtk"].Window.assert_not_called()
+        overlay.destroy()
+
+    def test_kde_wayland_with_unsupported_layer_shell_skips_window(self) -> None:
+        """KDE Plasma Wayland skips the fallback when GtkLayerShell reports unsupported."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        shell = _FakeLayerShell(supported=False)
+        env = {"KDE_FULL_SESSION": "true", "XDG_CURRENT_DESKTOP": "", "DESKTOP_SESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=shell),
+        ):
+            overlay = DictationOverlay(enabled=True)
+
+        self.assertFalse(overlay._gtk_ready)
+        self.assertFalse(overlay._use_layer_shell)
+        self.assertIsNone(overlay._window)
+        mocks["gtk"].Window.assert_not_called()
+        mocks["glib"].idle_add.assert_not_called()
+        shell.init_for_window.assert_not_called()
+        overlay.destroy()
+
+    def test_kde_wayland_with_layer_shell_support_check_error_skips_window(self) -> None:
+        """An error from GtkLayerShell.is_supported() cleanly disables the KDE Wayland fallback."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        shell = _FakeLayerShell(supported=True)
+        shell.is_supported = MagicMock(side_effect=RuntimeError("probe boom"))  # type: ignore[method-assign]
+        env = {"XDG_CURRENT_DESKTOP": "KDE", "DESKTOP_SESSION": "", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=shell),
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True)
+
+        self.assertFalse(overlay._gtk_ready)
+        self.assertFalse(overlay._use_layer_shell)
+        self.assertIsNone(overlay._window)
+        mocks["gtk"].Window.assert_not_called()
+        mocks["glib"].idle_add.assert_not_called()
+        overlay.destroy()
+
+    def test_kde_wayland_with_layer_shell_init_failure_destroys_window(self) -> None:
+        """If layer-shell init fails on KDE Wayland, tear down the temporary toplevel."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        shell = _FakeLayerShell(fail_init=True)
+        env = {"XDG_CURRENT_DESKTOP": "KDE", "DESKTOP_SESSION": "", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=shell),
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True)
+
+        self.assertFalse(overlay._gtk_ready)
+        self.assertFalse(overlay._use_layer_shell)
+        self.assertIsNone(overlay._window)
+        mocks["window"].destroy.assert_called_once()
+        mocks["window"].show_all.assert_not_called()
+        mocks["glib"].idle_add.assert_not_called()
+        overlay.destroy()
+
+    def test_kde_wayland_with_layer_shell_uses_layer_surface_without_startup_map(self) -> None:
+        """KDE Plasma Wayland with GtkLayerShell keeps the layer overlay and skips startup map."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        mocks["window"].get_visible.return_value = False
+        shell = _FakeLayerShell(supported=True, keyboard_mode=True)
+        env = {"XDG_CURRENT_DESKTOP": "KDE", "DESKTOP_SESSION": "plasma", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=shell),
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True)
+            self.assertFalse(overlay.prewarm())
+
+        self.assertTrue(overlay._gtk_ready)
+        self.assertTrue(overlay._use_layer_shell)
+        self.assertIs(overlay._window, mocks["window"])
+        shell.init_for_window.assert_called_once_with(mocks["window"])
+        shell.set_keyboard_mode.assert_called_once()
+        mocks["window"].show_all.assert_not_called()
+        overlay.destroy()
+
+    def test_kde_x11_without_layer_shell_keeps_overlay_window(self) -> None:
+        """KDE Plasma on X11 keeps the override-redirect overlay without GtkLayerShell."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkX11Display")
+        mocks["window"].get_visible.return_value = False
+        env = {"XDG_CURRENT_DESKTOP": "KDE", "DESKTOP_SESSION": "plasma", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=None),
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True)
+            self.assertFalse(overlay.prewarm())
+
+        self.assertTrue(overlay._gtk_ready)
+        self.assertFalse(overlay._use_layer_shell)
+        self.assertIs(overlay._window, mocks["window"])
+        # X11 does not prewarm at startup; it maps on demand when listening.
+        mocks["window"].show_all.assert_not_called()
+        overlay.destroy()
+
+    def test_gnome_wayland_without_layer_shell_keeps_prewarm_and_dock_quit(self) -> None:
+        """GNOME Wayland keeps the prewarmed fallback and dock Quit (#998, #1010, #1028)."""
+        mocks = self._install_gi_mocks()
+        self._set_display_gtype(mocks, "GdkWaylandDisplay")
+        mocks["window"].get_visible.return_value = False
+        on_close = MagicMock()
+        env = {"XDG_CURRENT_DESKTOP": "ubuntu:GNOME", "DESKTOP_SESSION": "ubuntu", "GDMSESSION": ""}
+
+        with (
+            patch.dict(os.environ, env),
+            patch("vocalinux.ui.dictation_overlay._try_import_layer_shell", return_value=None),
+        ):
+            os.environ.pop("KDE_FULL_SESSION", None)
+            overlay = DictationOverlay(enabled=True, on_close_request=on_close)
+            mocks["glib"].idle_add.assert_called_once_with(overlay.prewarm)
+
+            with patch.object(overlay, "_layout_bottom_strip"):
+                self.assertFalse(overlay.prewarm())
+
+            mocks["window"].show_all.assert_called_once()
+            mocks["window"].set_opacity.assert_called_with(0.0)
+
+            mocks["glib"].idle_add.reset_mock()
+            self.assertTrue(overlay._on_delete_event(mocks["window"], MagicMock()))
+            mocks["glib"].idle_add.assert_called_once()
+            scheduled = mocks["glib"].idle_add.call_args.args[0]
+            self.assertFalse(scheduled())
+            on_close.assert_called_once_with()
+
         overlay.destroy()
 
 

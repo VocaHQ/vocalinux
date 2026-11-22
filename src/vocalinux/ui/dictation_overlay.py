@@ -127,10 +127,12 @@ class DictationOverlay:
     Floating glowing dictation indicator backed by a GTK window.
 
     On X11 and with layer shell, a full-width bottom strip keeps the orb
-    bottom-center of the monitor. A plain Wayland toplevel cannot be
-    positioned: on KDE it is a compact window KWin places, elsewhere the
-    strip stays so the orb is at least horizontally centered. The window is
-    passive: no keyboard focus, click-through input region.
+    bottom-center of the monitor. On KDE Plasma Wayland without layer shell,
+    KWin manages a plain toplevel as a normal decorated/taskbar window, so the
+    fallback is skipped until ``gtk-layer-shell`` is installed (#1030, #1060).
+    On other Wayland compositors without layer shell (such as GNOME/Mutter),
+    the full-width strip stays so the orb is horizontally centered. The window
+    is passive: no keyboard focus, click-through input region.
     """
 
     def __init__(
@@ -153,8 +155,9 @@ class DictationOverlay:
 
         try:
             self._init_gtk_window()
-            self._gtk_ready = True
-            self._GLib.idle_add(self.prewarm)
+            self._gtk_ready = self._window is not None
+            if self._gtk_ready:
+                self._GLib.idle_add(self.prewarm)
         except Exception as e:
             # Headless / missing display: keep controller usable for tests.
             logger.warning("Dictation overlay window unavailable: %s", e)
@@ -171,6 +174,30 @@ class DictationOverlay:
         self._GLib = GLib
         self._Gdk = Gdk
         self._Gtk = Gtk
+
+        # Soft Wayland layer-shell (optional — never required).
+        layer_shell = _try_import_layer_shell()
+        layer_shell_supported = False
+        if layer_shell is not None:
+            try:
+                layer_shell_supported = bool(layer_shell.is_supported())
+            except Exception as e:
+                logger.debug("GtkLayerShell support check failed: %s", e)
+                layer_shell_supported = False
+
+        # On KDE Plasma Wayland without GtkLayerShell, KWin treats a plain
+        # xdg_toplevel as a regular window with server-side decorations,
+        # taskbar entry, and focus activation on map (#1030, #1060). KWin
+        # natively supports zwlr_layer_shell_v1, so skip the fallback window
+        # instead of showing a transparent framed box.
+        if self._display_is_wayland() and _is_kde_session() and not layer_shell_supported:
+            logger.info(
+                "Dictation overlay disabled on KDE Plasma Wayland because "
+                "GtkLayerShell is unavailable. Install gtk-layer-shell "
+                "(e.g. gir1.2-gtklayershell-0.1 on Debian/Ubuntu or "
+                "gtk-layer-shell on Fedora/Arch) to enable it."
+            )
+            return
 
         # TOPLEVEL is required by gtk-layer-shell; passive flags below avoid
         # keyboard focus so the active editor keeps receiving injected text.
@@ -197,29 +224,38 @@ class DictationOverlay:
         if visual is not None:
             window.set_visual(visual)
 
-        # Soft Wayland layer-shell (optional — never required).
-        layer_shell = _try_import_layer_shell()
-        if layer_shell is not None:
+        if layer_shell is not None and layer_shell_supported:
             try:
-                if layer_shell.is_supported():
-                    layer_shell.init_for_window(window)
-                    layer_shell.set_layer(window, layer_shell.Layer.OVERLAY)
-                    # Full-width bottom strip → orb drawn at horizontal center.
-                    layer_shell.set_anchor(window, layer_shell.Edge.BOTTOM, True)
-                    layer_shell.set_anchor(window, layer_shell.Edge.LEFT, True)
-                    layer_shell.set_anchor(window, layer_shell.Edge.RIGHT, True)
-                    layer_shell.set_margin(window, layer_shell.Edge.BOTTOM, _BOTTOM_MARGIN)
-                    layer_shell.set_exclusive_zone(window, 0)
-                    # Do not grab keyboard — critical so the focused app keeps input.
-                    if hasattr(layer_shell, "set_keyboard_mode"):
-                        layer_shell.set_keyboard_mode(window, layer_shell.KeyboardMode.NONE)
-                    elif hasattr(layer_shell, "set_keyboard_interactivity"):
-                        layer_shell.set_keyboard_interactivity(window, False)
-                    self._use_layer_shell = True
-                    logger.info("Dictation overlay using GtkLayerShell")
+                layer_shell.init_for_window(window)
+                layer_shell.set_layer(window, layer_shell.Layer.OVERLAY)
+                # Full-width bottom strip → orb drawn at horizontal center.
+                layer_shell.set_anchor(window, layer_shell.Edge.BOTTOM, True)
+                layer_shell.set_anchor(window, layer_shell.Edge.LEFT, True)
+                layer_shell.set_anchor(window, layer_shell.Edge.RIGHT, True)
+                layer_shell.set_margin(window, layer_shell.Edge.BOTTOM, _BOTTOM_MARGIN)
+                layer_shell.set_exclusive_zone(window, 0)
+                # Do not grab keyboard — critical so the focused app keeps input.
+                if hasattr(layer_shell, "set_keyboard_mode"):
+                    layer_shell.set_keyboard_mode(window, layer_shell.KeyboardMode.NONE)
+                elif hasattr(layer_shell, "set_keyboard_interactivity"):
+                    layer_shell.set_keyboard_interactivity(window, False)
+                self._use_layer_shell = True
+                logger.info("Dictation overlay using GtkLayerShell")
             except Exception as e:
                 logger.debug("GtkLayerShell setup failed, using fallback: %s", e)
                 self._use_layer_shell = False
+
+        if self._kde_wayland_without_layer_shell():
+            logger.info(
+                "Dictation overlay disabled on KDE Plasma Wayland because "
+                "GtkLayerShell setup failed. Install or update gtk-layer-shell "
+                "to enable it."
+            )
+            try:
+                window.destroy()
+            except Exception:
+                pass
+            return
 
         drawing = Gtk.DrawingArea()
         drawing.set_size_request(1, _STRIP_HEIGHT)
@@ -286,7 +322,17 @@ class DictationOverlay:
 
         The window stays, but the request is passed to ``on_close_request``
         so "Quit" from the dock quits Vocalinux like the tray's Quit (#1028).
+        On KDE Plasma Wayland without layer shell, closing an unexpected
+        fallback window hides it without quitting the tray app (#1060).
         """
+        if self._kde_wayland_without_layer_shell():
+            logger.info(
+                "Hiding fallback dictation overlay on KDE Plasma Wayland "
+                "without quitting the application"
+            )
+            if self._window is not None and self._window.get_visible():
+                self._window.hide()
+            return True
         if self._on_close_request is None:
             logger.info(
                 "Ignoring a close request for the dictation overlay; "
@@ -327,13 +373,26 @@ class DictationOverlay:
 
     def _display_is_wayland(self) -> bool:
         """Check the GType name; GTK3's Gdk typelib does not expose GdkWaylandDisplay as a class."""
-        display = self._Gdk.Display.get_default()
+        gdk = getattr(self, "_Gdk", None)
+        if gdk is None:
+            return False
+        display = gdk.Display.get_default()
         if display is None:
             return False
         try:
             return bool(display.__gtype__.name == "GdkWaylandDisplay")
         except (AttributeError, TypeError):
             return False
+
+    def _kde_wayland_without_layer_shell(self) -> bool:
+        """Whether the session is KDE Plasma Wayland without layer-shell support.
+
+        Without GtkLayerShell, KWin manages a plain xdg_toplevel as a normal
+        window (server-side titlebar/borders, taskbar entry, focus activation
+        on map), producing a transparent framed box at startup and quitting
+        the app when closed (#1030, #1060).
+        """
+        return self._display_is_wayland() and _is_kde_session() and not self._use_layer_shell
 
     def _mapping_steals_focus(self) -> bool:
         """Whether mapping the fallback can steal focus.
@@ -380,6 +439,12 @@ class DictationOverlay:
     def _sync_window(self) -> None:
         """Show/hide and restyle the GTK window from controller state."""
         if not self._gtk_ready or self._window is None:
+            return
+
+        if self._kde_wayland_without_layer_shell():
+            self._stop_animation()
+            if self._window.get_visible():
+                self._window.hide()
             return
 
         mode = self.controller.mode
@@ -445,6 +510,7 @@ class DictationOverlay:
             or self._window is None
             or not self.controller.enabled
             or not self._mapping_steals_focus()
+            or self._kde_wayland_without_layer_shell()
             or self._window.get_visible()
         ):
             return False
