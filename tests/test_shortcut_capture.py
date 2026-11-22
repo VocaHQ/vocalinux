@@ -23,8 +23,10 @@ from vocalinux.ui.settings_dialog import (
     _gdk_capture_to_shortcut,
     _gdk_keyname_to_token,
     _shortcut_from_capture,
+    _unshifted_gdk_keyval_from_event,
     function_token_from_evdev_code,
     function_token_from_gdk_hardware_keycode,
+    keypad_token_from_gdk_hardware_keycode,
     modifiers_from_active_evdev_codes,
 )
 
@@ -541,3 +543,253 @@ def test_destroy_clears_recording_flag_and_closes_devices(
     assert device.closed
     assert {watch["id"] for watch in evdev_recorder.watches} <= set(evdev_recorder.removed)
     assert evdev_recorder.timeouts[0]["id"] in evdev_recorder.removed
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("KP_0", "kp_0"),
+        ("KP_Insert", "kp_0"),
+        ("KP_1", "kp_1"),
+        ("KP_End", "kp_1"),
+        ("KP_5", "kp_5"),
+        ("KP_Begin", "kp_5"),
+        ("KP_9", "kp_9"),
+        ("KP_Prior", "kp_9"),
+        ("KP_Page_Up", "kp_9"),
+        ("KP_Decimal", "kp_decimal"),
+        ("KP_Delete", "kp_decimal"),
+        ("KP_Separator", "kp_decimal"),
+        ("KP_Add", "kp_add"),
+        ("KP_Subtract", "kp_subtract"),
+        ("KP_Multiply", "kp_multiply"),
+        ("KP_Divide", "kp_divide"),
+        ("KP_Enter", "kp_enter"),
+        ("ISO_Left_Tab", "tab"),
+        ("bar", "bar"),
+        ("degree", "degree"),
+        ("questiondown", "questiondown"),
+        ("exclamdown", "exclamdown"),
+        ("question", "question"),
+        ("less", "less"),
+        ("greater", "greater"),
+        ("plus", "plus"),
+        ("braceleft", "braceleft"),
+        ("braceright", "braceright"),
+        ("dead_acute", "dead_acute"),
+        ("dead_grave", "dead_grave"),
+        ("dead_circumflex", "dead_circumflex"),
+        ("dead_diaeresis", "dead_diaeresis"),
+        ("dead_tilde", "dead_tilde"),
+    ],
+)
+def test_maps_keypad_punctuation_and_dead_keys(name: str, expected: str) -> None:
+    """Keypad, international punctuation, ISO_Left_Tab, and dead keys map cleanly."""
+    assert _gdk_keyname_to_token(name) == expected
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("ntilde", "ñ"),
+        ("Ntilde", "ñ"),
+        ("ssharp", "ß"),
+        ("agrave", "à"),
+        ("udiaeresis", "ü"),
+    ],
+)
+def test_maps_unicode_letter_keysym_names(name: str, expected: str) -> None:
+    """Multi-char GDK/XKB letter keysym names resolve to lowercase single chars."""
+    token = _gdk_keyname_to_token(name)
+    if token is None:
+        pytest.skip("Neither real Gdk nor libxkbcommon is available")
+    assert token == expected
+
+
+@pytest.mark.parametrize(
+    "hardware,expected",
+    [
+        (90, "kp_0"),
+        (87, "kp_1"),
+        (88, "kp_2"),
+        (89, "kp_3"),
+        (83, "kp_4"),
+        (84, "kp_5"),
+        (85, "kp_6"),
+        (79, "kp_7"),
+        (80, "kp_8"),
+        (81, "kp_9"),
+        (91, "kp_decimal"),
+        (86, "kp_add"),
+        (82, "kp_subtract"),
+        (63, "kp_multiply"),
+        (106, "kp_divide"),
+        (104, "kp_enter"),
+        (0, None),
+        (19, None),  # top-row 0
+        (191, None),  # F13
+    ],
+)
+def test_keypad_token_from_gdk_hardware_keycode(hardware: int, expected: Optional[str]) -> None:
+    """XKB keypad hardware keycodes map unambiguously regardless of NumLock/Shift."""
+    assert keypad_token_from_gdk_hardware_keycode(hardware) == expected
+
+
+@pytest.mark.parametrize(
+    "modifiers,keyval_name,hardware_keycode,unshifted_keyval_name,expected",
+    [
+        # Issue #1074 on Latin-American (latam) layout:
+        (["ctrl", "shift"], "equal", 19, "0", "ctrl+shift+0"),
+        (["ctrl", "shift"], "degree", 49, "bar", "ctrl+shift+bar"),
+        (["ctrl", "shift"], "exclamdown", 21, "questiondown", "ctrl+shift+questiondown"),
+        (["ctrl", "shift"], "question", 20, "apostrophe", "ctrl+shift+apostrophe"),
+        (["ctrl", "shift"], "KP_Insert", 90, "KP_Insert", "ctrl+shift+kp_0"),
+        (["ctrl", "shift"], "KP_0", 90, "KP_Insert", "ctrl+shift+kp_0"),
+        (["ctrl", "shift"], "dead_diaeresis", 34, "dead_acute", "ctrl+shift+dead_acute"),
+        # US shifted top-row digit & Shift+Tab:
+        (["ctrl", "shift"], "parenright", 19, "0", "ctrl+shift+0"),
+        (["ctrl", "shift"], "ISO_Left_Tab", 23, "Tab", "ctrl+shift+tab"),
+        # Fallback to reported keyval when unshifted is unavailable:
+        (["ctrl", "shift"], "KP_Insert", 0, None, "ctrl+shift+kp_0"),
+        (["ctrl", "shift"], "bar", 0, None, "ctrl+shift+bar"),
+        (["ctrl", "shift"], "exclamdown", 0, None, "ctrl+shift+exclamdown"),
+        (["ctrl", "shift"], "question", 0, None, "ctrl+shift+question"),
+    ],
+)
+def test_gdk_capture_non_us_and_keypad_shortcuts(
+    modifiers: list[str],
+    keyval_name: str,
+    hardware_keycode: int,
+    unshifted_keyval_name: Optional[str],
+    expected: str,
+) -> None:
+    """Capture resolves unshifted base keys and hardware keypad codes (#1074)."""
+    assert (
+        _gdk_capture_to_shortcut(
+            modifiers,
+            keyval_name,
+            hardware_keycode,
+            unshifted_keyval_name=unshifted_keyval_name,
+        )
+        == expected
+    )
+
+
+def test_unshifted_gdk_keyval_from_event_queries_keymap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_unshifted_gdk_keyval_from_event reads level 0 from Gdk.Keymap."""
+    calls: list[tuple[int, Any, int]] = []
+
+    class _FakeKeymap:
+        def translate_keyboard_state(
+            self, hardware: int, state: Any, group: int
+        ) -> tuple[bool, int, int, int, int]:
+            calls.append((hardware, state, group))
+            return (True, 0x0030, group, 0, 0)
+
+    fake_gdk = types.SimpleNamespace(
+        Display=types.SimpleNamespace(get_default=lambda: object()),
+        Keymap=types.SimpleNamespace(get_for_display=lambda _d: _FakeKeymap()),
+        ModifierType=lambda val: val,
+    )
+    monkeypatch.setitem(_unshifted_gdk_keyval_from_event.__globals__, "Gdk", fake_gdk)
+
+    event = types.SimpleNamespace(hardware_keycode=19, group=0, keyval=0x003D)
+    assert _unshifted_gdk_keyval_from_event(event) == 0x0030
+    assert calls == [(19, 0, 0)]
+
+    # Zero hardware keycode returns None without calling keymap.
+    assert _unshifted_gdk_keyval_from_event(types.SimpleNamespace(hardware_keycode=0)) is None
+
+
+def test_gdk_event_to_shortcut_resolves_latam_ctrl_shift_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """_gdk_event_to_shortcut turns latam Ctrl+Shift+0 (equal) into ctrl+shift+0 (#1074)."""
+    method = _settings_dialog_unbound("_gdk_event_to_shortcut")
+
+    class _FakeKeymap:
+        def translate_keyboard_state(
+            self, hardware: int, state: Any, group: int
+        ) -> tuple[bool, int, int, int, int]:
+            assert hardware == 19
+            assert state == 0
+            return (True, 0x0030, group, 0, 0)
+
+    class _FakeModType:
+        CONTROL_MASK = 1 << 2
+        MOD1_MASK = 1 << 3
+        SHIFT_MASK = 1 << 0
+        SUPER_MASK = 1 << 26
+
+        def __new__(cls, val: int) -> int:
+            return val
+
+    keyval_names = {0x003D: "equal", 0x0030: "0"}
+    fake_gdk = types.SimpleNamespace(
+        Display=types.SimpleNamespace(get_default=lambda: object()),
+        Keymap=types.SimpleNamespace(get_for_display=lambda _d: _FakeKeymap()),
+        ModifierType=_FakeModType,
+        keyval_name=lambda kv: keyval_names.get(kv),
+    )
+    monkeypatch.setitem(method.__globals__, "Gdk", fake_gdk)
+
+    event = types.SimpleNamespace(
+        state=_FakeModType.CONTROL_MASK | _FakeModType.SHIFT_MASK,
+        keyval=0x003D,
+        hardware_keycode=19,
+        group=0,
+    )
+    assert method(object(), event) == "ctrl+shift+0"
+
+
+def test_report_shortcut_apply_result_escapes_markup_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Shortcut labels with '<' or '&' (e.g. ctrl+less, ctrl+ampersand) escape Pango markup."""
+    import html
+
+    method = _settings_dialog_unbound("_report_shortcut_apply_result")
+    fake_glib = types.SimpleNamespace(
+        markup_escape_text=lambda text: html.escape(text, quote=False)
+    )
+    monkeypatch.setitem(method.__globals__, "GLib", fake_glib)
+
+    for display_name, expected_escaped in [
+        ("Press Ctrl+<", "Press Ctrl+&lt;"),
+        ("Hold Ctrl+&", "Hold Ctrl+&amp;"),
+    ]:
+        for applied in (True, False):
+            rendered: list[str] = []
+            stub = types.SimpleNamespace(
+                shortcut_info_label=types.SimpleNamespace(set_markup=rendered.append)
+            )
+            method(stub, display_name, applied)
+            assert len(rendered) == 1
+            assert f"<b>{expected_escaped}</b>" in rendered[0]
+
+
+def test_unshifted_gdk_keyval_from_event_logs_lookup_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """_unshifted_gdk_keyval_from_event catches specific errors and logs context."""
+
+    class _BrokenKeymap:
+        def translate_keyboard_state(self, _hw: int, _state: Any, _group: int) -> Any:
+            raise TypeError("bad state")
+
+    fake_gdk = types.SimpleNamespace(
+        Display=types.SimpleNamespace(get_default=lambda: object()),
+        Keymap=types.SimpleNamespace(get_for_display=lambda _d: _BrokenKeymap()),
+        ModifierType=lambda val: val,
+    )
+    monkeypatch.setitem(_unshifted_gdk_keyval_from_event.__globals__, "Gdk", fake_gdk)
+
+    with caplog.at_level("DEBUG", logger="vocalinux.ui.settings_dialog"):
+        assert (
+            _unshifted_gdk_keyval_from_event(types.SimpleNamespace(hardware_keycode=19, group=0))
+            is None
+        )
+    assert "hardware_keycode=19" in caplog.text

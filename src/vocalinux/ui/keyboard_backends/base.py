@@ -144,43 +144,142 @@ MODIFIER_KEY_SIDES: dict[str, frozenset] = {
 }
 
 # Shortcut tokens that resolve to the same physical main key.
-_MAIN_KEY_ALIASES = {
+_MAIN_KEY_ALIASES: dict[str, str] = {
     "return": "enter",
     "escape": "esc",
 }
 
+# Fixed Linux evdev keycodes -> canonical keypad token. On X11 and Wayland,
+# XKB/GDK hardware keycodes are evdev + 8.
+EVDEV_KEYPAD_CODE_TO_TOKEN: dict[int, str] = {
+    82: "kp_0",  # KEY_KP0
+    79: "kp_1",  # KEY_KP1
+    80: "kp_2",  # KEY_KP2
+    81: "kp_3",  # KEY_KP3
+    75: "kp_4",  # KEY_KP4
+    76: "kp_5",  # KEY_KP5
+    77: "kp_6",  # KEY_KP6
+    71: "kp_7",  # KEY_KP7
+    72: "kp_8",  # KEY_KP8
+    73: "kp_9",  # KEY_KP9
+    83: "kp_decimal",  # KEY_KPDOT
+    78: "kp_add",  # KEY_KPPLUS
+    74: "kp_subtract",  # KEY_KPMINUS
+    55: "kp_multiply",  # KEY_KPASTERISK
+    98: "kp_divide",  # KEY_KPSLASH
+    96: "kp_enter",  # KEY_KPENTER
+}
+
+XKB_HARDWARE_KEYPAD_TOKENS: dict[int, str] = {
+    code + 8: token for code, token in EVDEV_KEYPAD_CODE_TO_TOKEN.items()
+}
+
+KEYPAD_TOKEN_TO_EVDEV_NAME: dict[str, str] = {
+    "kp_0": "KEY_KP0",
+    "kp_1": "KEY_KP1",
+    "kp_2": "KEY_KP2",
+    "kp_3": "KEY_KP3",
+    "kp_4": "KEY_KP4",
+    "kp_5": "KEY_KP5",
+    "kp_6": "KEY_KP6",
+    "kp_7": "KEY_KP7",
+    "kp_8": "KEY_KP8",
+    "kp_9": "KEY_KP9",
+    "kp_decimal": "KEY_KPDOT",
+    "kp_add": "KEY_KPPLUS",
+    "kp_subtract": "KEY_KPMINUS",
+    "kp_multiply": "KEY_KPASTERISK",
+    "kp_divide": "KEY_KPSLASH",
+    "kp_enter": "KEY_KPENTER",
+}
+
+# Canonical punctuation/symbol token -> printable character (single source of
+# truth shared by settings capture, X11 pynput matching, and Wayland evdev XKB
+# layout resolution). Covers US and international ISO layouts (latam, es, fr,
+# de, it, pt, br, Nordic, etc.).
+PUNCTUATION_TOKEN_TO_CHAR: dict[str, str] = {
+    "comma": ",",
+    "period": ".",
+    "slash": "/",
+    "semicolon": ";",
+    "apostrophe": "'",
+    "grave": "`",
+    "minus": "-",
+    "equal": "=",
+    "leftbracket": "[",
+    "rightbracket": "]",
+    "backslash": "\\",
+    "less": "<",
+    "greater": ">",
+    "plus": "+",
+    "asterisk": "*",
+    "bar": "|",
+    "questiondown": "¿",
+    "exclamdown": "¡",
+    "question": "?",
+    "exclam": "!",
+    "numbersign": "#",
+    "dollar": "$",
+    "ampersand": "&",
+    "quotedbl": '"',
+    "parenleft": "(",
+    "parenright": ")",
+    "colon": ":",
+    "underscore": "_",
+    "at": "@",
+    "braceleft": "{",
+    "braceright": "}",
+    "asciicircum": "^",
+    "asciitilde": "~",
+    "percent": "%",
+    "section": "§",
+    "degree": "°",
+    "guillemotleft": "«",
+    "guillemotright": "»",
+}
+
+CHAR_TO_PUNCTUATION_TOKEN: dict[str, str] = {
+    ch: token for token, ch in PUNCTUATION_TOKEN_TO_CHAR.items()
+}
+
+# X11/XKB dead-key keysyms that sit at level 0 on international layouts
+# (e.g. dead_acute on latam, dead_circumflex on de/fr, dead_grave on es).
+DEAD_KEYSYM_TO_TOKEN: dict[int, str] = {
+    0xFE50: "dead_grave",
+    0xFE51: "dead_acute",
+    0xFE52: "dead_circumflex",
+    0xFE53: "dead_tilde",
+    0xFE57: "dead_diaeresis",
+}
+
+DEAD_KEY_TOKENS: frozenset[str] = frozenset(DEAD_KEYSYM_TO_TOKEN.values())
+
 # Named (non-alphanumeric) main keys accepted in a combo. Single letters/digits
 # and function keys (f1-f24) are accepted by rule and need not be listed here.
-_NAMED_MAIN_KEYS = {
-    "space",
-    "tab",
-    "enter",
-    "return",
-    "esc",
-    "escape",
-    "backspace",
-    "delete",
-    "insert",
-    "home",
-    "end",
-    "pageup",
-    "pagedown",
-    "up",
-    "down",
-    "left",
-    "right",
-    "comma",
-    "period",
-    "slash",
-    "semicolon",
-    "apostrophe",
-    "grave",
-    "minus",
-    "equal",
-    "leftbracket",
-    "rightbracket",
-    "backslash",
-}
+_NAMED_MAIN_KEYS: set[str] = (
+    {
+        "space",
+        "tab",
+        "enter",
+        "return",
+        "esc",
+        "escape",
+        "backspace",
+        "delete",
+        "insert",
+        "home",
+        "end",
+        "pageup",
+        "pagedown",
+        "up",
+        "down",
+        "left",
+        "right",
+    }
+    | set(KEYPAD_TOKEN_TO_EVDEV_NAME.keys())
+    | set(PUNCTUATION_TOKEN_TO_CHAR.keys())
+    | set(DEAD_KEY_TOKENS)
+)
 
 _FUNCTION_KEY_RE = re.compile(r"f([1-9]|1[0-9]|2[0-4])$")
 
@@ -197,7 +296,7 @@ _MODIFIER_LABELS = {
     "right_shift": "Right Shift",
 }
 
-_NAMED_KEY_LABELS = {
+_NAMED_KEY_LABELS: dict[str, str] = {
     "space": "Space",
     "tab": "Tab",
     "enter": "Enter",
@@ -215,18 +314,34 @@ _NAMED_KEY_LABELS = {
     "down": "Down",
     "left": "Left",
     "right": "Right",
-    "comma": ",",
-    "period": ".",
-    "slash": "/",
-    "semicolon": ";",
-    "apostrophe": "'",
-    "grave": "`",
-    "minus": "-",
-    "equal": "=",
-    "leftbracket": "[",
-    "rightbracket": "]",
-    "backslash": "\\",
+    "kp_0": "Numpad 0",
+    "kp_1": "Numpad 1",
+    "kp_2": "Numpad 2",
+    "kp_3": "Numpad 3",
+    "kp_4": "Numpad 4",
+    "kp_5": "Numpad 5",
+    "kp_6": "Numpad 6",
+    "kp_7": "Numpad 7",
+    "kp_8": "Numpad 8",
+    "kp_9": "Numpad 9",
+    "kp_decimal": "Numpad .",
+    "kp_add": "Numpad +",
+    "kp_subtract": "Numpad -",
+    "kp_multiply": "Numpad *",
+    "kp_divide": "Numpad /",
+    "kp_enter": "Numpad Enter",
+    **PUNCTUATION_TOKEN_TO_CHAR,
+    "dead_grave": "`",
+    "dead_acute": "´",
+    "dead_circumflex": "^",
+    "dead_tilde": "~",
+    "dead_diaeresis": "¨",
 }
+
+
+def normalize_main_key_token(token: str) -> str:
+    """Resolve main-key aliases (e.g. ``return`` -> ``enter``) to canonical form."""
+    return _MAIN_KEY_ALIASES.get(token, token)
 
 
 def is_modifier_token(token: str) -> bool:
@@ -338,6 +453,15 @@ def is_valid_shortcut(shortcut_string: str) -> bool:
         return False
 
 
+def _combo_physical_evdev_code(token: str) -> Optional[int]:
+    """Return the active-layout physical evdev code for a combo main key, if resolvable."""
+    try:
+        from .evdev_backend import evdev_code_for_key
+    except ImportError:
+        return None
+    return evdev_code_for_key(token)
+
+
 def shortcut_gesture(shortcut_string: str) -> Optional[Tuple[str, frozenset]]:
     """The physical gesture a shortcut string describes, as backends match it.
 
@@ -364,8 +488,10 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
     """Whether two shortcut strings can be triggered by the same gesture (#805).
 
     String comparison alone misses gestures the backends treat as identical,
-    like "ctrl+alt+r" vs "alt+ctrl+r" or "ctrl+ctrl" vs
-    "left_ctrl+left_ctrl".
+    like "ctrl+alt+r" vs "alt+ctrl+r", "ctrl+ctrl" vs "left_ctrl+left_ctrl",
+    or shifted/unshifted pairs that resolve to the same physical key under the
+    active keyboard layout (e.g. "ctrl+shift+0" vs "ctrl+shift+equal" on
+    ``latam``, or "ctrl+shift+0" vs "ctrl+shift+parenright" on ``us``).
     """
     first_gesture = shortcut_gesture(first)
     second_gesture = shortcut_gesture(second)
@@ -374,7 +500,23 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
     if first_gesture[0] != second_gesture[0]:
         # A modifier press and a main-key press are different trigger events.
         return False
-    return bool(first_gesture[1] & second_gesture[1])
+    if first_gesture[1] & second_gesture[1]:
+        return True
+    if first_gesture[0] == "combo":
+        first_token = next(iter(first_gesture[1]))
+        second_token = next(iter(second_gesture[1]))
+        try:
+            from .layout_key_map import resolve_base_key_token
+
+            if resolve_base_key_token(first_token) == resolve_base_key_token(second_token):
+                return True
+        except ImportError:
+            pass
+        first_code = _combo_physical_evdev_code(first_token)
+        second_code = _combo_physical_evdev_code(second_token)
+        if first_code is not None and first_code == second_code:
+            return True
+    return False
 
 
 def _main_key_label(token: str) -> str:
