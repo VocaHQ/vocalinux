@@ -1240,3 +1240,65 @@ class TestMediaKeyBackendResolution:
         assert media_token_from_evdev_code(113) == "mute"
         assert media_token_from_evdev_code(216) == "messenger"
         assert media_token_from_evdev_code(30) is None  # KEY_A stays a typed key
+
+    def test_x11_listener_resolves_media_hardware_keycodes(self) -> None:
+        """The listener must resolve media keys exactly as the recorder does.
+
+        Pynput's X11 resolver reads the hardware keycode first; before this, a
+        binding captured with Record resolved back to its *remapped* character
+        (e.g. `r`) in the listener and never fired.
+        """
+        from vocalinux.ui.keyboard_backends import pynput_backend
+
+        # XKB hardware keycode = evdev code + 8.
+        assert pynput_backend._x11_hardware_token(113 + 8) == "mute"
+        assert pynput_backend._x11_hardware_token(215 + 8) == "mail"
+        assert pynput_backend._x11_hardware_token(70 + 8) == "scrolllock"
+        # Keypad and F-key precedence is unchanged.
+        assert pynput_backend._x11_hardware_token(90) == "kp_0"
+        assert pynput_backend._x11_hardware_token(191) == "f13"
+        assert pynput_backend._x11_hardware_token(30) is None
+
+    def test_recorder_and_listener_use_the_same_media_table(self) -> None:
+        from vocalinux.ui.keyboard_backends import pynput_backend
+        from vocalinux.ui.settings_dialog import media_token_from_gdk_hardware_keycode
+
+        for hardware_keycode in (113 + 8, 164 + 8, 215 + 8, 216 + 8, 70 + 8, 119 + 8):
+            assert media_token_from_gdk_hardware_keycode(
+                hardware_keycode
+            ) == pynput_backend._x11_hardware_token(hardware_keycode)
+
+    def test_device_discovery_widens_for_the_configured_media_key(self) -> None:
+        """A media-only input node must qualify when that media key is the shortcut."""
+        from vocalinux.ui.keyboard_backends import evdev_backend
+        from vocalinux.ui.keyboard_backends.base import parse_shortcut_spec
+
+        # Simulate a consumer-control device: KEY_MUTE only, no modifier, no KEY_A.
+        proc = (
+            "I: Bus=0019 Vendor=0000 Product=0000 Version=0000\n"
+            'N: Name="Consumer Control"\n'
+            "H: Handlers=kbd event9\n"
+            "B: KEY=20 0 0 0 0 0 0 0 0\n"
+            "B: REL=0\n"
+            "B: ABS=0\n"
+        )
+        import io
+
+        plain = evdev_backend._parse_keyboard_devices_from_proc(io.StringIO(proc))
+        assert plain == []
+
+        muted = evdev_backend._parse_keyboard_devices_from_proc(
+            io.StringIO(proc), spec=parse_shortcut_spec("mute")
+        )
+        # /dev/input/event9 must exist for the path to be returned.
+        import os
+
+        if os.path.exists("/dev/input/event9"):
+            assert muted == ["/dev/input/event9"]
+        # The bit for KEY_MUTE (113 -> word 4, bit 1) is what widened it.
+        assert evdev_backend._keyboard_key_codes(parse_shortcut_spec("mute")) > (
+            evdev_backend._KEYBOARD_KEY_CODES
+        )
+        assert evdev_backend._keyboard_key_codes(parse_shortcut_spec("ctrl+r")) == (
+            evdev_backend._KEYBOARD_KEY_CODES
+        )

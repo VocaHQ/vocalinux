@@ -150,9 +150,8 @@ from .keyboard_backends.base import (  # noqa: E402
     CHAR_TO_PUNCTUATION_TOKEN,
     DEAD_KEY_TOKENS,
     MEDIA_EVDEV_CODE_TO_TOKEN,
-    MEDIA_KEYSYM_TO_TOKEN,
-    MEDIA_TOKEN_TO_EVDEV_NAME,
     XKB_HARDWARE_KEYPAD_TOKENS,
+    XKB_HARDWARE_MEDIA_TOKENS,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
 from .keyboard_backends.layout_key_map import keysym_name_to_char  # noqa: E402
@@ -1804,13 +1803,14 @@ def media_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[str
     Media keys are as layout-independent as F13–F24: the kernel reports a fixed
     ``KEY_*`` code and XKB turns it into an ``XF86XK_*`` keysym, so the numeric
     keycode identifies the key even when the active layout maps it to NoSymbol.
-    XKB hardware keycodes are ``evdev code + 8``.
+    Uses the same table as the pynput listener's X11 resolver, so a recorded
+    binding resolves identically when the listener sees the key again.
     """
     try:
         code = int(hardware_keycode)
     except (TypeError, ValueError):
         return None
-    return MEDIA_EVDEV_CODE_TO_TOKEN.get(code - 8)
+    return XKB_HARDWARE_MEDIA_TOKENS.get(code)
 
 
 def _unshifted_gdk_keyval_from_event(event: Any) -> Optional[int]:

@@ -354,11 +354,24 @@ MEDIA_EVDEV_CODE_TO_TOKEN: dict[int, str] = {
     cast(int, entry["evdev_code"]): token for token, entry in MEDIA_KEY_TOKENS.items()
 }
 
+# Main-key token -> numeric evdev code, for callers that must not depend on
+# python-evdev being importable (device discovery, capture helpers).
+MEDIA_TOKEN_TO_EVDEV_CODE: dict[str, int] = {
+    token: cast(int, entry["evdev_code"]) for token, entry in MEDIA_KEY_TOKENS.items()
+}
+
 # X11 keysym -> main-key token, for the pynput listener and the GDK recorder.
 MEDIA_KEYSYM_TO_TOKEN: dict[int, str] = {
     cast(int, keysym): token
     for token, entry in MEDIA_KEY_TOKENS.items()
     for keysym in cast(tuple[int, ...], entry["keysyms"])
+}
+
+# XKB hardware keycode (evdev code + 8) -> main-key token, for the paths that
+# only see a hardware keycode: the GDK capture dialog and the pynput listener's
+# X11 key resolver. Both must agree, or a recorded binding never fires.
+XKB_HARDWARE_MEDIA_TOKENS: dict[int, str] = {
+    code + 8: token for code, token in MEDIA_EVDEV_CODE_TO_TOKEN.items()
 }
 
 # Named (non-alphanumeric) main keys accepted in a combo. Single letters/digits

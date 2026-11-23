@@ -53,6 +53,7 @@ from .base import (
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
     KEYPAD_TOKEN_TO_EVDEV_NAME,
+    MEDIA_TOKEN_TO_EVDEV_CODE,
     MEDIA_TOKEN_TO_EVDEV_NAME,
     PUNCTUATION_TOKEN_TO_CHAR,
     KeyboardBackend,
@@ -401,13 +402,37 @@ def evdev_code_for_key(token: str) -> Optional[int]:
     return None
 
 
-def find_keyboard_devices() -> list[str]:
+def _keyboard_key_codes(spec: Optional[ShortcutSpec] = None) -> frozenset[int]:
+    """KEY_* codes that make a device interesting for the configured shortcut.
+
+    A device qualifies as a keyboard when it carries a modifier or KEY_A, as
+    before (#915). When the configured shortcut names a media key, the device
+    that emits it also qualifies: many keyboards (and every laptop with a
+    separate consumer-control node) report media keys on their own input
+    device with no letter or modifier on it, so that device was previously
+    never opened and the shortcut never fired.
+    """
+    codes = set(_KEYBOARD_KEY_CODES)
+    if spec is not None and spec.key is not None:
+        # The numeric table keeps this independent of python-evdev being
+        # importable, so the discovery rule is testable off-Linux.
+        media_code = MEDIA_TOKEN_TO_EVDEV_CODE.get(spec.key)
+        if media_code is not None:
+            codes.add(media_code)
+    return frozenset(codes)
+
+
+def find_keyboard_devices(spec: Optional[ShortcutSpec] = None) -> list[str]:
     """
     Find devices with real keyboard keys.
 
     Nodes that also emit pointer motion are included but monitored ungrabbed
     so pointer movement stays on the compositor's direct input path (#953).
-    Pointer-only devices and button blocks are excluded.
+    Pointer-only and button blocks are excluded.
+
+    Passing the configured *spec* additionally keeps the device that reports
+    the shortcut's media key, so a media-only input node is not filtered out
+    before the listener can open it (#1071).
 
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
@@ -419,11 +444,12 @@ def find_keyboard_devices() -> list[str]:
     """
     try:
         return _parse_keyboard_devices_from_proc(
-            open("/proc/bus/input/devices", "r", encoding="utf-8", errors="replace")
+            open("/proc/bus/input/devices", "r", encoding="utf-8", errors="replace"),
+            spec=spec,
         )
     except (IOError, OSError) as e:
         logger.debug(f"Cannot read /proc/bus/input/devices: {e}")
-        fallback = _find_keyboard_devices_from_evdev()
+        fallback = _find_keyboard_devices_from_evdev(spec=spec)
         if fallback:
             # Hot-plug rescans call this often; keep the noise down after first hit.
             logger.debug(
@@ -528,33 +554,45 @@ def _proc_block_has_pointer_axes(device: dict[str, Any]) -> bool:
     )
 
 
-def _proc_block_has_keyboard_keys(device: dict[str, Any]) -> bool:
+def _proc_block_has_keyboard_keys(
+    device: dict[str, Any], codes: Optional[frozenset[int]] = None
+) -> bool:
     """True when the block's KEY bitmap has a real keyboard key.
 
     Any nonzero KEY bit used to qualify a block as a keyboard — but
     touchpad buttons, power/sleep keys and ACPI hotkey blocks all report
     EV_KEY codes too, so every one of them was grabbed and cloned (#915).
+    *codes* defaults to the plain keyboard set and is widened by
+    ``_keyboard_key_codes`` when the configured shortcut is a media key.
     """
     key_bitmap = device.get("key", "")
-    return any(_bitmap_has_code(key_bitmap, code) for code in _KEYBOARD_KEY_CODES)
+    wanted = _KEYBOARD_KEY_CODES if codes is None else codes
+    return any(_bitmap_has_code(key_bitmap, code) for code in wanted)
 
 
-def _parse_keyboard_devices_from_proc(proc_file: TextIO) -> list[str]:
+def _parse_keyboard_devices_from_proc(
+    proc_file: TextIO, spec: Optional[ShortcutSpec] = None
+) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices.
 
     Only blocks carrying a real keyboard key (a modifier or KEY_A, the
     same rule the evdev fallback applies) qualify. Pointer-capable keyboard
     nodes are kept for ungrabbed monitoring; pointer-only and button-only
     nodes remain excluded (#953).
+
+    When *spec* names a media key, the device carrying it qualifies too, so a
+    media-only consumer-control node is not skipped before the listener opens
+    it (#1071).
     """
     keyboard_devices: list[str] = []
     device: Optional[dict[str, Any]] = None
+    wanted_codes = _keyboard_key_codes(spec)
 
     def finish_device() -> None:
         nonlocal device
         if device is None:
             return
-        if not _proc_block_has_keyboard_keys(device):
+        if not _proc_block_has_keyboard_keys(device, wanted_codes):
             if _bitmap_has_any_bit(device.get("key", "")):
                 logger.debug(
                     "Skipping non-keyboard device during keyboard discovery: "
@@ -625,11 +663,12 @@ def _device_has_pointer_axes(device: InputDevice) -> bool:
         return True
 
 
-def _find_keyboard_devices_from_evdev() -> list[str]:
+def _find_keyboard_devices_from_evdev(spec: Optional[ShortcutSpec] = None) -> list[str]:
     """Discover keyboards by opening devices from ``evdev.list_devices()``."""
     if not EVDEV_AVAILABLE:
         return []
 
+    wanted_codes = _keyboard_key_codes(spec)
     keyboard_devices: list[str] = []
     try:
         paths = list(evdev.list_devices())
@@ -649,23 +688,11 @@ def _find_keyboard_devices_from_evdev() -> list[str]:
 
         # Prefer devices that look like keyboards: EV_KEY with a common letter
         # or a modifier. This includes combo "Keyboard" nodes on mice/remotes.
+        # When the shortcut is a media key, the node reporting it qualifies too.
         key_caps = capabilities.get(ecodes.EV_KEY, []) if capabilities else []
         if not key_caps:
             continue
-        if any(
-            code in key_caps
-            for code in (
-                KEY_LEFTCTRL,
-                KEY_RIGHTCTRL,
-                KEY_LEFTALT,
-                KEY_RIGHTALT,
-                KEY_LEFTSHIFT,
-                KEY_RIGHTSHIFT,
-                KEY_LEFTMETA,
-                KEY_RIGHTMETA,
-                getattr(ecodes, "KEY_A", -1),
-            )
-        ):
+        if any(code in key_caps for code in wanted_codes):
             keyboard_devices.append(path)
 
     return keyboard_devices
@@ -903,7 +930,7 @@ class EvdevDeviceHub:
 
     def _start_locked(self, engine: "EvdevKeyboardBackend") -> bool:
         """Open keyboards and start the reader thread. Caller holds the lock."""
-        device_paths = find_keyboard_devices()
+        device_paths = find_keyboard_devices(getattr(engine, "_spec", None))
         if not device_paths:
             logger.error("No keyboard devices found")
             return False
@@ -1572,7 +1599,13 @@ class EvdevDeviceHub:
         new_device_count = 0
 
         try:
-            device_paths = find_keyboard_devices()
+            # The hub serves every engine, so take the configured shortcut from
+            # a live engine; without one, keep the plain keyboard-only rule.
+            spec = next(
+                (getattr(engine, "_spec", None) for engine in list(self._engines)),
+                None,
+            )
+            device_paths = find_keyboard_devices(spec)
         except Exception as e:
             logger.error(f"Error rescanning keyboard devices: {e}")
             return 0
@@ -1966,7 +1999,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             return False
 
         try:
-            devices = find_keyboard_devices()
+            devices = find_keyboard_devices(self._spec)
             if not devices:
                 return False
 
@@ -1991,7 +2024,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         in_snap = bool(os.environ.get("SNAP_NAME") or os.environ.get("SNAP"))
 
         try:
-            devices = find_keyboard_devices()
+            devices = find_keyboard_devices(self._spec)
             if devices:
                 # Try to open the first device to check permissions
                 for device_path in devices[:1]:

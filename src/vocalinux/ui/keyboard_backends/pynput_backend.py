@@ -26,6 +26,7 @@ from .base import (
     DEFAULT_SHORTCUT_MODE,
     MEDIA_KEYSYM_TO_TOKEN,
     XKB_HARDWARE_KEYPAD_TOKENS,
+    XKB_HARDWARE_MEDIA_TOKENS,
     KeyboardBackend,
     normalize_main_key_token,
 )
@@ -222,10 +223,19 @@ def _char_to_token(char: str) -> Optional[str]:
 
 
 def _x11_hardware_token(hardware_keycode: int) -> Optional[str]:
-    """Map layout-independent X11 hardware keycodes (F13–F24, keypad) to tokens."""
+    """Map layout-independent X11 hardware keycodes to tokens.
+
+    Covers F13–F24, the numeric keypad, and media keys (#1071). Media keys are
+    included here so the listener resolves them exactly as the Settings
+    recorder does: both read the same hardware keycode, so a binding captured
+    with **Record** always fires.
+    """
     if 191 <= hardware_keycode <= 202:
         return f"f{hardware_keycode - 178}"
-    return XKB_HARDWARE_KEYPAD_TOKENS.get(hardware_keycode)
+    keypad_token = XKB_HARDWARE_KEYPAD_TOKENS.get(hardware_keycode)
+    if keypad_token is not None:
+        return keypad_token
+    return XKB_HARDWARE_MEDIA_TOKENS.get(hardware_keycode)
 
 
 def x11_keysym_to_token(keysym: int) -> Optional[str]:
