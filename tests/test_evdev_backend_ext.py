@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
+from vocalinux.ui.keyboard_backends.base import parse_shortcut_spec
 from vocalinux.ui.keyboard_backends.evdev_backend import (
     _MONITOR_STALL_SECONDS,
     DEVICE_RESCAN_SECONDS,
@@ -210,6 +211,54 @@ B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
             with patch("os.path.exists", return_value=False):
                 result = find_keyboard_devices()
                 assert "/dev/input/event0" not in result
+
+    def test_media_only_device_excluded_by_default(self) -> None:
+        """A consumer-control node alone is not a keyboard (#915)."""
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                assert find_keyboard_devices() == []
+
+    def test_media_only_device_kept_for_its_own_shortcut(self) -> None:
+        """The node carrying the configured media key must be opened (#1071).
+
+        Many keyboards, and every laptop with a separate consumer-control node,
+        report media keys on a device with no letter and no modifier. Without
+        this, `mute`/`ctrl+mute` validated but never fired.
+        """
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                assert find_keyboard_devices(parse_shortcut_spec("mute")) == ["/dev/input/event9"]
+                # A different media key does not widen discovery.
+                assert find_keyboard_devices(parse_shortcut_spec("playpause")) == []
+                # Nor does a plain combo.
+                assert find_keyboard_devices(parse_shortcut_spec("ctrl+r")) == []
+
+    def test_media_key_widens_discovery_without_dropping_keyboards(self) -> None:
+        """Widening adds the media node; the real keyboard is still found."""
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                both = find_keyboard_devices(parse_shortcut_spec("ctrl+mute"))
+                assert "/dev/input/event0" in both
+                assert "/dev/input/event9" in both
 
     def test_find_keyboard_devices_keeps_relative_combo_and_skips_mouse(self) -> None:
         """Keyboard keys keep a REL_X/Y combo; button-only pointer nodes stay excluded."""
