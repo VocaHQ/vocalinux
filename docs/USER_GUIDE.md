@@ -65,6 +65,8 @@ Configure under **Settings → Shortcuts**:
 
 Existing configs keep their saved shortcut. Left/right modifier keys and custom modifier+key combos (for example `Alt+R`) are supported.
 
+Multimedia keys work as shortcuts too, on their own or with modifiers: `mute`, `volumedown`, `volumeup`, `playpause`, `nextsong`, `previoussong`, `stop`, `homepage`, `mail`, `messenger`, `search`, `calculator`, `sleep`, `battery`, `wlan`, `bluetooth`, `brightnessup`, `brightnessdown`, `pause`, and `scrolllock` (for example `ctrl+mute`). Keys your keyboard does not have are simply never pressed, so the same config stays valid on a laptop and a desktop. Use **Record** in Settings to capture the key instead of typing its name.
+
 Enable **Pass Shortcut Keys to Applications** under **Settings → Dictation → Keyboard Shortcuts** to keep modifier actions such as Ctrl+mouse-wheel zoom working. Dictation still detects the configured shortcut, but the shortcut keys will also reach the foreground app, which may respond to them. This is off by default.
 
 ## Voice commands

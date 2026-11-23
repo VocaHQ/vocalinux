@@ -1088,3 +1088,155 @@ class TestSavedShiftedShortcutCompatibility:
         assert lkm.resolve_base_key_token("equal") == "equal"
         backend.set_shortcut("ctrl+equal")
         assert backend._combo_key_token == "equal"
+
+
+class TestMediaKeyShortcuts:
+    """Media/multimedia keys are bindable main keys (#1071).
+
+    Kernel codes and keysyms come from linux/input-event-codes.h, xorgproto's
+    XF86keysym.h and xkeyboard-config's symbols/inet; the parsing side is pure,
+    so it runs on every platform.
+    """
+
+    @pytest.mark.parametrize(
+        "shortcut,expected_key",
+        [
+            ("mute", "mute"),
+            ("playpause", "playpause"),
+            ("mail", "mail"),
+            ("messenger", "messenger"),
+            ("pause", "pause"),
+            ("scrolllock", "scrolllock"),
+        ],
+    )
+    def test_bare_media_key_parses(self, shortcut: str, expected_key: str) -> None:
+        spec = parse_shortcut_spec(shortcut)
+        assert spec.modifiers == ()
+        assert spec.key == expected_key
+        assert spec.is_combo is True
+        assert spec.canonical() == expected_key
+
+    @pytest.mark.parametrize(
+        "shortcut,modifiers,key",
+        [
+            ("ctrl+mute", ("ctrl",), "mute"),
+            ("alt+playpause", ("alt",), "playpause"),
+            ("ctrl+shift+volumeup", ("ctrl", "shift"), "volumeup"),
+        ],
+    )
+    def test_media_key_combo_parses(self, shortcut: str, modifiers: tuple, key: str) -> None:
+        spec = parse_shortcut_spec(shortcut)
+        assert spec.modifiers == modifiers
+        assert spec.key == key
+
+    @pytest.mark.parametrize(
+        "shortcut",
+        [
+            "mute",
+            "playpause",
+            "nextsong",
+            "previoussong",
+            "stop",
+            "homepage",
+            "mail",
+            "messenger",
+            "search",
+            "calculator",
+            "sleep",
+            "battery",
+            "wlan",
+            "bluetooth",
+            "brightnessup",
+            "brightnessdown",
+            "volumedown",
+            "volumeup",
+            "pause",
+            "scrolllock",
+        ],
+    )
+    def test_every_media_token_is_a_valid_shortcut(self, shortcut: str) -> None:
+        assert is_valid_shortcut(shortcut) is True
+        assert is_valid_shortcut(f"ctrl+{shortcut}") is True
+
+    def test_media_key_labels(self) -> None:
+        assert format_shortcut_label(parse_shortcut_spec("mute")) == "Mute"
+        assert format_shortcut_label(parse_shortcut_spec("ctrl+playpause")) == "Ctrl+Play/Pause"
+        assert format_shortcut_label(parse_shortcut_spec("scrolllock")) == "Scroll Lock"
+        assert get_shortcut_display_name("mute") == "Mute"
+        assert get_shortcut_display_name("ctrl+mute") == "Ctrl+Mute"
+        assert get_shortcut_display_name("ctrl+mute", "push_to_talk") == "Hold Ctrl+Mute"
+
+    def test_bare_printable_keys_stay_invalid(self) -> None:
+        # Media keys do not reopen bare letters/digits/punctuation (#1071).
+        for bare in ("r", "5", "space", "comma", "esc"):
+            assert is_valid_shortcut(bare) is False
+
+    def test_media_keysym_table_matches_canonical_tokens(self) -> None:
+        from vocalinux.ui.keyboard_backends.base import MEDIA_KEYSYM_TO_TOKEN
+
+        # XF86XK_Mail is KEY_EMAIL (215), not KEY_MAIL (155): symbols/inet binds
+        # "Use: XF86XK_Mail _EVDEVK(0x0d7) KEY_EMAIL".
+        assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF19] == "mail"
+        assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF8E] == "messenger"
+        assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF12] == "mute"
+        assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF14] == "playpause"
+        assert MEDIA_KEYSYM_TO_TOKEN[0xFF13] == "pause"
+        assert MEDIA_KEYSYM_TO_TOKEN[0xFF14] == "scrolllock"
+
+    def test_media_evdev_codes_round_trip(self) -> None:
+        from vocalinux.ui.keyboard_backends.base import (
+            MEDIA_EVDEV_CODE_TO_TOKEN,
+            MEDIA_TOKEN_TO_EVDEV_NAME,
+        )
+
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[113] == "mute"
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[164] == "playpause"
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[215] == "mail"
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[216] == "messenger"
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[70] == "scrolllock"
+        assert MEDIA_TOKEN_TO_EVDEV_NAME["mail"] == "KEY_EMAIL"
+        assert MEDIA_TOKEN_TO_EVDEV_NAME["messenger"] == "KEY_CHAT"
+
+    def test_pynput_keysym_lookup_handles_media_keys(self) -> None:
+        from vocalinux.ui.keyboard_backends import pynput_backend
+
+        for keysym, expected in (
+            (0x1008FF19, "mail"),
+            (0x1008FF12, "mute"),
+            (0x1008FF17, "nextsong"),
+            (0xFF13, "pause"),
+            (0xFF14, "scrolllock"),
+        ):
+            assert pynput_backend.x11_keysym_to_token(keysym) == expected
+
+
+class TestMediaKeyBackendResolution:
+    """The backends must resolve media tokens to their own codes (#1071)."""
+
+    def test_evdev_fixed_table_includes_media_tokens(self) -> None:
+        from vocalinux.ui.keyboard_backends import evdev_backend
+
+        # Element of the resolved name table, independent of evdev presence.
+        assert evdev_backend._FIXED_EVDEV_KEYS["mute"] == "KEY_MUTE"
+        assert evdev_backend._FIXED_EVDEV_KEYS["playpause"] == "KEY_PLAYPAUSE"
+        assert evdev_backend._FIXED_EVDEV_KEYS["mail"] == "KEY_EMAIL"
+        assert evdev_backend._FIXED_EVDEV_KEYS["messenger"] == "KEY_CHAT"
+        assert evdev_backend._FIXED_EVDEV_KEYS["scrolllock"] == "KEY_SCROLLLOCK"
+        assert evdev_backend._FIXED_EVDEV_KEYS["pause"] == "KEY_PAUSE"
+
+    def test_gdk_hardware_keycode_maps_media_keys(self) -> None:
+        from vocalinux.ui.settings_dialog import media_token_from_gdk_hardware_keycode
+
+        # XKB hardware keycode is the evdev code + 8.
+        assert media_token_from_gdk_hardware_keycode(113 + 8) == "mute"
+        assert media_token_from_gdk_hardware_keycode(215 + 8) == "mail"
+        assert media_token_from_gdk_hardware_keycode(70 + 8) == "scrolllock"
+        assert media_token_from_gdk_hardware_keycode(0) is None
+        assert media_token_from_gdk_hardware_keycode("bad") is None  # type: ignore[arg-type]
+
+    def test_gdk_evdev_code_maps_media_keys(self) -> None:
+        from vocalinux.ui.settings_dialog import media_token_from_evdev_code
+
+        assert media_token_from_evdev_code(113) == "mute"
+        assert media_token_from_evdev_code(216) == "messenger"
+        assert media_token_from_evdev_code(30) is None  # KEY_A stays a typed key

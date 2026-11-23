@@ -53,6 +53,7 @@ from .base import (
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
     KEYPAD_TOKEN_TO_EVDEV_NAME,
+    MEDIA_TOKEN_TO_EVDEV_NAME,
     PUNCTUATION_TOKEN_TO_CHAR,
     KeyboardBackend,
     ShortcutSpec,
@@ -316,6 +317,7 @@ _FIXED_EVDEV_KEYS: dict[str, str] = {
     "left": "KEY_LEFT",
     "right": "KEY_RIGHT",
     **KEYPAD_TOKEN_TO_EVDEV_NAME,
+    **MEDIA_TOKEN_TO_EVDEV_NAME,
 }
 
 # US-layout fallback evdev names for punctuation tokens when no non-US XKB map

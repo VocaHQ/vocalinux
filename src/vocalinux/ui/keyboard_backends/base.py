@@ -254,6 +254,113 @@ DEAD_KEYSYM_TO_TOKEN: dict[int, str] = {
 
 DEAD_KEY_TOKENS: frozenset[str] = frozenset(DEAD_KEYSYM_TO_TOKEN.values())
 
+# Media/multimedia keys (#1071). These are ordinary main keys on both X11 and
+# Wayland: the kernel reports them as KEY_* codes, XKB maps them to XF86XK_*
+# keysyms through `symbols/inet`, and libinput handles them like F1-F12. They
+# were previously rejected as unknown tokens, so none of them could be bound.
+#
+# One table is the single source of truth for all three resolution paths:
+#   * evdev/Wayland: ``evdev_name`` is the KEY_* name in linux/input-event-codes.h
+#     and ``evdev_code`` its numeric value.
+#   * X11/pynput: ``keysyms`` are the X11 keysyms bound to that kernel key.
+#   * X11 capture: XKB hardware keycodes are ``evdev code + 8``, so the GDK
+#     recorder resolves the same tokens through its own hardware path.
+# The XF86XK_* names carry the kernel key in their trailing comment in
+# xorgproto's XF86keysym.h; where a key maps to a differently named keysym the
+# file also lists it under "Use:". Both are recorded here so a rebind of the
+# name alone cannot silently break the binding.
+MEDIA_KEY_TOKENS: dict[str, dict[str, object]] = {
+    "mute": {"evdev_name": "KEY_MUTE", "evdev_code": 113, "keysyms": (0x1008FF12,)},
+    "volumedown": {"evdev_name": "KEY_VOLUMEDOWN", "evdev_code": 114, "keysyms": (0x1008FF11,)},
+    "volumeup": {"evdev_name": "KEY_VOLUMEUP", "evdev_code": 115, "keysyms": (0x1008FF13,)},
+    # XF86AudioPlay and XF86AudioPause share KEY_PLAYPAUSE, so the single
+    # token accepts both keysyms a level-1 XKB map can report.
+    "playpause": {
+        "evdev_name": "KEY_PLAYPAUSE",
+        "evdev_code": 164,
+        "keysyms": (0x1008FF14, 0x1008FF31),
+    },
+    "nextsong": {"evdev_name": "KEY_NEXTSONG", "evdev_code": 163, "keysyms": (0x1008FF17,)},
+    "previoussong": {
+        "evdev_name": "KEY_PREVIOUSSONG",
+        "evdev_code": 165,
+        "keysyms": (0x1008FF16,),
+    },
+    "stop": {"evdev_name": "KEY_STOPCD", "evdev_code": 166, "keysyms": (0x1008FF15,)},
+    "homepage": {"evdev_name": "KEY_HOMEPAGE", "evdev_code": 172, "keysyms": (0x1008FF18,)},
+    # XF86XK_Mail is bound to KEY_EMAIL (215) in symbols/inet, not KEY_MAIL (155):
+    # "Use: XF86XK_Mail _EVDEVK(0x0d7) KEY_EMAIL".
+    "mail": {"evdev_name": "KEY_EMAIL", "evdev_code": 215, "keysyms": (0x1008FF19,)},
+    # XF86XK_Messenger is bound to KEY_CHAT (216); KEY_MESSENGER (430) is a
+    # separate key that xorgproto only records as an alias.
+    "messenger": {"evdev_name": "KEY_CHAT", "evdev_code": 216, "keysyms": (0x1008FF8E,)},
+    "search": {"evdev_name": "KEY_SEARCH", "evdev_code": 217, "keysyms": (0x1008FF1B,)},
+    "calculator": {"evdev_name": "KEY_CALC", "evdev_code": 140, "keysyms": (0x1008FF1D,)},
+    "sleep": {"evdev_name": "KEY_SLEEP", "evdev_code": 142, "keysyms": (0x1008FF2F,)},
+    "battery": {"evdev_name": "KEY_BATTERY", "evdev_code": 236, "keysyms": (0x1008FF93,)},
+    "wlan": {"evdev_name": "KEY_WLAN", "evdev_code": 238, "keysyms": (0x1008FF95,)},
+    "bluetooth": {"evdev_name": "KEY_BLUETOOTH", "evdev_code": 237, "keysyms": (0x1008FF94,)},
+    "brightnessdown": {
+        "evdev_name": "KEY_BRIGHTNESSDOWN",
+        "evdev_code": 224,
+        "keysyms": (0x1008FF03,),
+    },
+    "brightnessup": {
+        "evdev_name": "KEY_BRIGHTNESSUP",
+        "evdev_code": 225,
+        "keysyms": (0x1008FF02,),
+    },
+    # Not XF86 keys: Pause and Scroll Lock keep their own core keysyms
+    # (XK_Pause 0xff13, XK_Scroll_Lock 0xff14), and the kernel reports Scroll
+    # Lock as KEY_SCROLLLOCK.
+    "pause": {"evdev_name": "KEY_PAUSE", "evdev_code": 119, "keysyms": (0xFF13,)},
+    "scrolllock": {"evdev_name": "KEY_SCROLLLOCK", "evdev_code": 70, "keysyms": (0xFF14,)},
+}
+
+# Human-readable names for the media tokens above (used in display labels).
+_MEDIA_KEY_LABELS: dict[str, str] = {
+    "mute": "Mute",
+    "volumedown": "Volume Down",
+    "volumeup": "Volume Up",
+    "playpause": "Play/Pause",
+    "nextsong": "Next Track",
+    "previoussong": "Previous Track",
+    "stop": "Stop",
+    "homepage": "Home Page",
+    "mail": "Mail",
+    "messenger": "Messenger",
+    "search": "Search",
+    "calculator": "Calculator",
+    "sleep": "Sleep",
+    "battery": "Battery",
+    "wlan": "WLAN",
+    "bluetooth": "Bluetooth",
+    "brightnessdown": "Brightness Down",
+    "brightnessup": "Brightness Up",
+    "pause": "Pause",
+    "scrolllock": "Scroll Lock",
+}
+
+MEDIA_KEY_TOKENS_SET: frozenset[str] = frozenset(MEDIA_KEY_TOKENS)
+
+# Main-key token -> its kernel KEY_* name, for the backends that need a code.
+MEDIA_TOKEN_TO_EVDEV_NAME: dict[str, str] = {
+    token: cast(str, entry["evdev_name"]) for token, entry in MEDIA_KEY_TOKENS.items()
+}
+
+# evdev key code -> main-key token, for the GDK recorder (XKB hardware keycodes
+# are `evdev code + 8`, so it needs the numeric form, not the ecodes name).
+MEDIA_EVDEV_CODE_TO_TOKEN: dict[int, str] = {
+    cast(int, entry["evdev_code"]): token for token, entry in MEDIA_KEY_TOKENS.items()
+}
+
+# X11 keysym -> main-key token, for the pynput listener and the GDK recorder.
+MEDIA_KEYSYM_TO_TOKEN: dict[int, str] = {
+    cast(int, keysym): token
+    for token, entry in MEDIA_KEY_TOKENS.items()
+    for keysym in cast(tuple[int, ...], entry["keysyms"])
+}
+
 # Named (non-alphanumeric) main keys accepted in a combo. Single letters/digits
 # and function keys (f1-f24) are accepted by rule and need not be listed here.
 _NAMED_MAIN_KEYS: set[str] = (
@@ -279,6 +386,7 @@ _NAMED_MAIN_KEYS: set[str] = (
     | set(KEYPAD_TOKEN_TO_EVDEV_NAME.keys())
     | set(PUNCTUATION_TOKEN_TO_CHAR.keys())
     | set(DEAD_KEY_TOKENS)
+    | MEDIA_KEY_TOKENS_SET
 )
 
 _FUNCTION_KEY_RE = re.compile(r"f([1-9]|1[0-9]|2[0-4])$")
@@ -336,6 +444,7 @@ _NAMED_KEY_LABELS: dict[str, str] = {
     "dead_circumflex": "^",
     "dead_tilde": "~",
     "dead_diaeresis": "¨",
+    **_MEDIA_KEY_LABELS,
 }
 
 
@@ -395,7 +504,8 @@ def parse_shortcut_spec(shortcut_string: str) -> ShortcutSpec:
     """Parse a shortcut string into a :class:`ShortcutSpec`.
 
     Accepts legacy pure-modifier forms ("ctrl+ctrl", "left_shift+left_shift"),
-    modifier+key combos ("alt+r", "ctrl+alt+r"), and bare function keys ("f10").
+    modifier+key combos ("alt+r", "ctrl+alt+r"), bare function keys ("f10"),
+    and bare media keys ("mute", "playpause", "mail", "pause", "scrolllock").
 
     Raises:
         ValueError: if the string is empty, malformed, contains an unknown key,
@@ -424,7 +534,12 @@ def parse_shortcut_spec(shortcut_string: str) -> ShortcutSpec:
             raise ValueError(f"Unknown key in shortcut: {token!r}")
 
     if not modifiers:
-        if main_key is not None and _FUNCTION_KEY_RE.fullmatch(main_key):
+        # A bare key needs no modifier when it cannot collide with typing:
+        # function keys and media keys are never characters. A bare letter,
+        # digit, punctuation key, or bare modifier stays invalid.
+        if main_key is not None and (
+            _FUNCTION_KEY_RE.fullmatch(main_key) or main_key in MEDIA_KEY_TOKENS_SET
+        ):
             return ShortcutSpec(modifiers=(), key=main_key)
         raise ValueError(f"Shortcut needs at least one modifier: {shortcut_string}")
 

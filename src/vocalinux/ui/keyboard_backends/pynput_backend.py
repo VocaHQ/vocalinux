@@ -24,6 +24,7 @@ from .base import (
     DEAD_KEYSYM_TO_TOKEN,
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
+    MEDIA_KEYSYM_TO_TOKEN,
     XKB_HARDWARE_KEYPAD_TOKENS,
     KeyboardBackend,
     normalize_main_key_token,
@@ -152,10 +153,13 @@ _X11_KEYPAD_KEYSYM_TOKENS: dict[int, str] = {
 }
 
 # X11 keysyms that must take precedence over KeyCode.char (e.g. dead_grave
-# carries char='`' with vk=0xFE50, and ISO_Left_Tab is Shift+Tab).
+# carries char='`' with vk=0xFE50, and ISO_Left_Tab is Shift+Tab). Media keys
+# belong here too: X11 reports them as KeyCode objects whose vk is the XF86
+# keysym, with no printable char to fall back on.
 _X11_KEYSYM_PRIORITY_TOKENS: dict[int, str] = {
     **DEAD_KEYSYM_TO_TOKEN,
     **_X11_KEYPAD_KEYSYM_TOKENS,
+    **MEDIA_KEYSYM_TO_TOKEN,
     0xFE20: "tab",  # XK_ISO_Left_Tab
 }
 
