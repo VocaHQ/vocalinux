@@ -521,6 +521,7 @@ class PynputKeyboardBackend(KeyboardBackend):
         logger.info("Stopping pynput keyboard listener")
         self.active = False
         self._pending_x11_key_info = None
+        self._reset_gesture(stop_session=True)
 
         if self.listener:
             try:
@@ -558,7 +559,9 @@ class PynputKeyboardBackend(KeyboardBackend):
                         logger.debug(f"Combo {self._shortcut} toggled (pynput)")
                         self.last_trigger_time = current_time
                         threading.Thread(target=self.double_tap_callback, daemon=True).start()
-                elif self._mode == "push_to_talk":
+                elif self._mode in ("push_to_talk", "hold_or_double_tap"):
+                    # A combo has no single-modifier press/release gesture;
+                    # hold_or_double_tap keeps push-to-talk semantics here.
                     if not self._combo_active and self.key_press_callback is not None:
                         self._combo_active = True
                         logger.debug(f"Combo {self._shortcut} pressed (pynput)")
@@ -575,7 +578,7 @@ class PynputKeyboardBackend(KeyboardBackend):
 
             is_main_key = self._combo_key_matches(key, self._pending_x11_key_info)
 
-            if self._mode == "push_to_talk" and self._combo_active:
+            if self._mode in ("push_to_talk", "hold_or_double_tap") and self._combo_active:
                 # End the hold when the main key or a required modifier is released.
                 if is_main_key or (is_modifier and not self._combo_modifiers_held()):
                     self._combo_active = False
@@ -594,6 +597,11 @@ class PynputKeyboardBackend(KeyboardBackend):
                 current_time = time.time()
                 normalized_key = self._normalize_modifier_key(key)
                 self.current_keys.add(normalized_key)
+
+                if self.hold_or_double_tap_active:
+                    self._handle_gesture_press(key)
+                    self.last_key_press_time = current_time
+                    return
 
                 if self._mode == "toggle":
                     if (
@@ -623,6 +631,11 @@ class PynputKeyboardBackend(KeyboardBackend):
 
             self.current_keys.discard(normalized_key)
             matched = self._matches_configured_modifier(key)
+
+            if self.hold_or_double_tap_active:
+                if matched:
+                    self._handle_gesture_release(key)
+                return
 
             if self._mode == "push_to_talk" and matched:
                 if self.key_release_callback is not None:

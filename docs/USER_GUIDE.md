@@ -62,8 +62,9 @@ Configure under **Settings → Shortcuts**:
 |------|----------|
 | **Push-to-talk** (default on new installs) | Hold Right Alt (Option on Mac-layout keyboards) while speaking; release to stop |
 | **Toggle** | Double-tap the configured shortcut key to start/stop |
+| **Hold / Double-Tap** | Hold the key to talk and release to stop, or double-tap to latch hands-free dictation (transcribes on pauses); double-tap again to stop |
 
-Existing configs keep their saved shortcut. Left/right modifier keys and custom modifier+key combos (for example `Alt+R`) are supported.
+Existing configs keep their saved shortcut. Left/right modifier keys and custom modifier+key combos (for example `Alt+R`) are supported. Hold / Double-Tap needs a single modifier key; a modifier+key combo keeps push-to-talk behavior in that mode, and external activation (a desktop shortcut running `vocalinux --toggle`) is toggle-only.
 
 Enable **Pass Shortcut Keys to Applications** under **Settings → Dictation → Keyboard Shortcuts** to keep modifier actions such as Ctrl+mouse-wheel zoom working. Dictation still detects the configured shortcut, but the shortcut keys will also reach the foreground app, which may respond to them. This is off by default.
 

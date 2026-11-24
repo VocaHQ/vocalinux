@@ -141,6 +141,16 @@ class KeyboardShortcutManager:
         """Get the human-readable name for the current mode."""
         return SHORTCUT_MODES.get(self._mode, self._mode)
 
+    @property
+    def mode_shortcut_display_name(self) -> str:
+        """Get the mode-specific human-readable name for the shortcut."""
+        return get_shortcut_display_name(self._shortcut, self._mode)
+
+    def notify_recognition_stopped(self, is_recording: Callable[[], bool] = lambda: False) -> None:
+        """Resync gesture state after recording stopped outside the shortcut."""
+        if self.backend_instance is not None:
+            self.backend_instance.notify_recognition_stopped(is_recording)
+
     def set_mode(self, mode: str) -> bool:
         """
         Update the shortcut mode.
@@ -225,11 +235,15 @@ class KeyboardShortcutManager:
         toggle_callback = None
         press_callback = None
         release_callback = None
+        hands_free_start_callback = None
+        hands_free_stop_callback = None
 
         if self.backend_instance:
             toggle_callback = self.backend_instance.double_tap_callback
             press_callback = self.backend_instance.key_press_callback
             release_callback = self.backend_instance.key_release_callback
+            hands_free_start_callback = self.backend_instance.hands_free_start_callback
+            hands_free_stop_callback = self.backend_instance.hands_free_stop_callback
 
         # Stop the current listener
         if was_active:
@@ -255,15 +269,20 @@ class KeyboardShortcutManager:
             self.register_toggle_callback(None)
             self.register_press_callback(None)
             self.register_release_callback(None)
+            self.register_hands_free_callbacks(None, None)
 
             # Re-register callbacks based on current mode
             if self._mode == "toggle" and toggle_callback:
                 self.register_toggle_callback(toggle_callback)
-            elif self._mode == "push_to_talk":
+            elif self._mode in ("push_to_talk", "hold_or_double_tap"):
                 if press_callback:
                     self.register_press_callback(press_callback)
                 if release_callback:
                     self.register_release_callback(release_callback)
+                if self._mode == "hold_or_double_tap":
+                    self.register_hands_free_callbacks(
+                        hands_free_start_callback, hands_free_stop_callback
+                    )
 
             success = self.start()
             if success:
@@ -360,6 +379,28 @@ class KeyboardShortcutManager:
             logger.debug("Cleared release callback")
         else:
             logger.info(f"Registered release callback for: {self.shortcut_display_name}")
+
+    def register_hands_free_callbacks(
+        self,
+        start: Optional[Callable[[], None]],
+        stop: Optional[Callable[[], None]] = None,
+    ):
+        """Register hands-free start/stop callbacks (hold_or_double_tap mode).
+
+        Args:
+            start: Switch a running session to hands-free dictation.
+            stop: Stop a latched hands-free session.
+        """
+        if self.backend_instance is None:
+            if start is not None or stop is not None:
+                logger.warning("Cannot register hands-free callbacks: no backend available")
+            return
+
+        self.backend_instance.register_hands_free_callbacks(start, stop)
+        if start is None and stop is None:
+            logger.debug("Cleared hands-free callbacks")
+        else:
+            logger.info(f"Registered hands-free callbacks for: {self.shortcut_display_name}")
 
     @property
     def listener(self):

@@ -5,10 +5,15 @@ All keyboard backends must inherit from this class and implement
 the required methods.
 """
 
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Callable, Optional, Tuple, cast
+
+from .hold_or_double_tap import HoldOrDoubleTapDetector
+
+logger = logging.getLogger(__name__)
 
 Callback = Callable[[], None]
 
@@ -98,6 +103,7 @@ DEFAULT_SHORTCUT = "right_alt+right_alt"
 SHORTCUT_MODES = {
     "toggle": "Toggle (double-tap to start/stop)",
     "push_to_talk": "Push-to-Talk (hold to speak)",
+    "hold_or_double_tap": "Hold to talk, double-tap for hands-free",
 }
 
 DEFAULT_SHORTCUT_MODE = "push_to_talk"
@@ -551,9 +557,12 @@ def get_shortcut_display_name(shortcut: str, mode: Optional[str] = None) -> str:
     """
     # Legacy shortcuts keep their exact curated wording.
     if mode and shortcut in SHORTCUT_MODE_DISPLAY_NAMES:
-        return SHORTCUT_MODE_DISPLAY_NAMES[shortcut].get(
-            mode, SHORTCUT_DISPLAY_NAMES.get(shortcut, shortcut)
-        )
+        labels = SHORTCUT_MODE_DISPLAY_NAMES[shortcut]
+        if mode in labels:
+            return labels[mode]
+        if mode == "hold_or_double_tap":
+            return f"Hold or double-tap {SHORTCUT_DISPLAY_NAMES.get(shortcut, shortcut)}"
+        return SHORTCUT_DISPLAY_NAMES.get(shortcut, shortcut)
     if shortcut in SHORTCUT_DISPLAY_NAMES:
         return SHORTCUT_DISPLAY_NAMES[shortcut]
 
@@ -567,6 +576,8 @@ def get_shortcut_display_name(shortcut: str, mode: Optional[str] = None) -> str:
         return f"Press {label}" if spec.is_combo else f"Double-tap {label}"
     if mode == "push_to_talk":
         return f"Hold {label}"
+    if mode == "hold_or_double_tap":
+        return f"Hold or double-tap {label}"
     return label
 
 
@@ -623,6 +634,16 @@ class KeyboardBackend(ABC):
         self._spec = parse_shortcut_spec(shortcut)
         self._modifier_key = self._spec.primary_modifier
         self.pass_shortcut_to_apps = False
+        # Hands-free callbacks for the hold_or_double_tap mode. Kept separate
+        # from press/release so switching a running session to hands-free and
+        # stopping it stay distinguishable from an ordinary hold release.
+        self.hands_free_start_callback: Optional[Callback] = None
+        self.hands_free_stop_callback: Optional[Callback] = None
+        self._gesture: Optional[HoldOrDoubleTapDetector] = None
+        # Last real release callback. A listener restart clears and re-registers
+        # callbacks while a queued stop may still be waiting to run.
+        self._gesture_stop_callback: Optional[Callback] = None
+        self._gesture_fallback_logged = False
 
     def set_pass_shortcut_to_apps(self, enabled: bool) -> None:
         """Forward hotkey events to applications while detecting gestures."""
@@ -648,11 +669,17 @@ class KeyboardBackend(ABC):
         Update the shortcut mode.
 
         Args:
-            mode: The new mode ("toggle" or "push_to_talk")
+            mode: The new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap")
         """
         if mode not in SHORTCUT_MODES:
             raise ValueError(f"Invalid mode: {mode}. Must be one of {list(SHORTCUT_MODES.keys())}")
         self._mode = mode
+        # Drop any in-flight gesture state (timers, held sources) so the old
+        # mode can never act on events delivered under the new one.
+        self._reset_gesture()
+        if mode == "hold_or_double_tap" and self._spec.is_combo:
+            self._log_gesture_fallback_once()
 
     @property
     def modifier_key(self) -> str:
@@ -666,9 +693,15 @@ class KeyboardBackend(ABC):
         Args:
             shortcut: The new shortcut string (e.g., "ctrl+ctrl", "alt+r")
         """
+        self._reset_gesture()
+        changed = shortcut != self._shortcut
         self._spec = parse_shortcut_spec(shortcut)
         self._modifier_key = self._spec.primary_modifier
         self._shortcut = shortcut
+        if changed:
+            self._gesture_fallback_logged = False
+        if self._mode == "hold_or_double_tap" and self._spec.is_combo:
+            self._log_gesture_fallback_once()
 
     @abstractmethod
     def start(self) -> bool:
@@ -705,6 +738,105 @@ class KeyboardBackend(ABC):
         """
         pass
 
+    # -- hold_or_double_tap gesture support --------------------------------
+
+    @property
+    def hold_or_double_tap_active(self) -> bool:
+        """True when this backend should drive the gesture state machine."""
+        return self._mode == "hold_or_double_tap" and not self._spec.is_combo
+
+    def _log_gesture_fallback_once(self) -> None:
+        """Explain why a combo shortcut keeps push-to-talk semantics."""
+        if self._gesture_fallback_logged:
+            return
+        self._gesture_fallback_logged = True
+        logger.info(
+            "Shortcut %r is a key combo; hold_or_double_tap falls back to "
+            "push-to-talk semantics (hold to talk, release to stop)",
+            self._shortcut,
+        )
+
+    def _ensure_gesture(self) -> HoldOrDoubleTapDetector:
+        """Create the detector on first use with lazily-read callbacks."""
+        if self._gesture is None:
+            self._gesture = HoldOrDoubleTapDetector(
+                self._gesture_hold_start,
+                self._gesture_hold_end,
+                self._gesture_hands_free_start,
+                self._gesture_hands_free_end,
+            )
+        return self._gesture
+
+    def _gesture_hold_start(self) -> None:
+        callback = self.key_press_callback
+        if callback is not None:
+            logger.debug("Hold-to-talk press (%s)", self._shortcut)
+            callback()
+
+    def _gesture_hold_end(self) -> None:
+        callback = self.key_release_callback or self._gesture_stop_callback
+        if callback is not None:
+            logger.debug("Hold-to-talk release (%s)", self._shortcut)
+            callback()
+
+    def _gesture_hands_free_start(self) -> None:
+        callback = self.hands_free_start_callback
+        if callback is None:
+            logger.warning("No hands-free start callback registered")
+            return
+        logger.debug("Hands-free dictation latched (%s)", self._shortcut)
+        callback()
+
+    def _gesture_hands_free_end(self) -> None:
+        callback = (
+            self.hands_free_stop_callback
+            or self.key_release_callback
+            or self._gesture_stop_callback
+        )
+        if callback is None:
+            logger.warning("No hands-free stop callback registered")
+            return
+        logger.debug("Hands-free dictation stopped (%s)", self._shortcut)
+        callback()
+
+    def _handle_gesture_press(self, source: object) -> bool:
+        """Feed a press to the detector. Returns True when it was consumed."""
+        if not self.hold_or_double_tap_active:
+            return False
+        self._ensure_gesture().press(source)
+        return True
+
+    def _handle_gesture_release(self, source: object) -> bool:
+        """Feed a release to the detector. Returns True when it was consumed."""
+        if self._gesture is None or not self.hold_or_double_tap_active:
+            return False
+        self._gesture.release(source)
+        return True
+
+    def _reset_gesture(self, *, stop_session: bool = False) -> None:
+        """Cancel timers and reset the detector, optionally stopping dictation."""
+        if self._gesture is not None:
+            self._gesture.reset(stop_session=stop_session)
+
+    def notify_recognition_stopped(self, is_recording: Callable[[], bool] = lambda: False) -> None:
+        """Resync after recording stopped outside the shortcut.
+
+        The tray calls this on IDLE/ERROR transitions. A latched or mid-tap
+        gesture must not survive the session it belonged to, or the next
+        press would be read as the second half of the old gesture.
+        """
+        if self._gesture is not None:
+            self._gesture.resync(is_recording)
+
+    def register_hands_free_callbacks(
+        self,
+        start: Optional[Callback],
+        stop: Optional[Callback] = None,
+    ) -> None:
+        """Register the hands-free start/stop callbacks (hold_or_double_tap)."""
+        self.hands_free_start_callback = start
+        self.hands_free_stop_callback = stop
+
     def register_toggle_callback(self, callback: Optional[Callback]) -> None:
         """
         Register a callback for the double-tap shortcut.
@@ -731,3 +863,5 @@ class KeyboardBackend(ABC):
             callback: Function to call when the shortcut key is released
         """
         self.key_release_callback = callback
+        if callback is not None:
+            self._gesture_stop_callback = callback

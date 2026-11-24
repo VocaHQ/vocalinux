@@ -27,6 +27,11 @@ from .base import (
     shortcut_gesture,
     shortcut_gestures_collide,
 )
+from .hold_or_double_tap import (
+    DOUBLE_TAP_WINDOW_SECONDS,
+    TAP_MAX_SECONDS,
+    HoldOrDoubleTapDetector,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -234,4 +239,7 @@ __all__ = [
     "is_valid_shortcut",
     "format_shortcut_label",
     "ShortcutSpec",
+    "HoldOrDoubleTapDetector",
+    "TAP_MAX_SECONDS",
+    "DOUBLE_TAP_WINDOW_SECONDS",
 ]

@@ -245,7 +245,10 @@ DEFAULT_CONFIG = {
     },
     "shortcuts": {
         "toggle_recognition": "right_alt+right_alt",
-        "mode": "push_to_talk",  # "toggle" or "push_to_talk"
+        # "toggle", "push_to_talk", or "hold_or_double_tap" (hold to talk,
+        # double-tap to latch hands-free; single-modifier shortcuts only —
+        # combos fall back to push-to-talk).
+        "mode": "push_to_talk",
         # When True, the internal evdev/pynput listener is not started; activation
         # comes in over D-Bus instead (e.g. a KDE Plasma global shortcut running
         # `vocalinux --toggle`). Avoids /dev/input access and the input group.
@@ -691,6 +694,21 @@ class ConfigManager:
                     shortcuts_config["toggle_recognition"] = "ctrl+ctrl"
                 changed = True
                 logger.info("Migrated missing shortcuts.mode to toggle for existing config")
+
+        # An unknown/hand-edited mode must not reach the backends, where a
+        # ValueError in the constructor would disable every shortcut.
+        mode = shortcuts_config.get("mode")
+        if mode is not None:
+            from .keyboard_backends.base import DEFAULT_SHORTCUT_MODE, SHORTCUT_MODES
+
+            if mode not in SHORTCUT_MODES:
+                logger.warning(
+                    "Unknown shortcut mode %r in config; falling back to %r",
+                    mode,
+                    DEFAULT_SHORTCUT_MODE,
+                )
+                shortcuts_config["mode"] = DEFAULT_SHORTCUT_MODE
+                changed = True
 
         if changed:
             self.save_config()
