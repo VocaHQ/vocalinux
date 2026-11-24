@@ -9,6 +9,7 @@ import copy
 import threading
 import time
 from types import SimpleNamespace
+from typing import Any, Callable, Optional
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -36,7 +37,7 @@ class FakeClock:
 
 
 class FakeTimer:
-    def __init__(self, delay: float, callback) -> None:
+    def __init__(self, delay: float, callback: Callable[[], None]) -> None:
         self.delay = delay
         self.callback = callback
         self.cancelled = False
@@ -53,7 +54,7 @@ class FakeTimers:
     def __init__(self) -> None:
         self.timers: list[FakeTimer] = []
 
-    def __call__(self, delay: float, callback) -> FakeTimer:
+    def __call__(self, delay: float, callback: Callable[[], None]) -> FakeTimer:
         timer = FakeTimer(delay, callback)
         self.timers.append(timer)
         return timer
@@ -71,14 +72,14 @@ def _wait_for(events: list[str], count: int, timeout: float = 2.0) -> None:
     assert len(events) >= count, f"expected {count} callbacks, got {events}"
 
 
-def _wait_until(condition, timeout: float = 2.0) -> None:
+def _wait_until(condition: Callable[[], bool], timeout: float = 2.0) -> None:
     deadline = time.monotonic() + timeout
     while not condition() and time.monotonic() < deadline:
         time.sleep(0.002)
     assert condition()
 
 
-def _drain(detector) -> None:
+def _drain(detector: HoldOrDoubleTapDetector) -> None:
     done = threading.Event()
     detector._dispatcher.submit(done.set)
     assert done.wait(2.0)
@@ -88,7 +89,7 @@ def _wait_idle() -> None:
     time.sleep(0.01)
 
 
-def _tray_indicator_class():
+def _tray_indicator_class() -> Any:
     """Import TrayIndicator with a self-contained GI mock.
 
     The full suite lets other test modules replace sys.modules["gi.repository"]
@@ -137,13 +138,13 @@ def _tray_indicator_class():
 
 
 @pytest.fixture
-def gestures():
+def gestures() -> SimpleNamespace:
     clock = FakeClock()
     timers = FakeTimers()
     events: list[str] = []
     threads: list[str] = []
 
-    def record(name: str):
+    def record(name: str) -> Callable[[], None]:
         def callback() -> None:
             threads.append(threading.current_thread().name)
             events.append(name)
@@ -533,18 +534,20 @@ class TestBackendWiring:
         with patch.object(backend._hub, "unregister"):
             backend.stop()
         gesture.reset.assert_called_with(stop_session=True)
+        # Closing here would let a queued release outlive the restart and stop
+        # the next recording; disposal is the manager's decision.
+        gesture.close.assert_not_called()
+        assert backend._gesture is gesture
 
-    def test_stop_closes_the_detector_worker(self) -> None:
+    def test_close_gesture_stops_the_detector_worker(self) -> None:
         backend = evdev_backend.EvdevKeyboardBackend(mode="hold_or_double_tap")
-        backend.active = True
         gesture = backend._ensure_gesture()
         ran = threading.Event()
         gesture._dispatcher.submit(ran.set)
         assert ran.wait(2.0)
         thread = gesture._dispatcher._thread
         assert thread is not None and thread.is_alive()
-        with patch.object(backend._hub, "unregister"):
-            backend.stop()
+        backend.close_gesture()
         thread.join(2.0)
         assert not thread.is_alive()
         assert backend._gesture is None
@@ -568,19 +571,14 @@ class TestBackendWiring:
         _wait_for(events, 2)
         assert events == ["start", "start"]
 
-    def test_pynput_stop_closes_the_detector_worker(self) -> None:
+    def test_pynput_stop_keeps_the_detector_for_ordering(self) -> None:
         backend = pynput_backend.PynputKeyboardBackend(mode="hold_or_double_tap")
         backend.active = True
         backend.listener = MagicMock()
         gesture = backend._ensure_gesture()
-        ran = threading.Event()
-        gesture._dispatcher.submit(ran.set)
-        assert ran.wait(2.0)
-        thread = gesture._dispatcher._thread
-        assert thread is not None and thread.is_alive()
         backend.stop()
-        thread.join(2.0)
-        assert not thread.is_alive()
+        assert backend._gesture is gesture
+        backend.close_gesture()
         assert backend._gesture is None
 
     def test_pynput_routes_modifier_events_to_the_detector(self) -> None:
@@ -630,7 +628,7 @@ class TestBackendWiring:
             def is_available(self) -> bool:
                 return True
 
-            def get_permission_hint(self):
+            def get_permission_hint(self) -> Optional[str]:
                 return None
 
         backend = Dummy(mode="hold_or_double_tap")
@@ -746,6 +744,16 @@ class TestShortcutManager:
             backend.hands_free_start_callback, backend.hands_free_stop_callback
         )
 
+    def test_dispose_stops_and_closes_the_backend_gesture(self) -> None:
+        backend = MagicMock()
+        with patch("vocalinux.ui.keyboard_shortcuts.create_backend", return_value=backend):
+            manager = KeyboardShortcutManager(
+                shortcut="right_alt+right_alt", mode="hold_or_double_tap"
+            )
+        manager.dispose()
+        backend.stop.assert_called_once()
+        backend.close_gesture.assert_called_once()
+
 
 class TestTrayWiring:
     def _fake(self, mode: str) -> MagicMock:
@@ -808,6 +816,17 @@ class TestTrayWiring:
         fake._stop_recognition.reset_mock()
         TrayIndicator._push_to_talk_release(fake, MagicMock())
         fake._stop_recognition.assert_not_called()
+
+    def test_discarded_language_managers_are_disposed(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        managers = [MagicMock(), MagicMock()]
+        fake._language_shortcut_managers = managers
+        TrayIndicator._stop_language_shortcut_managers(fake)
+        for manager in managers:
+            manager.dispose.assert_called_once_with()
+        assert fake._language_shortcut_managers == []
 
     def test_external_activation_warns_for_gesture_mode(self, caplog) -> None:
         TrayIndicator = _tray_indicator_class()

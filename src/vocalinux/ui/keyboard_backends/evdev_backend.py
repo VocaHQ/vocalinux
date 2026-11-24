@@ -2092,8 +2092,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
         logger.info("Stopping evdev keyboard listener")
         self.active = False
         # A listener stopped mid-hold must not leave the microphone open.
+        # Keep the detector: its serial worker orders a queued stop/release
+        # before the callbacks of a session started after a restart.
         self._reset_gesture(stop_session=True)
-        self.close_gesture()
         self._hub.unregister(self)
 
     def _monitor_devices(self) -> None:

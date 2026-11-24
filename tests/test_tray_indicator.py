@@ -409,7 +409,7 @@ class TestTrayIndicator(unittest.TestCase):
 
         with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
             self.tray_indicator._quit()
-            self.mock_ksm.stop.assert_called_once()
+            self.mock_ksm.dispose.assert_called_once()
             patched_gtk.main_quit.assert_called_once()
 
     def test_signal_handler(self):
@@ -1315,7 +1315,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.tray_indicator._on_system_suspend()
 
         self.mock_ksm.stop.assert_called_once()
-        language_manager.stop.assert_called_once()
+        language_manager.dispose.assert_called_once()
         self.assertEqual(self.tray_indicator._language_shortcut_managers, [])
         # Recognition was idle: nothing else to stop.
         self.mock_speech_engine.stop_recognition.assert_not_called()

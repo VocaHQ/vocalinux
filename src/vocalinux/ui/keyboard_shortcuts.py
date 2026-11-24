@@ -330,13 +330,28 @@ class KeyboardShortcutManager:
         return self.active
 
     def stop(self):
-        """Stop listening for keyboard shortcuts."""
+        """Stop listening for keyboard shortcuts.
+
+        The backend keeps its gesture detector, so callbacks queued before the
+        stop still run before anything dispatched after a restart.
+        """
         if self.backend_instance is None:
             return
 
         logger.info("Stopping keyboard shortcut listener")
         self.backend_instance.stop()
         self.active = False
+
+    def dispose(self) -> None:
+        """Stop the listener and release its detector worker.
+
+        Call this only when the manager is being discarded. A stop/start cycle
+        must keep the detector: replacing it would let a release queued before
+        the restart stop the next recording.
+        """
+        self.stop()
+        if self.backend_instance is not None:
+            self.backend_instance.close_gesture()
 
     def register_toggle_callback(self, callback: Optional[Callable[[], None]]):
         """

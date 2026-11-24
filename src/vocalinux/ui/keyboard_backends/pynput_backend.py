@@ -521,6 +521,8 @@ class PynputKeyboardBackend(KeyboardBackend):
         logger.info("Stopping pynput keyboard listener")
         self.active = False
         self._pending_x11_key_info = None
+        # Keep the detector so a queued release still runs before any session
+        # started after a restart; close_gesture() is for disposal only.
         self._reset_gesture(stop_session=True)
 
         if self.listener:
@@ -531,9 +533,6 @@ class PynputKeyboardBackend(KeyboardBackend):
                 logger.error(f"Error stopping pynput listener: {e}")
             finally:
                 self.listener = None
-        # Close after the listener is joined: a press delivered during shutdown
-        # would otherwise recreate the detector and leak its worker.
-        self.close_gesture()
 
     def _on_press(self, key) -> None:
         """Handle key press events."""

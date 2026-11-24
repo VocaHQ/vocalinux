@@ -539,7 +539,7 @@ class TrayIndicator:
         """Stop every per-language listener and drop the managers."""
         for manager in self._language_shortcut_managers:
             try:
-                manager.stop()
+                manager.dispose()
             except Exception:
                 logger.exception("Failed to stop a language shortcut manager")
         self._language_shortcut_managers = []
@@ -1447,14 +1447,14 @@ class TrayIndicator:
         item.set_visible(visible)
         self._sync_indicator_menu()
 
-    def _on_start_clicked(self, widget):
+    def _on_start_clicked(self, widget: Any) -> None:
         """Handle click on the Start Voice Typing menu item."""
         logger.debug("Start Voice Typing clicked")
         # Route through the owner-clearing helper: a stale shortcut owner from
         # an earlier session must not refuse the next hands-free latch.
         self._external_start()
 
-    def _on_stop_clicked(self, widget):
+    def _on_stop_clicked(self, widget: Any) -> None:
         """Handle click on the Stop Voice Typing menu item."""
         logger.debug("Stop Voice Typing clicked")
         self._external_stop()
@@ -2011,7 +2011,7 @@ class TrayIndicator:
         self._cleanup_input_monitor()
 
         # Stop the keyboard shortcut managers
-        self.shortcut_manager.stop()
+        self.shortcut_manager.dispose()
         self._stop_language_shortcut_managers()
 
         if getattr(self, "overlay", None) is not None:
