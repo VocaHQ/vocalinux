@@ -172,7 +172,7 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(config_manager.config, DEFAULT_CONFIG)
         self.mock_logger.error.assert_called()
 
-    def test_load_config_malformed_shortcut_mode_does_not_crash(self):
+    def test_load_config_malformed_shortcut_mode_does_not_crash(self) -> None:
         """A hand-edited list mode must not raise TypeError out of load_config."""
         with open(self.temp_config_file, "w") as f:
             json.dump({"shortcuts": {"mode": []}}, f)

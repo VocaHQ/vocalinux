@@ -632,7 +632,7 @@ def test_refresh_rebuilds_the_language_listeners() -> None:
 
         TrayIndicator.refresh_language_shortcuts(tray)
 
-    old.stop.assert_called_once()
+    old.dispose.assert_called_once()
     assert len(tray._language_shortcut_managers) == 2
 
 
@@ -642,13 +642,13 @@ def test_stop_language_shortcut_managers_survives_a_bad_stop() -> None:
 
     tray = _tray_stub()
     bad, good = MagicMock(), MagicMock()
-    bad.stop.side_effect = OSError("device vanished")
+    bad.dispose.side_effect = OSError("device vanished")
     tray._language_shortcut_managers = [bad, good]
 
     TrayIndicator._stop_language_shortcut_managers(tray)
 
-    bad.stop.assert_called_once()
-    good.stop.assert_called_once()
+    bad.dispose.assert_called_once()
+    good.dispose.assert_called_once()
     assert tray._language_shortcut_managers == []
 
 

@@ -165,7 +165,7 @@ def gestures() -> SimpleNamespace:
 
 
 class TestGestureDetector:
-    def test_hold_starts_and_stops_on_release(self, gestures) -> None:
+    def test_hold_starts_and_stops_on_release(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.31
@@ -174,7 +174,7 @@ class TestGestureDetector:
         assert gestures.events == ["hold_start", "hold_end"]
         assert gestures.timers.timers == []
 
-    def test_exactly_tap_max_is_a_hold(self, gestures) -> None:
+    def test_exactly_tap_max_is_a_hold(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd")
         _wait_for(gestures.events, 1)
         gestures.clock.now = TAP_MAX_SECONDS
@@ -182,7 +182,7 @@ class TestGestureDetector:
         _wait_for(gestures.events, 2)
         assert gestures.events[-1] == "hold_end"
 
-    def test_lone_tap_stops_after_the_window(self, gestures) -> None:
+    def test_lone_tap_stops_after_the_window(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.1
@@ -194,7 +194,7 @@ class TestGestureDetector:
         _wait_for(gestures.events, 2)
         assert gestures.events == ["hold_start", "hold_end"]
 
-    def test_double_tap_latches_hands_free(self, gestures) -> None:
+    def test_double_tap_latches_hands_free(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.1
@@ -216,7 +216,7 @@ class TestGestureDetector:
         _wait_idle()
         assert gestures.events == ["hold_start", "hands_free_start"]
 
-    def test_second_double_tap_stops_hands_free(self, gestures) -> None:
+    def test_second_double_tap_stops_hands_free(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.1
@@ -250,7 +250,7 @@ class TestGestureDetector:
         _wait_idle()
         assert gestures.events == ["hold_start", "hands_free_start", "hands_free_end"]
 
-    def test_hold_while_latched_is_ignored(self, gestures) -> None:
+    def test_hold_while_latched_is_ignored(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         gestures.clock.now = 0.1
         gestures.detector.release("a")
@@ -267,7 +267,7 @@ class TestGestureDetector:
         assert gestures.detector.latched is True
         assert gestures.events == ["hold_start", "hands_free_start"]
 
-    def test_press_after_the_window_is_not_a_double_tap(self, gestures) -> None:
+    def test_press_after_the_window_is_not_a_double_tap(self, gestures: SimpleNamespace) -> None:
         """A stalled timer thread must not turn a later press into a latch."""
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
@@ -285,7 +285,9 @@ class TestGestureDetector:
         _wait_for(gestures.events, 2)
         assert gestures.events == ["hold_start", "hold_end"]
 
-    def test_press_after_the_window_while_latched_is_not_a_stop_tap(self, gestures) -> None:
+    def test_press_after_the_window_while_latched_is_not_a_stop_tap(
+        self, gestures: SimpleNamespace
+    ) -> None:
         """A stalled timer must not make a later press stop a latched session."""
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
@@ -311,7 +313,7 @@ class TestGestureDetector:
         assert gestures.detector.latched is True
         assert gestures.events == ["hold_start", "hands_free_start"]
 
-    def test_auto_repeat_does_not_count_as_a_second_press(self, gestures) -> None:
+    def test_auto_repeat_does_not_count_as_a_second_press(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd")
         gestures.detector.press("kbd")
         gestures.detector.press("kbd")
@@ -322,7 +324,7 @@ class TestGestureDetector:
         assert gestures.events == ["hold_start"]
         assert gestures.timers.timers
 
-    def test_same_key_on_two_keyboards_is_not_a_tap(self, gestures) -> None:
+    def test_same_key_on_two_keyboards_is_not_a_tap(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("kbd-a")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.05
@@ -337,7 +339,7 @@ class TestGestureDetector:
         assert gestures.events == ["hold_start", "hold_end"]
         assert gestures.timers.timers == []
 
-    def test_resync_after_external_stop_restarts_normally(self, gestures) -> None:
+    def test_resync_after_external_stop_restarts_normally(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         gestures.clock.now = 0.1
         gestures.detector.release("a")
@@ -361,7 +363,7 @@ class TestGestureDetector:
             "hold_end",
         ]
 
-    def test_late_idle_does_not_drop_the_next_hold(self, gestures) -> None:
+    def test_late_idle_does_not_drop_the_next_hold(self, gestures: SimpleNamespace) -> None:
         """Stop reports IDLE while a new press is already queued."""
         entered, unblock, events = threading.Event(), threading.Event(), []
         detector = gestures.detector
@@ -388,7 +390,7 @@ class TestGestureDetector:
         _wait_for(events, 4)
         assert events == ["start", "stop", "start", "stop"]
 
-    def test_stale_idle_cannot_orphan_a_live_recording(self, gestures) -> None:
+    def test_stale_idle_cannot_orphan_a_live_recording(self, gestures: SimpleNamespace) -> None:
         detector = gestures.detector
         detector.press("a")
         _wait_for(gestures.events, 1)
@@ -399,7 +401,9 @@ class TestGestureDetector:
         _wait_for(gestures.events, 2)
         assert gestures.events == ["hold_start", "hold_end"]
 
-    def test_resync_while_key_down_ignores_auto_repeat_and_release(self, gestures) -> None:
+    def test_resync_while_key_down_ignores_auto_repeat_and_release(
+        self, gestures: SimpleNamespace
+    ) -> None:
         detector = gestures.detector
         detector.press("a")
         detector.resync()
@@ -411,7 +415,7 @@ class TestGestureDetector:
         detector.press("a")
         _wait_for(gestures.events, 2)
 
-    def test_reset_never_drops_a_queued_stop(self, gestures) -> None:
+    def test_reset_never_drops_a_queued_stop(self, gestures: SimpleNamespace) -> None:
         detector = gestures.detector
         block, entered = threading.Event(), threading.Event()
 
@@ -429,14 +433,14 @@ class TestGestureDetector:
         _drain(detector)
         assert gestures.events == ["hold_end"]
 
-    def test_reset_stops_a_live_session(self, gestures) -> None:
+    def test_reset_stops_a_live_session(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
         gestures.detector.reset(stop_session=True)
         _wait_for(gestures.events, 2)
         assert gestures.events == ["hold_start", "hold_end"]
 
-    def test_reset_without_stop_keeps_callbacks_silent(self, gestures) -> None:
+    def test_reset_without_stop_keeps_callbacks_silent(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
         gestures.detector.reset()
@@ -444,7 +448,7 @@ class TestGestureDetector:
         _wait_idle()
         assert gestures.events == ["hold_start"]
 
-    def test_callbacks_run_on_one_worker_in_order(self, gestures) -> None:
+    def test_callbacks_run_on_one_worker_in_order(self, gestures: SimpleNamespace) -> None:
         gestures.detector.press("a")
         _wait_for(gestures.events, 1)
         gestures.clock.now = 0.1
@@ -698,7 +702,7 @@ class TestConfigValidation:
         cm.save_config.assert_not_called()
 
     @pytest.mark.parametrize("mode", [[], {}, 7, ["hold_or_double_tap"]])
-    def test_unhashable_mode_falls_back_instead_of_raising(self, mode) -> None:
+    def test_unhashable_mode_falls_back_instead_of_raising(self, mode: Any) -> None:
         """SHORTCUT_MODES is a dict; "in" must not hash a hand-edited list."""
         cm = object.__new__(ConfigManager)
         cm.config = copy.deepcopy(DEFAULT_CONFIG)
@@ -828,7 +832,9 @@ class TestTrayWiring:
             manager.dispose.assert_called_once_with()
         assert fake._language_shortcut_managers == []
 
-    def test_external_activation_warns_for_gesture_mode(self, caplog) -> None:
+    def test_external_activation_warns_for_gesture_mode(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         TrayIndicator = _tray_indicator_class()
 
         fake = self._fake("hold_or_double_tap")
