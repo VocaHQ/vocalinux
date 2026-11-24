@@ -801,14 +801,16 @@ class KeyboardBackend(ABC):
 
     def _handle_gesture_press(self, source: object) -> bool:
         """Feed a press to the detector. Returns True when it was consumed."""
-        if not self.hold_or_double_tap_active:
+        # A stopped listener keeps delivering events until its backend is fully
+        # joined; ignoring them stops a detector being recreated after stop().
+        if not self.active or not self.hold_or_double_tap_active:
             return False
         self._ensure_gesture().press(source)
         return True
 
     def _handle_gesture_release(self, source: object) -> bool:
         """Feed a release to the detector. Returns True when it was consumed."""
-        if self._gesture is None or not self.hold_or_double_tap_active:
+        if not self.active or self._gesture is None or not self.hold_or_double_tap_active:
             return False
         self._gesture.release(source)
         return True
@@ -817,6 +819,29 @@ class KeyboardBackend(ABC):
         """Cancel timers and reset the detector, optionally stopping dictation."""
         if self._gesture is not None:
             self._gesture.reset(stop_session=stop_session)
+
+    def abort_gesture(self) -> None:
+        """Drop the in-progress gesture without ending a live session.
+
+        Called when the action a gesture asked for was refused (for example a
+        hands-free latch on a session another shortcut owns). Without this the
+        half-finished gesture would turn the next press into its second half.
+        The held key is remembered, so its release is ignored.
+        """
+        if self._gesture is not None:
+            self._gesture.abort()
+
+    def close_gesture(self) -> None:
+        """Stop the detector's worker thread and drop it.
+
+        A backend that is stopped and discarded must not leave the callback
+        worker waiting forever; per-language listeners are rebuilt whenever the
+        shortcut configuration changes.
+        """
+        gesture = self._gesture
+        self._gesture = None
+        if gesture is not None:
+            gesture.close()
 
     def notify_recognition_stopped(self, is_recording: Callable[[], bool] = lambda: False) -> None:
         """Resync after recording stopped outside the shortcut.

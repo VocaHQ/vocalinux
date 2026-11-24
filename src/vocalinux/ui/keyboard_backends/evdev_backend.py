@@ -2093,6 +2093,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self.active = False
         # A listener stopped mid-hold must not leave the microphone open.
         self._reset_gesture(stop_session=True)
+        self.close_gesture()
         self._hub.unregister(self)
 
     def _monitor_devices(self) -> None:

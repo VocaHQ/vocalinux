@@ -266,6 +266,50 @@ class TestGestureDetector:
         assert gestures.detector.latched is True
         assert gestures.events == ["hold_start", "hands_free_start"]
 
+    def test_press_after_the_window_is_not_a_double_tap(self, gestures) -> None:
+        """A stalled timer thread must not turn a later press into a latch."""
+        gestures.detector.press("a")
+        _wait_for(gestures.events, 1)
+        gestures.clock.now = 0.1
+        gestures.detector.release("a")
+        assert gestures.timers.timers
+        # The timer thread has not fired, but the window is long over: the
+        # session is still live, so this press is a hold on it, not a latch.
+        gestures.clock.now = 5.0
+        gestures.detector.press("a")
+        assert gestures.detector.latched is False
+        assert gestures.events == ["hold_start"]
+        gestures.clock.now = 5.4
+        gestures.detector.release("a")
+        _wait_for(gestures.events, 2)
+        assert gestures.events == ["hold_start", "hold_end"]
+
+    def test_press_after_the_window_while_latched_is_not_a_stop_tap(self, gestures) -> None:
+        """A stalled timer must not make a later press stop a latched session."""
+        gestures.detector.press("a")
+        _wait_for(gestures.events, 1)
+        gestures.clock.now = 0.1
+        gestures.detector.release("a")
+        gestures.clock.now = 0.2
+        gestures.detector.press("a")
+        _wait_for(gestures.events, 2)
+        gestures.clock.now = 0.25
+        gestures.detector.release("a")
+        _wait_idle()
+        # While latched: short tap arms the stop window, and the timer stalls.
+        gestures.clock.now = 1.0
+        gestures.detector.press("a")
+        gestures.clock.now = 1.05
+        gestures.detector.release("a")
+        gestures.clock.now = 3.0
+        gestures.detector.press("a")
+        assert gestures.detector.latched is True
+        assert gestures.events == ["hold_start", "hands_free_start"]
+        gestures.clock.now = 3.05
+        gestures.detector.release("a")
+        assert gestures.detector.latched is True
+        assert gestures.events == ["hold_start", "hands_free_start"]
+
     def test_auto_repeat_does_not_count_as_a_second_press(self, gestures) -> None:
         gestures.detector.press("kbd")
         gestures.detector.press("kbd")
@@ -426,6 +470,7 @@ def _evdev_event(code: int, value: int) -> SimpleNamespace:
 class TestBackendWiring:
     def test_evdev_routes_modifier_events_to_the_detector(self) -> None:
         backend = evdev_backend.EvdevKeyboardBackend(mode="hold_or_double_tap")
+        backend.active = True
         backend._gesture = MagicMock()
         device = MagicMock()
         backend._handle_key_event(_evdev_event(ecodes.KEY_RIGHTALT, 1), device)
@@ -446,6 +491,7 @@ class TestBackendWiring:
         backend = evdev_backend.EvdevKeyboardBackend(
             shortcut="right_alt+right_alt", mode="hold_or_double_tap"
         )
+        backend.active = True
         stopped = threading.Event()
         backend.register_press_callback(lambda: None)
         backend.register_release_callback(stopped.set)
@@ -488,8 +534,58 @@ class TestBackendWiring:
             backend.stop()
         gesture.reset.assert_called_with(stop_session=True)
 
+    def test_stop_closes_the_detector_worker(self) -> None:
+        backend = evdev_backend.EvdevKeyboardBackend(mode="hold_or_double_tap")
+        backend.active = True
+        gesture = backend._ensure_gesture()
+        ran = threading.Event()
+        gesture._dispatcher.submit(ran.set)
+        assert ran.wait(2.0)
+        thread = gesture._dispatcher._thread
+        assert thread is not None and thread.is_alive()
+        with patch.object(backend._hub, "unregister"):
+            backend.stop()
+        thread.join(2.0)
+        assert not thread.is_alive()
+        assert backend._gesture is None
+
+    def test_abort_gesture_ignores_the_release_and_starts_cleanly(self) -> None:
+        backend = evdev_backend.EvdevKeyboardBackend(mode="hold_or_double_tap")
+        backend.active = True
+        events: list[str] = []
+        backend.register_press_callback(lambda: events.append("start"))
+        backend.register_release_callback(lambda: events.append("stop"))
+
+        backend._handle_gesture_press("kbd")
+        _wait_for(events, 1)
+        # A refused latch aborts the gesture while the key is still down.
+        backend.abort_gesture()
+        backend._handle_gesture_press("kbd")  # auto-repeat: still the same hold
+        backend._handle_gesture_release("kbd")
+        assert events == ["start"]
+        # The key going up is ignored, and the next press starts a normal hold.
+        backend._handle_gesture_press("kbd")
+        _wait_for(events, 2)
+        assert events == ["start", "start"]
+
+    def test_pynput_stop_closes_the_detector_worker(self) -> None:
+        backend = pynput_backend.PynputKeyboardBackend(mode="hold_or_double_tap")
+        backend.active = True
+        backend.listener = MagicMock()
+        gesture = backend._ensure_gesture()
+        ran = threading.Event()
+        gesture._dispatcher.submit(ran.set)
+        assert ran.wait(2.0)
+        thread = gesture._dispatcher._thread
+        assert thread is not None and thread.is_alive()
+        backend.stop()
+        thread.join(2.0)
+        assert not thread.is_alive()
+        assert backend._gesture is None
+
     def test_pynput_routes_modifier_events_to_the_detector(self) -> None:
         backend = pynput_backend.PynputKeyboardBackend(mode="hold_or_double_tap")
+        backend.active = True
         backend._gesture = MagicMock()
         backend._matches_configured_modifier = MagicMock(return_value=True)
         key = object()
@@ -603,6 +699,17 @@ class TestConfigValidation:
         assert cm.config["shortcuts"]["mode"] == "hold_or_double_tap"
         cm.save_config.assert_not_called()
 
+    @pytest.mark.parametrize("mode", [[], {}, 7, ["hold_or_double_tap"]])
+    def test_unhashable_mode_falls_back_instead_of_raising(self, mode) -> None:
+        """SHORTCUT_MODES is a dict; "in" must not hash a hand-edited list."""
+        cm = object.__new__(ConfigManager)
+        cm.config = copy.deepcopy(DEFAULT_CONFIG)
+        cm.config["shortcuts"]["mode"] = mode
+        cm.save_config = MagicMock()
+        cm._migrate_shortcuts_config(None)
+        assert cm.config["shortcuts"]["mode"] == "push_to_talk"
+        cm.save_config.assert_called_once()
+
 
 class TestShortcutManager:
     def test_mode_label_and_callback_registration(self) -> None:
@@ -658,10 +765,49 @@ class TestTrayWiring:
         release_calls = fake.shortcut_manager.register_release_callback.call_args_list
         assert press_calls[-1].args[0] is fake._start_recognition
         assert release_calls[-1].args[0] is fake._release_main_push_to_talk
-        fake.shortcut_manager.register_hands_free_callbacks.assert_called_with(
-            fake._latch_hands_free, fake._release_main_push_to_talk
+        start_callback, stop_callback = (
+            fake.shortcut_manager.register_hands_free_callbacks.call_args.args
         )
+        assert start_callback.func is fake._latch_hands_free
+        assert start_callback.args == (fake.shortcut_manager,)
+        assert stop_callback is fake._release_main_push_to_talk
         fake.shortcut_manager.start.assert_called_once()
+
+    def test_tray_start_and_stop_clear_a_stale_owner(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        fake._external_stop = lambda: TrayIndicator._external_stop(fake)
+        fake._external_start = lambda: TrayIndicator._external_start(fake)
+        stale = MagicMock()
+        fake._ptt_owner = stale
+        fake.speech_engine.state = RecognitionState.LISTENING
+        TrayIndicator._on_stop_clicked(fake, None)
+        assert fake._ptt_owner is None
+        fake.speech_engine.stop_recognition.assert_called_once()
+
+        fake._ptt_owner = stale
+        fake.speech_engine.state = RecognitionState.IDLE
+        TrayIndicator._on_start_clicked(fake, None)
+        assert fake._ptt_owner is None
+        fake.speech_engine.start_recognition.assert_called_once()
+
+    def test_claimed_session_is_stopped_by_the_latching_shortcut(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        fake._ptt_owner = None
+        fake.speech_engine.enable_hands_free.return_value = True
+        manager = MagicMock()
+        # Latch an unowned session, then stop it through the same binding.
+        TrayIndicator._latch_hands_free(fake, manager)
+        assert fake._ptt_owner is manager
+        TrayIndicator._push_to_talk_release(fake, manager)
+        fake._stop_recognition.assert_called_once()
+
+        fake._stop_recognition.reset_mock()
+        TrayIndicator._push_to_talk_release(fake, MagicMock())
+        fake._stop_recognition.assert_not_called()
 
     def test_external_activation_warns_for_gesture_mode(self, caplog) -> None:
         TrayIndicator = _tray_indicator_class()
@@ -688,6 +834,40 @@ class TestTrayWiring:
         TrayIndicator = _tray_indicator_class()
 
         fake = MagicMock()
+        fake._ptt_owner = None
         fake.speech_engine.enable_hands_free.return_value = True
-        TrayIndicator._latch_hands_free(fake)
+        manager = MagicMock()
+        TrayIndicator._latch_hands_free(fake, manager)
         fake.speech_engine.enable_hands_free.assert_called_once()
+
+    def test_latch_is_refused_when_another_shortcut_owns_the_session(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        fake._ptt_owner = MagicMock()
+        manager = MagicMock()
+        TrayIndicator._latch_hands_free(fake, manager)
+        fake.speech_engine.enable_hands_free.assert_not_called()
+        manager.abort_gesture.assert_called_once()
+        assert fake._ptt_owner is not manager
+
+    def test_latch_claims_a_session_started_outside_the_shortcuts(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        fake._ptt_owner = None
+        fake.speech_engine.enable_hands_free.return_value = True
+        manager = MagicMock()
+        TrayIndicator._latch_hands_free(fake, manager)
+        # The latching shortcut now owns the session, so it can stop it.
+        assert fake._ptt_owner is manager
+
+    def test_refused_latch_aborts_the_calling_gesture(self) -> None:
+        TrayIndicator = _tray_indicator_class()
+
+        fake = MagicMock()
+        fake._ptt_owner = MagicMock()
+        manager = MagicMock()
+        TrayIndicator._latch_hands_free(fake, manager)
+        manager.abort_gesture.assert_called_once_with()
+        fake._resync_gestures.assert_not_called()

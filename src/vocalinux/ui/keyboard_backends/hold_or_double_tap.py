@@ -24,7 +24,9 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import Callable, Deque, Optional, Protocol
+from typing import Callable, Deque, Optional
+
+from ...common_types import CancelableTimer
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +39,6 @@ DOUBLE_TAP_WINDOW_SECONDS = 0.35
 Callback = Callable[[], None]
 
 
-class TimerHandle(Protocol):
-    """Handle returned by a timer factory; only cancel() is required."""
-
-    def cancel(self) -> None: ...
-
-
 class HoldOrDoubleTapDetector:
     """Turn modifier press/release events into hold and hands-free actions.
 
@@ -53,7 +49,8 @@ class HoldOrDoubleTapDetector:
         on_hands_free_end: Stop the hands-free session.
         clock: Monotonic clock. Injectable for tests.
         timer_factory: Builds a one-shot timer for delay seconds. The
-            returned handle must expose cancel(). Injectable for tests.
+            returned :class:`CancelableTimer` may be cancelled. Injectable for
+            tests.
     """
 
     _IDLE = "idle"
@@ -71,7 +68,7 @@ class HoldOrDoubleTapDetector:
         on_hands_free_end: Callback,
         *,
         clock: Callable[[], float] = time.monotonic,
-        timer_factory: Optional[Callable[[float, Callback], TimerHandle]] = None,
+        timer_factory: Optional[Callable[[float, Callback], CancelableTimer]] = None,
     ) -> None:
         self._on_hold_start = on_hold_start
         self._on_hold_end = on_hold_end
@@ -89,7 +86,7 @@ class HoldOrDoubleTapDetector:
         self._multi_press = False
         self._suppress_release = False
         self._session_live = False
-        self._timer: Optional[TimerHandle] = None
+        self._timer: Optional[CancelableTimer] = None
         self._timer_token = 0
         self._generation = 0
         self._pending = 0
@@ -124,6 +121,17 @@ class HoldOrDoubleTapDetector:
                 self._session_live = True
                 self._dispatch(self._on_hold_start, "hold start")
             elif state == self._TAP_WAIT:
+                if now - self._release_time > DOUBLE_TAP_WINDOW_SECONDS:
+                    # The timer thread has not fired yet, but the window is
+                    # over: this press continues the still-live session as a
+                    # hold instead of completing the old double-tap. Without
+                    # the check a stalled timer thread turns a much later press
+                    # into an unintended hands-free latch.
+                    self._cancel_timer()
+                    self._press_time = now
+                    self._multi_press = False
+                    self._state = self._HOLDING
+                    return
                 # Second tap within the window: latch the session already
                 # running from the first tap.
                 self._cancel_timer()
@@ -136,6 +144,14 @@ class HoldOrDoubleTapDetector:
                 self._multi_press = False
                 self._state = self._LATCH_PRESSED
             elif state == self._LATCH_TAP_WAIT:
+                if now - self._release_time > DOUBLE_TAP_WINDOW_SECONDS:
+                    # The window closed before the timer fired: this is a fresh
+                    # press while latched, not the tap that stops dictation.
+                    self._cancel_timer()
+                    self._press_time = now
+                    self._multi_press = False
+                    self._state = self._LATCH_PRESSED
+                    return
                 self._cancel_timer()
                 self._state = self._IDLE
                 self._session_live = False
@@ -234,6 +250,21 @@ class HoldOrDoubleTapDetector:
                 logger.info("Resetting hold/double-tap gesture; stopping live dictation")
                 self._dispatcher.submit(self._on_hold_end)
 
+    def abort(self) -> None:
+        """Drop the current gesture but remember keys that are still down.
+
+        Used when the action a gesture asked for was refused. Unlike reset(),
+        this runs while the user may still hold the key: the eventual release
+        is ignored and auto-repeat cannot start a new hold.
+        """
+        with self._lock:
+            self._generation += 1
+            self._cancel_timer()
+            self._state = self._IDLE
+            self._multi_press = False
+            self._session_live = False
+            self._suppress_release = bool(self._down)
+
     def close(self) -> None:
         """Reset and let queued callbacks finish, then stop the worker."""
         self.reset(stop_session=True)
@@ -260,7 +291,7 @@ class HoldOrDoubleTapDetector:
         if timer is not None:
             try:
                 timer.cancel()
-            except Exception:  # pragma: no cover - a timer cancel must not break input
+            except (RuntimeError, ValueError):  # pragma: no cover - defensive for injected timers
                 logger.debug("Could not cancel hold/double-tap timer", exc_info=True)
 
     def _expire(self, token: int) -> None:
@@ -343,7 +374,7 @@ class _SerialDispatcher:
                 logger.exception("Error in hold/double-tap callback")
 
 
-def _start_thread_timer(delay: float, callback: Callback) -> TimerHandle:
+def _start_thread_timer(delay: float, callback: Callback) -> CancelableTimer:
     timer = threading.Timer(delay, callback)
     timer.daemon = True
     timer.start()
@@ -354,5 +385,4 @@ __all__ = [
     "DOUBLE_TAP_WINDOW_SECONDS",
     "TAP_MAX_SECONDS",
     "HoldOrDoubleTapDetector",
-    "TimerHandle",
 ]

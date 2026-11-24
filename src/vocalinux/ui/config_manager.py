@@ -701,7 +701,10 @@ class ConfigManager:
         if mode is not None:
             from .keyboard_backends.base import DEFAULT_SHORTCUT_MODE, SHORTCUT_MODES
 
-            if mode not in SHORTCUT_MODES:
+            # isinstance() first: SHORTCUT_MODES is a dict, so "in" hashes the
+            # value and a hand-edited list or object raises TypeError before
+            # this fallback can repair it. load_config does not catch that.
+            if not isinstance(mode, str) or mode not in SHORTCUT_MODES:
                 logger.warning(
                     "Unknown shortcut mode %r in config; falling back to %r",
                     mode,

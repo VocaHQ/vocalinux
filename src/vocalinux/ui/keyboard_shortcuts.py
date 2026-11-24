@@ -151,6 +151,15 @@ class KeyboardShortcutManager:
         if self.backend_instance is not None:
             self.backend_instance.notify_recognition_stopped(is_recording)
 
+    def abort_gesture(self) -> None:
+        """Drop this binding's in-progress gesture, if any.
+
+        Used when the gesture asked for an action that was refused, so the next
+        press cannot be mistaken for the second half of the old gesture.
+        """
+        if self.backend_instance is not None:
+            self.backend_instance.abort_gesture()
+
     def set_mode(self, mode: str) -> bool:
         """
         Update the shortcut mode.
@@ -384,7 +393,7 @@ class KeyboardShortcutManager:
         self,
         start: Optional[Callable[[], None]],
         stop: Optional[Callable[[], None]] = None,
-    ):
+    ) -> None:
         """Register hands-free start/stop callbacks (hold_or_double_tap mode).
 
         Args:

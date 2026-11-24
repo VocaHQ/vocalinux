@@ -531,6 +531,9 @@ class PynputKeyboardBackend(KeyboardBackend):
                 logger.error(f"Error stopping pynput listener: {e}")
             finally:
                 self.listener = None
+        # Close after the listener is joined: a press delivered during shutdown
+        # would otherwise recreate the detector and leak its worker.
+        self.close_gesture()
 
     def _on_press(self, key) -> None:
         """Handle key press events."""

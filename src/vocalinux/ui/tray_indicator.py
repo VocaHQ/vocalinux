@@ -432,7 +432,8 @@ class TrayIndicator:
             self.shortcut_manager.register_press_callback(self._start_recognition)
             self.shortcut_manager.register_release_callback(self._release_main_push_to_talk)
             self.shortcut_manager.register_hands_free_callbacks(
-                self._latch_hands_free, self._release_main_push_to_talk
+                partial(self._latch_hands_free, self.shortcut_manager),
+                self._release_main_push_to_talk,
             )
 
         # Start the keyboard shortcut manager
@@ -512,7 +513,7 @@ class TrayIndicator:
                 )
                 if mode == "hold_or_double_tap":
                     manager.register_hands_free_callbacks(
-                        self._latch_hands_free,
+                        partial(self._latch_hands_free, manager),
                         partial(self._release_language_push_to_talk, manager),
                     )
             manager.start()
@@ -807,14 +808,33 @@ class TrayIndicator:
         for language_manager in getattr(self, "_language_shortcut_managers", ()):
             language_manager.notify_recognition_stopped(self._is_recording)
 
-    def _latch_hands_free(self) -> None:
+    def _latch_hands_free(self, manager: KeyboardShortcutManager) -> None:
         """Switch the live dictation session to hands-free (pause-driven).
 
         Called by the hold_or_double_tap gesture on the second tap. The engine
         keeps the running capture and releases any text it was holding for the
         key release, so nothing spoken before the latch is lost.
+
+        Only the binding that owns the live session may latch it. A language
+        shortcut's start is refused while another session records, and latching
+        that session would flip it hands-free in the wrong language with no way
+        for the same shortcut to stop it. A session started outside the
+        shortcuts (tray, D-Bus) has no owner and is claimed by the binding that
+        latches it, so that shortcut's next double-tap can stop it.
         """
-        latched = self.speech_engine.enable_hands_free()
+        with self._ptt_lock:
+            owner = self._ptt_owner
+            refused = owner is not None and owner is not manager
+            latched = False
+            if not refused:
+                latched = self.speech_engine.enable_hands_free()
+                if latched:
+                    self._ptt_owner = manager
+
+        if refused:
+            logger.debug("Hands-free latch ignored: the live session belongs to another shortcut")
+            manager.abort_gesture()
+            return
         if not latched:
             logger.debug("Hands-free latch ignored: no recording session is live")
             # The start was refused; do not leave the hotkey latched.
@@ -895,11 +915,12 @@ class TrayIndicator:
         )
 
     def _external_start(self) -> None:
-        """Start recognition for an external (D-Bus) trigger.
+        """Start recognition for an external (D-Bus or tray menu) trigger.
 
         Uses normal start semantics — not push-to-talk — so a single
         `vocalinux --start` transcribes immediately/with silence detection
-        rather than deferring until a Stop.
+        rather than deferring until a Stop. The session has no shortcut owner,
+        so any binding may latch it hands-free.
         """
         with self._ptt_lock:
             self._ptt_owner = None
@@ -907,7 +928,7 @@ class TrayIndicator:
                 self.speech_engine.start_recognition()
 
     def _external_stop(self) -> None:
-        """Stop recognition for an external (D-Bus) trigger."""
+        """Stop recognition for an external (D-Bus or tray menu) trigger."""
         with self._ptt_lock:
             self._ptt_owner = None
             if self.speech_engine.state != RecognitionState.IDLE:
@@ -1429,12 +1450,14 @@ class TrayIndicator:
     def _on_start_clicked(self, widget):
         """Handle click on the Start Voice Typing menu item."""
         logger.debug("Start Voice Typing clicked")
-        self.speech_engine.start_recognition()
+        # Route through the owner-clearing helper: a stale shortcut owner from
+        # an earlier session must not refuse the next hands-free latch.
+        self._external_start()
 
     def _on_stop_clicked(self, widget):
         """Handle click on the Stop Voice Typing menu item."""
         logger.debug("Stop Voice Typing clicked")
-        self.speech_engine.stop_recognition()
+        self._external_stop()
 
     def _on_cancel_transcription_clicked(self, widget: Any) -> None:
         """Cancel an in-progress transcription from the tray menu."""

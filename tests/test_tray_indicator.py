@@ -383,6 +383,7 @@ class TestTrayIndicator(unittest.TestCase):
 
     def test_on_stop_clicked(self):
         """Test stop button click handler."""
+        self.mock_speech_engine.state = self.RecognitionState.LISTENING
         self.mock_speech_engine.stop_recognition.reset_mock()
         self.tray_indicator._on_stop_clicked(None)
         self.mock_speech_engine.stop_recognition.assert_called_once()
