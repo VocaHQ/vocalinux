@@ -2040,8 +2040,34 @@ class SpeechRecognitionManager:
             f"({loaded_backend} backend, n_threads={effective_threads})"
         )
 
+        self._warm_up_for_backend(loaded_backend)
+
         self._model_initialized = True
         logger.info("whisper.cpp engine initialized successfully.")
+
+    def _warm_up_for_backend(self, backend: str) -> None:
+        """Warm up only the backend that compiles shaders on first use."""
+        from ..utils.whispercpp_model_info import ComputeBackend
+
+        if backend == ComputeBackend.VULKAN:
+            self._warm_up_whispercpp()
+
+    def _warm_up_whispercpp(self) -> None:
+        """Compile Vulkan shaders at load time instead of during the first dictation.
+
+        With a cold driver shader cache the first inference can take over 20
+        seconds. A warm cache makes this pass take well under a second.
+        """
+        started = time.monotonic()
+        try:
+            import numpy as np
+
+            noise = np.random.default_rng(0).normal(0.0, 0.02, 2 * 16000)
+            self.model.transcribe(noise.astype(np.float32), language="en")
+        except Exception:
+            logger.warning("whisper.cpp warm-up failed", exc_info=True)
+            return
+        logger.info("whisper.cpp warm-up took %.2fs", time.monotonic() - started)
 
     def _handle_gpu_fallback(
         self,
