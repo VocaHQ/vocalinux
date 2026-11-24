@@ -53,6 +53,21 @@ PROMPT_QUEUE=()
 """
 
 
+def _hide_host_processes(env: dict, tmp_path: Path) -> None:
+    """Keep install.sh from finding, and stopping, a real Vocalinux.
+
+    The PID-file lookup is already isolated through XDG_DATA_HOME; the
+    installer's pgrep fallback still sees every process of the user.
+    """
+    bin_dir = tmp_path / "bin-no-host-processes"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+    env["PATH"] = os.pathsep.join((str(bin_dir), env.get("PATH", "")))
+    env["XDG_DATA_HOME"] = str(tmp_path / ".local" / "share")
+
+
 def _run(script: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["bash", "-c", PRELUDE + script],
@@ -436,6 +451,7 @@ def test_piped_installer_defaults_to_upgrade_on_existing_install(tmp_path: Path)
     env["XDG_CONFIG_HOME"] = str(tmp_path / ".config")
     env["XDG_STATE_HOME"] = str(tmp_path / ".local" / "state")
     env["TMPDIR"] = str(tmp_path)
+    _hide_host_processes(env, tmp_path)
 
     inner = (
         f"cat {shlex.quote(str(INSTALL_SH))} | bash -s --"
