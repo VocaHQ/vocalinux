@@ -24,6 +24,7 @@ import pytest
 from vocalinux.ui.keyboard_backends.base import parse_shortcut_spec
 from vocalinux.ui.keyboard_backends.evdev_backend import (
     _MONITOR_STALL_SECONDS,
+    _WORD_BITS,
     DEVICE_RESCAN_SECONDS,
     EvdevDeviceHub,
     EvdevKeyboardBackend,
@@ -38,7 +39,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
 )
 
 
-def _proc_key_bitmap(*codes: int, word_bits: int = 64) -> str:
+def _proc_key_bitmap(*codes: int, word_bits: int = _WORD_BITS) -> str:
     """Format key codes as the words printed in /proc device bitmaps."""
     bits = sum(1 << code for code in codes)
     word_mask = (1 << word_bits) - 1
