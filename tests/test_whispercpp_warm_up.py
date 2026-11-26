@@ -12,6 +12,7 @@ from vocalinux.utils.whispercpp_model_info import ComputeBackend
 def _bare_manager() -> rm.SpeechRecognitionManager:
     manager = rm.SpeechRecognitionManager.__new__(rm.SpeechRecognitionManager)
     manager.model = MagicMock()
+    manager.whispercpp_no_context = True
     return manager
 
 
@@ -27,6 +28,18 @@ def test_warm_up_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) 
     with caplog.at_level(logging.WARNING):
         manager._warm_up_whispercpp()
     assert "whisper.cpp warm-up failed" in caplog.text
+
+
+def test_warm_up_skipped_when_model_context_is_kept(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """no_context=False must not seed the first dictation with warm-up audio."""
+    manager = _bare_manager()
+    manager.whispercpp_no_context = False
+    with caplog.at_level(logging.INFO):
+        manager._warm_up_for_backend(ComputeBackend.VULKAN)
+    manager.model.transcribe.assert_not_called()
+    assert "Skipping whisper.cpp warm-up" in caplog.text
 
 
 @pytest.mark.parametrize(

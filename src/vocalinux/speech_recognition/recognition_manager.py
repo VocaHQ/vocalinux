@@ -2047,10 +2047,19 @@ class SpeechRecognitionManager:
 
     def _warm_up_for_backend(self, backend: str) -> None:
         """Warm up only the backend that compiles shaders on first use."""
-        from ..utils.whispercpp_model_info import ComputeBackend
-
-        if backend == ComputeBackend.VULKAN:
-            self._warm_up_whispercpp()
+        if backend != ComputeBackend.VULKAN:
+            return
+        if not self.whispercpp_no_context:
+            # The warm-up inference feeds silence to the model. With context
+            # kept between dictations (no_context=False) that output would
+            # bias the first real transcription, so the shader compile has to
+            # stay on the first dictation instead.
+            logger.info(
+                "Skipping whisper.cpp warm-up: whispercpp_no_context is False, "
+                "so warm-up output would leak into the first dictation"
+            )
+            return
+        self._warm_up_whispercpp()
 
     def _warm_up_whispercpp(self) -> None:
         """Compile Vulkan shaders at load time instead of during the first dictation.
