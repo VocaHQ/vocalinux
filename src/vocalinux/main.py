@@ -92,7 +92,15 @@ def parse_arguments():
     parser.add_argument(
         "--engine",
         type=str,
-        choices=["vosk", "whisper", "whisper_cpp", "parakeet", "faster_whisper", "remote_api"],
+        choices=[
+            "vosk",
+            "whisper",
+            "whisper_cpp",
+            "parakeet",
+            "fourier",
+            "faster_whisper",
+            "remote_api",
+        ],
         help="Speech recognition engine to use (whisper_cpp recommended for best performance)",
     )
     parser.add_argument("--wayland", action="store_true", help="Force Wayland compatibility mode")
@@ -550,9 +558,7 @@ def main():
     resolved_language = language
     language = recognition_manager.normalize_language_for_engine(engine, language)
     if language != resolved_language:
-        logger.info(
-            "Parakeet ignores catalog language; using language=auto " f"(was {resolved_language})"
-        )
+        logger.info(f"{engine} selects language={language} (was {resolved_language})")
 
     if cli_model_set:
         model_size = args.model

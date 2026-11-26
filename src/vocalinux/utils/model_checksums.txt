@@ -163,3 +163,4 @@ faster-whisper-large-v3-model.bin                 sha256  69f74147e3334731bc3a76
 faster-whisper-large-v3-preprocessor_config.json  sha256  7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711  340
 faster-whisper-large-v3-tokenizer.json            sha256  6d8cbd7cd0d8d5815e478dac67b85a26bbe77c1f5e0c6d76d1ce2abc0e5f21ca  2480617
 faster-whisper-large-v3-vocabulary.json           sha256  c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1  1068114
+Fourier-2B-Q8_0.gguf                              sha256  6a7c419bd571f7b0e21da2d5ab1e3a1a3938a83470d622be57427af98f322981  2185030848

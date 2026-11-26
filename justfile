@@ -205,6 +205,7 @@ reproducible-wheel:
 lock:
     uv lock
     uv export --only-group release-build --no-emit-project -o requirements/release-build.txt
+    uv export --only-group fourier-runtime --no-emit-project -o requirements/fourier.txt
     uv export --only-group installer-build --no-emit-project -o requirements/installer-build.txt
     uv export --no-dev --no-emit-project --no-emit-package pygobject -o requirements/runtime.txt
     uv export --no-dev --extra vad --no-emit-project --no-emit-package pygobject -o requirements/vad.txt

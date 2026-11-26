@@ -16,6 +16,11 @@ release creation and both AppImages, not the source-package gate or other
 packaging jobs. It first pins the per-arch AppImage digests in the PKGBUILD,
 then pushes to AUR in the `Publish AUR -bin package` step.
 
+The optional English Fourier engine uses Python bindings currently available as
+PyPI wheels. To enable it on x86-64, use the [source installation](../README.md)
+with `./install.sh --auto --engine=fourier`. The AUR packages for the
+transcribe.cpp CLI do not supply these Python bindings.
+
 ## Maintainers (one-time setup)
 
 Release tags prepare and test the source PKGBUILD from

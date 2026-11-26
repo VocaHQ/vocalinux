@@ -58,6 +58,7 @@ from ..custom_dictionary import normalize_corrections  # noqa: E402
 from ..gateway_embed import GatewayStatus, get_gateway_embed_manager  # noqa: E402
 from ..speech_recognition.silero_vad import is_silero_available  # noqa: E402
 from ..utils import faster_whisper_model_info as faster_whisper
+from ..utils import fourier_model_info as fourier
 from ..utils.faster_whisper_model_info import delete_model as delete_faster_whisper_model
 from ..utils.faster_whisper_model_info import (  # noqa: E402
     get_recommended_model as get_recommended_faster_whisper_model,
@@ -278,6 +279,7 @@ ENGINE_MODELS = {
     "parakeet": [
         *parakeet.MODEL_SIZES,
     ],  # Parakeet TDT 0.6B int8 bundles
+    "fourier": [fourier.MODEL_ID],
     "faster_whisper": [
         "tiny",
         "tiny.en",
@@ -307,6 +309,7 @@ ENGINE_DISPLAY_NAMES = {
     "whisper": "Whisper",
     "whisper_cpp": "whisper.cpp",
     "parakeet": "Parakeet",
+    "fourier": "Fourier (English, noncommercial)",
     "faster_whisper": "Faster Whisper",
     "remote_api": "Remote API",
 }
@@ -1567,6 +1570,9 @@ def recommended_model_for_engine(
         model_id = parakeet.RECOMMENDED_MODEL
         reason = parakeet.RECOMMENDED_REASON
         size_mb = parakeet.PARAKEET_MODEL_INFO.get(model_id, {}).get("size_mb", 0)
+    elif engine == "fourier":
+        model_id, reason = fourier.MODEL_ID, str(fourier.MODEL_INFO["desc"])
+        size_mb = fourier.MODEL_INFO["size_mb"]
     elif engine == "faster_whisper":
         recommended_model, reason = get_recommended_faster_whisper_model()
         model_id, reason = _recommended_faster_whisper_variant_for_language(
@@ -2410,6 +2416,12 @@ def _undownloaded_model_info(language: str, engine: str, model_name: str) -> Opt
         return WHISPERCPP_MODEL_INFO.get(model_name, {"size_mb": 39})
     if engine == "vosk" and not _is_vosk_model_downloaded(model_name, language):
         return VOSK_MODEL_INFO.get(model_name, {"size_mb": 50})
+    if (
+        engine == "fourier"
+        and model_name == fourier.MODEL_ID
+        and not fourier.model_path().is_file()
+    ):
+        return fourier.MODEL_INFO
     if engine == "parakeet" and not parakeet.is_model_downloaded(model_name):
         return parakeet.PARAKEET_MODEL_INFO.get(model_name, {"size_mb": 639})
     if engine == "faster_whisper" and not is_faster_whisper_model_downloaded(model_name):
@@ -2431,6 +2443,8 @@ def _model_download_source_url(
     if engine == "vosk":
         model_dir = vosk_model_dirname(model_name, language)
         return f"https://alphacephei.com/vosk/models/{model_dir}.zip" if model_dir else ""
+    if engine == "fourier" and model_name == fourier.MODEL_ID:
+        return fourier.URL
     if engine == "parakeet":
         files = parakeet.model_files(model_name)
         return parakeet.get_model_file_url(model_name, files[0]) if files else ""
@@ -7683,8 +7697,11 @@ class SettingsDialog(AboutSectionMixin):
 
         if available_count == 0:
             logger.error("No speech recognition engines available!")
-            # Still add them so the UI works, but log the error
+            # Keep the normal recovery choices when no engines are installed.
+            # Fourier requires the opt-in wheels from the source installer.
             for engine in ENGINE_MODELS.keys():
+                if engine == "fourier":
+                    continue
                 display_name = _engine_display_name(engine)
                 self.engine_combo.append(display_name, display_name)
         else:
@@ -7870,7 +7887,9 @@ class SettingsDialog(AboutSectionMixin):
     def _sync_language_options_for_selected_model(self, preferred_language: Optional[str] = None):
         """Refresh language options and keep the current model/language pair valid."""
         engine = self._get_selected_engine()
-        if engine == "parakeet":
+        if engine == "fourier":
+            language_to_keep = "en-us"
+        elif engine == "parakeet":
             # Coverage is the model (v2-english vs v3-european), not this picker.
             # Remember a non-auto preferred leftover, but never clobber memory with
             # the forced auto that follows an engine switch into Parakeet.
@@ -7893,7 +7912,9 @@ class SettingsDialog(AboutSectionMixin):
                 fallback_language = self._default_language_for_engine(engine)
                 self._set_combo_active_id_or_first(self.language_combo, fallback_language)
 
-            if engine == "parakeet":
+            if engine == "fourier":
+                self.language = "en-us"
+            elif engine == "parakeet":
                 self.language = "auto"
             else:
                 self.language = (
@@ -7939,6 +7960,8 @@ class SettingsDialog(AboutSectionMixin):
                 smallest_model = None
                 if engine == "whisper":
                     recommended_model, _ = _get_recommended_whisper_model()
+                elif engine == "fourier":
+                    recommended_model = fourier.MODEL_ID
                 elif engine == "parakeet":
                     recommended_model = parakeet.RECOMMENDED_MODEL
                 elif engine == "faster_whisper":
@@ -7962,6 +7985,9 @@ class SettingsDialog(AboutSectionMixin):
                         elif engine == "vosk" and size in VOSK_MODEL_INFO:
                             info = VOSK_MODEL_INFO[size]
                             is_downloaded = _is_vosk_model_downloaded(size, self.language)
+                        elif engine == "fourier":
+                            info = fourier.MODEL_INFO
+                            is_downloaded = fourier.model_path().is_file()
                         elif engine == "parakeet":
                             info = parakeet.PARAKEET_MODEL_INFO[size]
                             is_downloaded = parakeet.is_model_downloaded(size)
@@ -8144,7 +8170,7 @@ class SettingsDialog(AboutSectionMixin):
         if engine == "parakeet":
             model_id = self.model_combo.get_active_id()
             return model_id.lower() if model_id else None
-        if engine == "faster_whisper":
+        if engine in {"faster_whisper", "fourier"}:
             model_id = self.model_combo.get_active_id()
             return model_id.lower() if model_id else None
         return None
@@ -8203,6 +8229,15 @@ class SettingsDialog(AboutSectionMixin):
                         model.dirname == active_id,
                     )
                 )
+        elif engine == "fourier" and fourier.model_path().is_file():
+            items.append(
+                (
+                    fourier.MODEL_ID,
+                    "Fourier 2B Q8",
+                    _format_size(2185),
+                    fourier.MODEL_ID == active_id,
+                )
+            )
         elif engine == "parakeet":
             for name in parakeet.list_downloaded_models():
                 items.append(
@@ -8311,6 +8346,8 @@ class SettingsDialog(AboutSectionMixin):
             _delete_whisper_model(model_id)
         elif engine == "vosk":
             delete_vosk_model(model_id)
+        elif engine == "fourier" and model_id == fourier.MODEL_ID:
+            fourier.model_path().unlink(missing_ok=True)
         elif engine == "parakeet":
             parakeet.delete_model(model_id)
         elif engine == "faster_whisper":
@@ -8369,12 +8406,18 @@ class SettingsDialog(AboutSectionMixin):
         # write the coerced active value back into memory).
         preserve_language_memory = None
         vosk_coerced = False
-        if engine == "parakeet":
+        if engine == "fourier":
+            if previous_engine not in {"parakeet", "fourier"}:
+                self._last_non_parakeet_language = current_lang or self.language
+            self.language = "en-us"
+        elif previous_engine == "fourier" and engine != "parakeet":
+            self.language = self._last_non_parakeet_language or "auto"
+        elif engine == "parakeet":
             # Force auto for honesty, but remember the prior catalog preference so
             # leaving Parakeet can restore Whisper/cpp language instead of auto.
             # Only capture on entry: a re-fired changed signal while already on
             # Parakeet would otherwise overwrite memory with the forced auto.
-            if previous_engine != "parakeet":
+            if previous_engine not in {"parakeet", "fourier"}:
                 remembered = current_lang or self.language
                 # Vosk may still display coerced en-us for an unsupported
                 # catalog language. Entering Parakeet must not record that
@@ -8529,6 +8572,9 @@ class SettingsDialog(AboutSectionMixin):
                     continue
                 is_downloaded = _is_vosk_model_downloaded("small", lang_code)
                 display_text += " ✓" if is_downloaded else " ↓"
+            elif engine == "fourier":
+                if lang_code != "en-us":
+                    continue
             elif engine in ["whisper", "whisper_cpp", "parakeet", "faster_whisper", "remote_api"]:
                 # An English-only model must not hide other languages: picking
                 # Polish (or auto) retargets to the multilingual sibling.
@@ -9093,6 +9139,11 @@ class SettingsDialog(AboutSectionMixin):
             is_downloaded = _is_vosk_model_downloaded(model_name, self.language)
             recommended, reason = _get_recommended_vosk_model()
             extra_info = f"Size: {_format_size(info['size_mb'])}"
+        elif engine == "fourier":
+            info = fourier.MODEL_INFO
+            is_downloaded = fourier.model_path().is_file()
+            recommended, reason = fourier.MODEL_ID, str(info["desc"])
+            extra_info = "Local CPU · CC BY-NC 4.0"
         elif engine == "parakeet":
             if model_name not in parakeet.PARAKEET_MODEL_INFO:
                 self.model_info_card.hide()
@@ -9125,6 +9176,7 @@ class SettingsDialog(AboutSectionMixin):
             "whisper_cpp": WHISPERCPP_MODEL_INFO,
             "vosk": VOSK_MODEL_INFO,
             "parakeet": parakeet.PARAKEET_MODEL_INFO,
+            "fourier": {fourier.MODEL_ID: fourier.MODEL_INFO},
             "faster_whisper": FASTER_WHISPER_MODEL_INFO,
         }[engine].get(recommended, {})
         recommended_size_mb = cast(int, recommended_info.get("size_mb", 0))
@@ -10053,6 +10105,8 @@ For now, the engine has been reverted to VOSK."""
         if host:
             secondary += f" from {host}"
         secondary += ". Nothing is downloaded until you confirm."
+        if engine == "fourier":
+            secondary += " The Fourier weights are licensed for noncommercial use (CC BY-NC 4.0)."
 
         dialog = Gtk.MessageDialog(
             transient_for=self,

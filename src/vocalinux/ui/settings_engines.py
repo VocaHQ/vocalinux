@@ -30,6 +30,7 @@ def get_available_engines() -> dict[str, bool]:
             "whisper",
             "whisper_cpp",
             "parakeet",
+            "fourier",
             "faster_whisper",
             "remote_api",
         )
