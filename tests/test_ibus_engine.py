@@ -2212,38 +2212,6 @@ class TestTextInjectorWithIBus(unittest.TestCase):
             self.assertEqual(injector.wayland_tool, "ydotool")
 
     @patch("vocalinux.text_injection.text_injector.is_ibus_available")
-    @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
-    def test_ibus_inject_text(self, mock_injector_class, mock_ibus_available):
-        """Test text injection via IBus."""
-        mock_ibus_available.return_value = True
-        mock_injector_instance = MagicMock()
-        mock_injector_instance.inject_text.return_value = True
-        mock_injector_class.return_value = mock_injector_instance
-
-        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
-            from vocalinux.text_injection.text_injector import TextInjector
-
-            injector = TextInjector()
-            result = injector.inject_text("Hello via IBus")
-
-            self.assertTrue(result)
-            mock_injector_instance.inject_text.assert_called_once_with("Hello via IBus")
-
-    @patch("vocalinux.text_injection.text_injector.is_ibus_available")
-    @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
-    def test_stop_calls_ibus_stop(self, mock_injector_class, mock_ibus_available):
-        """Test that stop() calls IBus injector stop."""
-        mock_ibus_available.return_value = True
-        mock_injector_instance = MagicMock()
-        mock_injector_class.return_value = mock_injector_instance
-
-        with patch.dict("os.environ", {"XDG_SESSION_TYPE": "wayland"}):
-            from vocalinux.text_injection.text_injector import TextInjector
-
-            injector = TextInjector()
-            injector.stop()
-
-    @patch("vocalinux.text_injection.text_injector.is_ibus_available")
     @patch("vocalinux.text_injection.text_injector.is_ibus_active_input_method")
     @patch("vocalinux.text_injection.text_injector.IBusTextInjector")
     def test_ibus_inject_text(self, mock_injector_class, mock_is_active_im, mock_ibus_available):
