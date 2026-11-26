@@ -331,6 +331,8 @@ class TestTrayIndicator(unittest.TestCase):
             "processing": "processing",
         }
         self.tray_indicator.shortcut_manager.shortcut_display_name = "Ctrl+Alt+V"
+        # A real mode-specific name contains a verb; the tooltip must not use it.
+        self.tray_indicator.shortcut_manager.mode_shortcut_display_name = "Hold Ctrl+Alt+V"
         self.mock_speech_engine.state = self.RecognitionState.PROCESSING
         self.mock_speech_engine.is_transcribing.return_value = True
 
@@ -383,6 +385,7 @@ class TestTrayIndicator(unittest.TestCase):
 
     def test_on_stop_clicked(self):
         """Test stop button click handler."""
+        self.mock_speech_engine.state = self.RecognitionState.LISTENING
         self.mock_speech_engine.stop_recognition.reset_mock()
         self.tray_indicator._on_stop_clicked(None)
         self.mock_speech_engine.stop_recognition.assert_called_once()
@@ -408,7 +411,7 @@ class TestTrayIndicator(unittest.TestCase):
 
         with patch("vocalinux.ui.tray_indicator.Gtk") as patched_gtk:
             self.tray_indicator._quit()
-            self.mock_ksm.stop.assert_called_once()
+            self.mock_ksm.dispose.assert_called_once()
             patched_gtk.main_quit.assert_called_once()
 
     def test_signal_handler(self):
@@ -1314,7 +1317,7 @@ class TestTrayIndicator(unittest.TestCase):
         self.tray_indicator._on_system_suspend()
 
         self.mock_ksm.stop.assert_called_once()
-        language_manager.stop.assert_called_once()
+        language_manager.dispose.assert_called_once()
         self.assertEqual(self.tray_indicator._language_shortcut_managers, [])
         # Recognition was idle: nothing else to stop.
         self.mock_speech_engine.stop_recognition.assert_not_called()

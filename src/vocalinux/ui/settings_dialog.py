@@ -643,6 +643,7 @@ def _combo_with_suffix(
 _SHORTCUT_MODE_COMBO_LABELS = {
     "toggle": "Toggle",
     "push_to_talk": "Push-to-Talk",
+    "hold_or_double_tap": "Hold / Double-Tap",
 }
 
 
@@ -6053,6 +6054,21 @@ class SettingsDialog(AboutSectionMixin):
             self.shortcut_info_label.set_text(
                 "In Push-to-Talk mode: Hold the shortcut down to speak, release to stop recording."
             )
+        elif mode == "hold_or_double_tap":
+            if is_combo:
+                self.shortcut_row.set_subtitle("Hold to talk, release to stop")
+                self.shortcut_info_label.set_text(
+                    "In Hold / Double-Tap mode: key combos keep push-to-talk "
+                    "behaviour (hold to speak, release to stop). Double-tap "
+                    "hands-free needs a single modifier shortcut."
+                )
+            else:
+                self.shortcut_row.set_subtitle("Hold to talk; double-tap for hands-free")
+                self.shortcut_info_label.set_text(
+                    "In Hold / Double-Tap mode: hold the key to talk and release "
+                    "to stop, or double-tap to latch hands-free dictation "
+                    "(transcribes on pauses). Double-tap again to stop."
+                )
 
     def _on_shortcut_mode_changed(self, widget):
         """Handle shortcut mode selection change."""

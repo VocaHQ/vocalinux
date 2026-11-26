@@ -94,6 +94,10 @@ class SpeechRecognitionManagerProtocol(Protocol):
         """Start recognition in ``language`` for this utterance only (#805)."""
         ...
 
+    def enable_hands_free(self) -> bool:
+        """Switch a running recording to pause-driven (hands-free) delivery."""
+        ...
+
     def is_transcribing(self) -> bool:
         """Whether a stopped dictation session is still being transcribed."""
         ...

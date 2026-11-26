@@ -73,7 +73,8 @@ class KeyboardShortcutManager:
             backend: Optional backend name to force ('pynput' or 'evdev')
                     If not specified, auto-detects based on environment.
             shortcut: The shortcut to listen for (e.g., "ctrl+ctrl", "alt+alt")
-            mode: The shortcut mode ("toggle" or "push_to_talk")
+            mode: The shortcut mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap")
         """
         self.backend_instance = None
         self.active = False
@@ -141,6 +142,25 @@ class KeyboardShortcutManager:
         """Get the human-readable name for the current mode."""
         return SHORTCUT_MODES.get(self._mode, self._mode)
 
+    @property
+    def mode_shortcut_display_name(self) -> str:
+        """Get the mode-specific human-readable name for the shortcut."""
+        return get_shortcut_display_name(self._shortcut, self._mode)
+
+    def notify_recognition_stopped(self, is_recording: Callable[[], bool] = lambda: False) -> None:
+        """Resync gesture state after recording stopped outside the shortcut."""
+        if self.backend_instance is not None:
+            self.backend_instance.notify_recognition_stopped(is_recording)
+
+    def abort_gesture(self) -> None:
+        """Drop this binding's in-progress gesture, if any.
+
+        Used when the gesture asked for an action that was refused, so the next
+        press cannot be mistaken for the second half of the old gesture.
+        """
+        if self.backend_instance is not None:
+            self.backend_instance.abort_gesture()
+
     def set_mode(self, mode: str) -> bool:
         """
         Update the shortcut mode.
@@ -148,7 +168,8 @@ class KeyboardShortcutManager:
         Note: This requires restarting the listener to take effect.
 
         Args:
-            mode: The new mode ("toggle" or "push_to_talk")
+            mode: The new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap")
 
         Returns:
             True if successful, False if the mode is invalid
@@ -195,7 +216,13 @@ class KeyboardShortcutManager:
 
         return True
 
-    def restart_with_shortcut(self, shortcut: str, mode: Optional[str] = None) -> bool:
+    def restart_with_shortcut(
+        self,
+        shortcut: str,
+        mode: Optional[str] = None,
+        hands_free_start_callback: Optional[Callable[[], None]] = None,
+        hands_free_stop_callback: Optional[Callable[[], None]] = None,
+    ) -> bool:
         """
         Restart the keyboard listener with a new shortcut.
 
@@ -205,7 +232,12 @@ class KeyboardShortcutManager:
 
         Args:
             shortcut: The new shortcut string (e.g., "ctrl+ctrl", "alt+alt")
-            mode: Optional new mode ("toggle" or "push_to_talk"). If None, keeps current mode.
+            mode: Optional new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap"). If None, keeps current mode.
+            hands_free_start_callback: Hands-free latch callback to use when
+                switching to "hold_or_double_tap" from a mode that has none.
+            hands_free_stop_callback: Hands-free stop callback for the same
+                switch.
 
         Returns:
             True if the listener was successfully restarted with the new shortcut,
@@ -225,11 +257,20 @@ class KeyboardShortcutManager:
         toggle_callback = None
         press_callback = None
         release_callback = None
-
         if self.backend_instance:
             toggle_callback = self.backend_instance.double_tap_callback
             press_callback = self.backend_instance.key_press_callback
             release_callback = self.backend_instance.key_release_callback
+            hands_free_start_callback = (
+                hands_free_start_callback or self.backend_instance.hands_free_start_callback
+            )
+            hands_free_stop_callback = (
+                hands_free_stop_callback or self.backend_instance.hands_free_stop_callback
+            )
+        else:
+            toggle_callback = None
+            press_callback = None
+            release_callback = None
 
         # Stop the current listener
         if was_active:
@@ -255,15 +296,20 @@ class KeyboardShortcutManager:
             self.register_toggle_callback(None)
             self.register_press_callback(None)
             self.register_release_callback(None)
+            self.register_hands_free_callbacks(None, None)
 
             # Re-register callbacks based on current mode
             if self._mode == "toggle" and toggle_callback:
                 self.register_toggle_callback(toggle_callback)
-            elif self._mode == "push_to_talk":
+            elif self._mode in ("push_to_talk", "hold_or_double_tap"):
                 if press_callback:
                     self.register_press_callback(press_callback)
                 if release_callback:
                     self.register_release_callback(release_callback)
+                if self._mode == "hold_or_double_tap":
+                    self.register_hands_free_callbacks(
+                        hands_free_start_callback, hands_free_stop_callback
+                    )
 
             success = self.start()
             if success:
@@ -302,13 +348,28 @@ class KeyboardShortcutManager:
         return self.active
 
     def stop(self):
-        """Stop listening for keyboard shortcuts."""
+        """Stop listening for keyboard shortcuts.
+
+        The backend keeps its gesture detector, so callbacks queued before the
+        stop still run before anything dispatched after a restart.
+        """
         if self.backend_instance is None:
             return
 
         logger.info("Stopping keyboard shortcut listener")
         self.backend_instance.stop()
         self.active = False
+
+    def dispose(self) -> None:
+        """Stop the listener and release its detector worker.
+
+        Call this only when the manager is being discarded. A stop/start cycle
+        must keep the detector: replacing it would let a release queued before
+        the restart stop the next recording.
+        """
+        self.stop()
+        if self.backend_instance is not None:
+            self.backend_instance.close_gesture()
 
     def register_toggle_callback(self, callback: Optional[Callable[[], None]]):
         """
@@ -360,6 +421,28 @@ class KeyboardShortcutManager:
             logger.debug("Cleared release callback")
         else:
             logger.info(f"Registered release callback for: {self.shortcut_display_name}")
+
+    def register_hands_free_callbacks(
+        self,
+        start: Optional[Callable[[], None]],
+        stop: Optional[Callable[[], None]] = None,
+    ) -> None:
+        """Register hands-free start/stop callbacks (hold_or_double_tap mode).
+
+        Args:
+            start: Switch a running session to hands-free dictation.
+            stop: Stop a latched hands-free session.
+        """
+        if self.backend_instance is None:
+            if start is not None or stop is not None:
+                logger.warning("Cannot register hands-free callbacks: no backend available")
+            return
+
+        self.backend_instance.register_hands_free_callbacks(start, stop)
+        if start is None and stop is None:
+            logger.debug("Cleared hands-free callbacks")
+        else:
+            logger.info(f"Registered hands-free callbacks for: {self.shortcut_display_name}")
 
     @property
     def listener(self):

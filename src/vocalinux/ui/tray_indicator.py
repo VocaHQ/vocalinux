@@ -397,19 +397,26 @@ class TrayIndicator:
         self.shortcut_manager.register_toggle_callback(None)
         self.shortcut_manager.register_press_callback(None)
         self.shortcut_manager.register_release_callback(None)
+        self.shortcut_manager.register_hands_free_callbacks(None, None)
+
+        # Get configured mode from config
+        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
 
         # External-activation mode: skip the internal evdev/pynput listener
         # entirely so no /dev/input access is required. Activation then comes
         # in over D-Bus (see VocalinuxDBusService).
         if self._external_activation_active():
             logger.info("Internal hotkey listener disabled (external activation via D-Bus)")
+            if mode == "hold_or_double_tap":
+                logger.warning(
+                    "hold_or_double_tap needs the internal key listener; external "
+                    "activation only supports start/stop (toggle) semantics"
+                )
             # The whole internal listener family is off; per-language
             # listeners must not keep firing either.
             self._stop_language_shortcut_managers()
             return
 
-        # Get configured mode from config
-        mode = self.config_manager.get_str("shortcuts", "mode", DEFAULT_SHORTCUT_MODE)
         logger.info(f"Setting up keyboard shortcuts with mode: {mode}")
 
         if mode == "toggle":
@@ -419,6 +426,15 @@ class TrayIndicator:
             # Register press/release callbacks for push-to-talk mode
             self.shortcut_manager.register_press_callback(self._start_recognition)
             self.shortcut_manager.register_release_callback(self._release_main_push_to_talk)
+        elif mode == "hold_or_double_tap":
+            # Hold = push-to-talk, double-tap = latch hands-free. Combos fall
+            # back to push-to-talk inside the backend (with a log line).
+            self.shortcut_manager.register_press_callback(self._start_recognition)
+            self.shortcut_manager.register_release_callback(self._release_main_push_to_talk)
+            self.shortcut_manager.register_hands_free_callbacks(
+                partial(self._latch_hands_free, self.shortcut_manager),
+                self._release_main_push_to_talk,
+            )
 
         # Start the keyboard shortcut manager
         self.shortcut_manager.start()
@@ -495,6 +511,11 @@ class TrayIndicator:
                 manager.register_release_callback(
                     partial(self._release_language_push_to_talk, manager)
                 )
+                if mode == "hold_or_double_tap":
+                    manager.register_hands_free_callbacks(
+                        partial(self._latch_hands_free, manager),
+                        partial(self._release_language_push_to_talk, manager),
+                    )
             manager.start()
             self._language_shortcut_managers.append(manager)
             logger.info(f"Language shortcut {shortcut} -> {language} armed ({mode} mode)")
@@ -518,7 +539,7 @@ class TrayIndicator:
         """Stop every per-language listener and drop the managers."""
         for manager in self._language_shortcut_managers:
             try:
-                manager.stop()
+                manager.dispose()
             except Exception:
                 logger.exception("Failed to stop a language shortcut manager")
         self._language_shortcut_managers = []
@@ -776,6 +797,51 @@ class TrayIndicator:
             lambda: self.speech_engine.start_recognition(mode="push_to_talk"),
         )
 
+    def _is_recording(self) -> bool:
+        return self.speech_engine.state == RecognitionState.LISTENING
+
+    def _resync_gestures(self) -> None:
+        """Let every hotkey drop a gesture whose session is over."""
+        manager = getattr(self, "shortcut_manager", None)
+        if manager is not None:
+            manager.notify_recognition_stopped(self._is_recording)
+        for language_manager in getattr(self, "_language_shortcut_managers", ()):
+            language_manager.notify_recognition_stopped(self._is_recording)
+
+    def _latch_hands_free(self, manager: KeyboardShortcutManager) -> None:
+        """Switch the live dictation session to hands-free (pause-driven).
+
+        Called by the hold_or_double_tap gesture on the second tap. The engine
+        keeps the running capture and releases any text it was holding for the
+        key release, so nothing spoken before the latch is lost.
+
+        Only the binding that owns the live session may latch it. A language
+        shortcut's start is refused while another session records, and latching
+        that session would flip it hands-free in the wrong language with no way
+        for the same shortcut to stop it. A session started outside the
+        shortcuts (tray, D-Bus) has no owner and is claimed by the binding that
+        latches it, so that shortcut's next double-tap can stop it.
+        """
+        with self._ptt_lock:
+            owner = self._ptt_owner
+            refused = owner is not None and owner is not manager
+            latched = False
+            if not refused:
+                latched = self.speech_engine.enable_hands_free()
+                if latched:
+                    self._ptt_owner = manager
+
+        if refused:
+            logger.debug("Hands-free latch ignored: the live session belongs to another shortcut")
+            manager.abort_gesture()
+            return
+        if not latched:
+            logger.debug("Hands-free latch ignored: no recording session is live")
+            # The start was refused; do not leave the hotkey latched.
+            self._resync_gestures()
+            return
+        logger.info("Hands-free dictation latched (double-tap again to stop)")
+
     def _cancel_if_transcribing(self) -> bool:
         """Cancel a running transcription; the recording hotkey doubles as cancel (#991)."""
         if self.speech_engine.state != RecognitionState.PROCESSING:
@@ -849,11 +915,12 @@ class TrayIndicator:
         )
 
     def _external_start(self) -> None:
-        """Start recognition for an external (D-Bus) trigger.
+        """Start recognition for an external (D-Bus or tray menu) trigger.
 
         Uses normal start semantics — not push-to-talk — so a single
         `vocalinux --start` transcribes immediately/with silence detection
-        rather than deferring until a Stop.
+        rather than deferring until a Stop. The session has no shortcut owner,
+        so any binding may latch it hands-free.
         """
         with self._ptt_lock:
             self._ptt_owner = None
@@ -861,7 +928,7 @@ class TrayIndicator:
                 self.speech_engine.start_recognition()
 
     def _external_stop(self) -> None:
-        """Stop recognition for an external (D-Bus) trigger."""
+        """Stop recognition for an external (D-Bus or tray menu) trigger."""
         with self._ptt_lock:
             self._ptt_owner = None
             if self.speech_engine.state != RecognitionState.IDLE:
@@ -905,6 +972,12 @@ class TrayIndicator:
         Args:
             state: The new recognition state
         """
+        # Recording can stop outside the shortcut (tray, error, silence, voice
+        # command). A latched or mid-tap gesture belongs to the session that
+        # just ended; resync so the next press starts a normal one.
+        if state in (RecognitionState.IDLE, RecognitionState.ERROR):
+            self._resync_gestures()
+
         keepalive = getattr(self, "_model_keepalive", None)
         if keepalive is not None:
             if state == RecognitionState.IDLE:
@@ -1309,6 +1382,9 @@ class TrayIndicator:
         elif state == RecognitionState.PROCESSING:
             if transcribing:
                 shortcut_manager = getattr(self, "shortcut_manager", None)
+                # Use the plain shortcut name: mode-specific names already
+                # contain a verb ("Hold Right Alt"), which would garble this
+                # into "press Hold Right Alt again to cancel".
                 name = getattr(shortcut_manager, "shortcut_display_name", None)
                 if not isinstance(name, str) or not name:
                     name = "the recording shortcut"
@@ -1372,15 +1448,17 @@ class TrayIndicator:
         item.set_visible(visible)
         self._sync_indicator_menu()
 
-    def _on_start_clicked(self, widget):
+    def _on_start_clicked(self, widget: Any) -> None:
         """Handle click on the Start Voice Typing menu item."""
         logger.debug("Start Voice Typing clicked")
-        self.speech_engine.start_recognition()
+        # Route through the owner-clearing helper: a stale shortcut owner from
+        # an earlier session must not refuse the next hands-free latch.
+        self._external_start()
 
-    def _on_stop_clicked(self, widget):
+    def _on_stop_clicked(self, widget: Any) -> None:
         """Handle click on the Stop Voice Typing menu item."""
         logger.debug("Stop Voice Typing clicked")
-        self.speech_engine.stop_recognition()
+        self._external_stop()
 
     def _on_cancel_transcription_clicked(self, widget: Any) -> None:
         """Cancel an in-progress transcription from the tray menu."""
@@ -1639,7 +1717,8 @@ class TrayIndicator:
 
         Args:
             shortcut: The new shortcut string (e.g., "ctrl+ctrl", "alt+alt")
-            mode: Optional new mode ("toggle" or "push_to_talk"). If None, keeps current mode.
+            mode: Optional new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap"). If None, keeps current mode.
 
         Returns:
             True if the shortcut was updated successfully, False otherwise
@@ -1934,7 +2013,7 @@ class TrayIndicator:
         self._cleanup_input_monitor()
 
         # Stop the keyboard shortcut managers
-        self.shortcut_manager.stop()
+        self.shortcut_manager.dispose()
         self._stop_language_shortcut_managers()
 
         if getattr(self, "overlay", None) is not None:

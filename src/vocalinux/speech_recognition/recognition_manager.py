@@ -656,7 +656,9 @@ class SpeechRecognitionManager:
         # Recording control flags
         self.should_record = False
         self._session_cancel = threading.Event()
-        self._recognition_mode = "toggle"  # "toggle" or "push_to_talk"
+        # "toggle", "push_to_talk", or "hands_free" (a push-to-talk session
+        # latched into pause-driven delivery by the hold_or_double_tap mode).
+        self._recognition_mode = "toggle"
         self.audio_buffer: list[bytes] = []
         # Monotonic time the current buffer's first chunk was captured,
         # propagated onto each enqueued _AudioSegment.
@@ -3737,6 +3739,35 @@ class SpeechRecognitionManager:
         self.recognition_thread.start()
         # After the threads exist: a start that returned early must not duck.
         self._arm_playback_duck()
+        return True
+
+    def enable_hands_free(self) -> bool:
+        """Switch a running session to pause-driven (hands-free) delivery.
+
+        Called when the hold_or_double_tap gesture latches. The capture thread,
+        the session's language and every already-buffered audio chunk stay
+        exactly as they are; only the release gate opens and the VAD/segment
+        logic stops waiting for a key release. Any transcript already held for
+        the release is delivered from its gate in capture order, so speech
+        captured before the latch is neither lost nor delivered twice.
+
+        Returns:
+            True when the session is (now) hands-free, False if no recording
+            session is running.
+        """
+        with self._lifecycle_lock:
+            if not self._owns_session():
+                return False
+            if self.state != RecognitionState.LISTENING or not self.should_record:
+                return False
+            if self._recognition_mode == "hands_free":
+                return True
+            self._recognition_mode = "hands_free"
+            # Opening the gate can only release text already transcribed;
+            # delivery happens on the recognition worker so it stays ordered
+            # with the segments queued behind it.
+            self._key_release_gate.set()
+        logger.info("Hands-free dictation latched: transcribing on pauses")
         return True
 
     def is_transcribing(self) -> bool:

@@ -1068,6 +1068,7 @@ class EvdevDeviceHub:
                     # engine's combo logically held.
                     for engine in engines:
                         engine._reset_combo_state()
+                        engine._resync_gesture_keys(device)
                 self._forward_event(fd, event, generation)
             return
         if fd in self._dropped_devices:
@@ -1942,9 +1943,31 @@ class EvdevKeyboardBackend(KeyboardBackend):
             # press of that key would be consumed too, eating a keystroke.
             self._combo_swallowed.discard(fd)
 
+    def _release_lost_gesture_keys(self, device: InputDevice, held: set[int]) -> None:
+        """Deliver gesture releases for this device's keys that are not held."""
+        if self._gesture is None:
+            return
+        for source in self._gesture.held_sources():
+            device_id, code = cast("tuple[int, int]", source)
+            if device_id == id(device) and code not in held:
+                self._gesture.release(source)
+
+    def _resync_gesture_keys(self, device: InputDevice) -> None:
+        """Recover from a release lost to SYN_DROPPED."""
+        if self._gesture is None or not self._gesture.held_sources():
+            return
+        try:
+            held = set(device.active_keys())
+        except (OSError, IOError):
+            held = set()
+        self._release_lost_gesture_keys(device, held)
+
     def _drop_device_state(self, fd: int, device: InputDevice) -> None:
         """Forget shortcut bookkeeping tied to a removed device's fd."""
         self.key_pressed_devices.discard(id(device))
+        # A disconnect can swallow a release mid-hold. Only this device's keys
+        # count: unplugging another keyboard must not end a hands-free session.
+        self._release_lost_gesture_keys(device, set())
         self._withheld_modifier.pop(fd, None)
         # The fd can be recycled for a newly plugged device; a stale
         # swallowed press would then eat that device's first release.
@@ -1957,6 +1980,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         """Forget every fd-scoped shortcut pairing (shared layer teardown)."""
         self._withheld_modifier = {}
         self._combo_swallowed = set()
+        self._reset_gesture(stop_session=True)
 
     def is_available(self) -> bool:
         """Check if evdev can access a keyboard device that supports this shortcut."""
@@ -2067,6 +2091,10 @@ class EvdevKeyboardBackend(KeyboardBackend):
 
         logger.info("Stopping evdev keyboard listener")
         self.active = False
+        # A listener stopped mid-hold must not leave the microphone open.
+        # Keep the detector: its serial worker orders a queued stop/release
+        # before the callbacks of a session started after a restart.
+        self._reset_gesture(stop_session=True)
         self._hub.unregister(self)
 
     def _monitor_devices(self) -> None:
@@ -2238,7 +2266,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 logger.debug(f"Combo {self._shortcut} toggled (evdev)")
                 self.last_trigger_time = current_time
                 threading.Thread(target=self.double_tap_callback, daemon=True).start()
-        elif self._mode == "push_to_talk":
+        elif self._mode in ("push_to_talk", "hold_or_double_tap"):
+            # Combos cannot see a single modifier's press/release gesture, so
+            # hold_or_double_tap keeps push-to-talk semantics here.
             if not self._combo_active and self.key_press_callback is not None:
                 self._combo_active = True
                 logger.debug(f"Combo {self._shortcut} pressed (evdev)")
@@ -2246,7 +2276,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
 
     def _combo_released(self) -> None:
         """Fire the release callback when a live push-to-talk combo ends."""
-        if self._mode == "push_to_talk" and self._combo_active:
+        if self._mode in ("push_to_talk", "hold_or_double_tap") and self._combo_active:
             self._combo_active = False
             if self.key_release_callback is not None:
                 logger.debug(f"Combo {self._shortcut} released (evdev)")
@@ -2263,6 +2293,17 @@ class EvdevKeyboardBackend(KeyboardBackend):
             # Check if this is our target modifier key
             if code in target_codes:
                 device_id = id(device)
+                # Hold-or-double-tap uses its own backend-independent detector.
+                # (device, code) identifies the physical key so auto-repeat and
+                # the same modifier on two keyboards never look like a tap.
+                if self.hold_or_double_tap_active:
+                    if value == 1:
+                        self.key_pressed_devices.add(device_id)
+                        self._handle_gesture_press((device_id, code))
+                    elif value == 0:
+                        self.key_pressed_devices.discard(device_id)
+                        self._handle_gesture_release((device_id, code))
+                    return
 
                 if value == 1:  # Key press
                     self.key_pressed_devices.add(device_id)
