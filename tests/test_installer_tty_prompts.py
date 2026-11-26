@@ -43,12 +43,28 @@ def _installer_sources() -> dict[Path, str]:
     return sources
 
 
+def _hide_host_processes(env: dict, tmp_path: Path) -> None:
+    """Keep install.sh from finding, and stopping, a real Vocalinux.
+
+    The PID-file lookup is already isolated through XDG_DATA_HOME; the
+    installer's pgrep fallback still sees every process of the user.
+    """
+    bin_dir = tmp_path / "bin-no-host-processes"
+    bin_dir.mkdir()
+    pgrep = bin_dir / "pgrep"
+    pgrep.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+    env["PATH"] = os.pathsep.join((str(bin_dir), env.get("PATH", "")))
+    env["XDG_DATA_HOME"] = str(tmp_path / ".local" / "share")
+
+
 def _pty_env(tmp_path: Path) -> dict:
     """Isolate the installer's log and scratch writes inside the test tmp dir."""
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["XDG_STATE_HOME"] = str(tmp_path / ".local" / "state")
     env["TMPDIR"] = str(tmp_path)
+    _hide_host_processes(env, tmp_path)
     return env
 
 
