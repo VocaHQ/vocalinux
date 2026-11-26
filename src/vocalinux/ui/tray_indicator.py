@@ -1382,9 +1382,10 @@ class TrayIndicator:
         elif state == RecognitionState.PROCESSING:
             if transcribing:
                 shortcut_manager = getattr(self, "shortcut_manager", None)
-                name = getattr(shortcut_manager, "mode_shortcut_display_name", None)
-                if not isinstance(name, str) or not name:
-                    name = getattr(shortcut_manager, "shortcut_display_name", None)
+                # Use the plain shortcut name: mode-specific names already
+                # contain a verb ("Hold Right Alt"), which would garble this
+                # into "press Hold Right Alt again to cancel".
+                name = getattr(shortcut_manager, "shortcut_display_name", None)
                 if not isinstance(name, str) or not name:
                     name = "the recording shortcut"
                 description = f"Transcribing, press {name} again to cancel"
@@ -1716,7 +1717,8 @@ class TrayIndicator:
 
         Args:
             shortcut: The new shortcut string (e.g., "ctrl+ctrl", "alt+alt")
-            mode: Optional new mode ("toggle" or "push_to_talk"). If None, keeps current mode.
+            mode: Optional new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap"). If None, keeps current mode.
 
         Returns:
             True if the shortcut was updated successfully, False otherwise

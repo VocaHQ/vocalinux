@@ -748,6 +748,27 @@ class TestShortcutManager:
             backend.hands_free_start_callback, backend.hands_free_stop_callback
         )
 
+    def test_restart_into_hold_mode_accepts_hands_free_callbacks(self) -> None:
+        backend = MagicMock()
+        backend.active = True
+        backend.double_tap_callback = None
+        backend.key_press_callback = MagicMock()
+        backend.key_release_callback = MagicMock()
+        backend.hands_free_start_callback = None
+        backend.hands_free_stop_callback = None
+        backend.start.return_value = True
+        with patch("vocalinux.ui.keyboard_shortcuts.create_backend", return_value=backend):
+            manager = KeyboardShortcutManager(shortcut="right_alt+right_alt", mode="push_to_talk")
+        manager.active = True
+        start = MagicMock()
+        stop = MagicMock()
+
+        assert (
+            manager.restart_with_shortcut("right_alt+right_alt", "hold_or_double_tap", start, stop)
+            is True
+        )
+        backend.register_hands_free_callbacks.assert_called_with(start, stop)
+
     def test_dispose_stops_and_closes_the_backend_gesture(self) -> None:
         backend = MagicMock()
         with patch("vocalinux.ui.keyboard_shortcuts.create_backend", return_value=backend):

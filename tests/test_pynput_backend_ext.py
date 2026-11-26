@@ -541,6 +541,39 @@ class TestPynputKeyboardBackendGetKeyVariants:
             assert isinstance(result, set)
 
 
+class TestPynputGestureSource:
+    def test_production_alias_builder_folds_right_alt_names(self) -> None:
+        """The builder, not just the test stub, must fold the aliases."""
+        from vocalinux.ui.keyboard_backends.pynput_backend import _gesture_aliases_for
+
+        assert _gesture_aliases_for(MockKeyboard) == {MockKey.alt_gr: MockKey.alt_r}
+
+    @patch("vocalinux.ui.keyboard_backends.pynput_backend.PYNPUT_AVAILABLE", True)
+    @patch(
+        "vocalinux.ui.keyboard_backends.pynput_backend.GESTURE_SOURCE_ALIASES",
+        {MockKey.alt_gr: MockKey.alt_r},
+    )
+    @patch("vocalinux.ui.keyboard_backends.pynput_backend.MODIFIER_KEY_VARIANTS")
+    def test_aliased_press_and_release_clear_the_held_source(
+        self, mock_variants: MagicMock
+    ) -> None:
+        """Right Alt pressed as alt_gr and released as alt_r must not stick."""
+        backend = PynputKeyboardBackend(shortcut="right_alt+right_alt", mode="hold_or_double_tap")
+        backend.active = True
+        mock_variants.get.return_value = {MockKey.alt_r, MockKey.alt_gr}
+
+        backend._on_press(MockKey.alt_gr)
+        assert backend._gesture is not None
+        assert backend._gesture.held_sources() == {MockKey.alt_r}
+
+        backend._on_release(MockKey.alt_r)
+        assert backend._gesture.held_sources() == set()
+
+        # The cleared key is recorded again, not ignored as auto-repeat.
+        backend._on_press(MockKey.alt_r)
+        assert backend._gesture.held_sources() == {MockKey.alt_r}
+
+
 class TestPynputKeyboardBackendModifierMatching:
     @patch("vocalinux.ui.keyboard_backends.pynput_backend.PYNPUT_AVAILABLE", True)
     @patch("vocalinux.ui.keyboard_backends.pynput_backend.MODIFIER_KEY_VARIANTS")

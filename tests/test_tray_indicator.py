@@ -331,6 +331,8 @@ class TestTrayIndicator(unittest.TestCase):
             "processing": "processing",
         }
         self.tray_indicator.shortcut_manager.shortcut_display_name = "Ctrl+Alt+V"
+        # A real mode-specific name contains a verb; the tooltip must not use it.
+        self.tray_indicator.shortcut_manager.mode_shortcut_display_name = "Hold Ctrl+Alt+V"
         self.mock_speech_engine.state = self.RecognitionState.PROCESSING
         self.mock_speech_engine.is_transcribing.return_value = True
 

@@ -73,7 +73,8 @@ class KeyboardShortcutManager:
             backend: Optional backend name to force ('pynput' or 'evdev')
                     If not specified, auto-detects based on environment.
             shortcut: The shortcut to listen for (e.g., "ctrl+ctrl", "alt+alt")
-            mode: The shortcut mode ("toggle" or "push_to_talk")
+            mode: The shortcut mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap")
         """
         self.backend_instance = None
         self.active = False
@@ -167,7 +168,8 @@ class KeyboardShortcutManager:
         Note: This requires restarting the listener to take effect.
 
         Args:
-            mode: The new mode ("toggle" or "push_to_talk")
+            mode: The new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap")
 
         Returns:
             True if successful, False if the mode is invalid
@@ -214,7 +216,13 @@ class KeyboardShortcutManager:
 
         return True
 
-    def restart_with_shortcut(self, shortcut: str, mode: Optional[str] = None) -> bool:
+    def restart_with_shortcut(
+        self,
+        shortcut: str,
+        mode: Optional[str] = None,
+        hands_free_start_callback: Optional[Callable[[], None]] = None,
+        hands_free_stop_callback: Optional[Callable[[], None]] = None,
+    ) -> bool:
         """
         Restart the keyboard listener with a new shortcut.
 
@@ -224,7 +232,12 @@ class KeyboardShortcutManager:
 
         Args:
             shortcut: The new shortcut string (e.g., "ctrl+ctrl", "alt+alt")
-            mode: Optional new mode ("toggle" or "push_to_talk"). If None, keeps current mode.
+            mode: Optional new mode ("toggle", "push_to_talk", or
+                "hold_or_double_tap"). If None, keeps current mode.
+            hands_free_start_callback: Hands-free latch callback to use when
+                switching to "hold_or_double_tap" from a mode that has none.
+            hands_free_stop_callback: Hands-free stop callback for the same
+                switch.
 
         Returns:
             True if the listener was successfully restarted with the new shortcut,
@@ -244,15 +257,20 @@ class KeyboardShortcutManager:
         toggle_callback = None
         press_callback = None
         release_callback = None
-        hands_free_start_callback = None
-        hands_free_stop_callback = None
-
         if self.backend_instance:
             toggle_callback = self.backend_instance.double_tap_callback
             press_callback = self.backend_instance.key_press_callback
             release_callback = self.backend_instance.key_release_callback
-            hands_free_start_callback = self.backend_instance.hands_free_start_callback
-            hands_free_stop_callback = self.backend_instance.hands_free_stop_callback
+            hands_free_start_callback = (
+                hands_free_start_callback or self.backend_instance.hands_free_start_callback
+            )
+            hands_free_stop_callback = (
+                hands_free_stop_callback or self.backend_instance.hands_free_stop_callback
+            )
+        else:
+            toggle_callback = None
+            press_callback = None
+            release_callback = None
 
         # Stop the current listener
         if was_active:
