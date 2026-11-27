@@ -1934,7 +1934,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         (``_combo_main_codes``); this view exists for callers and tests
         that reason about the one primary key.
         """
-        codes = getattr(self, "_combo_main_codes", set())
+        codes: set[int] = getattr(self, "_combo_main_codes", set())
         return next(iter(codes)) if codes else None
 
     @_combo_main_code.setter
@@ -1971,7 +1971,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
 
     def _resolve_combo_targets(self) -> None:
         """Resolve the spec's combo modifiers and main key to evdev codes."""
-        self._combo_main_codes: set[int] = set()
+        self._combo_main_codes = set()
         self._combo_modifier_sets = []
         self._combo_all_codes = set()
         self._combo_pressed = set()
