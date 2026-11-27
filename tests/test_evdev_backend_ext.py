@@ -2311,7 +2311,7 @@ class TestEvdevGrabAndForwarding:
 
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 2)) is True
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 0)) is True
-        assert fd not in backend._combo_swallowed
+        assert (fd, key_r) not in backend._combo_swallowed
 
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 1)) is False
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 0)) is False
@@ -2514,14 +2514,34 @@ class TestEvdevGrabAndForwarding:
         assert backend._event_is_shortcut(11, self._key_event(key_r, 0)) is True
         assert backend._combo_swallowed == set()
 
+    def test_event_is_shortcut_combo_tracks_overlapping_keys_per_device(self) -> None:
+        """Two media keys on one device each pair their own press and release."""
+        backend = EvdevKeyboardBackend(shortcut="alt+r")
+        play, pause = 164, 165
+        backend._combo_main_codes = {play, pause}
+        backend._combo_pressed = {56}  # KEY_LEFTALT held
+
+        # Both keys are pressed and consumed; neither press reaches apps.
+        assert backend._event_is_shortcut(10, self._key_event(play, 1)) is True
+        assert backend._event_is_shortcut(10, self._key_event(pause, 1)) is True
+        assert backend._combo_swallowed == {(10, play), (10, pause)}
+
+        # Releasing Play must not clear Pause's pairing: its held repeat and
+        # release still belong to the shortcut, not to the foreground app.
+        assert backend._event_is_shortcut(10, self._key_event(play, 0)) is True
+        assert backend._combo_swallowed == {(10, pause)}
+        assert backend._event_is_shortcut(10, self._key_event(pause, 2)) is True
+        assert backend._event_is_shortcut(10, self._key_event(pause, 0)) is True
+        assert backend._combo_swallowed == set()
+
     def test_reset_combo_state_keeps_other_devices_swallowed(self) -> None:
         """A dropped-event reset on one device can't orphan another's press."""
         backend = EvdevKeyboardBackend(shortcut="alt+r")
-        backend._combo_swallowed = {10, 11}
+        backend._combo_swallowed = {(10, 30), (11, 30)}
 
         backend._reset_combo_state()
 
-        assert backend._combo_swallowed == {10, 11}
+        assert backend._combo_swallowed == {(10, 30), (11, 30)}
 
     def test_forward_event_filters_feedback_types(self):
         """Only real input events and SYN are re-emitted — never EV_LED."""
@@ -2803,7 +2823,7 @@ class TestEvdevGrabAndForwarding:
         forwarder = MagicMock()
         backend._forwarders = {10: forwarder}
         backend._forwarded_held = {10: set()}
-        backend._combo_swallowed = {10}
+        backend._combo_swallowed = {(10, 30)}
 
         backend._resync_clone_key_state(10, device)
 
@@ -2817,11 +2837,11 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = [30]
-        backend._combo_swallowed = {10}
+        backend._combo_swallowed = {(10, 30)}
 
         backend._resync_clone_key_state(10, device)
 
-        assert backend._combo_swallowed == {10}
+        assert backend._combo_swallowed == {(10, 30)}
 
     def test_monitor_exit_releases_grabs_on_select_failure(self) -> None:
         """An unexpected monitor exit closes devices, releasing every grab."""

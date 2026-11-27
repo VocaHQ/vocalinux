@@ -1906,9 +1906,10 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._combo_all_codes: set[int] = set()
         self._combo_pressed: set[int] = set()  # currently-held combo-relevant codes
         self._combo_active = False  # True while a push-to-talk combo hold is live
-        # fds whose combo main-key press was consumed but not yet released —
-        # per-device so one keyboard's release can't consume another's press.
-        self._combo_swallowed: set[int] = set()
+        # (fd, code) of combo main-key presses consumed but not yet released —
+        # per device and per key so one key's release (or another key on the
+        # same device) cannot consume a press that was never swallowed.
+        self._combo_swallowed: set[tuple[int, int]] = set()
         # fd -> consumed pure-modifier presses withheld for AltGr replay, as
         # {code: [press_event, replayed]}. A press replayed once stays listed
         # so its release can be forwarded too.
@@ -2025,7 +2026,11 @@ class EvdevKeyboardBackend(KeyboardBackend):
 
     def _has_fd_state(self, fd: int) -> bool:
         """True if this engine still tracks shortcut state for a device fd."""
-        return fd in self._combo_swallowed or bool(self._withheld_modifier.get(fd))
+        return bool(self._swallowed_codes(fd)) or bool(self._withheld_modifier.get(fd))
+
+    def _swallowed_codes(self, fd: int) -> set[int]:
+        """Key codes of this device whose combo press was consumed."""
+        return {code for swallowed_fd, code in self._combo_swallowed if swallowed_fd == fd}
 
     def _resync_shortcut_state(self, fd: int, actually_held: set[int]) -> None:
         """Prune this engine's fd-scoped state after a SYN_DROPPED resync."""
@@ -2034,12 +2039,12 @@ class EvdevKeyboardBackend(KeyboardBackend):
             for code in list(withheld):
                 if code not in actually_held:
                     withheld.pop(code)
-        if self._combo_main_codes and not (self._combo_main_codes & actually_held):
-            # A dropped burst can also eat the release of a swallowed combo
-            # press — a key the clone never saw, so the hub's forwarded-held
-            # set cannot reflect it. Without this prune the next ordinary
-            # press of that key would be consumed too, eating a keystroke.
-            self._combo_swallowed.discard(fd)
+        # A dropped burst can also eat the release of a swallowed combo press —
+        # a key the clone never saw, so the hub's forwarded-held set cannot
+        # reflect it. Without this prune the next ordinary press of that key
+        # would be consumed too, eating a keystroke.
+        for code in self._swallowed_codes(fd) - actually_held:
+            self._combo_swallowed.discard((fd, code))
 
     def _drop_device_state(self, fd: int, device: InputDevice) -> None:
         """Forget shortcut bookkeeping tied to a removed device's fd."""
@@ -2047,7 +2052,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self._withheld_modifier.pop(fd, None)
         # The fd can be recycled for a newly plugged device; a stale
         # swallowed press would then eat that device's first release.
-        self._combo_swallowed.discard(fd)
+        for code in self._swallowed_codes(fd):
+            self._combo_swallowed.discard((fd, code))
         # A disconnect can swallow the modifier release (e.g. a wireless
         # split half dropping mid-hold); don't leave the combo logically held.
         self._reset_combo_state()
@@ -2207,9 +2213,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
             # Do not expose the release of a combo press swallowed
             # before this option was enabled.
             if spec.is_combo and event.code in self._combo_main_codes:
-                if fd in self._combo_swallowed:
+                if (fd, event.code) in self._combo_swallowed:
                     if event.value == 0:
-                        self._combo_swallowed.discard(fd)
+                        self._combo_swallowed.discard((fd, event.code))
                     return True
             elif not spec.is_combo and event.value == 0:
                 # A previously withheld press was replayed on opt-in.
@@ -2260,16 +2266,17 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if not spec.modifiers:
             return True  # bare function key
         if event.value == 1 and self._required_modifiers_held():
-            self._combo_swallowed.add(fd)
+            self._combo_swallowed.add((fd, event.code))
             return True
         if event.value == 0:
-            # Consume the release of a swallowed press on THIS device exactly
-            # once, so apps never see a press/release pair we half-forwarded.
-            if fd not in self._combo_swallowed:
+            # Consume the release of a swallowed press on THIS device and key
+            # exactly once, so apps never see a press/release pair we
+            # half-forwarded and a sibling media key keeps its own state.
+            if (fd, event.code) not in self._combo_swallowed:
                 return False
-            self._combo_swallowed.discard(fd)
+            self._combo_swallowed.discard((fd, event.code))
             return True
-        return fd in self._combo_swallowed
+        return (fd, event.code) in self._combo_swallowed
 
     def _replay_withheld_modifiers(self, fd: int) -> None:
         """Emit withheld modifier presses ahead of a non-target key.
