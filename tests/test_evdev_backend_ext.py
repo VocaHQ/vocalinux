@@ -3424,7 +3424,7 @@ class TestSharedEvdevDeviceLayer:
 
         opened = []
 
-        def fake_open(device_path, generation=None):
+        def fake_open(device_path: str, generation: int | None = None) -> bool:
             opened.append(device_path)
             return True
 
