@@ -21,8 +21,10 @@ from unittest.mock import MagicMock, Mock, call, mock_open, patch
 
 import pytest
 
+from vocalinux.ui.keyboard_backends.base import parse_shortcut_spec
 from vocalinux.ui.keyboard_backends.evdev_backend import (
     _MONITOR_STALL_SECONDS,
+    _WORD_BITS,
     DEVICE_RESCAN_SECONDS,
     EvdevDeviceHub,
     EvdevKeyboardBackend,
@@ -37,7 +39,7 @@ from vocalinux.ui.keyboard_backends.evdev_backend import (
 )
 
 
-def _proc_key_bitmap(*codes: int, word_bits: int = 64) -> str:
+def _proc_key_bitmap(*codes: int, word_bits: int = _WORD_BITS) -> str:
     """Format key codes as the words printed in /proc device bitmaps."""
     bits = sum(1 << code for code in codes)
     word_mask = (1 << word_bits) - 1
@@ -210,6 +212,103 @@ B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
             with patch("os.path.exists", return_value=False):
                 result = find_keyboard_devices()
                 assert "/dev/input/event0" not in result
+
+    def test_media_only_device_excluded_by_default(self) -> None:
+        """A consumer-control node alone is not a keyboard (#915)."""
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                assert find_keyboard_devices() == []
+
+    def test_media_only_device_kept_for_its_own_shortcut(self) -> None:
+        """The node carrying the configured media key must be opened (#1071).
+
+        Many keyboards, and every laptop with a separate consumer-control node,
+        report media keys on a device with no letter and no modifier. Without
+        this, `mute`/`ctrl+mute` validated but never fired.
+        """
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                assert find_keyboard_devices(parse_shortcut_spec("mute")) == ["/dev/input/event9"]
+                # A different media key does not widen discovery.
+                assert find_keyboard_devices(parse_shortcut_spec("playpause")) == []
+                # Nor does a plain combo.
+                assert find_keyboard_devices(parse_shortcut_spec("ctrl+r")) == []
+
+    def test_media_key_widens_discovery_without_dropping_keyboards(self) -> None:
+        """Widening adds the media node; the real keyboard is still found."""
+        mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
+"""
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                both = find_keyboard_devices(parse_shortcut_spec("ctrl+mute"))
+                assert "/dev/input/event0" in both
+                assert "/dev/input/event9" in both
+
+    def test_media_token_covers_every_physical_key(self) -> None:
+        """A media shortcut opens the node carrying ANY of the token's keys.
+
+        xkeyboard-config binds one XF86 keysym from several kernel keys
+        (XF86Mail from KEY_MAIL 155 and KEY_EMAIL 215; Play/Pause from
+        KEY_PLAYPAUSE 164, KEY_PAUSECD 201, KEY_PLAYCD 200 and KEY_PLAY 207).
+        A keyboard reporting either physical key must be discovered, or the
+        saved binding never fires on it.
+        """
+        for code in (ecodes.KEY_MAIL, ecodes.KEY_EMAIL):
+            mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(code)}
+"""
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                with patch("os.path.exists", return_value=True):
+                    assert find_keyboard_devices(parse_shortcut_spec("mail")) == [
+                        "/dev/input/event9"
+                    ], f"code {code} must widen discovery for the mail token"
+
+    def test_union_spec_keeps_any_engines_media_node(self) -> None:
+        """The hub's hot-plug rescan keeps every registered engine's node.
+
+        The rescan takes the union of the engines' codes, not the spec of
+        whichever engine happens to be first: a keyboard-only engine and a
+        mute engine running together must both find their devices.
+        """
+        mock_proc_content = f"""I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        from vocalinux.ui.keyboard_backends.evdev_backend import (
+            _keyboard_key_codes,
+            find_keyboard_devices,
+        )
+
+        union = _keyboard_key_codes() | _keyboard_key_codes(parse_shortcut_spec("mute"))
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                found = find_keyboard_devices(wanted_codes=union)
+        assert "/dev/input/event0" in found
+        assert "/dev/input/event9" in found
 
     def test_find_keyboard_devices_keeps_relative_combo_and_skips_mouse(self) -> None:
         """Keyboard keys keep a REL_X/Y combo; button-only pointer nodes stay excluded."""
@@ -2212,7 +2311,7 @@ class TestEvdevGrabAndForwarding:
 
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 2)) is True
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 0)) is True
-        assert fd not in backend._combo_swallowed
+        assert (fd, key_r) not in backend._combo_swallowed
 
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 1)) is False
         assert backend._event_is_shortcut(fd, self._key_event(key_r, 0)) is False
@@ -2415,14 +2514,34 @@ class TestEvdevGrabAndForwarding:
         assert backend._event_is_shortcut(11, self._key_event(key_r, 0)) is True
         assert backend._combo_swallowed == set()
 
+    def test_event_is_shortcut_combo_tracks_overlapping_keys_per_device(self) -> None:
+        """Two media keys on one device each pair their own press and release."""
+        backend = EvdevKeyboardBackend(shortcut="alt+r")
+        play, pause = 164, 165
+        backend._combo_main_codes = {play, pause}
+        backend._combo_pressed = {56}  # KEY_LEFTALT held
+
+        # Both keys are pressed and consumed; neither press reaches apps.
+        assert backend._event_is_shortcut(10, self._key_event(play, 1)) is True
+        assert backend._event_is_shortcut(10, self._key_event(pause, 1)) is True
+        assert backend._combo_swallowed == {(10, play), (10, pause)}
+
+        # Releasing Play must not clear Pause's pairing: its held repeat and
+        # release still belong to the shortcut, not to the foreground app.
+        assert backend._event_is_shortcut(10, self._key_event(play, 0)) is True
+        assert backend._combo_swallowed == {(10, pause)}
+        assert backend._event_is_shortcut(10, self._key_event(pause, 2)) is True
+        assert backend._event_is_shortcut(10, self._key_event(pause, 0)) is True
+        assert backend._combo_swallowed == set()
+
     def test_reset_combo_state_keeps_other_devices_swallowed(self) -> None:
         """A dropped-event reset on one device can't orphan another's press."""
         backend = EvdevKeyboardBackend(shortcut="alt+r")
-        backend._combo_swallowed = {10, 11}
+        backend._combo_swallowed = {(10, 30), (11, 30)}
 
         backend._reset_combo_state()
 
-        assert backend._combo_swallowed == {10, 11}
+        assert backend._combo_swallowed == {(10, 30), (11, 30)}
 
     def test_forward_event_filters_feedback_types(self):
         """Only real input events and SYN are re-emitted — never EV_LED."""
@@ -2704,7 +2823,7 @@ class TestEvdevGrabAndForwarding:
         forwarder = MagicMock()
         backend._forwarders = {10: forwarder}
         backend._forwarded_held = {10: set()}
-        backend._combo_swallowed = {10}
+        backend._combo_swallowed = {(10, 30)}
 
         backend._resync_clone_key_state(10, device)
 
@@ -2718,11 +2837,11 @@ class TestEvdevGrabAndForwarding:
         device = MagicMock()
         device.fileno.return_value = 10
         device.active_keys.return_value = [30]
-        backend._combo_swallowed = {10}
+        backend._combo_swallowed = {(10, 30)}
 
         backend._resync_clone_key_state(10, device)
 
-        assert backend._combo_swallowed == {10}
+        assert backend._combo_swallowed == {(10, 30)}
 
     def test_monitor_exit_releases_grabs_on_select_failure(self) -> None:
         """An unexpected monitor exit closes devices, releasing every grab."""
@@ -3285,6 +3404,56 @@ class TestSharedEvdevDeviceLayer:
         for engine in engines:
             assert hub.register(engine) is True
         return hub
+
+    def test_joining_running_hub_rescans_for_the_joining_media_node(self) -> None:
+        """An engine joining a running hub widens discovery to its shortcut.
+
+        The cold start had no reason to open a media-only consumer-control
+        node (a keyboard-only engine started the hub), so the mute engine
+        joining later must trigger a rescan that opens it — without one its
+        binding saves fine and then never fires (#1071 review).
+        """
+        media_engine = EvdevKeyboardBackend(shortcut="mute")
+        hub = media_engine._hub
+        hub.reset()
+        hub.running = True
+        # A keyboard-only engine is already registered: the hub was cold
+        # started with a keyboard-only discovery rule.
+        keyboard_engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        hub._engines.add(keyboard_engine)
+
+        opened = []
+
+        def fake_open(device_path: str, generation: int | None = None) -> bool:
+            opened.append(device_path)
+            return True
+
+        hub._open_keyboard_device = fake_open
+
+        try:
+            with patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices"
+            ) as finder:
+                finder.return_value = ["/dev/input/event9"]
+
+                assert hub.register(media_engine) is True
+
+                # The rescan ran under the same locks the cold start holds, and
+                # it discovered with the UNION of the engines' codes: the media
+                # engine's code widened the keyboard-only set the hub started with.
+                finder.assert_called_once()
+                wanted = finder.call_args.kwargs["wanted_codes"]
+                from vocalinux.ui.keyboard_backends.evdev_backend import (
+                    _keyboard_key_codes,
+                )
+
+                assert _keyboard_key_codes(parse_shortcut_spec("mute")) <= set(wanted)
+                assert opened == ["/dev/input/event9"]
+        finally:
+            # The layer is process-wide and only weakly references its engines:
+            # leaving this test's engines registered would keep it "running"
+            # for later tests that assert it shuts down with its last listener.
+            hub.reset()
 
     def test_backends_share_one_device_layer(self) -> None:
         """Every backend binds to the same process-wide hub."""

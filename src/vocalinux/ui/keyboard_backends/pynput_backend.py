@@ -24,7 +24,9 @@ from .base import (
     DEAD_KEYSYM_TO_TOKEN,
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
+    MEDIA_KEYSYM_TO_TOKEN,
     XKB_HARDWARE_KEYPAD_TOKENS,
+    XKB_HARDWARE_MEDIA_TOKENS,
     KeyboardBackend,
     normalize_main_key_token,
 )
@@ -152,10 +154,13 @@ _X11_KEYPAD_KEYSYM_TOKENS: dict[int, str] = {
 }
 
 # X11 keysyms that must take precedence over KeyCode.char (e.g. dead_grave
-# carries char='`' with vk=0xFE50, and ISO_Left_Tab is Shift+Tab).
+# carries char='`' with vk=0xFE50, and ISO_Left_Tab is Shift+Tab). Media keys
+# belong here too: X11 reports them as KeyCode objects whose vk is the XF86
+# keysym, with no printable char to fall back on.
 _X11_KEYSYM_PRIORITY_TOKENS: dict[int, str] = {
     **DEAD_KEYSYM_TO_TOKEN,
     **_X11_KEYPAD_KEYSYM_TOKENS,
+    **MEDIA_KEYSYM_TO_TOKEN,
     0xFE20: "tab",  # XK_ISO_Left_Tab
 }
 
@@ -218,10 +223,19 @@ def _char_to_token(char: str) -> Optional[str]:
 
 
 def _x11_hardware_token(hardware_keycode: int) -> Optional[str]:
-    """Map layout-independent X11 hardware keycodes (F13–F24, keypad) to tokens."""
+    """Map layout-independent X11 hardware keycodes to tokens.
+
+    Covers F13–F24, the numeric keypad, and media keys (#1071). Media keys are
+    included here so the listener resolves them exactly as the Settings
+    recorder does: both read the same hardware keycode, so a binding captured
+    with **Record** always fires.
+    """
     if 191 <= hardware_keycode <= 202:
         return f"f{hardware_keycode - 178}"
-    return XKB_HARDWARE_KEYPAD_TOKENS.get(hardware_keycode)
+    keypad_token = XKB_HARDWARE_KEYPAD_TOKENS.get(hardware_keycode)
+    if keypad_token is not None:
+        return keypad_token
+    return XKB_HARDWARE_MEDIA_TOKENS.get(hardware_keycode)
 
 
 def x11_keysym_to_token(keysym: int) -> Optional[str]:

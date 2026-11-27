@@ -149,7 +149,9 @@ from .keyboard_backends import (  # noqa: E402
 from .keyboard_backends.base import (  # noqa: E402
     CHAR_TO_PUNCTUATION_TOKEN,
     DEAD_KEY_TOKENS,
+    MEDIA_EVDEV_CODE_TO_TOKEN,
     XKB_HARDWARE_KEYPAD_TOKENS,
+    XKB_HARDWARE_MEDIA_TOKENS,
 )
 from .keyboard_backends.evdev_backend import MODIFIER_KEY_CODES  # noqa: E402
 from .keyboard_backends.layout_key_map import keysym_name_to_char  # noqa: E402
@@ -1702,6 +1704,34 @@ _GDK_KEYNAME_TOKENS: dict[str, str] = {
     **{token: token for token in DEAD_KEY_TOKENS},
 }
 
+# XF86 keysym names GDK reports for media keys (#1071). The names come from
+# xorgproto's XF86keysym.h; only the keys in MEDIA_KEY_TOKENS are listed, so a
+# recognised name always resolves to a token the backends can enforce.
+_GDK_XF86_KEYNAME_TOKENS: dict[str, str] = {
+    "XF86AudioMute": "mute",
+    "XF86AudioLowerVolume": "volumedown",
+    "XF86AudioRaiseVolume": "volumeup",
+    "XF86AudioPlay": "playpause",
+    "XF86AudioPause": "playpause",
+    "XF86AudioNext": "nextsong",
+    "XF86AudioPrev": "previoussong",
+    "XF86AudioStop": "stop",
+    "XF86HomePage": "homepage",
+    "XF86Mail": "mail",
+    "XF86Messenger": "messenger",
+    "XF86Search": "search",
+    "XF86Calculator": "calculator",
+    "XF86Sleep": "sleep",
+    "XF86Battery": "battery",
+    "XF86WLAN": "wlan",
+    "XF86Bluetooth": "bluetooth",
+    "XF86MonBrightnessDown": "brightnessdown",
+    "XF86MonBrightnessUp": "brightnessup",
+    # Core keysyms, not XF86 ones, but the same recorder path.
+    "Pause": "pause",
+    "Scroll_Lock": "scrolllock",
+}
+
 
 def _gdk_keyname_to_unicode_char(name: str) -> Optional[str]:
     """Resolve a multi-char GDK/XKB keysym name (e.g. ``ntilde``) to a Unicode char."""
@@ -1722,6 +1752,8 @@ def _gdk_keyname_to_token(name: Optional[str]) -> Optional[str]:
         return None
     if name in _GDK_KEYNAME_TOKENS:
         return _GDK_KEYNAME_TOKENS[name]
+    if name in _GDK_XF86_KEYNAME_TOKENS:
+        return _GDK_XF86_KEYNAME_TOKENS[name]
     if len(name) == 1 and name.isalnum():
         return name.lower()
     if re.fullmatch(r"[Ff]([1-9]|1[0-9]|2[0-4])", name):
@@ -1763,6 +1795,22 @@ def keypad_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[st
     except (TypeError, ValueError):
         return None
     return XKB_HARDWARE_KEYPAD_TOKENS.get(code)
+
+
+def media_token_from_gdk_hardware_keycode(hardware_keycode: int) -> Optional[str]:
+    """Map XKB/GDK hardware keycodes for media keys to canonical tokens (#1071).
+
+    Media keys are as layout-independent as F13–F24: the kernel reports a fixed
+    ``KEY_*`` code and XKB turns it into an ``XF86XK_*`` keysym, so the numeric
+    keycode identifies the key even when the active layout maps it to NoSymbol.
+    Uses the same table as the pynput listener's X11 resolver, so a recorded
+    binding resolves identically when the listener sees the key again.
+    """
+    try:
+        code = int(hardware_keycode)
+    except (TypeError, ValueError):
+        return None
+    return XKB_HARDWARE_MEDIA_TOKENS.get(code)
 
 
 def _unshifted_gdk_keyval_from_event(event: Any) -> Optional[int]:
@@ -1814,6 +1862,15 @@ def function_token_from_evdev_code(code: int) -> Optional[str]:
     return None
 
 
+def media_token_from_evdev_code(code: int) -> Optional[str]:
+    """Map an evdev media key code (e.g. KEY_MUTE) to its canonical token (#1071)."""
+    try:
+        key = int(code)
+    except (TypeError, ValueError):
+        return None
+    return MEDIA_EVDEV_CODE_TO_TOKEN.get(key)
+
+
 def modifiers_from_active_evdev_codes(active_codes: set[int]) -> list[str]:
     """Return ctrl/alt/shift/super currently held in *active_codes*, in that order."""
     held: list[str] = []
@@ -1840,7 +1897,8 @@ def _gdk_capture_to_shortcut(
     """Build a shortcut from recorder inputs.
 
     Precedence:
-    1. Layout-independent hardware keycodes: FK13–FK24 and numeric keypad keys.
+    1. Layout-independent hardware keycodes: FK13–FK24, numeric keypad keys, and
+       media keys (the kernel's fixed KEY_* code, media keysym regardless).
     2. Unshifted (level-0) keyval name from the active keymap so ``Shift+key``
        binds to the base key (e.g. ``Ctrl+Shift+0`` -> ``ctrl+shift+0``, not
        ``ctrl+shift+equal`` on ``latam``).
@@ -1849,6 +1907,8 @@ def _gdk_capture_to_shortcut(
     token = function_token_from_gdk_hardware_keycode(hardware_keycode)
     if token is None:
         token = keypad_token_from_gdk_hardware_keycode(hardware_keycode)
+    if token is None:
+        token = media_token_from_gdk_hardware_keycode(hardware_keycode)
     if token is None and unshifted_keyval_name:
         token = _gdk_keyname_to_token(unshifted_keyval_name)
     if token is None:
@@ -1881,7 +1941,9 @@ class _EvdevShortcutRecorder:
 
     def start(self) -> None:
         try:
+            from .keyboard_backends.base import MEDIA_TOKEN_TO_EVDEV_CODES
             from .keyboard_backends.evdev_backend import (
+                _KEYBOARD_KEY_CODES,
                 DEVICE_RESCAN_SECONDS,
                 EVDEV_AVAILABLE,
                 find_keyboard_devices,
@@ -1900,12 +1962,20 @@ class _EvdevShortcutRecorder:
 
         self._active = True
         self._input_device_cls = InputDevice
-        self._find_keyboard_devices = find_keyboard_devices
+        # Recording has no spec to narrow discovery: the user has not chosen
+        # the key yet, and on Wayland the GDK fallback sees nothing when the
+        # compositor takes the XF86Audio* keys itself. Every media-capable
+        # node must therefore be watched, or a media-only consumer-control
+        # device is filtered out before its keys can ever be captured (#1071).
+        recorder_codes = set(_KEYBOARD_KEY_CODES)
+        for codes in MEDIA_TOKEN_TO_EVDEV_CODES.values():
+            recorder_codes.update(codes)
+        self._find_keyboard_devices = lambda: find_keyboard_devices(wanted_codes=recorder_codes)
 
         paths: list[str] = []
         listed = False
         try:
-            paths = list(find_keyboard_devices())
+            paths = list(self._find_keyboard_devices())
             listed = True
         except Exception as e:
             logger.warning("Cannot list keyboard devices for shortcut recording: %s", e)
@@ -2076,6 +2146,8 @@ class _EvdevShortcutRecorder:
             if value == 1:
                 held.add(code)
                 token = function_token_from_evdev_code(code)
+                if token is None:
+                    token = media_token_from_evdev_code(code)
                 if token is None:
                     continue
                 shortcut = _shortcut_from_capture(
