@@ -261,6 +261,55 @@ B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
                 assert "/dev/input/event0" in both
                 assert "/dev/input/event9" in both
 
+    def test_media_token_covers_every_physical_key(self) -> None:
+        """A media shortcut opens the node carrying ANY of the token's keys.
+
+        xkeyboard-config binds one XF86 keysym from several kernel keys
+        (XF86Mail from KEY_MAIL 155 and KEY_EMAIL 215; Play/Pause from
+        KEY_PLAYPAUSE 164, KEY_PAUSECD 201, KEY_PLAYCD 200 and KEY_PLAY 207).
+        A keyboard reporting either physical key must be discovered, or the
+        saved binding never fires on it.
+        """
+        for code in (ecodes.KEY_MAIL, ecodes.KEY_EMAIL):
+            mock_proc_content = f"""I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(code)}
+"""
+            with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+                with patch("os.path.exists", return_value=True):
+                    assert find_keyboard_devices(parse_shortcut_spec("mail")) == [
+                        "/dev/input/event9"
+                    ], f"code {code} must widen discovery for the mail token"
+
+    def test_union_spec_keeps_any_engines_media_node(self) -> None:
+        """The hub's hot-plug rescan keeps every registered engine's node.
+
+        The rescan takes the union of the engines' codes, not the spec of
+        whichever engine happens to be first: a keyboard-only engine and a
+        mute engine running together must both find their devices.
+        """
+        mock_proc_content = f"""I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
+N: Name="AT Translated Set 2 keyboard"
+H: Handlers=sysrq kbd event0
+B: KEY=402000000 3803078f800d001 feffffdfffefffff fffffffffffffffe
+I: Bus=0019 Vendor=0000 Product=0000 Version=0000
+N: Name="Consumer Control"
+H: Handlers=kbd event9
+B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
+"""
+        from vocalinux.ui.keyboard_backends.evdev_backend import (
+            _keyboard_key_codes,
+            find_keyboard_devices_spec,
+        )
+
+        union = _keyboard_key_codes() | _keyboard_key_codes(parse_shortcut_spec("mute"))
+        with patch("builtins.open", mock_open(read_data=mock_proc_content)):
+            with patch("os.path.exists", return_value=True):
+                found = find_keyboard_devices_spec(union)
+        assert "/dev/input/event0" in found
+        assert "/dev/input/event9" in found
+
     def test_find_keyboard_devices_keeps_relative_combo_and_skips_mouse(self) -> None:
         """Keyboard keys keep a REL_X/Y combo; button-only pointer nodes stay excluded."""
         mock_proc_content = f"""I: Bus=0011 Vendor=0001 Product=0001 Version=ab83
@@ -1008,7 +1057,7 @@ class TestEvdevKeyboardBackendStop:
 class TestEvdevKeyboardBackendHotplug:
     """Test hotplug discovery for evdev keyboard devices."""
 
-    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices_spec")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     def test_scan_for_new_devices_opens_hotplugged_keyboard(
         self, mock_input_device, mock_find_devices
@@ -3335,6 +3384,49 @@ class TestSharedEvdevDeviceLayer:
         for engine in engines:
             assert hub.register(engine) is True
         return hub
+
+    def test_joining_running_hub_rescans_for_the_joining_media_node(self) -> None:
+        """An engine joining a running hub widens discovery to its shortcut.
+
+        The cold start had no reason to open a media-only consumer-control
+        node (a keyboard-only engine started the hub), so the mute engine
+        joining later must trigger a rescan that opens it — without one its
+        binding saves fine and then never fires (#1071 review).
+        """
+        media_engine = EvdevKeyboardBackend(shortcut="mute")
+        hub = media_engine._hub
+        hub.running = True
+        # A keyboard-only engine is already registered: the hub was cold
+        # started with a keyboard-only discovery rule.
+        keyboard_engine = EvdevKeyboardBackend(shortcut="ctrl+ctrl")
+        hub._engines.add(keyboard_engine)
+
+        opened = []
+
+        def fake_open(device_path, generation=None):
+            opened.append(device_path)
+            return True
+
+        hub._open_keyboard_device = fake_open
+
+        with patch(
+            "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices_spec"
+        ) as finder:
+            finder.return_value = ["/dev/input/event9"]
+
+            assert hub.register(media_engine) is True
+
+            # The rescan ran under the same locks the cold start holds, and
+            # it discovered with the UNION of the engines' codes: the media
+            # engine's code widened the keyboard-only set the hub started with.
+            finder.assert_called_once()
+            wanted = finder.call_args[0][0]
+            from vocalinux.ui.keyboard_backends.evdev_backend import (
+                _keyboard_key_codes,
+            )
+
+            assert _keyboard_key_codes(parse_shortcut_spec("mute")) <= set(wanted)
+            assert opened == ["/dev/input/event9"]
 
     def test_backends_share_one_device_layer(self) -> None:
         """Every backend binds to the same process-wide hub."""

@@ -260,9 +260,15 @@ DEAD_KEY_TOKENS: frozenset[str] = frozenset(DEAD_KEYSYM_TO_TOKEN.values())
 # were previously rejected as unknown tokens, so none of them could be bound.
 #
 # One table is the single source of truth for all three resolution paths:
-#   * evdev/Wayland: ``evdev_name`` is the KEY_* name in linux/input-event-codes.h
-#     and ``evdev_code`` its numeric value.
-#   * X11/pynput: ``keysyms`` are the X11 keysyms bound to that kernel key.
+#   * evdev/Wayland: ``evdev_names`` are the KEY_* names in
+#     linux/input-event-codes.h and ``evdev_codes`` their numeric values. A
+#     token carries every kernel key whose XKB binding produces one of its
+#     keysyms — xkeyboard-config maps the same XF86 keysym from more than one
+#     physical key (XF86Mail from both KEY_MAIL 155 and KEY_EMAIL 215,
+#     XF86AudioPlay/XF86AudioPause from KEY_PLAYPAUSE 164 and KEY_PAUSECD
+#     201, plus KEY_PLAYCD 200 and KEY_PLAY 207 on the full map), so a
+#     binding must fire through whichever key the keyboard reports.
+#   * X11/pynput: ``keysyms`` are the X11 keysyms bound to those kernel keys.
 #   * X11 capture: XKB hardware keycodes are ``evdev code + 8``, so the GDK
 #     recorder resolves the same tokens through its own hardware path.
 # The XF86XK_* names carry the kernel key in their trailing comment in
@@ -270,51 +276,99 @@ DEAD_KEY_TOKENS: frozenset[str] = frozenset(DEAD_KEYSYM_TO_TOKEN.values())
 # file also lists it under "Use:". Both are recorded here so a rebind of the
 # name alone cannot silently break the binding.
 MEDIA_KEY_TOKENS: dict[str, dict[str, object]] = {
-    "mute": {"evdev_name": "KEY_MUTE", "evdev_code": 113, "keysyms": (0x1008FF12,)},
-    "volumedown": {"evdev_name": "KEY_VOLUMEDOWN", "evdev_code": 114, "keysyms": (0x1008FF11,)},
-    "volumeup": {"evdev_name": "KEY_VOLUMEUP", "evdev_code": 115, "keysyms": (0x1008FF13,)},
-    # XF86AudioPlay and XF86AudioPause share KEY_PLAYPAUSE, so the single
-    # token accepts both keysyms a level-1 XKB map can report.
+    "mute": {"evdev_names": ("KEY_MUTE",), "evdev_codes": (113,), "keysyms": (0x1008FF12,)},
+    "volumedown": {
+        "evdev_names": ("KEY_VOLUMEDOWN",),
+        "evdev_codes": (114,),
+        "keysyms": (0x1008FF11,),
+    },
+    "volumeup": {
+        "evdev_names": ("KEY_VOLUMEUP",),
+        "evdev_codes": (115,),
+        "keysyms": (0x1008FF13,),
+    },
+    # XF86AudioPlay and XF86AudioPause share KEY_PLAYPAUSE, so the token
+    # accepts both keysyms a level-1 XKB map can report. On the full map
+    # KEY_PAUSECD (201) sends XF86AudioPause, and KEY_PLAYCD (200) and
+    # KEY_PLAY (207) send XF86AudioPlay, so all four keys toggle playback.
     "playpause": {
-        "evdev_name": "KEY_PLAYPAUSE",
-        "evdev_code": 164,
+        "evdev_names": ("KEY_PLAYPAUSE", "KEY_PAUSECD", "KEY_PLAYCD", "KEY_PLAY"),
+        "evdev_codes": (164, 201, 200, 207),
         "keysyms": (0x1008FF14, 0x1008FF31),
     },
-    "nextsong": {"evdev_name": "KEY_NEXTSONG", "evdev_code": 163, "keysyms": (0x1008FF17,)},
+    "nextsong": {
+        "evdev_names": ("KEY_NEXTSONG",),
+        "evdev_codes": (163,),
+        "keysyms": (0x1008FF17,),
+    },
     "previoussong": {
-        "evdev_name": "KEY_PREVIOUSSONG",
-        "evdev_code": 165,
+        "evdev_names": ("KEY_PREVIOUSSONG",),
+        "evdev_codes": (165,),
         "keysyms": (0x1008FF16,),
     },
-    "stop": {"evdev_name": "KEY_STOPCD", "evdev_code": 166, "keysyms": (0x1008FF15,)},
-    "homepage": {"evdev_name": "KEY_HOMEPAGE", "evdev_code": 172, "keysyms": (0x1008FF18,)},
-    # XF86XK_Mail is bound to KEY_EMAIL (215) in symbols/inet, not KEY_MAIL (155):
-    # "Use: XF86XK_Mail _EVDEVK(0x0d7) KEY_EMAIL".
-    "mail": {"evdev_name": "KEY_EMAIL", "evdev_code": 215, "keysyms": (0x1008FF19,)},
-    # XF86XK_Messenger is bound to KEY_CHAT (216); KEY_MESSENGER (430) is a
-    # separate key that xorgproto only records as an alias.
-    "messenger": {"evdev_name": "KEY_CHAT", "evdev_code": 216, "keysyms": (0x1008FF8E,)},
-    "search": {"evdev_name": "KEY_SEARCH", "evdev_code": 217, "keysyms": (0x1008FF1B,)},
-    "calculator": {"evdev_name": "KEY_CALC", "evdev_code": 140, "keysyms": (0x1008FF1D,)},
-    "sleep": {"evdev_name": "KEY_SLEEP", "evdev_code": 142, "keysyms": (0x1008FF2F,)},
-    "battery": {"evdev_name": "KEY_BATTERY", "evdev_code": 236, "keysyms": (0x1008FF93,)},
-    "wlan": {"evdev_name": "KEY_WLAN", "evdev_code": 238, "keysyms": (0x1008FF95,)},
-    "bluetooth": {"evdev_name": "KEY_BLUETOOTH", "evdev_code": 237, "keysyms": (0x1008FF94,)},
+    # XF86AudioStop and XF86Eject share KEY_STOPCD on the basic media map.
+    "stop": {
+        "evdev_names": ("KEY_STOPCD",),
+        "evdev_codes": (166,),
+        "keysyms": (0x1008FF15,),
+    },
+    "homepage": {
+        "evdev_names": ("KEY_HOMEPAGE",),
+        "evdev_codes": (172,),
+        "keysyms": (0x1008FF18,),
+    },
+    # XF86Mail comes from both KEY_MAIL (155) and KEY_EMAIL (215) —
+    # symbols/inet binds the keysym on <I163> and <I223> alike.
+    "mail": {
+        "evdev_names": ("KEY_MAIL", "KEY_EMAIL"),
+        "evdev_codes": (155, 215),
+        "keysyms": (0x1008FF19,),
+    },
+    # XF86Messenger is bound to KEY_CHAT (216); KEY_MESSENGER (430) is a
+    # separate key that xorgproto only records as an alias, with no XKB
+    # binding, so it cannot produce the keysym.
+    "messenger": {
+        "evdev_names": ("KEY_CHAT",),
+        "evdev_codes": (216,),
+        "keysyms": (0x1008FF8E,),
+    },
+    "search": {"evdev_names": ("KEY_SEARCH",), "evdev_codes": (217,), "keysyms": (0x1008FF1B,)},
+    "calculator": {
+        "evdev_names": ("KEY_CALC",),
+        "evdev_codes": (140,),
+        "keysyms": (0x1008FF1D,),
+    },
+    "sleep": {"evdev_names": ("KEY_SLEEP",), "evdev_codes": (142,), "keysyms": (0x1008FF2F,)},
+    "battery": {
+        "evdev_names": ("KEY_BATTERY",),
+        "evdev_codes": (236,),
+        "keysyms": (0x1008FF93,),
+    },
+    "wlan": {"evdev_names": ("KEY_WLAN",), "evdev_codes": (238,), "keysyms": (0x1008FF95,)},
+    "bluetooth": {
+        "evdev_names": ("KEY_BLUETOOTH",),
+        "evdev_codes": (237,),
+        "keysyms": (0x1008FF94,),
+    },
     "brightnessdown": {
-        "evdev_name": "KEY_BRIGHTNESSDOWN",
-        "evdev_code": 224,
+        "evdev_names": ("KEY_BRIGHTNESSDOWN",),
+        "evdev_codes": (224,),
         "keysyms": (0x1008FF03,),
     },
     "brightnessup": {
-        "evdev_name": "KEY_BRIGHTNESSUP",
-        "evdev_code": 225,
+        "evdev_names": ("KEY_BRIGHTNESSUP",),
+        "evdev_codes": (225,),
         "keysyms": (0x1008FF02,),
     },
     # Not XF86 keys: Pause and Scroll Lock keep their own core keysyms
     # (XK_Pause 0xff13, XK_Scroll_Lock 0xff14), and the kernel reports Scroll
     # Lock as KEY_SCROLLLOCK.
-    "pause": {"evdev_name": "KEY_PAUSE", "evdev_code": 119, "keysyms": (0xFF13,)},
-    "scrolllock": {"evdev_name": "KEY_SCROLLLOCK", "evdev_code": 70, "keysyms": (0xFF14,)},
+    "pause": {"evdev_names": ("KEY_PAUSE",), "evdev_codes": (119,), "keysyms": (0xFF13,)},
+    "scrolllock": {
+        "evdev_names": ("KEY_SCROLLLOCK",),
+        "evdev_codes": (70,),
+        "keysyms": (0xFF14,),
+    },
 }
 
 # Human-readable names for the media tokens above (used in display labels).
@@ -343,21 +397,34 @@ _MEDIA_KEY_LABELS: dict[str, str] = {
 
 MEDIA_KEY_TOKENS_SET: frozenset[str] = frozenset(MEDIA_KEY_TOKENS)
 
-# Main-key token -> its kernel KEY_* name, for the backends that need a code.
+# Main-key token -> its primary kernel KEY_* name, for the backends that need
+# a name (the first physical key of the token's set).
 MEDIA_TOKEN_TO_EVDEV_NAME: dict[str, str] = {
-    token: cast(str, entry["evdev_name"]) for token, entry in MEDIA_KEY_TOKENS.items()
+    token: cast(tuple[str, ...], entry["evdev_names"])[0]
+    for token, entry in MEDIA_KEY_TOKENS.items()
 }
 
-# evdev key code -> main-key token, for the GDK recorder (XKB hardware keycodes
-# are `evdev code + 8`, so it needs the numeric form, not the ecodes name).
+# evdev key code -> main-key token, for the GDK recorder and the Wayland
+# listener's code match (XKB hardware keycodes are `evdev code + 8`, so the
+# recorder needs the numeric form, not the ecodes name). Every physical key
+# of a token resolves to it.
 MEDIA_EVDEV_CODE_TO_TOKEN: dict[int, str] = {
-    cast(int, entry["evdev_code"]): token for token, entry in MEDIA_KEY_TOKENS.items()
+    code: token
+    for token, entry in MEDIA_KEY_TOKENS.items()
+    for code in cast(tuple[int, ...], entry["evdev_codes"])
 }
 
-# Main-key token -> numeric evdev code, for callers that must not depend on
-# python-evdev being importable (device discovery, capture helpers).
+# Main-key token -> every numeric evdev code that produces its keysym, for
+# callers that must not depend on python-evdev being importable (device
+# discovery, capture helpers).
+MEDIA_TOKEN_TO_EVDEV_CODES: dict[str, tuple[int, ...]] = {
+    token: cast(tuple[int, ...], entry["evdev_codes"]) for token, entry in MEDIA_KEY_TOKENS.items()
+}
+
+# Backwards-compatible single-code view: the token's primary evdev code.
 MEDIA_TOKEN_TO_EVDEV_CODE: dict[str, int] = {
-    token: cast(int, entry["evdev_code"]) for token, entry in MEDIA_KEY_TOKENS.items()
+    token: cast(tuple[int, ...], entry["evdev_codes"])[0]
+    for token, entry in MEDIA_KEY_TOKENS.items()
 }
 
 # X11 keysym -> main-key token, for the pynput listener and the GDK recorder.
@@ -581,13 +648,13 @@ def is_valid_shortcut(shortcut_string: str) -> bool:
         return False
 
 
-def _combo_physical_evdev_code(token: str) -> Optional[int]:
-    """Return the active-layout physical evdev code for a combo main key, if resolvable."""
+def _combo_physical_evdev_codes(token: str) -> set[int]:
+    """Return the active-layout physical evdev codes for a combo main key."""
     try:
-        from .evdev_backend import evdev_code_for_key
+        from .evdev_backend import evdev_codes_for_key
     except ImportError:
-        return None
-    return evdev_code_for_key(token)
+        return set()
+    return evdev_codes_for_key(token)
 
 
 def shortcut_gesture(shortcut_string: str) -> Optional[Tuple[str, frozenset]]:
@@ -640,9 +707,9 @@ def shortcut_gestures_collide(first: str, second: str) -> bool:
                 return True
         except ImportError:
             pass
-        first_code = _combo_physical_evdev_code(first_token)
-        second_code = _combo_physical_evdev_code(second_token)
-        if first_code is not None and first_code == second_code:
+        first_codes = _combo_physical_evdev_codes(first_token)
+        second_codes = _combo_physical_evdev_codes(second_token)
+        if first_codes and first_codes & second_codes:
             return True
     return False
 

@@ -870,7 +870,7 @@ class TestSavedShiftedShortcutCompatibility:
         assert latam_shifted.get("¡") == "¿"
 
         monkeypatch.setattr(lkm, "get_active_shifted_to_base_map", lambda: latam_shifted)
-        monkeypatch.setattr(kb_base, "_combo_physical_evdev_code", lambda _token: None)
+        monkeypatch.setattr(kb_base, "_combo_physical_evdev_codes", lambda _token: set())
 
         # Collision detection catches the pair even when evdev is unavailable (X11-only).
         assert kb_base.shortcut_gestures_collide("ctrl+shift+equal", "ctrl+shift+0") is True
@@ -905,7 +905,7 @@ class TestSavedShiftedShortcutCompatibility:
         monkeypatch.setattr(
             lkm, "get_active_shifted_to_base_map", lambda: dict(lkm._US_SHIFTED_TO_BASE)
         )
-        monkeypatch.setattr(kb_base, "_combo_physical_evdev_code", lambda _token: None)
+        monkeypatch.setattr(kb_base, "_combo_physical_evdev_codes", lambda _token: set())
 
         assert lkm.resolve_base_key_token("equal") == "equal"
         assert lkm.resolve_base_key_token("parenright") == "0"
@@ -1176,8 +1176,6 @@ class TestMediaKeyShortcuts:
     def test_media_keysym_table_matches_canonical_tokens(self) -> None:
         from vocalinux.ui.keyboard_backends.base import MEDIA_KEYSYM_TO_TOKEN
 
-        # XF86XK_Mail is KEY_EMAIL (215), not KEY_MAIL (155): symbols/inet binds
-        # "Use: XF86XK_Mail _EVDEVK(0x0d7) KEY_EMAIL".
         assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF19] == "mail"
         assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF8E] == "messenger"
         assert MEDIA_KEYSYM_TO_TOKEN[0x1008FF12] == "mute"
@@ -1188,15 +1186,26 @@ class TestMediaKeyShortcuts:
     def test_media_evdev_codes_round_trip(self) -> None:
         from vocalinux.ui.keyboard_backends.base import (
             MEDIA_EVDEV_CODE_TO_TOKEN,
+            MEDIA_TOKEN_TO_EVDEV_CODES,
             MEDIA_TOKEN_TO_EVDEV_NAME,
         )
 
         assert MEDIA_EVDEV_CODE_TO_TOKEN[113] == "mute"
         assert MEDIA_EVDEV_CODE_TO_TOKEN[164] == "playpause"
-        assert MEDIA_EVDEV_CODE_TO_TOKEN[215] == "mail"
         assert MEDIA_EVDEV_CODE_TO_TOKEN[216] == "messenger"
         assert MEDIA_EVDEV_CODE_TO_TOKEN[70] == "scrolllock"
-        assert MEDIA_TOKEN_TO_EVDEV_NAME["mail"] == "KEY_EMAIL"
+        # A media token covers every kernel key its XF86 keysym comes from:
+        # symbols/inet binds XF86Mail on both <I163> (KEY_MAIL 155) and
+        # <I223> (KEY_EMAIL 215), and Play/Pause likewise from KEY_PLAYPAUSE
+        # (164) and KEY_PAUSECD (201). A keyboard reporting either physical
+        # key must resolve to the same recorded token.
+        assert MEDIA_TOKEN_TO_EVDEV_CODES["mail"] == (155, 215)
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[155] == "mail"
+        assert MEDIA_EVDEV_CODE_TO_TOKEN[215] == "mail"
+        assert MEDIA_TOKEN_TO_EVDEV_CODES["playpause"] == (164, 201, 200, 207)
+        for code in (164, 201, 200, 207):
+            assert MEDIA_EVDEV_CODE_TO_TOKEN[code] == "playpause"
+        assert MEDIA_TOKEN_TO_EVDEV_NAME["mail"] == "KEY_MAIL"
         assert MEDIA_TOKEN_TO_EVDEV_NAME["messenger"] == "KEY_CHAT"
 
     def test_pynput_keysym_lookup_handles_media_keys(self) -> None:
@@ -1219,9 +1228,11 @@ class TestMediaKeyBackendResolution:
         from vocalinux.ui.keyboard_backends import evdev_backend
 
         # Element of the resolved name table, independent of evdev presence.
+        # Media tokens carry their full code sets (see base.MEDIA_KEY_TOKENS),
+        # so the single-name view takes the primary key of each set.
         assert evdev_backend._FIXED_EVDEV_KEYS["mute"] == "KEY_MUTE"
         assert evdev_backend._FIXED_EVDEV_KEYS["playpause"] == "KEY_PLAYPAUSE"
-        assert evdev_backend._FIXED_EVDEV_KEYS["mail"] == "KEY_EMAIL"
+        assert evdev_backend._FIXED_EVDEV_KEYS["mail"] == "KEY_MAIL"
         assert evdev_backend._FIXED_EVDEV_KEYS["messenger"] == "KEY_CHAT"
         assert evdev_backend._FIXED_EVDEV_KEYS["scrolllock"] == "KEY_SCROLLLOCK"
         assert evdev_backend._FIXED_EVDEV_KEYS["pause"] == "KEY_PAUSE"

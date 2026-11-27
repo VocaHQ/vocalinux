@@ -29,7 +29,8 @@ import select
 import threading
 import time
 import weakref
-from typing import Any, Mapping, Optional, Sequence, TextIO, cast
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, Optional, TextIO, cast
 
 # Try to import evdev
 try:
@@ -53,7 +54,7 @@ from .base import (
     DEFAULT_SHORTCUT,
     DEFAULT_SHORTCUT_MODE,
     KEYPAD_TOKEN_TO_EVDEV_NAME,
-    MEDIA_TOKEN_TO_EVDEV_CODE,
+    MEDIA_TOKEN_TO_EVDEV_CODES,
     MEDIA_TOKEN_TO_EVDEV_NAME,
     PUNCTUATION_TOKEN_TO_CHAR,
     KeyboardBackend,
@@ -362,44 +363,67 @@ _US_PUNCT_EVDEV_KEYS: dict[str, str] = {
 _NAMED_EVDEV_KEYS: dict[str, str] = {**_FIXED_EVDEV_KEYS, **_US_PUNCT_EVDEV_KEYS}
 
 
-def evdev_code_for_key(token: str) -> Optional[int]:
-    """Resolve a canonical main-key token (e.g. "r", "f5", "kp_0", "bar") to an evdev code.
+def evdev_codes_for_key(token: str) -> set[int]:
+    """Resolve a canonical main-key token to every evdev code that can emit it.
 
-    Navigation, keypad, and function keys are layout-independent. Letters,
-    digits, punctuation, and dead keys remap through the active XKB layout map
-    so non-US layouts hit the right physical key (e.g. AZERTY "a" -> KEY_Q,
-    latam "bar" -> KEY_GRAVE, latam "questiondown" -> KEY_EQUAL, latam
-    "apostrophe" -> KEY_MINUS).
+    A media token covers all the kernel keys XKB binds to its keysym(s)
+    (e.g. "mail" is KEY_MAIL 155 and KEY_EMAIL 215 alike, per
+    xkeyboard-config's symbols/inet), so a shortcut fires through whichever
+    physical key the keyboard reports. Layout-dependent tokens (letters,
+    punctuation, dead keys) resolve to the single code the active XKB map
+    gives; navigation, keypad, and function keys are layout-independent.
     """
-    if not EVDEV_AVAILABLE or not token:
-        return None
+    if not token:
+        return set()
+    # Media codes are the numeric table in base.py, so they resolve without
+    # python-evdev — the same rule discovery relies on off-Linux.
+    media_codes = MEDIA_TOKEN_TO_EVDEV_CODES.get(token)
+    if media_codes:
+        return set(media_codes)
+    if not EVDEV_AVAILABLE:
+        return set()
     fixed_name = _FIXED_EVDEV_KEYS.get(token)
     if fixed_name is not None:
-        return getattr(ecodes, fixed_name, None)
+        code = getattr(ecodes, fixed_name, None)
+        return {code} if code is not None else set()
     if re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", token):
-        return getattr(ecodes, f"KEY_{token.upper()}", None)
+        code = getattr(ecodes, f"KEY_{token.upper()}", None)
+        return {code} if code is not None else set()
     if token in DEAD_KEY_TOKENS:
         layout_map = get_active_char_to_evdev_map()
         if layout_map and token in layout_map:
-            return layout_map[token]
-        return None
+            return {layout_map[token]}
+        return set()
     punct_char = PUNCTUATION_TOKEN_TO_CHAR.get(token)
     if punct_char is not None:
         layout_map = get_active_char_to_evdev_map()
         if layout_map and punct_char in layout_map:
-            return layout_map[punct_char]
+            return {layout_map[punct_char]}
         fallback_name = _US_PUNCT_EVDEV_KEYS.get(token)
         if fallback_name is not None:
-            return getattr(ecodes, fallback_name, None)
-        return None
+            code = getattr(ecodes, fallback_name, None)
+            return {code} if code is not None else set()
+        return set()
     if len(token) == 1:
         layout_map = get_active_char_to_evdev_map()
         if layout_map and token in layout_map:
-            return layout_map[token]
+            return {layout_map[token]}
         if token.isascii() and token.isalnum():
-            return getattr(ecodes, f"KEY_{token.upper()}", None)
-        return None
-    return None
+            code = getattr(ecodes, f"KEY_{token.upper()}", None)
+            return {code} if code is not None else set()
+        return set()
+    return set()
+
+
+def evdev_code_for_key(token: str) -> Optional[int]:
+    """Resolve a canonical main-key token to its primary evdev code.
+
+    Returns the first code of :func:`evdev_codes_for_key`. Callers that match
+    events against a token must use the set form: a media token maps to
+    several physical keys.
+    """
+    codes = evdev_codes_for_key(token)
+    return next(iter(codes)) if codes else None
 
 
 def _keyboard_key_codes(spec: Optional[ShortcutSpec] = None) -> frozenset[int]:
@@ -411,14 +435,16 @@ def _keyboard_key_codes(spec: Optional[ShortcutSpec] = None) -> frozenset[int]:
     separate consumer-control node) report media keys on their own input
     device with no letter or modifier on it, so that device was previously
     never opened and the shortcut never fired.
+
+    A media token maps to every kernel key XKB binds its keysym to
+    (e.g. "mail" is both KEY_MAIL and KEY_EMAIL in xkeyboard-config), so a
+    binding recorded through either physical key fires.
     """
     codes = set(_KEYBOARD_KEY_CODES)
     if spec is not None and spec.key is not None:
         # The numeric table keeps this independent of python-evdev being
         # importable, so the discovery rule is testable off-Linux.
-        media_code = MEDIA_TOKEN_TO_EVDEV_CODE.get(spec.key)
-        if media_code is not None:
-            codes.add(media_code)
+        codes.update(MEDIA_TOKEN_TO_EVDEV_CODES.get(spec.key, ()))
     return frozenset(codes)
 
 
@@ -442,14 +468,25 @@ def find_keyboard_devices(spec: Optional[ShortcutSpec] = None) -> list[str]:
     Returns:
         List of device paths for keyboard devices
     """
+    return find_keyboard_devices_spec(_keyboard_key_codes(spec))
+
+
+def find_keyboard_devices_spec(wanted_codes: Iterable[int]) -> list[str]:
+    """Find keyboard devices interesting for a set of KEY_* codes.
+
+    Same rules and fallbacks as :func:`find_keyboard_devices`; the shared
+    reader's hot-plug rescan passes the union of every registered engine's
+    codes so a device any engine's shortcut can live on is kept.
+    """
+    wanted_codes = frozenset(wanted_codes)
     try:
         return _parse_keyboard_devices_from_proc(
             open("/proc/bus/input/devices", "r", encoding="utf-8", errors="replace"),
-            spec=spec,
+            wanted_codes=wanted_codes,
         )
     except (IOError, OSError) as e:
         logger.debug(f"Cannot read /proc/bus/input/devices: {e}")
-        fallback = _find_keyboard_devices_from_evdev(spec=spec)
+        fallback = _find_keyboard_devices_from_evdev(wanted_codes)
         if fallback:
             # Hot-plug rescans call this often; keep the noise down after first hit.
             logger.debug(
@@ -570,9 +607,7 @@ def _proc_block_has_keyboard_keys(
     return any(_bitmap_has_code(key_bitmap, code) for code in wanted)
 
 
-def _parse_keyboard_devices_from_proc(
-    proc_file: TextIO, spec: Optional[ShortcutSpec] = None
-) -> list[str]:
+def _parse_keyboard_devices_from_proc(proc_file: TextIO, wanted_codes: frozenset[int]) -> list[str]:
     """Parse an open /proc/bus/input/devices stream for event KEY devices.
 
     Only blocks carrying a real keyboard key (a modifier or KEY_A, the
@@ -580,19 +615,19 @@ def _parse_keyboard_devices_from_proc(
     nodes are kept for ungrabbed monitoring; pointer-only and button-only
     nodes remain excluded (#953).
 
-    When *spec* names a media key, the device carrying it qualifies too, so a
-    media-only consumer-control node is not skipped before the listener opens
-    it (#1071).
+    A block also qualifies when it carries one of *wanted_codes* beyond the
+    keyboard set, so a media-only consumer-control node is not skipped
+    before the listener opens it (#1071).
     """
     keyboard_devices: list[str] = []
     device: Optional[dict[str, Any]] = None
-    wanted_codes = _keyboard_key_codes(spec)
+    wanted = frozenset(wanted_codes)
 
     def finish_device() -> None:
         nonlocal device
         if device is None:
             return
-        if not _proc_block_has_keyboard_keys(device, wanted_codes):
+        if not _proc_block_has_keyboard_keys(device, wanted):
             if _bitmap_has_any_bit(device.get("key", "")):
                 logger.debug(
                     "Skipping non-keyboard device during keyboard discovery: "
@@ -663,12 +698,23 @@ def _device_has_pointer_axes(device: InputDevice) -> bool:
         return True
 
 
-def _find_keyboard_devices_from_evdev(spec: Optional[ShortcutSpec] = None) -> list[str]:
-    """Discover keyboards by opening devices from ``evdev.list_devices()``."""
+def _find_keyboard_devices_from_evdev(
+    wanted_codes: Optional[Iterable[int]] = None,
+    *,
+    spec: Optional[ShortcutSpec] = None,
+) -> list[str]:
+    """Discover keyboards by opening devices from ``evdev.list_devices()``.
+
+    *wanted_codes* is the set of KEY_* codes that qualify a device; it
+    defaults to the plain keyboard set, and *spec* (kept for callers that
+    still pass one) widens it with the shortcut's media codes.
+    """
     if not EVDEV_AVAILABLE:
         return []
 
-    wanted_codes = _keyboard_key_codes(spec)
+    if wanted_codes is None:
+        wanted_codes = _keyboard_key_codes(spec)
+    wanted = frozenset(wanted_codes)
     keyboard_devices: list[str] = []
     try:
         paths = list(evdev.list_devices())
@@ -692,7 +738,7 @@ def _find_keyboard_devices_from_evdev(spec: Optional[ShortcutSpec] = None) -> li
         key_caps = capabilities.get(ecodes.EV_KEY, []) if capabilities else []
         if not key_caps:
             continue
-        if any(code in key_caps for code in wanted_codes):
+        if any(code in key_caps for code in wanted):
             keyboard_devices.append(path)
 
     return keyboard_devices
@@ -738,10 +784,10 @@ def device_has_key(device_path: str, key_token: str) -> bool:
     Returns:
         True if the device reports the key in its EV_KEY capabilities
     """
-    key_code = evdev_code_for_key(key_token)
-    if key_code is None:
+    key_codes = evdev_codes_for_key(key_token)
+    if not key_codes:
         return False
-    return _device_has_any_code(device_path, {key_code})
+    return _device_has_any_code(device_path, key_codes)
 
 
 def device_supports_shortcut(device_path: str, spec: ShortcutSpec) -> bool:
@@ -925,6 +971,11 @@ class EvdevDeviceHub:
                 if self.running:
                     self._engines.add(engine)
                     logger.debug("Keyboard backend joined the shared evdev device layer")
+                    # A joining engine can need a device the cold start had
+                    # no reason to open (its media-only node, say), so rescan
+                    # under the same locks a cold start holds: a concurrent
+                    # unregister must not observe a half-widened engine set.
+                    self._scan_for_new_devices()
                     return True
                 return self._start_locked(engine)
 
@@ -1599,13 +1650,14 @@ class EvdevDeviceHub:
         new_device_count = 0
 
         try:
-            # The hub serves every engine, so take the configured shortcut from
-            # a live engine; without one, keep the plain keyboard-only rule.
-            spec = next(
-                (getattr(engine, "_spec", None) for engine in list(self._engines)),
-                None,
-            )
-            device_paths = find_keyboard_devices(spec)
+            # The hub serves every engine, so the discovery spec is the union
+            # of what each registered engine needs: any device one engine's
+            # shortcut can live on qualifies. Without a spec anywhere, keep
+            # the plain keyboard-only rule.
+            wanted = _keyboard_key_codes()
+            for engine in list(self._engines):
+                wanted |= _keyboard_key_codes(getattr(engine, "_spec", None))
+            device_paths = find_keyboard_devices_spec(wanted)
         except Exception as e:
             logger.error(f"Error rescanning keyboard devices: {e}")
             return 0
@@ -1853,7 +1905,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
         self.key_pressed_devices: set[int] = set()
 
         # Combo (modifier+key) state. Populated by _resolve_combo_targets().
-        self._combo_main_code: Optional[int] = None
+        self._combo_main_codes: set[int] = set()
         self._combo_modifier_sets: list[set[int]] = []
         self._combo_all_codes: set[int] = set()
         self._combo_pressed: set[int] = set()  # currently-held combo-relevant codes
@@ -1873,6 +1925,22 @@ class EvdevKeyboardBackend(KeyboardBackend):
     def _get_target_key_codes(self) -> set[int]:
         """Get the evdev key codes for the configured modifier."""
         return MODIFIER_KEY_CODES.get(self._modifier_key, set())
+
+    @property
+    def _combo_main_code(self) -> Optional[int]:
+        """Primary evdev code of the combo main key (single-code view).
+
+        The engine matches events against the full code set
+        (``_combo_main_codes``); this view exists for callers and tests
+        that reason about the one primary key.
+        """
+        codes = getattr(self, "_combo_main_codes", set())
+        return next(iter(codes)) if codes else None
+
+    @_combo_main_code.setter
+    def _combo_main_code(self, code: Optional[int]) -> None:
+        """Set the combo main key codes from a single primary code."""
+        self._combo_main_codes = {code} if code is not None else set()
 
     def set_pass_shortcut_to_apps(self, enabled: bool) -> None:
         """Apply pass-through, including any modifier already held.
@@ -1903,7 +1971,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
 
     def _resolve_combo_targets(self) -> None:
         """Resolve the spec's combo modifiers and main key to evdev codes."""
-        self._combo_main_code = None
+        self._combo_main_codes: set[int] = set()
         self._combo_modifier_sets = []
         self._combo_all_codes = set()
         self._combo_pressed = set()
@@ -1914,8 +1982,8 @@ class EvdevKeyboardBackend(KeyboardBackend):
         if spec is None or not spec.is_combo:
             return
 
-        main_code = evdev_code_for_key(spec.key)
-        if main_code is None:
+        main_codes = evdev_codes_for_key(spec.key)
+        if not main_codes:
             logger.error(
                 f"Combo shortcut '{self._shortcut}': cannot resolve key '{spec.key}' "
                 "to an evdev code; combo will not trigger"
@@ -1930,9 +1998,9 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 return
             modifier_sets.append(set(codes))
 
-        self._combo_main_code = main_code
+        self._combo_main_codes = main_codes
         self._combo_modifier_sets = modifier_sets
-        self._combo_all_codes = set().union(*modifier_sets) | {main_code}
+        self._combo_all_codes = set().union(*modifier_sets) | main_codes
 
     def _required_modifiers_held(self) -> bool:
         """True if at least one key code for every required modifier is held."""
@@ -1970,7 +2038,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             for code in list(withheld):
                 if code not in actually_held:
                     withheld.pop(code)
-        if self._combo_main_code is not None and self._combo_main_code not in actually_held:
+        if self._combo_main_codes and not (self._combo_main_codes & actually_held):
             # A dropped burst can also eat the release of a swallowed combo
             # press — a key the clone never saw, so the hub's forwarded-held
             # set cannot reflect it. Without this prune the next ordinary
@@ -2142,7 +2210,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             # Gesture detection still runs through _handle_key_event.
             # Do not expose the release of a combo press swallowed
             # before this option was enabled.
-            if spec.is_combo and event.code == self._combo_main_code:
+            if spec.is_combo and event.code in self._combo_main_codes:
                 if fd in self._combo_swallowed:
                     if event.value == 0:
                         self._combo_swallowed.discard(fd)
@@ -2191,8 +2259,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
                     self._forward_event(fd, event)
             return True
 
-        main_code = self._combo_main_code
-        if event.code != main_code or main_code is None:
+        if event.code not in self._combo_main_codes:
             return False
         if not spec.modifiers:
             return True  # bare function key
@@ -2241,7 +2308,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
             code = event.code
             value = event.value  # 0 = release, 1 = press, 2 = autorepeat
 
-            if self._combo_main_code is None:
+            if not self._combo_main_codes:
                 return
             if value == 2:  # ignore autorepeat; press/release drive the gesture
                 return
@@ -2252,7 +2319,7 @@ class EvdevKeyboardBackend(KeyboardBackend):
                 elif value == 0:
                     self._combo_pressed.discard(code)
 
-            if code == self._combo_main_code:
+            if code in self._combo_main_codes:
                 if value == 1 and self._required_modifiers_held():
                     self._combo_triggered()
                 elif value == 0:

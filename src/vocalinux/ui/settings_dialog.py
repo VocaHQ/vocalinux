@@ -1941,10 +1941,12 @@ class _EvdevShortcutRecorder:
 
     def start(self) -> None:
         try:
+            from .keyboard_backends.base import MEDIA_TOKEN_TO_EVDEV_CODES
             from .keyboard_backends.evdev_backend import (
+                _KEYBOARD_KEY_CODES,
                 DEVICE_RESCAN_SECONDS,
                 EVDEV_AVAILABLE,
-                find_keyboard_devices,
+                find_keyboard_devices_spec,
             )
         except ImportError:
             logger.debug("evdev unavailable for shortcut recording; using GDK events only")
@@ -1960,12 +1962,20 @@ class _EvdevShortcutRecorder:
 
         self._active = True
         self._input_device_cls = InputDevice
-        self._find_keyboard_devices = find_keyboard_devices
+        # Recording has no spec to narrow discovery: the user has not chosen
+        # the key yet, and on Wayland the GDK fallback sees nothing when the
+        # compositor takes the XF86Audio* keys itself. Every media-capable
+        # node must therefore be watched, or a media-only consumer-control
+        # device is filtered out before its keys can ever be captured (#1071).
+        recorder_codes = set(_KEYBOARD_KEY_CODES)
+        for codes in MEDIA_TOKEN_TO_EVDEV_CODES.values():
+            recorder_codes.update(codes)
+        self._find_keyboard_devices = lambda: find_keyboard_devices_spec(recorder_codes)
 
         paths: list[str] = []
         listed = False
         try:
-            paths = list(find_keyboard_devices())
+            paths = list(self._find_keyboard_devices())
             listed = True
         except Exception as e:
             logger.warning("Cannot list keyboard devices for shortcut recording: %s", e)
