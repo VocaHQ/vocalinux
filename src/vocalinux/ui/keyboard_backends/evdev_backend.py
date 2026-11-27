@@ -448,7 +448,11 @@ def _keyboard_key_codes(spec: Optional[ShortcutSpec] = None) -> frozenset[int]:
     return frozenset(codes)
 
 
-def find_keyboard_devices(spec: Optional[ShortcutSpec] = None) -> list[str]:
+def find_keyboard_devices(
+    spec: Optional[ShortcutSpec] = None,
+    *,
+    wanted_codes: Optional[Iterable[int]] = None,
+) -> list[str]:
     """
     Find devices with real keyboard keys.
 
@@ -458,7 +462,9 @@ def find_keyboard_devices(spec: Optional[ShortcutSpec] = None) -> list[str]:
 
     Passing the configured *spec* additionally keeps the device that reports
     the shortcut's media key, so a media-only input node is not filtered out
-    before the listener can open it (#1071).
+    before the listener can open it (#1071). Callers that serve several
+    bindings at once — the shared reader's hot-plug rescan, the shortcut
+    recorder — pass the union they need as *wanted_codes* instead.
 
     Prefers /proc/bus/input/devices (host installs). Falls back to
     ``evdev.list_devices()`` when that path cannot be read (common under snap
@@ -468,25 +474,15 @@ def find_keyboard_devices(spec: Optional[ShortcutSpec] = None) -> list[str]:
     Returns:
         List of device paths for keyboard devices
     """
-    return find_keyboard_devices_spec(_keyboard_key_codes(spec))
-
-
-def find_keyboard_devices_spec(wanted_codes: Iterable[int]) -> list[str]:
-    """Find keyboard devices interesting for a set of KEY_* codes.
-
-    Same rules and fallbacks as :func:`find_keyboard_devices`; the shared
-    reader's hot-plug rescan passes the union of every registered engine's
-    codes so a device any engine's shortcut can live on is kept.
-    """
-    wanted_codes = frozenset(wanted_codes)
+    codes = _keyboard_key_codes(spec) if wanted_codes is None else frozenset(wanted_codes)
     try:
         return _parse_keyboard_devices_from_proc(
             open("/proc/bus/input/devices", "r", encoding="utf-8", errors="replace"),
-            wanted_codes=wanted_codes,
+            wanted_codes=codes,
         )
     except (IOError, OSError) as e:
         logger.debug(f"Cannot read /proc/bus/input/devices: {e}")
-        fallback = _find_keyboard_devices_from_evdev(wanted_codes)
+        fallback = _find_keyboard_devices_from_evdev(codes)
         if fallback:
             # Hot-plug rescans call this often; keep the noise down after first hit.
             logger.debug(
@@ -1652,12 +1648,12 @@ class EvdevDeviceHub:
         try:
             # The hub serves every engine, so the discovery spec is the union
             # of what each registered engine needs: any device one engine's
-            # shortcut can live on qualifies. Without a spec anywhere, keep
-            # the plain keyboard-only rule.
+            # shortcut can live on qualifies. With no media binding anywhere
+            # the union is the plain keyboard-only rule.
             wanted = _keyboard_key_codes()
             for engine in list(self._engines):
                 wanted |= _keyboard_key_codes(getattr(engine, "_spec", None))
-            device_paths = find_keyboard_devices_spec(wanted)
+            device_paths = find_keyboard_devices(wanted_codes=wanted)
         except Exception as e:
             logger.error(f"Error rescanning keyboard devices: {e}")
             return 0

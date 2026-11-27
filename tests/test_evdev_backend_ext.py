@@ -300,13 +300,13 @@ B: KEY={_proc_key_bitmap(ecodes.KEY_MUTE)}
 """
         from vocalinux.ui.keyboard_backends.evdev_backend import (
             _keyboard_key_codes,
-            find_keyboard_devices_spec,
+            find_keyboard_devices,
         )
 
         union = _keyboard_key_codes() | _keyboard_key_codes(parse_shortcut_spec("mute"))
         with patch("builtins.open", mock_open(read_data=mock_proc_content)):
             with patch("os.path.exists", return_value=True):
-                found = find_keyboard_devices_spec(union)
+                found = find_keyboard_devices(wanted_codes=union)
         assert "/dev/input/event0" in found
         assert "/dev/input/event9" in found
 
@@ -1057,7 +1057,7 @@ class TestEvdevKeyboardBackendStop:
 class TestEvdevKeyboardBackendHotplug:
     """Test hotplug discovery for evdev keyboard devices."""
 
-    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices_spec")
+    @patch("vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices")
     @patch("vocalinux.ui.keyboard_backends.evdev_backend.InputDevice")
     def test_scan_for_new_devices_opens_hotplugged_keyboard(
         self, mock_input_device, mock_find_devices
@@ -3395,6 +3395,7 @@ class TestSharedEvdevDeviceLayer:
         """
         media_engine = EvdevKeyboardBackend(shortcut="mute")
         hub = media_engine._hub
+        hub.reset()
         hub.running = True
         # A keyboard-only engine is already registered: the hub was cold
         # started with a keyboard-only discovery rule.
@@ -3409,24 +3410,30 @@ class TestSharedEvdevDeviceLayer:
 
         hub._open_keyboard_device = fake_open
 
-        with patch(
-            "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices_spec"
-        ) as finder:
-            finder.return_value = ["/dev/input/event9"]
+        try:
+            with patch(
+                "vocalinux.ui.keyboard_backends.evdev_backend.find_keyboard_devices"
+            ) as finder:
+                finder.return_value = ["/dev/input/event9"]
 
-            assert hub.register(media_engine) is True
+                assert hub.register(media_engine) is True
 
-            # The rescan ran under the same locks the cold start holds, and
-            # it discovered with the UNION of the engines' codes: the media
-            # engine's code widened the keyboard-only set the hub started with.
-            finder.assert_called_once()
-            wanted = finder.call_args[0][0]
-            from vocalinux.ui.keyboard_backends.evdev_backend import (
-                _keyboard_key_codes,
-            )
+                # The rescan ran under the same locks the cold start holds, and
+                # it discovered with the UNION of the engines' codes: the media
+                # engine's code widened the keyboard-only set the hub started with.
+                finder.assert_called_once()
+                wanted = finder.call_args.kwargs["wanted_codes"]
+                from vocalinux.ui.keyboard_backends.evdev_backend import (
+                    _keyboard_key_codes,
+                )
 
-            assert _keyboard_key_codes(parse_shortcut_spec("mute")) <= set(wanted)
-            assert opened == ["/dev/input/event9"]
+                assert _keyboard_key_codes(parse_shortcut_spec("mute")) <= set(wanted)
+                assert opened == ["/dev/input/event9"]
+        finally:
+            # The layer is process-wide and only weakly references its engines:
+            # leaving this test's engines registered would keep it "running"
+            # for later tests that assert it shuts down with its last listener.
+            hub.reset()
 
     def test_backends_share_one_device_layer(self) -> None:
         """Every backend binds to the same process-wide hub."""

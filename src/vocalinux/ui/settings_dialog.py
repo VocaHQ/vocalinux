@@ -1946,7 +1946,7 @@ class _EvdevShortcutRecorder:
                 _KEYBOARD_KEY_CODES,
                 DEVICE_RESCAN_SECONDS,
                 EVDEV_AVAILABLE,
-                find_keyboard_devices_spec,
+                find_keyboard_devices,
             )
         except ImportError:
             logger.debug("evdev unavailable for shortcut recording; using GDK events only")
@@ -1970,7 +1970,7 @@ class _EvdevShortcutRecorder:
         recorder_codes = set(_KEYBOARD_KEY_CODES)
         for codes in MEDIA_TOKEN_TO_EVDEV_CODES.values():
             recorder_codes.update(codes)
-        self._find_keyboard_devices = lambda: find_keyboard_devices_spec(recorder_codes)
+        self._find_keyboard_devices = lambda: find_keyboard_devices(wanted_codes=recorder_codes)
 
         paths: list[str] = []
         listed = False
